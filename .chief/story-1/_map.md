@@ -22,6 +22,7 @@
 - [Schema format identity](../_tickets/8-schema-format-identity.md): typdoc's own JSON format, not JSON Schema; no interop in v1; design wording fixed in three places.
 - [Collection definition files](../_tickets/12-collection-definition-files.md): one file per collection at `.typdoc/collections/<name>.json` (`match`, `schema`, `refBase`, `validation`, `last`); one `version` in `config.json` covers all typdoc-owned formats; no collection order; overlapping matches are an error; a broken collection file stops the namespace.
 - [Counter allocation](../_tickets/2-counter-allocation.md): next number = max(highest existing in the collection, the collection's `last`) + 1, written back under the lock; never reused after a delete; the shared `counter` option is removed (one ticket schema, one collection, told apart by `kind`); a coded schema serves exactly one collection; no new file. Where `last` lives is ticket 12.
+- [Slug rules](../_tickets/4-slug-rules.md): heading slugs follow GitHub's algorithm (Thai kept, `dup-1` collision-aware, empty slugs deduped like any other); link fragments are percent-decoded and compared case-insensitively; `{slug}` is removed from file names, which are never derived from a title.
 
 ## Not yet specified
 
