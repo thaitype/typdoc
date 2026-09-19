@@ -4,7 +4,7 @@
 
 ## Overview
 
-`typdoc` is a CLI that treats a folder of Markdown files as typed, linked documents: frontmatter is validated against JSON schemas, and references between documents, in frontmatter or body links, are resolved, queried and checked. Tickets are one kind of document; notes, learnings and precedents are others. Every command has `--json` output and meaningful exit codes, because the main users are agents.
+`typdoc` is a CLI that treats a folder of Markdown files as typed, linked documents: frontmatter is validated against schema files (a JSON format of typdoc's own, not JSON Schema), and references between documents, in frontmatter or body links, are resolved, queried and checked. Tickets are one kind of document; notes, learnings and precedents are others. Every command has `--json` output and meaningful exit codes, because the main users are agents.
 
 **Philosophy**
 
@@ -18,7 +18,7 @@ typdoc is a lens over the files, not a format for them. Adopting it means adding
 
 - **Files stay plain Markdown.** Frontmatter is ordinary YAML whose values are ordinary strings, numbers and lists. A link in the body is a standard Markdown link to a real path. Text that merely mentions something ("see WF-3") is information by default. A namespace can opt in to checking that mentioned keys exist (the body.mentions rule); mentions still never become refs.
 - **Generic.** `typdoc` knows documents, fields, headings and refs. Workflow meaning ("claim", "frontier", "precedent") lives in the skill or workflow that calls it.
-- **Schema-driven.** Types, enums, state transitions and ref targets come from JSON schemas, so one tool serves many document structures.
+- **Schema-driven.** Types, enums, state transitions and ref targets come from schema files, so one tool serves many document structures. The format is typdoc's own JSON, not JSON Schema, which has no notion of refs between documents, state transitions or auto fields.
 - **Frontmatter only.** Writes touch the frontmatter block and never re-serialize the body. The one exception is `mv`, which rewrites link paths.
 - **Safe under concurrency.** Number allocation and conditional updates happen under a lock.
 
@@ -133,7 +133,7 @@ There is one config location. A legacy `.typdoc.json` beside the folder is a con
 
 ## Schema format
 
-A schema is a JSON file with a name, an optional code, an optional parent, and its fields.
+A schema is a JSON file with a name, an optional code, an optional parent, and its fields. The format is typdoc's own; it is not JSON Schema, and no JSON Schema tool reads it.
 
 **Top-level keys**
 
@@ -330,6 +330,23 @@ ref.all(blocked_by).status=resolved
 
 Arrows are stored only on the document holding the field. `refby` finds incoming arrows through a reverse index built from the frontmatter already loaded, the same index `refs --reverse` uses; nothing is stored twice.
 
+**Grammar**
+
+```
+expr     = ref-expr | plain
+ref-expr = dir "." quant "(" f ")" [ "." plain ]   ; "all" requires the "." plain part
+dir      = "ref" | "refby"
+quant    = "all" | "any" | "none"
+f        = field | "$body"                         ; a ref or ref[] field, or $body
+plain    = field op value
+field    = [A-Za-z_][A-Za-z0-9_-]*                 ; or a pseudo-field
+op       = "!=" | "<=" | ">=" | "=" | "<" | ">"    ; longest match at the first operator after the field
+value    = item { "," item }                       ; one comparison value only for < <= > >=
+item     = { char | "*" | "\" ( "," | "*" | "\" ) }  ; "\" before anything else is an error
+```
+
+An unescaped `*` is a glob; alone, in `k=*`, it means "present". In `--set` the same rules hold except that `*` must be escaped and `,` splits only array fields.
+
 **Expressions**
 
 | Expression | Meaning | Example |
@@ -342,18 +359,22 @@ Arrows are stored only on the document holding the field. `refby` finds incoming
 | `k=v` on an array | Array contains `v` | `blocked_by=WF-3` |
 | `k<v`, `k<=v` | Less than, less than or equal | `updated_at<2026-09-01` |
 | `k>v`, `k>=v` | Greater than, greater than or equal | `estimate>=3` |
-| `ref.all(f)[.EXPR]` | Every document in my `f` matches; true when empty | `ref.all(blocked_by).status=resolved` |
+| `ref.all(f).EXPR` | Every document in my `f` matches; true when empty | `ref.all(blocked_by).status=resolved` |
 | `ref.any(f)[.EXPR]` | At least one document in my `f` matches; false when empty | `ref.any(blocked_by).updated_at<2026-08-01` |
 | `ref.none(f)[.EXPR]` | No document in my `f` matches; true when empty | `ref.none(blocked_by).kind=research` |
-| `refby.all(f)[.EXPR]` | Every document whose `f` points at me matches; true when none | `refby.all(parent).status=resolved` |
+| `refby.all(f).EXPR` | Every document whose `f` points at me matches; true when none | `refby.all(blocked_by).status=resolved` |
 | `refby.any(f)[.EXPR]` | At least one document whose `f` points at me matches; false when none | `refby.any(blocked_by).status=open` |
 | `refby.none(f)[.EXPR]` | No document whose `f` points at me matches; true when none | `refby.none(sources)` |
 
-- **Omitting `.EXPR`** tests only whether arrows exist: `ref.any(blocked_by)` = "I have a blocker"; `refby.none(sources)` = "nothing cites me".
-- **Pseudo-fields** on every document: `path`, `key` (coded only), `code`, `collection`, `schema`, `namespace`. `$body` is a virtual ref field holding body links. A reached document in another namespace reports that namespace's collection name.
-- **Reached documents** are read under their own schema. A reached document lacking the field, or a dangling ref, does not match; dangling refs also warn on stderr.
+- **Omitting `.EXPR`** tests only whether arrows exist: `ref.any(blocked_by)` = "I have a blocker"; `refby.none(sources)` = "nothing cites me". `ref.all(f)` and `refby.all(f)` need a `.EXPR`; without one they are errors, with the hint `use ref.any(f) or ref.none(f)`, since "every arrow passes a condition that is not there" is always true. For `ref.*` an arrow is counted from the value written in the field, dangling refs included, so a ticket whose only blocker points at nothing does not look unblocked. To find dangling refs, use `ref.any(f).path!=*`: a dangling ref has no document and so no `path`, which satisfies `!=` under the rule below. (`refby` arrows always come from a document that exists, so `refby` has no dangling case.)
+- **Pseudo-fields** on every document: `path`, `key` (coded only), `code`, `collection`, `schema`, `namespace`. `$body` is a virtual ref field holding body links. A reached document in another namespace reports that namespace's collection name. These names are reserved: `schema.valid` rejects a schema field that uses one, or any name starting with `$`. The list is closed; adding a pseudo-field later is a breaking change. `$body` is valid only as `f` inside `ref.*(f)` and `refby.*(f)`.
+- **Reached documents** are read under their own schema. A reached document lacking the field, or a dangling ref, counts as absent (see Absence and negation); dangling refs also warn on stderr.
+- **Absence and negation.** `k!=v` is exactly NOT `k=v`, in every form (single value, list, glob, array). Something absent, whether a document without the field or a dangling ref, fails every positive condition (`=` in any form, `k=*`) and satisfies every `!=`. The ordering comparisons (`<`, `<=`, `>`, `>=`) are the exception: absent fails them. This keeps paired queries complementary: `ref.all(blocked_by).status=resolved` and `ref.any(blocked_by).status!=resolved` split the open tickets between them, and none falls through. Because `k!=v` includes documents whose schema has no `k`, use it with `--collection` (or add `k=*`) when a query spans collections.
+- **Values and escaping.** In a value only three characters are special: `,` (separates alternatives), `*` (glob) and `\`. Put `\` before one to mean it literally: `title=Cosmos\, or SQL`, `k=\*`. `\` before any other character, or at the end of a value, is an error, which catches typos and leaves room to add special characters later. `*` is the only glob; there is no `?` and no `[...]`. `k=*` means "present" and `k=\*` a literal star. `=`, `<`, `>` and `!` need no escape in a value, because the expression is split at the first operator after the field name, taking the longest of `!=`, `<=`, `>=`, `=`, `<`, `>`. The same rules apply to `--where`, `--if` and `--set`, except that `--set` splits a value on `,` only for array fields. Wrap the whole expression in single quotes so the shell leaves `\`, `*`, `<` and `>` alone.
+- **Names and scope.** A field name is `[A-Za-z_][A-Za-z0-9_-]*`, and `schema.valid` holds schema fields to the same rule, so every field can be queried. A field name unknown to every schema in scope is an error, not an empty result. For a plain condition the scope is the collections chosen with `--collection` or `--code`, or every collection in the namespace when none is chosen; a document whose schema lacks the field counts as absent. In `ref.*(f)` and `refby.*(f)`, `f` must be a field of type `ref` or `ref[]`, or `$body`, defined in a schema of this namespace or one it imports. The scope of the condition after `ref.*(f)` is the schemas named by `f`'s `target` (every schema in this namespace and its imports when the target is `"*"`); after `refby.*(f)` it is the schemas that define `f`; for `$body` in either it is every schema in this namespace and its imports.
+- **Syntax.** An expression is read whole, as one argument: spaces belong to names and values, so `status = open` is an error, with the hint `did you mean status=open?`. Field names, values, globs and enum values are case-sensitive. An empty value is an error in `--where` and `--if` (use `k!=*` to test for absent or empty); in `--set`, `k=` removes the field. On an array field `=` means some element matches and `!=` means no element does. The condition after `ref.*(f).` is a plain condition; another `ref.*` inside it is an error, as is anything after `)` that is not `.EXPR`. The ordering comparisons take one value, so `k<a,b` is an error. In a list, each value is coerced by the field's type on its own, and one that cannot be coerced makes the whole expression an error. In `--set`, an unescaped `*` in a value is an error (write `\*` for a literal star), and `,` in the value of a scalar field is an ordinary character.
 - **Coercion.** Values are coerced by schema type. A value outside an `enum` is an error (except with globs), so typos fail loudly.
-- **Comparisons** (`<`, `<=`, `>`, `>=`) apply to `number`, `date` and `datetime` only; on any other type they are an error. `datetime` values compare as instants, offsets included. A date-only value compared with a `datetime` field compares against the field's date part. A document without the field matches no comparison. Always quote the expression: `<` and `>` are shell redirections.
+- **Comparisons** (`<`, `<=`, `>`, `>=`) apply to `number`, `date` and `datetime` only; on any other type they are an error. `datetime` values compare as instants, offsets included. A date-only value compared with a `datetime` field compares against the field's date part. A document without the field satisfies no ordering comparison. Always quote the expression: `<` and `>` are shell redirections.
 - **Rule of thumb.** "Does such a document exist" → `any`; "is nothing in the way" → `all`; "is there none" → `none`. For a single `ref` field prefer `any`, since `all` is true when the field is empty.
 - **v1 limits.** One hop, no OR across fields. All `--where` conditions are ANDed.
 
@@ -466,7 +487,7 @@ Re-fetches remote schemas (all of them, or the URLs given), including remote par
 typdoc validate [<key|path> ...] [--schemas] [--strict] [--audit]
 ```
 
-- **Schemas:** duplicate names or codes, `extends` cycles, undeclared overrides, invalid options, import names colliding with URL schemes.
+- **Schemas:** duplicate names or codes, `extends` cycles, undeclared overrides, invalid options, field names that break the naming rule or use a reserved name, import names colliding with URL schemes.
 - **Documents:** types, required fields, enum values, unknown fields, duplicate keys, files not fitting the collection's `match` template.
 - **Refs:** missing targets, disallowed target schemas, missing `#heading` anchors, cycles on `acyclic` fields, coded documents referenced by path (warning).
 - **Across namespaces:** a ref into an imported namespace that is absent on this machine is a warning; a present namespace missing the file is an error. `--strict` makes both errors.
@@ -529,7 +550,7 @@ Correctness rules are always on; quality rules are configured namespace-wide und
 
 | Rule | Checks |
 | --- | --- |
-| `schema.valid` | Duplicate names or codes, `extends` cycles, undeclared overrides, invalid options, import names colliding with URL schemes |
+| `schema.valid` | Duplicate names or codes, `extends` cycles, undeclared overrides, invalid options, field names that break the naming rule or use a reserved name, import names colliding with URL schemes |
 | `frontmatter.types` | Types, required fields, enum values |
 | `frontmatter.transitions` | State changes follow `transitions` (checked on write) |
 | `refs.resolve` | Frontmatter refs point at existing files |
