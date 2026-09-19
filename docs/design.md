@@ -95,7 +95,6 @@ Each namespace has one `.typdoc/config.json` that names the namespace, sets name
 | Placeholder | Stands for | Allowed in |
 | --- | --- | --- |
 | `{key}` | `{code}-{number}`, with the code taken from the schema, e.g. `WF-3` | Coded schemas; exactly once, no globs |
-| `{slug}` | A slug derived from the title, e.g. `cosmos-or-sql` | Coded schemas, alongside `{key}` |
 | `*`, `**` | Glob | Schemas without a code; no placeholders |
 
 One template serves both directions: it decides which files belong to the collection, and `typdoc new` uses it to name new files. Because `{key}` includes the schema's code, several coded collections can share one template in one folder: `tickets/{key}.md` matches `WF-3.md` for one schema and `RFC-4.md` for another. Each code counts on one number sequence of its own, so a coded schema serves exactly one collection; two collections naming the same coded schema is a config error, as is a `last` on a collection whose schema has no code.
@@ -266,10 +265,9 @@ See [the secret-handling precedent](../../typmem/memory/precedents/secret-handli
 | Schema | `match` | Example file |
 | --- | --- | --- |
 | With `code` | `tickets/{key}.md` | `tickets/WF-3.md` |
-| With `code`, slug included | `decisions/{key}-{slug}.md` | `decisions/DEC-7-cosmos-or-sql.md` |
 | Without `code` | `learnings/*.md` | `learnings/never-send-secrets-over-ship.md` |
 
-`{key}.md` is the recommended form because a body link to it never breaks: the name does not change when the title does. Including `{slug}` reads better in `ls`, at the cost of `mv` on retitle. Either way, keys resolve to files, and two files with the same key are a validation error.
+A coded document's file name is its key and nothing else, so it never changes when the title does and a body link to it never breaks. Keys resolve to files, and two files with the same key are a validation error. A document without a code is named by whoever creates it (`typdoc new <path>`); typdoc only checks the path against `match`. typdoc never derives a file name from a title: a title can slug to nothing (`😀`), and a long Thai title can exceed the file-name limit.
 
 **Rules**
 
@@ -294,7 +292,9 @@ If nothing is imported, nothing is ever read as a namespaced reference. Import n
 
 **Body links.** Only standard Markdown links count: `[text](path)` and `[text](path#heading)`, with paths relative to the document. Links starting with a URL scheme (`https:`, `mailto:` and so on) that is not an import name are always skipped; no configuration is needed. Links inside fenced code blocks and inline code are not links. Relative paths that should not be checked (images, generated files) go in the `ignore` option of the `body.links` rule. Plain-text mentions are never refs; the `body.mentions` rule can check that they exist (see Validation rules). Body links are exposed to queries as the virtual ref field `$body`.
 
-**Canonical form.** A coded document should be referenced by key in frontmatter; referencing it by path works but `validate` warns, since a slug path can change. Body links always use paths.
+**Heading anchors.** The `slug` of a heading follows GitHub's algorithm, so a link that passes `validate` also works on GitHub. Take the heading's plain text (text and code spans; image alt text, line breaks and inline HTML contribute nothing), lowercase it, delete punctuation other than `-` and `_`, symbols and other characters that are not letters or digits, and turn each space into `-`. Marks count as part of a letter, so Thai vowels and tone marks stay; non-ASCII text is kept as written, never transliterated. A slug that repeats an earlier one in the same document gets `-1`, `-2` and so on, skipping any result already taken (`Dup`, `Dup`, `Dup 1` give `dup`, `dup-1`, `dup-1-1`). Every heading counts, including those inside block quotes and list items but not those inside fenced code, so the numbering matches GitHub's. A heading whose slug is empty (`## !!!`, `## 😀`) is not special: the first gets `""` and cannot be linked to, the next `-1`, then `-2`. In a link, the fragment is percent-decoded (a `%` not followed by two hex digits is kept as written) and then compared with the slug without regard to case. Slugs are used only for anchors, never for file names. The exact character classes are pinned by the contract's fixtures, generated from GitHub's renderer.
+
+**Canonical form.** A coded document should be referenced by key in frontmatter; referencing it by path works but `validate` warns, since a path changes when the file is moved and a key does not. Body links always use paths.
 
 **Write-time checks** (`new`, `set`): the target exists; its schema is allowed by `target`; no cycle forms on `acyclic` fields.
 
@@ -452,7 +452,7 @@ Validates types, enums, transitions and refs, then writes all fields atomically.
 typdoc toc <key|path> [--depth n] [--json]
 ```
 
-Lists body headings with line ranges counted from the top of the file, frontmatter included, so they match editor and file-tool line numbers. Headings inside fenced code are ignored. `--json` returns `{ level, text, slug, line, end }`; `slug` is what a `#heading` link must use.
+Lists body headings with line ranges counted from the top of the file, frontmatter included, so they match editor and file-tool line numbers. Headings inside fenced code are ignored; headings inside block quotes and list items are listed. `--json` returns `{ level, text, slug, line, end }`; `slug` is what a `#heading` link must use (see Heading anchors under Refs).
 
 ### typdoc refs
 
@@ -564,7 +564,7 @@ Correctness rules are always on; quality rules are configured namespace-wide und
 | Rule | Default | Options | Checks |
 | --- | --- | --- | --- |
 | `body.links` | `error` | `ignore` (globs of relative targets to skip) | Markdown links in the body point at existing files |
-| `body.anchors` | `error` | — | `#heading` in a link exists in the target |
+| `body.anchors` | `error` | — | `#heading` in a link exists in the target (percent-decoded, case-insensitive; see Heading anchors) |
 | `body.mentions` | `off` | `inlineCode` (`true`), `fencedCode` (`false`) | Keys mentioned in body text exist |
 | `refs.codedByPath` | `warn` | — | A coded document is referenced by path instead of key |
 | `frontmatter.unknown` | `warn` | — | Frontmatter fields not in the schema |
