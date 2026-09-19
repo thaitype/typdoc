@@ -31,7 +31,7 @@ A document is identified by a key if its schema has a `code`, and by its path ot
 | Concept | Definition | Example |
 | --- | --- | --- |
 | Namespace | A folder containing `.typdoc/config.json`. A file belongs to the nearest namespace above it. Keys, collection names and schema names are unique within a namespace. | `chief` at `.chief/`, `memory` at `typmem/memory/` |
-| Collection | Files in a namespace matching one pattern, sharing one schema | `learnings/*.md` |
+| Collection | Files in a namespace matching one pattern, sharing one schema; defined by one file in `.typdoc/collections/` | `learnings/*.md` |
 | Schema | JSON definition of fields and rules, optionally with a `code` | `wayfinder.json` (`code: WF`) |
 | Document | One `.md` file | `learnings/never-send-secrets-over-ship.md` |
 | Key | `{code}-{number}`, the identity of a document whose schema has a code | `WF-3` |
@@ -40,25 +40,19 @@ A document is identified by a key if its schema has a `code`, and by its path ot
 
 Before any query or validation, `typdoc` builds one index mapping every key and every path to its file. Refs of either kind resolve through it, so a keyed ticket can point at a path-identified note and the reverse.
 
-**Collection vs schema.** A collection selects files; a schema describes their shape. One schema without a `code` may serve several collections (`notes` and `drafts` both using `note.json`), so anything about choosing documents uses the collection: `list --collection`, the `collection` pseudo-field, `validation.collections`. Anything about data shape uses the schema: types, fields, `extends`, and a ref field's `target`. `target` names schemas rather than collections because a schema, possibly published remotely, cannot know what a given namespace calls its collections.
+**Collection vs schema.** A collection selects files; a schema describes their shape. One schema without a `code` may serve several collections (`notes` and `drafts` both using `note.json`), so anything about choosing documents uses the collection: `list --collection`, the `collection` pseudo-field, a collection's `validation`. Anything about data shape uses the schema: types, fields, `extends`, and a ref field's `target`. `target` names schemas rather than collections because a schema, possibly published remotely, cannot know what a given namespace calls its collections.
 
 ## Config: .typdoc/config.json
 
-Each namespace has one `.typdoc/config.json` that names the namespace, maps files to schemas, and optionally imports other namespaces.
+Each namespace has one `.typdoc/config.json` that names the namespace, sets namespace-wide options and optionally imports other namespaces, plus one file per collection in `.typdoc/collections/` that maps files to a schema.
 
 ```json
 {
   "version": 1,
   "name": "chief",
-  "collections": [
-    { "name": "wayfinder", "match": "tickets/{key}.md",          "schema": "schemas/wayfinder.json", "last": 12 },
-    { "name": "decisions", "match": "decisions/{key}-{slug}.md", "schema": "schemas/decision.json" },
-    { "name": "notes",     "match": "notes/*.md",                "schema": "schemas/note.json", "refBase": "namespace" }
-  ],
   "imports": { "memory": "${TYPMEM_DIR}/memory" },
   "validation": {
-    "global":      { "body.links": { "level": "error", "ignore": ["assets/**"] } },
-    "collections": { "wayfinder": { "body.mentions": { "level": "error" } } }
+    "global": { "body.links": { "level": "error", "ignore": ["assets/**"] } }
   },
   "lock": "local"
 }
@@ -66,17 +60,35 @@ Each namespace has one `.typdoc/config.json` that names the namespace, maps file
 
 | Key | Required | Meaning |
 | --- | --- | --- |
-| `version` | yes | Integer version of the config format, currently `1`. An unknown version is a config error; `typdoc` never guesses. |
+| `version` | yes | Integer version of every file format typdoc owns: this file, the collection files, `lock.json` and the schema format. Currently `1`. An unknown version is a config error; `typdoc` never guesses. Pinned copies of remote schemas follow the publisher's version in their URL. |
 | `name` | yes | This namespace's name, the prefix other namespaces use in namespaced references and qualified schema names |
-| `collections` | yes | Ordered list of `{ name, match, schema, last?, refBase? }` |
-| `collections[].name` | yes | Unique within the namespace; used by `validation.collections` |
-| `collections[].match` | yes | Which files belong to the collection. See Match templates. |
-| `collections[].schema` | yes | Relative path or `https://` URL of the schema. See Remote schemas. |
-| `collections[].last` | no | Coded schemas only. The highest number `typdoc new` has allocated in this collection. Written by `typdoc new`, not by hand; it is what stops a number being reused after its document is deleted. |
-| `collections[].refBase` | no | How frontmatter paths resolve: `file` (default, relative to the document) or `namespace` (relative to the namespace folder) |
 | `imports` | no | Name → folder of another namespace. Paths may use environment variables. See Refs → Across namespaces. |
-| `validation` | no | Rule levels and options, namespace-wide and per collection. See Validation rules. |
+| `validation` | no | Rule levels and options that apply namespace-wide, under `global`. A collection tunes them in its own file. See Validation rules. |
 | `lock` | no | `local` (default) or `git-common`. See Concurrency. |
+
+**Collection files.** Each collection is one file, `.typdoc/collections/<name>.json`. The file name without `.json` is the collection's name: ASCII letters, digits, `-` and `_`, so it is unique by construction. The file maps files to a schema and holds that collection's state:
+
+```json
+// .typdoc/collections/wayfinder.json
+{
+  "match": "tickets/{key}.md",
+  "schema": "schemas/wayfinder.json",
+  "validation": { "body.mentions": { "level": "error" } },
+  "last": 12
+}
+```
+
+| Key | Required | Meaning |
+| --- | --- | --- |
+| `match` | yes | Which files belong to the collection. See Match templates. |
+| `schema` | yes | Relative path or `https://` URL of the schema. See Remote schemas. |
+| `refBase` | no | How frontmatter paths resolve: `file` (default, relative to the document) or `namespace` (relative to the namespace folder) |
+| `validation` | no | Rule levels and options for this collection only, merged over `validation.global`. See Validation rules. |
+| `last` | no | Coded schemas only. The highest number `typdoc new` has allocated in this collection. Written by `typdoc new`, not by hand; it is what stops a number being reused after its document is deleted. |
+
+**Loading.** Every `*.json` file in `.typdoc/collections/` is a collection; other files are ignored. A file that cannot be parsed, has an unknown key or names a schema that does not exist is a config error that names the file, and `typdoc` stops rather than skip it, because a skipped collection would silently shrink every result. Collections have no order; anything that lists them sorts by name. A document matched by two collections is an error (`collections.overlap`), never settled by precedence.
+
+**Writing `last`.** `typdoc new` replaces only the number, in place, then re-parses the result and compares it with what it meant to write before renaming the temp file over the original, so it cannot corrupt a collection file.
 
 **Match templates.** For a coded schema, `match` is a template with placeholders; for a schema without a code, it is a glob.
 
@@ -88,7 +100,7 @@ Each namespace has one `.typdoc/config.json` that names the namespace, maps file
 
 One template serves both directions: it decides which files belong to the collection, and `typdoc new` uses it to name new files. Because `{key}` includes the schema's code, several coded collections can share one template in one folder: `tickets/{key}.md` matches `WF-3.md` for one schema and `RFC-4.md` for another. Each code counts on one number sequence of its own, so a coded schema serves exactly one collection; two collections naming the same coded schema is a config error, as is a `last` on a collection whose schema has no code.
 
-**Discovery.** `typdoc` finds its namespace by walking up from the current directory, or from a document path given as an argument, to the nearest folder containing `.typdoc/config.json`. `--dir <path>` overrides it. Config and local schemas are read on every run with no cache; remote schemas are read from their pinned copies (see Remote schemas).
+**Discovery.** `typdoc` finds its namespace by walking up from the current directory, or from a document path given as an argument, to the nearest folder containing `.typdoc/config.json`. `--dir <path>` overrides it. Config, collection files and local schemas are read on every run with no cache; remote schemas are read from their pinned copies (see Remote schemas).
 
 **Nested namespaces.** A collection's `match` never crosses into a nested namespace: a file with a nearer `.typdoc/config.json` always belongs to that namespace.
 
@@ -97,16 +109,16 @@ One template serves both directions: it decides which files belong to the collec
 ```
 .typdoc/
   config.json    config (this section)            commit
+  collections/   one file per collection          commit
   lock.json      pins for remote content          commit
   vendor/        pinned copies, e.g. schemas/     commit
   write.lock     mutex held while writing         .gitignore
 ```
 
-`lock.json` is split into sections so pins other than schemas can join later without a rename:
+`lock.json` has no version of its own (the `version` in `config.json` covers every file typdoc owns) and is split into sections so pins other than schemas can join later without a rename:
 
 ```json
 {
-  "version": 1,
   "schemas": {
     "https://schemas.example.dev/chief/wayfinder/v1.json": {
       "sha256": "9f2c…", "path": "vendor/schemas/3a7e1c.json", "fetchedAt": "2026-09-19T14:30:00+07:00"
@@ -156,7 +168,8 @@ A schema is a JSON file with a name, an optional code, an optional parent, and i
 **Remote schemas.** Anywhere a schema is referenced, in a collection's `schema` or in `extends`, an `https://` URL to a JSON file works as well as a path. A workflow can publish its schemas so users need not write them:
 
 ```json
-{ "name": "wayfinder", "match": "tickets/{key}.md",
+// .typdoc/collections/wayfinder.json
+{ "match": "tickets/{key}.md",
   "schema": "https://schemas.example.dev/chief/wayfinder/v1.json" }
 ```
 
@@ -484,25 +497,32 @@ A typical adoption: run `--audit`, adjust `match` until every intended file is c
 
 ## Validation rules
 
-Correctness rules are always on; quality rules are configured per namespace and per collection under `validation`.
+Correctness rules are always on; quality rules are configured namespace-wide under `validation` in `config.json`, and per collection under `validation` in its collection file.
 
-**Config shape.** One rule is one object: a `level` (`off`, `warn`, `error`) plus that rule's options, if any. The same object shape appears in `global` and in `collections`.
+**Config shape.** One rule is one object: a `level` (`off`, `warn`, `error`) plus that rule's options, if any. The same object shape appears in `validation.global` and in a collection file's `validation`.
 
 ```json
+// .typdoc/config.json
 "validation": {
   "global": {
     "body.links":          { "level": "error", "ignore": ["assets/**", "generated/**"] },
     "body.mentions":       { "level": "warn", "inlineCode": true, "fencedCode": false },
     "frontmatter.unknown": { "level": "off" }
-  },
-  "collections": {
-    "wayfinder": { "body.mentions": { "level": "error", "fencedCode": true } },
-    "drafts":    { "body.links":    { "level": "warn" } }
   }
 }
 ```
 
-- **Merge order:** typdoc defaults → `global` → `collections.<name>`. A collection entry merges key by key, so it states only what differs.
+```json
+// .typdoc/collections/wayfinder.json
+"validation": { "body.mentions": { "level": "error", "fencedCode": true } }
+```
+
+```json
+// .typdoc/collections/drafts.json
+"validation": { "body.links": { "level": "warn" } }
+```
+
+- **Merge order:** typdoc defaults → `validation.global` → the collection's `validation`. A collection file merges key by key, so it states only what differs.
 - **`--strict`** raises every `warn` left after merging to `error`.
 
 **Always on** (cannot be configured; queries and writes depend on them)
@@ -516,6 +536,7 @@ Correctness rules are always on; quality rules are configured per namespace and 
 | `refs.target` | Ref targets match the field's `target` |
 | `refs.acyclic` | No cycle on `acyclic` fields |
 | `keys.unique` | No two files share a key |
+| `collections.overlap` | No file is matched by two collections |
 
 **Configurable**
 
@@ -542,7 +563,7 @@ Correctness rules are always on; quality rules are configured per namespace and 
 
 A mention is looked up in this namespace and the namespaces it imports: no match reports *not found*; more than one reports *ambiguous*; an imported namespace absent on this machine falls under `imports.absent`. `fencedCode` defaults to `false` because code blocks often hold logs, commands and diffs that contain key-like text.
 
-**Config errors** (reported when the config loads): a missing or unknown `version`; `validation.collections` names a collection that does not exist; an unknown rule name or option; any attempt to configure an always-on rule; a `match` template breaking the placeholder rules; a `last` on a collection whose schema has no code; two collections naming the same coded schema; a schema URL that is not `https://`; a remote schema with no pin that cannot be fetched; a pinned copy whose SHA-256 no longer matches `lock.json` (the copy was edited by hand; run `typdoc pull` to restore it).
+**Config errors** (reported when the config loads): a missing or unknown `version`; a collection file that cannot be parsed, has an unknown key, names a schema that does not exist, or has a name outside ASCII letters, digits, `-` and `_`; an unknown rule name or option; any attempt to configure an always-on rule; a `match` template breaking the placeholder rules; a `last` on a collection whose schema has no code; two collections naming the same coded schema; a schema URL that is not `https://`; a remote schema with no pin that cannot be fetched; a pinned copy whose SHA-256 no longer matches `lock.json` (the copy was edited by hand; run `typdoc pull` to restore it).
 
 **Output.** One line per finding, `path:line:col  level  message  rule`; `--json` returns the same fields.
 
@@ -625,15 +646,23 @@ The skill text needs two updates: its ticket template moves from inline `Type:` 
 Existing precedents write `sources` relative to the memory namespace folder (`learnings/...`), so each collection sets `"refBase": "namespace"` and no file needs editing.
 
 ```json
-{
-  "version": 1,
-  "name": "memory",
-  "collections": [
-    { "name": "precedents", "match": "precedents/*.md", "schema": "schemas/precedent.json", "refBase": "namespace" },
-    { "name": "learnings",  "match": "learnings/*.md",  "schema": "schemas/learning.json",  "refBase": "namespace" },
-    { "name": "proposals",  "match": "proposals/*.md",  "schema": "schemas/proposal.json",  "refBase": "namespace" }
-  ]
-}
+// .typdoc/config.json
+{ "version": 1, "name": "memory" }
+```
+
+```json
+// .typdoc/collections/precedents.json
+{ "match": "precedents/*.md", "schema": "schemas/precedent.json", "refBase": "namespace" }
+```
+
+```json
+// .typdoc/collections/learnings.json
+{ "match": "learnings/*.md", "schema": "schemas/learning.json", "refBase": "namespace" }
+```
+
+```json
+// .typdoc/collections/proposals.json
+{ "match": "proposals/*.md", "schema": "schemas/proposal.json", "refBase": "namespace" }
 ```
 
 | Question | Command |
