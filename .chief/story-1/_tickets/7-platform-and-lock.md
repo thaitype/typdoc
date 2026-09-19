@@ -12,3 +12,4 @@ Decide the supported platforms for v1 (Linux and macOS only, or Windows too), wh
 
 ## Answer
 
+**Note from [13](13-multiple-namespaces-in-one-typdoc.md), still open here:** the lock is now one file per namespace at `.typdoc/locks/<namespace>.lock` (git-common: `<project-hash>-<namespace>.lock`). `mv --renumber` holds two namespaces' locks in name order. Quoting advice for `--namespace '*'` joins the shell-quoting question above.

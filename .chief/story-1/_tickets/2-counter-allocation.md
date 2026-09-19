@@ -35,3 +35,5 @@ Decided with the human, 2026-09-19, after two reversals (below). Supersedes the 
 ## Not verified
 
 No code exists yet, so nothing was checked by running it. The design was grepped after the edits: no remaining mention of `counter`, `counters` or `IMP`, and `lock.json` appears only where it means remote-schema pins. The example ticket schema keeps its name `wayfinder` and code `WF` although it now covers implementation tickets; the key prefix is a naming choice, not made here.
+
+**Amended by [13](13-multiple-namespaces-in-one-typdoc.md):** `last` no longer lives in the collection file (ticket 12's placement). It is kept per namespace and collection in `.typdoc/state/<namespace>.json`; the formula (max of the highest existing number and `last`, plus one) and the never-reuse guarantee are unchanged, now scoped to one namespace.

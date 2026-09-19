@@ -42,3 +42,4 @@ Defaults, all accepted by the human:
 
 No code exists yet. The design has not been re-read end to end after these edits; only grepped. Whether `lock.json` without a `version` is comfortable for the pinned-copy checksum check was not examined beyond the design text.
 
+**Amended by [13](13-multiple-namespaces-in-one-typdoc.md):** collection files are configuration only (`last` removed; it is an unknown key there and lives in `.typdoc/state/<namespace>.json`). Collections are shared by every namespace of a project and `match` counts from each namespace folder. `config.json` loses `name` and gains optional `namespaces`. Overlap is checked in each namespace.

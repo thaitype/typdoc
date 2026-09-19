@@ -27,3 +27,5 @@ Resolved with the human, 2026-09-19. `docs/design.md` is amended (Heading anchor
 **Defaults chosen by the agent, not asked (veto welcome):** heading text is the text and code spans, with image alt text, line breaks and inline HTML contributing nothing (research 3, section 4.5); a `%` not followed by two hex digits is kept as written; `toc` lists headings inside block quotes and list items; the exact character classes are left to the contract's fixtures, generated from GitHub's renderer.
 
 Corrected mid-grill: NFC/NFD normalisation is not a Thai problem (Thai has almost no canonical decompositions); it would only affect accented Latin letters, and only if a name were derived, which it no longer is.
+
+**Note from [13](13-multiple-namespaces-in-one-typdoc.md):** "two files with the same key are a validation error" is scoped to one namespace, since the same key may exist in several.

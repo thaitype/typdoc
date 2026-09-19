@@ -23,12 +23,14 @@
 - [Collection definition files](../_tickets/12-collection-definition-files.md): one file per collection at `.typdoc/collections/<name>.json` (`match`, `schema`, `refBase`, `validation`, `last`); one `version` in `config.json` covers all typdoc-owned formats; no collection order; overlapping matches are an error; a broken collection file stops the namespace.
 - [Counter allocation](../_tickets/2-counter-allocation.md): next number = max(highest existing in the collection, the collection's `last`) + 1, written back under the lock; never reused after a delete; the shared `counter` option is removed (one ticket schema, one collection, told apart by `kind`); a coded schema serves exactly one collection; no new file. Where `last` lives is ticket 12.
 - [Slug rules](../_tickets/4-slug-rules.md): heading slugs follow GitHub's algorithm (Thai kept, `dup-1` collision-aware, empty slugs deduped like any other); link fragments are percent-decoded and compared case-insensitively; `{slug}` is removed from file names, which are never derived from a title.
+- [Multiple namespaces in one `.typdoc`](../_tickets/13-multiple-namespaces-in-one-typdoc.md): a project (`.typdoc`) holds one namespace `default` or several named by child folders (`namespaces`, one level, `[A-Za-z0-9_-]`); `name` removed from config; `name:` sibling, `name::` import; whole-project import in v1; scope by prefix > `--namespace` > `TYPDOC_NAMESPACE` > cwd, `TYPDOC_DIR` replaces `--dir`; state in `state/<namespace>.json`, locks per namespace; coded docs cannot move across namespaces except `mv --renumber`, with `auto: moves` and `refs.moved`. Amends 2, 12, 7, 5, 4.
 
 ## Not yet specified
 
 - Exact `--json` output shape for every command (belongs in the contract `/chief-plan` writes, once the decisions above settle).
 - Distribution and versioning of the tool itself (`cargo install`, release binaries, config `version` upgrade path).
 - A published meta-schema (JSON Schema describing typdoc's own schema files) so editors can complete `schemas/*.json`; no one has asked for it yet.
+- Exact argument shape of `mv --renumber` (how the destination namespace is named) and whether it is atomic across two namespaces when a write fails midway; belongs in the contract.
 - Scale: the index is rebuilt on every run with no cache; at what document count does that stop being acceptable?
 
 ## Out of scope
