@@ -18,6 +18,7 @@
 - [YAML frontmatter approach](../_tickets/1-yaml-frontmatter-approach.md): read with `yaml_serde` into typed `String` fields; write with `yaml-edit` (exact-pinned, three operations) behind a mandatory reparse guard; `yaml-edit` is two days old, so the guard is load-bearing (research recommendation, human may override).
 - [Markdown body parsing](../_tickets/3-markdown-body-parsing.md): build on `pulldown-cmark` 0.13.4; cut frontmatter first and parse the body slice; hand-write the line/col mapping and a GitHub-style slugger (research recommendation, human may override).
 - [HTTP client for remote schemas](../_tickets/6-remote-schema-fetching.md): `ureq` 3.x blocking behind a `Fetch` trait; `typdoc-core` stays runtime-free (research recommendation, human may override).
+- [Collection definition files](../_tickets/12-collection-definition-files.md): one file per collection at `.typdoc/collections/<name>.json` (`match`, `schema`, `refBase`, `validation`, `last`); one `version` in `config.json` covers all typdoc-owned formats; no collection order; overlapping matches are an error; a broken collection file stops the namespace.
 - [Counter allocation](../_tickets/2-counter-allocation.md): next number = max(highest existing in the collection, the collection's `last`) + 1, written back under the lock; never reused after a delete; the shared `counter` option is removed (one ticket schema, one collection, told apart by `kind`); a coded schema serves exactly one collection; no new file. Where `last` lives is ticket 12.
 
 ## Not yet specified
