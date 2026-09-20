@@ -1,7 +1,7 @@
 # 15: The query language, conditions through refs
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 12, 14
 
 ## What this delivers
