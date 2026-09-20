@@ -31,6 +31,7 @@
 ## Not yet specified
 
 - Exact `--json` output shape for every command (belongs in the contract `/chief-plan` writes, once the decisions above settle), including for each array whether its order is guaranteed (goldens sort the arrays that do not guarantee one).
+- From ticket 9, for the contract: what an interrupted write leaves behind (the design promises the target file is whole and says nothing about a temp file); the instant between creating a lock file and registering it for cleanup; an interrupt that arrives while the process is working and not waiting; and that every command takes its locks through one acquisition path, which the signal tests depend on (if that cannot hold, ticket 9 names the fallback).
 - Distribution and versioning of the tool itself (`cargo install`, release binaries, config `version` upgrade path). Also open there: whether the test suite must run from a published package. Fixtures and examples sit at the repository root, outside every crate's package root, so a package's `tests/` cannot find them (checked with `cargo package --list`); choosing between excluding `tests` from packages and moving fixtures inside a crate belongs to this decision.
 - A published meta-schema (JSON Schema describing typdoc's own schema files) so editors can complete `schemas/*.json`; no one has asked for it yet.
 - Exact argument shape of `mv --renumber` (how the destination namespace is named) and whether it is atomic across two namespaces when a write fails midway; belongs in the contract.
