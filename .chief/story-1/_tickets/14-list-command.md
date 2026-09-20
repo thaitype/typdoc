@@ -1,7 +1,7 @@
 # 14: `typdoc list`
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 3, 13
 
 ## What this delivers
