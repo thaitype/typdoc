@@ -1,0 +1,7 @@
+{
+  "name": "person",
+  "fields": {
+    "title": { "type": "string" },
+    "bogus_marker": { "type": "string" }
+  }
+}

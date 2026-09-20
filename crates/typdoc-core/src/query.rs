@@ -1,14 +1,18 @@
-//! The scalar half of the query language: a plain condition (`field op value`), its escaping
-//! and glob, the pseudo-fields every document carries, coercion by the field's type, and the
-//! rules for absence and negation. `ref.*` and `refby.*` conditions are not parsed here: an
-//! expression that starts one fails with a plain syntax error, since a field name never
-//! contains `.`.
+//! The query language's grammar: a plain condition (`field op value`) and a `ref.*`/`refby.*`
+//! condition that wraps at most one plain condition. Escaping, the glob, the pseudo-fields every
+//! document carries, coercion by a field's type, and the rules for absence and negation are all
+//! plain-condition concerns.
 //!
 //! `parse` turns one `--where`/`--if`-style expression into a [`Condition`], checking nothing
-//! but the expression's own shape. `evaluate` checks that condition against one schema and one
-//! document: unknown fields, values that do not fit their field's type, and an ordering
-//! comparison on a field that is not `number`, `date` or `datetime`, are reported there, since
-//! only there is the field's declared type known.
+//! but the expression's own shape: a [`Condition::Plain`] or a [`Condition::Ref`] wrapping at
+//! most one [`PlainCondition`] (the grammar's `ref-expr = dir "." quant "(" f ")" [ "." plain ]`
+//! allows no second `ref.*`/`refby.*` inside the first). `evaluate` checks one [`PlainCondition`]
+//! against one schema and one document: unknown fields, values that do not fit their field's
+//! type, and an ordering comparison on a field that is not `number`, `date` or `datetime`, are
+//! reported there, since only there is the field's declared type known. A `ref.*`/`refby.*`
+//! condition reads more than one schema and more than one document — the arrows it follows, and
+//! the scope its own field name and its inner condition's field name are checked against — so
+//! evaluating one is `Project`'s job, not this module's; `parse` only shapes it.
 
 use std::cmp::Ordering as CmpOrdering;
 
@@ -46,6 +50,16 @@ impl Op {
     fn is_ordering(self) -> bool {
         matches!(self, Op::Lt | Op::Le | Op::Gt | Op::Ge)
     }
+
+    /// What this operator gives for something wholly absent, independent of the value or items
+    /// on the other side of it (design, Absence and negation: "fails every positive condition
+    /// (`=` in any form, `k=*`) and satisfies every `!=`"; the ordering comparisons fail too).
+    /// `evaluate` reaches this indirectly, through a document that lacks a named field; a
+    /// dangling ref reached by `ref.*`/`refby.*` has no document at all, not even the
+    /// pseudo-fields one would carry, so `Project` calls this directly instead of building one.
+    pub fn absent_result(self) -> bool {
+        matches!(self, Op::Ne)
+    }
 }
 
 /// One alternative of a condition's value, once escaping is resolved.
@@ -62,10 +76,64 @@ pub enum Item {
 
 /// A plain condition, parsed but not yet checked against a schema.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Condition {
+pub struct PlainCondition {
     pub field: FieldRef,
     pub op: Op,
     pub items: Vec<Item>,
+}
+
+/// One `--where`/`--if` expression, once its own shape is known: `me`'s own fields tested
+/// directly, or arrows followed to other documents (`docs/design.md`, Query: `expr = ref-expr |
+/// plain`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Condition {
+    Plain(PlainCondition),
+    Ref(RefCondition),
+}
+
+/// `ref` (arrows leaving me) or `refby` (arrows pointing at me).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dir {
+    Ref,
+    RefBy,
+}
+
+/// `all`, `any` or `none` of the arrows a `ref.*`/`refby.*` condition follows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Quant {
+    All,
+    Any,
+    None,
+}
+
+/// `f` in `ref.*(f)`/`refby.*(f)`: a ref or ref[] field name, or the virtual field `$body`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefField {
+    Named(String),
+    Body,
+}
+
+impl RefField {
+    /// The name a message or a `RefsReference.field` comparison can use for this field: `$body`
+    /// for the virtual field, the name as written otherwise.
+    pub fn name(&self) -> &str {
+        match self {
+            RefField::Body => "$body",
+            RefField::Named(name) => name,
+        }
+    }
+}
+
+/// A `ref.*`/`refby.*` condition: which arrows (`dir`, `quant`, `field`) and, when given, the
+/// plain condition each document reached must satisfy (`inner`). `inner: None` is the design's
+/// "omitting `.EXPR`": the condition tests only whether an arrow exists, so `quant` is never
+/// `All` when `inner` is `None` (parsing refuses that combination with a hint).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefCondition {
+    pub dir: Dir,
+    pub quant: Quant,
+    pub field: RefField,
+    pub inner: Option<PlainCondition>,
 }
 
 /// Why an expression could not be parsed or type-checked. Every variant is one of the errors
@@ -134,9 +202,10 @@ fn syntax(message: String) -> QueryError {
 // Parsing
 // ---------------------------------------------------------------------------------------------
 
-/// Parses one `--where`/`--if`-style expression: `field op value`. An empty value is always an
-/// error, since this is the grammar `--where` and `--if` share (`--set` has its own rule for an
-/// empty value, and the read core has no write command to use it in).
+/// Parses one `--where`/`--if`-style expression: a plain condition (`field op value`) or a
+/// `ref.*`/`refby.*` condition. An empty value is always an error, since this is the grammar
+/// `--where` and `--if` share (`--set` has its own rule for an empty value, and the read core
+/// has no write command to use it in).
 pub fn parse(expr: &str) -> Result<Condition, QueryError> {
     let first = parse_strict(expr);
     if let Err(QueryError::Syntax {
@@ -169,15 +238,124 @@ pub fn parse_field(name: &str) -> Result<FieldRef, QueryError> {
     Ok(to_field_ref(parsed))
 }
 
+/// `expr = ref-expr | plain`: `ref-expr` is told apart from `plain` by the field name alone —
+/// `ref` or `refby` immediately followed by `.` — since both are otherwise ordinary field names
+/// a plain condition can use (`ref=x` is a plain condition on a field literally named `ref`).
 fn parse_strict(expr: &str) -> Result<Condition, QueryError> {
     let (name, rest) = take_field_name(expr)?;
+    if let Some(after_dot) = rest.strip_prefix('.') {
+        let dir = match name {
+            "ref" => Some(Dir::Ref),
+            "refby" => Some(Dir::RefBy),
+            _ => None,
+        };
+        if let Some(dir) = dir {
+            return parse_ref_expr(dir, name, after_dot).map(Condition::Ref);
+        }
+    }
+    parse_plain_from(name, rest).map(Condition::Plain)
+}
+
+/// `plain = field op value`, for the condition after `ref.*(f).` — `parse_strict` is not reused
+/// here on purpose: the grammar gives that position `plain`, never `ref-expr`, so a value that
+/// itself starts `ref.`/`refby.` must fail the same way any other field followed by `.` does
+/// (`take_operator` finds no operator at the start of `.something`), not be read as nesting.
+fn parse_plain(expr: &str) -> Result<PlainCondition, QueryError> {
+    let (name, rest) = take_field_name(expr)?;
+    parse_plain_from(name, rest)
+}
+
+fn parse_plain_from(name: &str, rest: &str) -> Result<PlainCondition, QueryError> {
     let (op, value) = take_operator(rest)?;
     let items = parse_value(value, op)?;
-    Ok(Condition {
+    Ok(PlainCondition {
         field: to_field_ref(name),
         op,
         items,
     })
+}
+
+/// `ref-expr`'s tail once `dir "."` is behind it: `quant "(" f ")" [ "." plain ]`. `dir_name` is
+/// `"ref"` or `"refby"`, kept only to name it in a message.
+fn parse_ref_expr(dir: Dir, dir_name: &str, rest: &str) -> Result<RefCondition, QueryError> {
+    let (quant_word, rest) = take_word(rest);
+    let quant = match quant_word {
+        "all" => Quant::All,
+        "any" => Quant::Any,
+        "none" => Quant::None,
+        other => {
+            return Err(syntax(format!(
+                "expected `all`, `any` or `none` after `{dir_name}.`, found `{other}`"
+            )));
+        }
+    };
+    let Some(rest) = rest.strip_prefix('(') else {
+        return Err(syntax(format!(
+            "expected `(` after `{dir_name}.{quant_word}`, found `{rest}`"
+        )));
+    };
+    let (field, rest) = take_ref_field(rest)?;
+    let Some(rest) = rest.strip_prefix(')') else {
+        return Err(syntax(format!(
+            "expected `)` to close `{dir_name}.{quant_word}(...)`, found `{rest}`"
+        )));
+    };
+    if rest.is_empty() {
+        if quant == Quant::All {
+            return Err(QueryError::Syntax {
+                message: format!(
+                    "`{dir_name}.all(f)` needs a `.EXPR`: every arrow trivially passes a condition that is not there"
+                ),
+                hint: Some(format!("use {dir_name}.any(f) or {dir_name}.none(f)")),
+            });
+        }
+        return Ok(RefCondition {
+            dir,
+            quant,
+            field,
+            inner: None,
+        });
+    }
+    let Some(after_close) = rest.strip_prefix('.') else {
+        return Err(syntax(format!(
+            "expected `.EXPR` after `)`, found `{rest}`"
+        )));
+    };
+    let inner = parse_plain(after_close)?;
+    Ok(RefCondition {
+        dir,
+        quant,
+        field,
+        inner: Some(inner),
+    })
+}
+
+/// `f = field | "$body"`: the literal `$body`, or a field name read the same way a plain
+/// condition's own field is.
+fn take_ref_field(rest: &str) -> Result<(RefField, &str), QueryError> {
+    if let Some(after) = rest.strip_prefix("$body") {
+        return Ok((RefField::Body, after));
+    }
+    let (name, after) = take_field_name(rest)?;
+    Ok((RefField::Named(name.to_owned()), after))
+}
+
+/// `[A-Za-z0-9_-]*` at the start of `s`, with no requirement that it start with a letter (unlike
+/// a field name): used only for the quantifier word, which `parse_ref_expr` checks against the
+/// three the grammar allows, so a leading digit or `-` simply fails that check with a useful
+/// "found" value instead of the field-name error's wording.
+fn take_word(s: &str) -> (&str, &str) {
+    let bytes = s.as_bytes();
+    let mut end = 0;
+    while end < bytes.len() {
+        let b = bytes[end];
+        if b.is_ascii_alphanumeric() || b == b'_' || b == b'-' {
+            end += 1;
+        } else {
+            break;
+        }
+    }
+    (&s[..end], &s[end..])
 }
 
 /// `[A-Za-z_][A-Za-z0-9_-]*` at the start of `expr`. Field names are ASCII, so scanning bytes
@@ -364,13 +542,16 @@ pub(crate) fn field_value(field: &FieldRef, doc: &Document) -> Option<Value> {
     }
 }
 
-/// Checks one condition against `schema`, then evaluates it against `doc`: absence, `!=` as
-/// exactly NOT `=`, and, for `<`, `<=`, `>`, `>=`, a document without the field failing the
+/// Checks one plain condition against `schema`, then evaluates it against `doc`: absence, `!=`
+/// as exactly NOT `=`, and, for `<`, `<=`, `>`, `>=`, a document without the field failing the
 /// comparison. Filtering a list of candidate documents calls this once per document with the
 /// schema each was read under; a plain condition's scope, when it spans more than one
-/// collection, is for that caller to resolve field by field before calling this.
+/// collection, is for that caller to resolve field by field before calling this. A `ref.*`/
+/// `refby.*` condition's own field and quantifier are never seen here: `Project` walks the
+/// arrows and calls this once per document reached, with that document's own schema, for the
+/// inner condition alone.
 pub fn evaluate(
-    condition: &Condition,
+    condition: &PlainCondition,
     schema: &Resolved,
     doc: &Document,
 ) -> Result<bool, QueryError> {

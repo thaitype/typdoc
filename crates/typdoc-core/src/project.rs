@@ -16,7 +16,7 @@ use crate::frontmatter;
 use crate::index::{Entry as Indexed, Index, Member};
 use crate::lines::Position;
 use crate::links::{self, BodyLink, BodyLinks};
-use crate::query::{self, Condition, FieldRef, Op};
+use crate::query::{self, Condition, Dir, FieldRef, PlainCondition, Quant, RefCondition, RefField};
 use crate::refs;
 use crate::schema::{self, Auto, Field, FieldType, Resolved};
 use crate::scope::{self, Scope};
@@ -102,6 +102,30 @@ pub struct RefsReport {
     pub refs: Vec<RefsReference>,
 }
 
+/// One entry of `Project::incoming_refs`: an outgoing reference found anywhere in the project,
+/// with the document that holds it (`holder`) and that document's position in `self.collections`
+/// (`collection`), for `refby.*` to filter by field and by where it resolves to, and to read
+/// `holder` under its own schema without reading its file again.
+struct IncomingRef {
+    holder: Document,
+    collection: usize,
+    reference: RefsReference,
+}
+
+/// What `evaluate_ref_condition` needs about the candidate `me` and the project, bundled so the
+/// method itself takes one context argument instead of one per piece: `me`'s own path, index
+/// entry, parsed fields and body links (read once per candidate by `Project::list`'s own loop),
+/// the project's coded schemas (for classifying a bare-key ref), and the precomputed reverse
+/// index `refby.*` reads, when at least one `refby.*` condition needs it.
+struct RefEvalCtx<'a> {
+    me_path: &'a str,
+    me_entry: &'a Indexed,
+    me_fields: &'a [(String, Value)],
+    me_body: &'a BodyLinks,
+    codes: &'a BTreeSet<String>,
+    incoming: Option<&'a [IncomingRef]>,
+}
+
 /// One `--sort field[:asc|:desc]` of a `list` run, already parsed: `field` the same grammar a
 /// condition's own field uses (a pseudo-field or a name), `desc` for `:desc`, `false` (`asc`) by
 /// default.
@@ -123,6 +147,17 @@ pub struct ListFilter<'a> {
     pub codes: &'a [String],
     pub wheres: &'a [Condition],
     pub sort: &'a [SortKey],
+}
+
+/// `list`'s result: the matched documents, sorted and cut to `--limit` by nothing here (the
+/// caller does that, see `ListFilter`'s own doc), and every dangling ref a `ref.*` condition
+/// reached while evaluating `--where`, one line each, ready to print to stderr as written
+/// (design, Query, "Reached documents": "dangling refs also warn on stderr"). Empty when no
+/// `ref.*` condition reached one, which is the ordinary case.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListResult {
+    pub documents: Vec<Document>,
+    pub dangling_refs: Vec<String>,
 }
 
 pub struct Project {
@@ -337,26 +372,64 @@ impl Project {
     /// **The scope-wide field check this ticket owns.** The design's Names and scope paragraph
     /// makes a field name unknown to *every* schema in scope an error, while a document whose own
     /// schema merely lacks the field counts as absent; `query::evaluate` sees one schema at a time
-    /// and cannot tell those two apart (ticket 13's report). So every `--where` condition's own
-    /// field is checked here, once, against every schema `--collection`/`--code` (or, absent
+    /// and cannot tell those two apart (ticket 13's report). So every plain `--where` condition's
+    /// own field is checked here, once, against every schema `--collection`/`--code` (or, absent
     /// those, every collection) selects, before any document is read; only once that has passed
     /// does a document whose own schema happens to lack the field get to fall out as absent,
     /// resolved directly by the op (`!=` satisfied, everything else failed) rather than by calling
     /// `evaluate` with a schema that would misreport it as the scope-wide error.
-    pub fn list(&self, scope: &Scope, filter: &ListFilter) -> Result<Vec<Document>, Error> {
+    ///
+    /// **`ref.*`/`refby.*` conditions (ticket 15) get the same upfront check, with their own
+    /// scope.** `f` must be a ref/ref[] field (or `$body`) somewhere in the *whole project*, not
+    /// only the collections `--collection`/`--code` select: arrows leave that scope freely. Once
+    /// `f` is known, the condition after it is checked against the scope the design gives that
+    /// condition — the schemas named by `f`'s `target` after `ref.*(f)`, the schemas that declare
+    /// `f` after `refby.*(f)`, and every schema of the project for `$body` in either direction —
+    /// never against `selected`, which is the plain condition's scope, not this one's.
+    ///
+    /// **Dangling refs warn (ticket 15).** `ref.*` counts an arrow from the value written even
+    /// when it does not resolve (see `evaluate_ref_condition`), and the design says so counting
+    /// still warns: "dangling refs also warn on stderr". `refby.*` never contributes a warning,
+    /// since an arrow it follows always comes from a document that exists.
+    pub fn list(&self, scope: &Scope, filter: &ListFilter) -> Result<ListResult, Error> {
         let selected = self.select_collections(filter.collections, filter.codes)?;
         for condition in filter.wheres {
-            if let FieldRef::Named(name) = &condition.field
-                && !selected
-                    .iter()
-                    .any(|&i| self.collections[i].schema.field(name).is_some())
-            {
-                return Err(Error::BadArgument(
-                    query::QueryError::UnknownField(name.clone()).to_string(),
-                ));
+            match condition {
+                Condition::Plain(plain) => {
+                    if let FieldRef::Named(name) = &plain.field
+                        && !selected
+                            .iter()
+                            .any(|&i| self.collections[i].schema.field(name).is_some())
+                    {
+                        return Err(Error::BadArgument(
+                            query::QueryError::UnknownField(name.clone()).to_string(),
+                        ));
+                    }
+                }
+                Condition::Ref(ref_condition) => self.check_ref_condition_scope(ref_condition)?,
             }
         }
+        let codes = self.project_codes();
+        // Real body links are only read per candidate when some `ref.*(f)` condition is present
+        // (`refby.*` never reads "me"'s own body: it reads every *other* document's outgoing
+        // refs, gathered once below): an empty `BodyLinks` gives `document_out_refs` nothing to
+        // add under `$body`, which is exactly right for a condition whose own field is a name,
+        // never `$body`.
+        let needs_own_body = filter
+            .wheres
+            .iter()
+            .any(|c| matches!(c, Condition::Ref(r) if r.dir == Dir::Ref));
+        let incoming = if filter
+            .wheres
+            .iter()
+            .any(|c| matches!(c, Condition::Ref(r) if r.dir == Dir::RefBy))
+        {
+            Some(self.incoming_refs(&codes)?)
+        } else {
+            None
+        };
         let mut matched: Vec<(usize, Document)> = Vec::new();
+        let mut dangling_refs: Vec<String> = Vec::new();
         for (path, entry) in self.index.iter() {
             if !selected.contains(&entry.collection) {
                 continue;
@@ -381,11 +454,30 @@ impl Project {
                 code: collection.schema.code.clone(),
                 collection: collection.name.clone(),
                 schema: collection.schema.name.clone(),
-                fields,
+                fields: fields.clone(),
+            };
+            let body = if needs_own_body {
+                links::scan(&text).expect("frontmatter.parse already refused an unclosed block")
+            } else {
+                BodyLinks::default()
+            };
+            let ref_ctx = RefEvalCtx {
+                me_path: path,
+                me_entry: entry,
+                me_fields: &fields,
+                me_body: &body,
+                codes: &codes,
+                incoming: incoming.as_deref(),
             };
             let mut keep = true;
             for condition in filter.wheres {
-                if !condition_matches(condition, &collection.schema, &doc)? {
+                let matches = match condition {
+                    Condition::Plain(plain) => condition_matches(plain, &collection.schema, &doc)?,
+                    Condition::Ref(ref_condition) => {
+                        self.evaluate_ref_condition(ref_condition, &ref_ctx, &mut dangling_refs)?
+                    }
+                };
+                if !matches {
                     keep = false;
                     break;
                 }
@@ -409,7 +501,15 @@ impl Project {
             }
             compare_identity(a, b)
         });
-        Ok(matched.into_iter().map(|(_, doc)| doc).collect())
+        // More than one candidate, or more than one `ref.*` condition on the same field, can
+        // reach the same dangling ref; sorted and deduplicated so a warning is not printed twice
+        // for one.
+        dangling_refs.sort();
+        dangling_refs.dedup();
+        Ok(ListResult {
+            documents: matched.into_iter().map(|(_, doc)| doc).collect(),
+            dangling_refs,
+        })
     }
 
     /// The collections `--collection`/`--code` select, by their position in `self.collections`:
@@ -453,6 +553,262 @@ impl Project {
             selected.extend(matches);
         }
         Ok(selected.into_iter().collect())
+    }
+
+    /// Every collection of the whole project whose schema declares `field` as `ref` or `ref[]`,
+    /// by position in `self.collections` — never narrowed to `--collection`/`--code`'s
+    /// `selected`, since arrows a `ref.*`/`refby.*` condition follows are not bound by it. `$body`
+    /// is declared by every schema implicitly (design: "for `$body` in either it is every schema
+    /// in this project and its imports"), so it returns every collection without checking one.
+    fn schemas_declaring_ref_field(&self, field: &RefField) -> Vec<usize> {
+        let RefField::Named(name) = field else {
+            return (0..self.collections.len()).collect();
+        };
+        self.collections
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| {
+                matches!(
+                    c.schema.field(name).map(|f| &f.kind),
+                    Some(FieldType::Ref | FieldType::RefList)
+                )
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// The scope the design gives the condition after `ref.*(f)`/`refby.*(f)` (Names and scope):
+    /// the schemas named by `f`'s `target` after `ref.*(f)` (every schema of the project when the
+    /// target is `"*"`, absent, or a value `schema.valid` already reports as invalid — ticket 10's
+    /// reading of an invalid `target` reused here: it places no restriction, since the fault is
+    /// already reported once under `schema.valid`), the schemas that declare `f` after
+    /// `refby.*(f)` (`declaring`, already computed by the caller), and every schema of the project
+    /// for `$body` in either direction.
+    fn ref_condition_inner_scope(
+        &self,
+        dir: Dir,
+        field: &RefField,
+        declaring: &[usize],
+    ) -> Vec<usize> {
+        if matches!(field, RefField::Body) {
+            return (0..self.collections.len()).collect();
+        }
+        if matches!(dir, Dir::RefBy) {
+            return declaring.to_vec();
+        }
+        let RefField::Named(name) = field else {
+            unreachable!("RefField::Body already returned above")
+        };
+        let mut unrestricted = false;
+        let mut names: BTreeSet<&str> = BTreeSet::new();
+        for &i in declaring {
+            let target = self.collections[i]
+                .schema
+                .field(name)
+                .and_then(|f| f.target.as_ref());
+            match target {
+                None | Some(schema::Target::Any) | Some(schema::Target::Other(_)) => {
+                    unrestricted = true;
+                }
+                Some(schema::Target::Schemas(list)) => {
+                    names.extend(list.iter().map(String::as_str));
+                }
+            }
+        }
+        if unrestricted {
+            return (0..self.collections.len()).collect();
+        }
+        self.collections
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| names.contains(c.schema.name.as_str()))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// The upfront half of a `ref.*`/`refby.*` condition's own scope-wide check, run once before
+    /// any document is read (`Project::list`'s own doc comment explains why): `f` itself must be
+    /// declared as a ref/ref[] field somewhere in the project (skipped for `$body`, which is
+    /// always valid), and, when the condition carries an inner `.EXPR`, that condition's own named
+    /// field must be declared by at least one schema of the scope `ref_condition_inner_scope`
+    /// gives it.
+    fn check_ref_condition_scope(&self, condition: &RefCondition) -> Result<(), Error> {
+        let declaring = self.schemas_declaring_ref_field(&condition.field);
+        if !matches!(condition.field, RefField::Body) && declaring.is_empty() {
+            return Err(Error::BadArgument(
+                query::QueryError::UnknownField(condition.field.name().to_owned()).to_string(),
+            ));
+        }
+        let Some(inner) = &condition.inner else {
+            return Ok(());
+        };
+        let FieldRef::Named(name) = &inner.field else {
+            return Ok(());
+        };
+        let inner_scope =
+            self.ref_condition_inner_scope(condition.dir, &condition.field, &declaring);
+        if !inner_scope
+            .iter()
+            .any(|&i| self.collections[i].schema.field(name).is_some())
+        {
+            return Err(Error::BadArgument(
+                query::QueryError::UnknownField(name.clone()).to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// One `ref.*`/`refby.*` condition, evaluated against the candidate `me` named by `ctx`: the
+    /// arrows `condition.field` names, counted from the value written (dangling refs included
+    /// for `ref.*`; `refby.*` arrows always come from a document that exists), each checked
+    /// against `condition.inner` when there is one — existence alone otherwise — and combined by
+    /// `condition.quant`. Every dangling ref a `ref.*` arrow reaches is appended to `warnings`
+    /// (design: "dangling refs also warn on stderr"), whether or not `condition.inner` ends up
+    /// mattering to the result — the arrow was still walked and found dangling.
+    fn evaluate_ref_condition(
+        &self,
+        condition: &RefCondition,
+        ctx: &RefEvalCtx<'_>,
+        warnings: &mut Vec<String>,
+    ) -> Result<bool, Error> {
+        let wanted = condition.field.name();
+        match condition.dir {
+            Dir::Ref => {
+                let refs: Vec<RefsReference> = self
+                    .document_out_refs(
+                        ctx.me_path,
+                        ctx.me_entry,
+                        ctx.me_fields,
+                        ctx.me_body,
+                        ctx.codes,
+                    )
+                    .into_iter()
+                    .filter(|r| r.field == wanted)
+                    .collect();
+                let mut results = Vec::with_capacity(refs.len());
+                for r in &refs {
+                    if let RefOutcome::Unresolved(reason_id) = &r.other {
+                        warnings.push(format!(
+                            "{}: the ref `{}` in `{}` does not resolve ({reason_id})",
+                            ctx.me_path, r.written, r.field
+                        ));
+                    }
+                    results.push(match &condition.inner {
+                        None => true,
+                        Some(inner) => match &r.other {
+                            RefOutcome::Unresolved(_) => inner.op.absent_result(),
+                            RefOutcome::Resolved(target) => {
+                                self.evaluate_reached(&target.path, inner)?
+                            }
+                        },
+                    });
+                }
+                Ok(combine_quant(condition.quant, results.into_iter()))
+            }
+            Dir::RefBy => {
+                let incoming = ctx
+                    .incoming
+                    .expect("Project::list precomputes this whenever a refby condition is present");
+                let mut results = Vec::new();
+                for item in incoming {
+                    if item.reference.field != wanted {
+                        continue;
+                    }
+                    let RefOutcome::Resolved(target) = &item.reference.other else {
+                        continue;
+                    };
+                    if target.path != ctx.me_path {
+                        continue;
+                    }
+                    results.push(match &condition.inner {
+                        None => true,
+                        Some(inner) => condition_matches(
+                            inner,
+                            &self.collections[item.collection].schema,
+                            &item.holder,
+                        )?,
+                    });
+                }
+                Ok(combine_quant(condition.quant, results.into_iter()))
+            }
+        }
+    }
+
+    /// One document reached by an outgoing arrow that resolved: read under its own schema when
+    /// it is indexed (an ordinary collection member), or, when it resolved outside every
+    /// collection (reachable only through `target: "*"`, e.g. a README), a real file with no
+    /// schema — every named field is then unknown to it and reads as absent, the same rule a
+    /// document whose own schema simply lacks a field already follows, while its pseudo-fields
+    /// (`path`, `namespace`) still apply, since the file genuinely exists (design: "Reached
+    /// documents are read under their own schema"). A target whose own frontmatter block cannot
+    /// be parsed has nothing to test either and is read the same way: absent, never an error, the
+    /// same as it is left out of `list`'s own candidates and given no other finding (design: "no
+    /// other rule is evaluated for that file").
+    fn evaluate_reached(&self, path: &str, inner: &PlainCondition) -> Result<bool, Error> {
+        let Some(entry) = self.index.get(path) else {
+            let name = self.ref_name_of(path);
+            let empty_schema = Resolved::new(String::new(), None, BTreeMap::new());
+            let doc = Document {
+                path: path.to_owned(),
+                namespace: name.namespace,
+                key: None,
+                code: None,
+                collection: String::new(),
+                schema: String::new(),
+                fields: Vec::new(),
+            };
+            return condition_matches(inner, &empty_schema, &doc);
+        };
+        let collection = &self.collections[entry.collection];
+        let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
+        let Some(fields) = parsed_fields(&text, &collection.schema) else {
+            return Ok(inner.op.absent_result());
+        };
+        let doc = Document {
+            path: path.to_owned(),
+            namespace: self.config.namespaces[entry.namespace].name.clone(),
+            key: entry.key.clone(),
+            code: collection.schema.code.clone(),
+            collection: collection.name.clone(),
+            schema: collection.schema.name.clone(),
+            fields,
+        };
+        condition_matches(inner, &collection.schema, &doc)
+    }
+
+    /// Every outgoing reference of every document of the project, each with the document that
+    /// holds it (`holder`) and its position in `self.collections` (`collection`): `refby.*`'s own
+    /// reverse index, built once per `list` call that needs it and then filtered per candidate and
+    /// per `refby.*` condition, the same computation `refs --reverse` does without a field or a
+    /// target filter (`Project::refs`'s own reverse branch).
+    fn incoming_refs(&self, codes: &BTreeSet<String>) -> Result<Vec<IncomingRef>, Error> {
+        let mut holders: Vec<(&str, &Indexed)> = self.index.iter().collect();
+        holders.sort_by_key(|(path, _)| *path);
+        let mut out = Vec::new();
+        for (path, entry) in holders {
+            let collection = &self.collections[entry.collection];
+            let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
+            let Some((fields, body)) = parsed_fields_and_body(&text, &collection.schema) else {
+                continue;
+            };
+            let holder = Document {
+                path: path.to_owned(),
+                namespace: self.config.namespaces[entry.namespace].name.clone(),
+                key: entry.key.clone(),
+                code: collection.schema.code.clone(),
+                collection: collection.name.clone(),
+                schema: collection.schema.name.clone(),
+                fields: fields.clone(),
+            };
+            for reference in self.document_out_refs(path, entry, &fields, &body, codes) {
+                out.push(IncomingRef {
+                    holder: holder.clone(),
+                    collection: entry.collection,
+                    reference,
+                });
+            }
+        }
+        Ok(out)
     }
 
     /// The headings of a document's body, in the order of `line`.
@@ -1687,18 +2043,36 @@ fn parsed_fields(text: &str, schema: &Resolved) -> Option<Vec<(String, Value)>> 
 /// field the scope otherwise knows. Absence resolves by the op alone, exactly as the design's
 /// Absence and negation paragraph gives it for a missing field: `!=` is satisfied, `=` in any
 /// form and every ordering comparison fail. A pseudo-field is never unknown to a schema (it
-/// applies, or does not, independently of one), so it always reaches `evaluate` below.
+/// applies, or does not, independently of one), so it always reaches `evaluate` below. Also the
+/// inner condition of a `ref.*`/`refby.*` reached at a real document (ticket 15): the scope check
+/// for that inner condition is `check_ref_condition_scope`'s job, not this one's, exactly as the
+/// outer, plain-condition scope check is `Project::list`'s and not this function's.
 fn condition_matches(
-    condition: &Condition,
+    condition: &PlainCondition,
     schema: &Resolved,
     doc: &Document,
 ) -> Result<bool, Error> {
     if let FieldRef::Named(name) = &condition.field
         && schema.field(name).is_none()
     {
-        return Ok(condition.op == Op::Ne);
+        return Ok(condition.op.absent_result());
     }
     query::evaluate(condition, schema, doc).map_err(|e| Error::BadArgument(e.to_string()))
+}
+
+/// The design's table for `ref.*`/`refby.*`: `all` true when every item is, and true on an empty
+/// set ("true when empty"); `any` true when some item is, and false on an empty set ("false when
+/// empty"); `none` true when no item is, and true on an empty set ("true when empty"). One
+/// function for both "does this arrow satisfy the inner condition" (`Some(inner)`, one bool per
+/// arrow) and "does an arrow merely exist" (`inner: None`, a `true` per arrow already baked into
+/// `items` by the caller), since the quantifier's own meaning does not change between them.
+fn combine_quant(quant: Quant, items: impl Iterator<Item = bool>) -> bool {
+    let mut items = items;
+    match quant {
+        Quant::All => items.all(|matched| matched),
+        Quant::Any => items.any(|matched| matched),
+        Quant::None => !items.any(|matched| matched),
+    }
 }
 
 /// A sort key's value, comparable independently of type: `Missing` is greater than every other

@@ -485,3 +485,88 @@ fn list_is_no_longer_in_the_list_of_commands_the_binary_lacks() {
     assert!(!registry::UNIMPLEMENTED_COMMANDS.contains(&"list"));
     assert!(registry::commands().contains(&"list".to_owned()));
 }
+
+// ---------------------------------------------------------------------------------------------
+// `ref.*`/`refby.*` through the binary: parses, evaluates, and a dangling ref warns on stderr
+// (design, Query, "Reached documents": "dangling refs also warn on stderr").
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn a_ref_star_condition_matches_through_the_binary() {
+    // `fixtures/valid/ref-query`: T-2's blocked_by is empty, so ref.all(...).status=resolved is
+    // vacuously true for it; T-3's only blocker is T-2, itself resolved.
+    let ran = list(
+        &fixture("valid/ref-query"),
+        &[
+            "--collection",
+            "tickets",
+            "--where",
+            "ref.all(blocked_by).status=resolved",
+            "--ids",
+        ],
+    );
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    let ids: Vec<&str> = ran.stdout.lines().collect();
+    assert!(ids.contains(&"T-2"), "{ids:?}");
+    assert!(ids.contains(&"T-3"), "{ids:?}");
+}
+
+#[test]
+fn a_dangling_ref_reached_by_ref_star_warns_on_stderr() {
+    // T-1's blocked_by is [T-2, T-99]; T-99 does not exist, so evaluating ref.any(blocked_by)
+    // for T-1 walks a dangling ref and must warn about it, even though the query itself succeeds
+    // (exit 0) and the dangling ref simply counts as absent for the result.
+    let ran = list(
+        &fixture("valid/ref-query"),
+        &[
+            "--collection",
+            "tickets",
+            "--where",
+            "ref.any(blocked_by).status!=resolved",
+            "--json",
+        ],
+    );
+
+    assert_eq!(
+        ran.code, 0,
+        "stderr should carry a warning, not an error: {}",
+        ran.stderr
+    );
+    assert!(
+        ran.stderr.contains("T-99"),
+        "expected a dangling-ref warning naming T-99, got {:?}",
+        ran.stderr
+    );
+    assert!(
+        ran.stdout_json()["documents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["path"] == json!("tickets/T-1.md")),
+        "T-1 still matches: its dangling blocker counts as absent, which satisfies !=resolved"
+    );
+}
+
+#[test]
+fn a_query_with_no_dangling_ref_prints_nothing_on_stderr() {
+    // Narrowed to T-3 alone (key=T-3): its only blocker (T-2) resolves cleanly, so evaluating
+    // ref.any(blocked_by) for it never reaches T-1's or T-5's dangling T-99, and stderr stays
+    // empty even though the very same field, elsewhere in this project, does have one.
+    let ran = list(
+        &fixture("valid/ref-query"),
+        &[
+            "--collection",
+            "tickets",
+            "--where",
+            "key=T-3",
+            "--where",
+            "ref.any(blocked_by)",
+            "--json",
+        ],
+    );
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stderr, "");
+    assert_eq!(ran.stdout_json()["total"], json!(1));
+}

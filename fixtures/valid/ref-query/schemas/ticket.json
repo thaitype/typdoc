@@ -1,0 +1,10 @@
+{
+  "name": "ticket",
+  "code": "T",
+  "fields": {
+    "title": { "type": "string" },
+    "status": { "type": "enum", "values": ["open", "claimed", "resolved", "closed"] },
+    "blocked_by": { "type": "ref[]", "target": "*" },
+    "sources": { "type": "ref[]", "target": ["archive"] }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "archive",
+  "fields": {
+    "title": { "type": "string" },
+    "resolved_note": { "type": "string" }
+  }
+}

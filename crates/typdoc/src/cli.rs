@@ -5,10 +5,10 @@ use clap::error::ErrorKind as ClapKind;
 use clap::{Parser, Subcommand};
 use serde_json::{Map, Value as Json, json};
 use typdoc_core::{
-    Argument, Deps, Document, DocumentArg, Env, Error, ErrorKind, FieldRef, Finding, ListFilter,
-    Project, RefOutcome, RefsDirection, RefsReference, RefsReport, Severity, SortKey, Toc,
-    ValidateReport, ValidateScope, Value, discover, discover_for, parse_field, parse_query,
-    resolve_on_disk,
+    Argument, Condition, Deps, Document, DocumentArg, Env, Error, ErrorKind, FieldRef, Finding,
+    ListFilter, ListResult, Project, RefField, RefOutcome, RefsDirection, RefsReference,
+    RefsReport, Severity, SortKey, Toc, ValidateReport, ValidateScope, Value, discover,
+    discover_for, parse_field, parse_query, resolve_on_disk,
 };
 
 #[derive(Parser)]
@@ -154,7 +154,7 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 &sort,
                 cli.namespace.as_deref(),
             ) {
-                Ok(matched) => list_outcome(&matched, limit, fields.as_deref(), &where_, ids, json),
+                Ok(result) => list_outcome(&result, limit, fields.as_deref(), &where_, ids, json),
                 Err(e) => failure(json, exit_code(e.kind()), &e),
             }
         }
@@ -267,7 +267,7 @@ fn list(
     wheres: &[String],
     sort: &[String],
     namespace: Option<&str>,
-) -> Result<Vec<Document>, Error> {
+) -> Result<ListResult, Error> {
     let root = discover(deps.env)?;
     let project = Project::load(&root)?;
     let scope = project.scope(None, namespace, deps.env)?;
@@ -320,15 +320,20 @@ fn parse_sort_key(spec: &str) -> Result<SortKey, Error> {
 /// `list`'s three output shapes, chosen by `--json`/`--ids`/neither: `total` and `truncated`
 /// (design: `truncated` is true exactly when `total`, the count before `--limit`, is larger than
 /// the number listed) are computed here, once, from `matched` (every document `list` matched, in
-/// order) and `limit`, so every shape agrees with the other two.
+/// order) and `limit`, so every shape agrees with the other two. `result.dangling_refs` goes to
+/// stderr the same way whichever of the three shapes is chosen (design, Query: "dangling refs
+/// also warn on stderr" — the warning is not part of any of the three shapes `--json` names, so
+/// it is not conditioned on `json` the way `stdout` is).
 fn list_outcome(
-    matched: &[Document],
+    result: &ListResult,
     limit: Option<usize>,
     fields: Option<&str>,
     wheres: &[String],
     ids: bool,
     json: bool,
 ) -> Outcome {
+    let matched = &result.documents;
+    let stderr = dangling_refs_stderr(&result.dangling_refs);
     let total = matched.len();
     let listed = match limit {
         Some(n) => &matched[..n.min(matched.len())],
@@ -336,7 +341,10 @@ fn list_outcome(
     };
     let truncated = total > listed.len();
     if json {
-        return success(list_json(listed, total, truncated));
+        return Outcome {
+            stderr,
+            ..success(list_json(listed, total, truncated))
+        };
     }
     if ids {
         let mut stdout = String::new();
@@ -347,15 +355,27 @@ fn list_outcome(
         return Outcome {
             code: 0,
             stdout,
-            stderr: String::new(),
+            stderr,
         };
     }
     let columns = table_columns(fields, wheres);
     Outcome {
         code: 0,
         stdout: list_table(matched, listed.len(), &columns),
-        stderr: String::new(),
+        stderr,
     }
+}
+
+/// Every dangling ref a `ref.*` condition reached, one per line, for stderr (design, Query,
+/// "Reached documents": "dangling refs also warn on stderr"). Empty when none were reached, the
+/// ordinary case, which prints nothing.
+fn dangling_refs_stderr(dangling_refs: &[String]) -> String {
+    if dangling_refs.is_empty() {
+        return String::new();
+    }
+    let mut text = dangling_refs.join("\n");
+    text.push('\n');
+    text
 }
 
 fn list_json(documents: &[Document], total: usize, truncated: bool) -> Json {
@@ -368,6 +388,11 @@ fn list_json(documents: &[Document], total: usize, truncated: bool) -> Json {
 /// first appears (design: "Default output is a table of key or path, title, and every field
 /// used in `--where`"). A `--where` expression that failed to parse never reaches here (`list`
 /// already returned its error), so re-parsing it for its field name alone is safe.
+///
+/// A `ref.*`/`refby.*` condition names one of my own fields too — the ref field `f` itself, e.g.
+/// `blocked_by` in `ref.all(blocked_by).status=resolved` — so that field is added the same way a
+/// plain condition's field is; `status` in that example belongs to the document reached, not to
+/// "me", and is left out, the same as `$body` (not a printable frontmatter field of "me") is.
 fn table_columns(fields: Option<&str>, wheres: &[String]) -> Vec<String> {
     if let Some(fields) = fields {
         return fields.split(',').map(str::to_owned).collect();
@@ -375,8 +400,16 @@ fn table_columns(fields: Option<&str>, wheres: &[String]) -> Vec<String> {
     let mut columns = Vec::new();
     for expr in wheres {
         if let Ok(condition) = parse_query(expr) {
-            let name = field_name(&condition.field);
-            if !columns.contains(&name) {
+            let name = match &condition {
+                Condition::Plain(plain) => Some(field_name(&plain.field)),
+                Condition::Ref(ref_condition) => match &ref_condition.field {
+                    RefField::Named(name) => Some(name.clone()),
+                    RefField::Body => None,
+                },
+            };
+            if let Some(name) = name
+                && !columns.contains(&name)
+            {
                 columns.push(name);
             }
         }
