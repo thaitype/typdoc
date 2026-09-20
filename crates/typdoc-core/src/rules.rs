@@ -51,6 +51,12 @@ pub const RULES: &[&str] = &[
     "keys.unique",
     "collections.overlap",
     "filename.pattern",
+    "refs.resolve",
+    "refs.target",
+    "refs.acyclic",
+    "refs.codedByPath",
+    "refs.moved",
+    "names.shadowed",
 ];
 
 /// Ids the design names and the binary does not report yet. Each is a difference between
@@ -58,16 +64,10 @@ pub const RULES: &[&str] = &[
 /// when it enters `RULES`, and it is empty when v1 is finished.
 pub const UNIMPLEMENTED_RULES: &[&str] = &[
     "frontmatter.transitions", // story 2
-    "refs.resolve",            // story 1
-    "refs.target",             // story 1
-    "refs.acyclic",            // story 1
     "state.missing",           // story 1
     "body.links",              // story 1
     "body.anchors",            // story 1
     "body.mentions",           // story 1
-    "refs.codedByPath",        // story 1
-    "refs.moved",              // story 1
-    "names.shadowed",          // story 1
     "imports.absent",          // story 1
     "config.state-uncoded",    // story 1
     "config.state-orphan",     // story 1

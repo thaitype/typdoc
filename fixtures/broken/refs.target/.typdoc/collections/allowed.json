@@ -1,0 +1,1 @@
+{ "match": "allowed/*.md", "schema": "schemas/allowed.json" }

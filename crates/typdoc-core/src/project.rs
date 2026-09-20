@@ -5,16 +5,17 @@ use std::path::{Path, PathBuf};
 
 use crate::argument::DocumentArg;
 use crate::body::{self, Heading};
-use crate::config::{CONFIG_FILE, Collection, Config, Level, Report, Rules, config_file};
-use crate::document::Document;
+use crate::config::{CONFIG_FILE, Collection, Config, Level, RefBase, Report, Rules, config_file};
+use crate::document::{Document, Value};
 use crate::env::Env;
 use crate::error::Error;
 use crate::frontmatter;
 use crate::index::{Entry as Indexed, Index, Member};
-use crate::schema::{self, Resolved};
+use crate::refs;
+use crate::schema::{self, Auto, FieldType, Resolved};
 use crate::scope::{self, Scope};
 use crate::template::Template;
-use crate::validate::{self, DocName, Finding, ValidateScope};
+use crate::validate::{self, DocName, Finding, Severity, ValidateScope};
 
 /// The folder that holds `.typdoc/config.json`: `TYPDOC_DIR` when it is set, and otherwise
 /// the nearest one above the current directory, that directory included.
@@ -59,6 +60,20 @@ pub struct Project {
     stray_files: Vec<(String, String)>,
 }
 
+/// The whole-project context `refs.resolve`, `refs.target`, `refs.codedByPath` and `refs.moved`
+/// read beside a document's own frontmatter, bundled because the three always travel together
+/// from `Project::validate` through `check_entry` to `check_refs`.
+struct RefProject<'a> {
+    /// The code of every coded schema in the project (the bare-key ref form's "the code exists
+    /// in this project" condition).
+    codes: BTreeSet<String>,
+    /// The name and code of every collection's schema, by the collection's position.
+    schemas: Vec<refs::SchemaInfo<'a>>,
+    /// A written ref that no longer resolves, to the current key or path of the document that
+    /// recorded moving away from it (`auto: moves`).
+    moved: BTreeMap<String, String>,
+}
+
 struct Loaded {
     name: String,
     schema: Resolved,
@@ -68,6 +83,10 @@ struct Loaded {
     schema_path: String,
     /// The collection file's own `validation`, merged over the project's `validation.global`.
     validation: Rules,
+    /// How a relative ref in a document of this collection is resolved: from the document's own
+    /// folder or from its namespace's. The sibling-prefixed path form ignores this; only the
+    /// unprefixed form reads it (design.md's Refs table).
+    ref_base: RefBase,
 }
 
 /// The report of a `validate` run, in the shape the design's summary and findings hold, before
@@ -147,6 +166,7 @@ impl Project {
                 schema,
                 schema_path,
                 validation: collection.validation.clone(),
+                ref_base: collection.ref_base,
             });
         }
         report.finish()?;
@@ -241,6 +261,7 @@ impl Project {
         if schemas_only {
             let scope = self.scope(None, flag, env)?;
             let mut findings = self.schema_findings.clone();
+            findings.extend(self.shadowed_names_findings(strict));
             validate::order(&mut findings);
             return Ok(ValidateReport {
                 scope: ValidateScope::Schemas,
@@ -253,7 +274,10 @@ impl Project {
         }
         if args.is_empty() {
             let scope = self.scope(None, flag, env)?;
+            let (ref_project, acyclic) = self.ref_project()?;
             let mut findings = self.schema_findings.clone();
+            findings.extend(self.shadowed_names_findings(strict));
+            findings.extend(acyclic);
             let mut namespaces = BTreeSet::new();
             let mut documents = 0usize;
             for (path, entry) in self.index.iter() {
@@ -264,7 +288,7 @@ impl Project {
                 namespaces.insert(namespace.clone());
                 documents += 1;
                 let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
-                findings.extend(self.check_entry(path, entry, &text, strict));
+                findings.extend(self.check_entry(path, entry, &text, strict, &ref_project));
             }
             // An overlapping path has no one collection to check its frontmatter against, so it
             // was never checked (contract item 8's reasoning for a document whose block cannot
@@ -312,6 +336,7 @@ impl Project {
                 findings,
             });
         }
+        let (ref_project, acyclic) = self.ref_project()?;
         let mut findings = Vec::new();
         let mut namespaces = BTreeSet::new();
         let mut paths = BTreeSet::new();
@@ -346,9 +371,19 @@ impl Project {
             if paths.insert(path.clone()) {
                 let namespace = &self.config.namespaces[entry.namespace].name;
                 namespaces.insert(namespace.clone());
-                findings.extend(self.check_entry(&path, entry, &text, strict));
+                findings.extend(self.check_entry(&path, entry, &text, strict, &ref_project));
             }
         }
+        // `refs.acyclic` is always on and its cycles are project-wide, but only a cycle that
+        // passes through one of the documents actually named is reported here: unlike the
+        // whole-project scan, every finding in this scope is about a document the caller named,
+        // and a cycle elsewhere in the project is that other document's own `validate` run to
+        // report, not this one's.
+        findings.extend(
+            acyclic
+                .into_iter()
+                .filter(|finding| paths.contains(&finding.path)),
+        );
         validate::order(&mut findings);
         Ok(ValidateReport {
             scope: ValidateScope::Paths,
@@ -366,8 +401,17 @@ impl Project {
     /// also used by another document of the same namespace. Always on, so `strict` does not
     /// change it. `collections.overlap` is never checked here: a path it is true of is not in
     /// the index at all (`Index::build`), so this is never reached for one; it is a finding of
-    /// the whole-project scan instead.
-    fn check_entry(&self, path: &str, entry: &Indexed, text: &str, strict: bool) -> Vec<Finding> {
+    /// the whole-project scan instead. `refs` gives `refs.resolve`, `refs.target`,
+    /// `refs.codedByPath` and `refs.moved`, skipped when `frontmatter.parse` already fired for
+    /// this document (the design: "no other rule is evaluated for that file").
+    fn check_entry(
+        &self,
+        path: &str,
+        entry: &Indexed,
+        text: &str,
+        strict: bool,
+        ref_project: &RefProject,
+    ) -> Vec<Finding> {
         let collection = &self.collections[entry.collection];
         let namespace = &self.config.namespaces[entry.namespace].name;
         let name = DocName {
@@ -404,7 +448,312 @@ impl Project {
                 ),
             ));
         }
+        if !findings.iter().any(|f| f.rule == "frontmatter.parse") {
+            findings.extend(self.check_refs(path, entry, text, &name, strict, ref_project));
+        }
         findings
+    }
+
+    /// `refs.resolve`, `refs.target`, `refs.codedByPath` and `refs.moved` for every `ref` and
+    /// `ref[]` field of one document already known to parse. A value that does not fit its
+    /// field's type is skipped: `frontmatter.types` already reported it, and a value that is not
+    /// text or a list of text names nothing a ref form could read.
+    fn check_refs(
+        &self,
+        path: &str,
+        entry: &Indexed,
+        text: &str,
+        name: &DocName,
+        strict: bool,
+        ref_project: &RefProject,
+    ) -> Vec<Finding> {
+        let collection = &self.collections[entry.collection];
+        let fields = match parsed_fields(text, &collection.schema) {
+            Some(fields) => fields,
+            None => return Vec::new(),
+        };
+        let ctx = refs::Ctx {
+            doc_namespace: entry.namespace,
+            doc_path: path,
+            ref_base: collection.ref_base,
+            namespaces: &self.config.namespaces,
+            codes: &ref_project.codes,
+            index: &self.index,
+            root: &self.root,
+        };
+        let mut findings = Vec::new();
+        for (field_name, value) in &fields {
+            let Some(field) = collection.schema.field(field_name) else {
+                continue;
+            };
+            if !matches!(field.kind, FieldType::Ref | FieldType::RefList)
+                || !crate::coerce::fits(&field.kind, value)
+            {
+                continue;
+            }
+            for written in ref_values(value) {
+                match refs::resolve_one(written, &ctx) {
+                    Err(reason) => findings.extend(self.unresolved_ref_finding(
+                        name,
+                        field_name,
+                        written,
+                        reason,
+                        &ref_project.moved,
+                        &collection.validation,
+                        strict,
+                    )),
+                    Ok(resolved) => {
+                        if !refs::target_allowed(
+                            field.target.as_ref(),
+                            &resolved,
+                            &ref_project.schemas,
+                        ) {
+                            findings.push(validate::finding(
+                                name,
+                                Severity::Error,
+                                "refs.target",
+                                Some(field_name),
+                                format!(
+                                    "the ref `{written}` targets `{}`, which `target` does not allow",
+                                    resolved.path
+                                ),
+                            ));
+                        }
+                        let coded = resolved
+                            .collection
+                            .is_some_and(|index| ref_project.schemas[index].code.is_some());
+                        if coded
+                            && resolved.via == refs::Via::Path
+                            && let Some(level) = validate::effective_level(
+                                Level::Warn,
+                                "refs.codedByPath",
+                                &self.config.validation,
+                                &collection.validation,
+                                strict,
+                            )
+                        {
+                            findings.push(validate::finding(
+                                name,
+                                level,
+                                "refs.codedByPath",
+                                Some(field_name),
+                                format!(
+                                    "the ref `{written}` names a coded document by path: use its key instead"
+                                ),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        findings
+    }
+
+    /// `refs.moved` when `written` matches a recorded move, `refs.resolve` otherwise (`None` only
+    /// when `refs.moved` fires but is configured `off`): the one place that decides between the
+    /// two ordinary-missing-target findings, so `check_refs` reads as one branch per outcome of
+    /// `resolve_one` rather than a decision nested inside it.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "each part is independent context a caller already holds (the document's name,
+    which field and ref, why it failed, the project's moved records, the collection's own rule
+    levels, strict); bundling them would hide which one changes across the two call sites that
+    would use it, `check_refs` and a future `body.mentions` (ticket 11, also `refs.moved`)"
+    )]
+    fn unresolved_ref_finding(
+        &self,
+        name: &DocName,
+        field_name: &str,
+        written: &str,
+        reason: refs::Reason,
+        moved: &BTreeMap<String, String>,
+        collection: &Rules,
+        strict: bool,
+    ) -> Option<Finding> {
+        if let Some(new_id) = moved.get(written) {
+            let level = validate::effective_level(
+                Level::Error,
+                "refs.moved",
+                &self.config.validation,
+                collection,
+                strict,
+            )?;
+            return Some(validate::finding(
+                name,
+                level,
+                "refs.moved",
+                Some(field_name),
+                format!("the ref `{written}` no longer resolves: it was moved to `{new_id}`"),
+            ));
+        }
+        Some(validate::finding(
+            name,
+            Severity::Error,
+            "refs.resolve",
+            Some(field_name),
+            reason_message(written, reason),
+        ))
+    }
+
+    /// The code of every coded schema in the project, for the bare-key ref form's "the code
+    /// exists in this project" condition (design.md's Refs table).
+    fn project_codes(&self) -> BTreeSet<String> {
+        self.collections
+            .iter()
+            .filter_map(|collection| collection.schema.code.clone())
+            .collect()
+    }
+
+    /// The name and code of every collection's schema, by the collection's position, for
+    /// `refs.target` and `refs.codedByPath`.
+    fn schema_infos(&self) -> Vec<refs::SchemaInfo<'_>> {
+        self.collections
+            .iter()
+            .map(|collection| refs::SchemaInfo {
+                name: &collection.schema.name,
+                code: collection.schema.code.as_deref(),
+            })
+            .collect()
+    }
+
+    /// The whole-project context `check_entry` and `check_refs` read beside a document's own
+    /// frontmatter (`codes`, `schemas`, and the `refs.moved` map `prescan_refs` builds), bundled
+    /// into one reference since the three always travel together from here down to `check_refs`;
+    /// `refs.acyclic`'s findings are returned alongside rather than folded in, since whether they
+    /// are reported depends on the scope (see `validate`'s two callers of this).
+    fn ref_project(&self) -> Result<(RefProject<'_>, Vec<Finding>), Error> {
+        let codes = self.project_codes();
+        let schemas = self.schema_infos();
+        let (moved, acyclic) = self.prescan_refs(&codes)?;
+        Ok((
+            RefProject {
+                codes,
+                schemas,
+                moved,
+            },
+            acyclic,
+        ))
+    }
+
+    /// `names.shadowed`: a namespace name that is also an import alias, so `name:` and `name::`
+    /// reach different documents. A fact about the config, not about a document, so it needs no
+    /// document read and is the same in every scope that reports it (`All` and `Schemas`, the
+    /// same two `schema_findings` reaches, never `Paths`: see `check_entry`'s callers).
+    fn shadowed_names_findings(&self, strict: bool) -> Vec<Finding> {
+        let Some(level) = validate::effective_level(
+            Level::Warn,
+            "names.shadowed",
+            &self.config.validation,
+            &Rules::new(),
+            strict,
+        ) else {
+            return Vec::new();
+        };
+        self.config
+            .namespaces
+            .iter()
+            .map(|namespace| namespace.name.as_str())
+            .filter(|name| self.config.import_names.iter().any(|alias| alias == name))
+            .map(|name| {
+                validate::names_shadowed_finding(
+                    level,
+                    CONFIG_FILE,
+                    format!(
+                        "the name `{name}` is both a sibling namespace and an import alias: `{name}:` and `{name}::` reach different documents"
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    /// The whole-project pass `refs.moved` and `refs.acyclic` both need before any single
+    /// document's refs can be judged: a moved record can be recorded in a document outside the
+    /// scope of the run that reads it, and a cycle can pass through documents outside it too.
+    /// Reads every document once, distinct from the read `check_entry`'s caller already does for
+    /// the ones in scope: cheap next to a network call, and this crate makes none (contract item
+    /// 21, "no promised figure for the cost of a run").
+    ///
+    /// Returns the map from a written ref that no longer resolves to the current key or path of
+    /// the document that recorded moving away from it (`auto: moves`), and the `refs.acyclic`
+    /// findings of every cycle found through a field marked `acyclic` (one finding per document
+    /// on a cycle, per field, since each one's own edge is what is wrong with it).
+    fn prescan_refs(
+        &self,
+        codes: &BTreeSet<String>,
+    ) -> Result<(BTreeMap<String, String>, Vec<Finding>), Error> {
+        let mut moved: BTreeMap<String, String> = BTreeMap::new();
+        let mut edges: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+        for (path, entry) in self.index.iter() {
+            let collection = &self.collections[entry.collection];
+            let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
+            let Some(fields) = parsed_fields(&text, &collection.schema) else {
+                continue;
+            };
+            let ctx = refs::Ctx {
+                doc_namespace: entry.namespace,
+                doc_path: path,
+                ref_base: collection.ref_base,
+                namespaces: &self.config.namespaces,
+                codes,
+                index: &self.index,
+                root: &self.root,
+            };
+            let identity = entry.key.clone().unwrap_or_else(|| path.to_owned());
+            for (field_name, value) in &fields {
+                let Some(field) = collection.schema.field(field_name) else {
+                    continue;
+                };
+                if field.auto == Some(Auto::Moves)
+                    && field.kind == FieldType::List
+                    && let Value::List(items) = value
+                {
+                    for item in items {
+                        moved
+                            .entry(item.clone())
+                            .or_insert_with(|| identity.clone());
+                    }
+                }
+                if field.is_acyclic()
+                    && matches!(field.kind, FieldType::Ref | FieldType::RefList)
+                    && crate::coerce::fits(&field.kind, value)
+                {
+                    for written in ref_values(value) {
+                        if let Ok(resolved) = refs::resolve_one(written, &ctx) {
+                            edges
+                                .entry(field_name.clone())
+                                .or_default()
+                                .push((path.to_owned(), resolved.path));
+                        }
+                    }
+                }
+            }
+        }
+        let mut findings = Vec::new();
+        for (field_name, field_edges) in &edges {
+            for cyclic_path in refs::cyclic_nodes(field_edges) {
+                let Some(entry) = self.index.get(&cyclic_path) else {
+                    continue;
+                };
+                let collection = &self.collections[entry.collection];
+                let namespace = &self.config.namespaces[entry.namespace].name;
+                let name = DocName {
+                    path: &cyclic_path,
+                    namespace,
+                    collection: &collection.name,
+                    key: entry.key.as_deref(),
+                };
+                findings.push(validate::finding(
+                    &name,
+                    Severity::Error,
+                    "refs.acyclic",
+                    Some(field_name),
+                    format!("a cycle passes through `{field_name}`"),
+                ));
+            }
+        }
+        // Not sorted here: the caller merges this into a larger set of findings and orders that
+        // once, so sorting this slice first would only be thrown away.
+        Ok((moved, findings))
     }
 
     /// The path a document argument names, its place in the index, and the text of the file.
@@ -489,6 +838,37 @@ impl Project {
         Error::NotFound {
             path: path.to_owned(),
             hint,
+        }
+    }
+}
+
+/// The fields of a document already read, or `None` when its block cannot be parsed: the ref
+/// rules read no document `frontmatter.parse` has already refused (design: "no other rule is
+/// evaluated for that file"), and this is the one place that reads a block a second time to get
+/// them, since `validate::check_document` does not hand its own parse back out.
+fn parsed_fields(text: &str, schema: &Resolved) -> Option<Vec<(String, Value)>> {
+    let block = frontmatter::block(text).ok()??;
+    frontmatter::fields(block, schema).ok()
+}
+
+/// The written ref or refs a field's already-typed value holds: one for `ref`, each item of the
+/// list for `ref[]`. Called only once `coerce::fits` has shown the value matches the field's
+/// kind, so the other variants of `Value` never reach here.
+fn ref_values(value: &Value) -> Vec<&str> {
+    match value {
+        Value::Text(text) => vec![text.as_str()],
+        Value::List(items) => items.iter().map(String::as_str).collect(),
+        Value::Number(_) | Value::Bool(_) | Value::Date(_) | Value::Datetime(_) => Vec::new(),
+    }
+}
+
+/// The message for a ref that does not resolve, naming why (`refs.resolve`'s two reasons; the
+/// third, `import-absent`, is ticket 17's, since this story does not resolve an import).
+fn reason_message(written: &str, reason: refs::Reason) -> String {
+    match reason {
+        refs::Reason::NotFound => format!("the ref `{written}` does not resolve: not found"),
+        refs::Reason::BadPrefix => {
+            format!("the ref `{written}` does not resolve: its prefix names no namespace")
         }
     }
 }

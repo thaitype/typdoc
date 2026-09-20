@@ -1,0 +1,1 @@
+{ "name": "note", "fields": { "blocked_by": { "type": "ref[]", "target": "*", "acyclic": true } } }

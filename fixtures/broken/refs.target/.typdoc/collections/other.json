@@ -1,0 +1,1 @@
+{ "match": "other/*.md", "schema": "schemas/other.json" }

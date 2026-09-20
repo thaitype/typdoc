@@ -97,8 +97,11 @@ impl Argument {
     }
 }
 
-/// `^[A-Z][A-Z0-9]*-\d+$`, written by hand so the crate takes on no regex engine for it.
-fn looks_like_key(text: &str) -> bool {
+/// `^[A-Z][A-Z0-9]*-\d+$`, written by hand so the crate takes on no regex engine for it. Shared
+/// with `refs`, which tells a bare key apart from a relative path the same way an argument does
+/// (the key shape itself is one fact about the world; where the two readings differ — a prefix,
+/// scope — each module keeps its own rule, per ticket 7's report).
+pub(crate) fn looks_like_key(text: &str) -> bool {
     let Some((code, digits)) = text.split_once('-') else {
         return false;
     };

@@ -726,3 +726,371 @@ fn a_file_fitting_one_of_several_coplaced_coded_collections_is_not_a_stray() {
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     assert_eq!(ran.stdout_json()["findings"], json!([]));
 }
+
+// Ticket 10: the forms of a ref (a bare key, a sibling prefix, a relative path with `refBase`),
+// resolved through the index of names as they are on disk, and `refs.resolve`, `refs.target`,
+// `refs.acyclic`, `refs.moved`, `refs.codedByPath` and `names.shadowed`. The exact set each
+// rule's `broken/` fixture trips is checked by `coverage.rs`; this file covers the two cases the
+// ticket names, and a few finding shapes and positive cases that a single fixture cannot show
+// alongside a negative one.
+
+const REF_SCHEMA: [(&str, &str); 2] = [
+    (
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "*.md", "schema": "note.json" }"#,
+    ),
+    (
+        "note.json",
+        r#"{ "name": "note", "fields": { "see": { "type": "ref", "target": "*" } } }"#,
+    ),
+];
+
+/// The ticket's own example: a ref whose case differs from the target file's is `not-found`, not
+/// a match a case-insensitive file system might have given it (ticket 22 of the design
+/// decisions: paths compare exactly as written, case included).
+#[test]
+fn a_ref_whose_case_differs_from_the_files_is_not_found() {
+    let project = Scratch::project(&REF_SCHEMA);
+    project.file("Target.md", "");
+    project.file("a.md", "---\nsee: target.md\n---\n");
+
+    let ran = validate(&[], project.path());
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let findings = ran.stdout_json()["findings"].clone();
+    let findings = findings.as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0]["rule"], json!("refs.resolve"));
+    assert_eq!(findings[0]["field"], json!("see"));
+    assert!(
+        findings[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("not found"),
+        "{findings:?}"
+    );
+}
+
+/// The ticket's other example: `chief::WF-5` in a project with several namespaces is
+/// `bad-prefix`. The import form is not resolved in this story (ticket 17's), so this holds
+/// whether or not `chief` is a configured import alias: nothing here ever treats `::` as
+/// anything but not-yet-read.
+#[test]
+fn chief_double_colon_wf_5_in_a_project_with_several_namespaces_is_bad_prefix() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/config.json",
+            r#"{ "version": 1, "namespaces": ["story-1", "story-2"] }"#,
+        ),
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "*.md", "schema": "note.json" }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": { "see": { "type": "ref", "target": "*" } } }"#,
+        ),
+    ]);
+    // Both namespace folders must exist: a plain (non-glob) `namespaces` entry naming a folder
+    // that is not there is a config error, and `story-2` needs no document of its own for the
+    // project to genuinely have several namespaces.
+    project.file("story-2/.gitkeep", "");
+    project.file("story-1/a.md", "---\nsee: chief::WF-5\n---\n");
+
+    let ran = validate(&[], project.path());
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let findings = ran.stdout_json()["findings"].clone();
+    let findings = findings.as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0]["rule"], json!("refs.resolve"));
+    assert_eq!(findings[0]["path"], json!("story-1/a.md"));
+    assert!(
+        findings[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no namespace"),
+        "{findings:?}"
+    );
+}
+
+/// A bare key whose code exists in the project resolves in the document's own namespace,
+/// whatever the current directory is (design.md's Refs: "whatever the working directory").
+#[test]
+fn a_bare_key_resolves_in_the_documents_own_namespace() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/tickets.json",
+            r#"{ "match": "tickets/{key}.md", "schema": "wf.json" }"#,
+        ),
+        ("wf.json", r#"{ "name": "wf", "code": "WF", "fields": {} }"#),
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "notes/*.md", "schema": "note.json" }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": { "see": { "type": "ref", "target": "*" } } }"#,
+        ),
+    ]);
+    project.file("tickets/WF-1.md", "");
+    project.file("notes/a.md", "---\nsee: WF-1\n---\n");
+
+    let ran = validate(&[], project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout_json()["findings"], json!([]));
+}
+
+/// A relative ref resolved under `refBase: namespace` reads from the namespace's folder, not
+/// the document's own, unlike the default `refBase: file`.
+#[test]
+fn ref_base_namespace_reads_a_relative_ref_from_the_namespace_folder() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "notes/*.md", "schema": "note.json", "refBase": "namespace" }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": { "see": { "type": "ref", "target": "*" } } }"#,
+        ),
+    ]);
+    project.file("target.md", "");
+    project.file("notes/a.md", "---\nsee: target.md\n---\n");
+
+    let ran = validate(&[], project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout_json()["findings"], json!([]));
+}
+
+/// A ref that resolves to a document whose schema `target` does not list is `refs.target`, and
+/// one that resolves to a listed schema is clean.
+#[test]
+fn refs_target_refuses_a_schema_not_named_by_target() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/allowed.json",
+            r#"{ "match": "allowed/*.md", "schema": "allowed.json" }"#,
+        ),
+        ("allowed.json", r#"{ "name": "allowed", "fields": {} }"#),
+        (
+            ".typdoc/collections/tickets.json",
+            r#"{ "match": "*.md", "schema": "ticket.json" }"#,
+        ),
+        (
+            "ticket.json",
+            r#"{ "name": "ticket", "fields": { "see": { "type": "ref", "target": ["allowed"] } } }"#,
+        ),
+    ]);
+    project.file("allowed/a.md", "");
+    project.file("good.md", "---\nsee: allowed/a.md\n---\n");
+
+    let ran = validate(&[], project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout_json()["findings"], json!([]));
+}
+
+/// `refs.codedByPath` warns when a coded document is named by path, and a ref to the same
+/// document by key is clean, the same choice `set` and `new` make: a key does not change when
+/// the file moves and a path does (design.md's Refs, "Canonical form").
+#[test]
+fn a_coded_document_referenced_by_key_is_clean_and_by_path_warns() {
+    let files = [
+        (
+            ".typdoc/collections/tickets.json",
+            r#"{ "match": "tickets/{key}.md", "schema": "wf.json" }"#,
+        ),
+        ("wf.json", r#"{ "name": "wf", "code": "WF", "fields": {} }"#),
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "notes/*.md", "schema": "note.json" }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": { "see": { "type": "ref", "target": "*" } } }"#,
+        ),
+    ];
+    let by_key = Scratch::project(&files);
+    by_key.file("tickets/WF-1.md", "");
+    by_key.file("notes/a.md", "---\nsee: WF-1\n---\n");
+    let by_path = Scratch::project(&files);
+    by_path.file("tickets/WF-1.md", "");
+    by_path.file("notes/a.md", "---\nsee: ../tickets/WF-1.md\n---\n");
+
+    let key_ran = validate(&[], by_key.path());
+    let path_ran = validate(&[], by_path.path());
+
+    assert_eq!(key_ran.code, 0, "{}", key_ran.stderr);
+    assert_eq!(key_ran.stdout_json()["findings"], json!([]));
+    assert_eq!(
+        path_ran.code, 0,
+        "warn does not fail the run: {}",
+        path_ran.stderr
+    );
+    let findings = path_ran.stdout_json()["findings"].clone();
+    let findings = findings.as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0]["rule"], json!("refs.codedByPath"));
+    assert_eq!(findings[0]["level"], json!("warn"));
+}
+
+/// A cycle through an `acyclic` field is reported at each document on it; a field not marked
+/// `acyclic` may point back at itself with no finding.
+#[test]
+fn refs_acyclic_reports_every_document_on_the_cycle_and_a_plain_ref_field_may_cycle_freely() {
+    let files = [
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "*.md", "schema": "note.json" }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": {
+                "blocked_by": { "type": "ref[]", "target": "*", "acyclic": true },
+                "related": { "type": "ref[]", "target": "*" }
+            } }"#,
+        ),
+    ];
+    let cyclic = Scratch::project(&files);
+    cyclic.file("a.md", "---\nblocked_by: [b.md]\n---\n");
+    cyclic.file("b.md", "---\nblocked_by: [a.md]\n---\n");
+    let free = Scratch::project(&files);
+    free.file("a.md", "---\nrelated: [b.md]\n---\n");
+    free.file("b.md", "---\nrelated: [a.md]\n---\n");
+
+    let cyclic_ran = validate(&[], cyclic.path());
+    let free_ran = validate(&[], free.path());
+
+    assert_eq!(cyclic_ran.code, 2, "{}", cyclic_ran.stderr);
+    let findings = cyclic_ran.stdout_json()["findings"].clone();
+    let findings = findings.as_array().unwrap();
+    assert_eq!(findings.len(), 2, "{findings:?}");
+    for finding in findings {
+        assert_eq!(finding["rule"], json!("refs.acyclic"));
+        assert_eq!(finding["field"], json!("blocked_by"));
+    }
+    assert_eq!(free_ran.code, 0, "{}", free_ran.stderr);
+    assert_eq!(free_ran.stdout_json()["findings"], json!([]));
+}
+
+/// `refs.acyclic` is always on, but naming one document of a cycle reports only that document's
+/// own finding: every finding in the `paths` scope is about a document the caller named, and the
+/// other document on the same cycle is that document's own `validate` run to report.
+#[test]
+fn refs_acyclic_in_paths_scope_reports_only_the_named_document_on_the_cycle() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "*.md", "schema": "note.json" }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": {
+                "blocked_by": { "type": "ref[]", "target": "*", "acyclic": true }
+            } }"#,
+        ),
+    ]);
+    project.file("a.md", "---\nblocked_by: [b.md]\n---\n");
+    project.file("b.md", "---\nblocked_by: [a.md]\n---\n");
+
+    let ran = validate(&["a.md"], project.path());
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let findings = ran.stdout_json()["findings"].clone();
+    let findings = findings.as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0]["rule"], json!("refs.acyclic"));
+    assert_eq!(findings[0]["path"], json!("a.md"));
+}
+
+/// `refs.moved` replaces the ordinary missing-target finding and names the new key or path;
+/// without a matching `auto: moves` record, the same dangling ref is plain `refs.resolve`.
+#[test]
+fn refs_moved_replaces_refs_resolve_and_names_the_new_identity() {
+    let files = [
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "*.md", "schema": "note.json" }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": {
+                "moved_from": { "type": "list", "auto": "moves" },
+                "see": { "type": "ref", "target": "*" }
+            } }"#,
+        ),
+    ];
+    let moved = Scratch::project(&files);
+    moved.file("new.md", "---\nmoved_from: [old.md]\n---\n");
+    moved.file("b.md", "---\nsee: old.md\n---\n");
+    let not_recorded = Scratch::project(&files);
+    not_recorded.file("new.md", "---\n---\n");
+    not_recorded.file("b.md", "---\nsee: old.md\n---\n");
+
+    let moved_ran = validate(&[], moved.path());
+    let plain_ran = validate(&[], not_recorded.path());
+
+    assert_eq!(moved_ran.code, 2, "{}", moved_ran.stderr);
+    let findings = moved_ran.stdout_json()["findings"].clone();
+    let findings = findings.as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0]["rule"], json!("refs.moved"));
+    assert_eq!(findings[0]["path"], json!("b.md"));
+    assert!(
+        findings[0]["message"].as_str().unwrap().contains("new.md"),
+        "{findings:?}"
+    );
+
+    assert_eq!(plain_ran.code, 2, "{}", plain_ran.stderr);
+    let findings = plain_ran.stdout_json()["findings"].clone();
+    let findings = findings.as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0]["rule"], json!("refs.resolve"));
+}
+
+/// `names.shadowed` is a fact about the config, not about a document: no `namespace`,
+/// `collection` or `key`, the same shape `schema.valid` uses.
+#[test]
+fn a_names_shadowed_finding_carries_no_namespace_collection_or_key() {
+    let project = Scratch::project(&[]);
+    project.file(
+        ".typdoc/config.json",
+        r#"{ "version": 1, "namespaces": ["shadow_ns"], "imports": { "shadow_ns": "../elsewhere" } }"#,
+    );
+    project.file("shadow_ns/a.md", "");
+
+    let ran = validate(&[], project.path());
+
+    assert_eq!(ran.code, 0, "warn does not fail the run: {}", ran.stderr);
+    let findings = ran.stdout_json()["findings"].clone();
+    let findings = findings.as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    let finding = &findings[0];
+    assert_eq!(finding["rule"], json!("names.shadowed"));
+    assert_eq!(finding["level"], json!("warn"));
+    assert!(finding.get("namespace").is_none(), "{finding}");
+    assert!(finding.get("collection").is_none(), "{finding}");
+    assert!(finding.get("key").is_none(), "{finding}");
+}
+
+/// `names.shadowed` also shows under `--schemas`, the same scope `schema.valid` reaches.
+#[test]
+fn names_shadowed_is_reported_under_schemas_only_too() {
+    let project = Scratch::project(&[]);
+    project.file(
+        ".typdoc/config.json",
+        r#"{ "version": 1, "namespaces": ["shadow_ns"], "imports": { "shadow_ns": "../elsewhere" } }"#,
+    );
+    project.file("shadow_ns/a.md", "");
+
+    let ran = validate(&["--schemas"], project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let findings = ran.stdout_json()["findings"].clone();
+    let findings = findings.as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0]["rule"], json!("names.shadowed"));
+}

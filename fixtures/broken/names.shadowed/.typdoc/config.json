@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "namespaces": ["shadow_ns"],
+  "imports": { "shadow_ns": "../elsewhere" }
+}

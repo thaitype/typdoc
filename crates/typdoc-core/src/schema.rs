@@ -241,7 +241,9 @@ pub(crate) fn is_scheme_name(text: &str) -> bool {
 }
 
 /// A path with `.` and empty segments removed and each `..` taken against the segment before it.
-fn normalize(path: &str) -> String {
+/// Shared with `refs`, which joins a relative ref against its base the same way a schema
+/// reference is joined against the folder that names it.
+pub(crate) fn normalize(path: &str) -> String {
     let mut kept: Vec<&str> = Vec::new();
     for part in path.split('/') {
         match part {

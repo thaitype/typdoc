@@ -12,6 +12,7 @@ mod index;
 mod lines;
 mod namespaces;
 mod project;
+mod refs;
 pub mod rules;
 mod schema;
 mod scope;

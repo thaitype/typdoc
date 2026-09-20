@@ -1,0 +1,7 @@
+{
+  "name": "note",
+  "fields": {
+    "moved_from": { "type": "list", "auto": "moves" },
+    "see": { "type": "ref", "target": "*" }
+  }
+}

@@ -229,11 +229,13 @@ fn build_finding(
     }
 }
 
-/// A finding about `name`'s document, at `field` when it is about one field. Every finding this
-/// ticket's rules produce has no position (frontmatter.parse: contract item 7, checked by
-/// running; frontmatter.types and frontmatter.unknown: no field-position tracking is built
-/// yet), so this is the one place that constructs one.
-fn finding(
+/// A finding about `name`'s document, at `field` when it is about one field. No position-tracking
+/// is built yet for any rule that uses this (frontmatter.parse: contract item 7, checked by
+/// running; the others: nothing maps a field or a ref back to a line yet), so this is the one
+/// place that constructs one. `pub(crate)` so `project.rs`'s ref rules (`refs.resolve`,
+/// `refs.target`, `refs.codedByPath`, `refs.moved`, `refs.acyclic`) build their findings the same
+/// way `frontmatter.types` and `frontmatter.unknown` do, rather than a second shape for refs.
+pub(crate) fn finding(
     name: &DocName,
     level: Severity,
     rule: &'static str,
@@ -296,6 +298,22 @@ pub(crate) fn overlap_finding(path: &str, namespace: &str, message: String) -> F
         "collections.overlap",
         path,
         Some(namespace),
+        None,
+        None,
+        None,
+        message,
+    )
+}
+
+/// A finding about a name that is both a sibling namespace and an import alias
+/// (`names.shadowed`): a fact about the config, not about one document, so it carries no
+/// `namespace`, `collection` or `key`, the same shape `schema_finding` uses.
+pub(crate) fn names_shadowed_finding(level: Severity, path: &str, message: String) -> Finding {
+    build_finding(
+        level,
+        "names.shadowed",
+        path,
+        None,
         None,
         None,
         None,
