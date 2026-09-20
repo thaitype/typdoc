@@ -11,10 +11,12 @@ use crate::env::Env;
 use crate::error::Error;
 use crate::frontmatter;
 use crate::index::{Entry as Indexed, Index, Member};
+use crate::lines::Position;
+use crate::links;
 use crate::refs;
 use crate::schema::{self, Auto, FieldType, Resolved};
 use crate::scope::{self, Scope};
-use crate::template::Template;
+use crate::template::{Step, Template};
 use crate::validate::{self, DocName, Finding, Severity, ValidateScope};
 
 /// The folder that holds `.typdoc/config.json`: `TYPDOC_DIR` when it is set, and otherwise
@@ -72,6 +74,23 @@ struct RefProject<'a> {
     /// A written ref that no longer resolves, to the current key or path of the document that
     /// recorded moving away from it (`auto: moves`).
     moved: BTreeMap<String, String>,
+}
+
+/// The context every checked destination of one document (`check_body_destination`'s callers)
+/// shares: everything about the document and its rule levels that stays the same across every
+/// link, image and definition `check_body` walks, so a caller passes one reference instead of
+/// the same ten values on every call.
+struct BodyDocContext<'a> {
+    name: &'a DocName<'a>,
+    doc_path: &'a str,
+    doc_text: &'a str,
+    ctx: &'a refs::Ctx<'a>,
+    ignore: &'a [Template],
+    moved: &'a BTreeMap<String, String>,
+    collection: &'a Rules,
+    strict: bool,
+    links_level: Option<Severity>,
+    anchors_level: Option<Severity>,
 }
 
 struct Loaded {
@@ -450,6 +469,7 @@ impl Project {
         }
         if !findings.iter().any(|f| f.rule == "frontmatter.parse") {
             findings.extend(self.check_refs(path, entry, text, &name, strict, ref_project));
+            findings.extend(self.check_body(path, entry, text, &name, strict, ref_project));
         }
         findings
     }
@@ -547,6 +567,402 @@ impl Project {
             }
         }
         findings
+    }
+
+    /// `body.links`, `body.anchors` and `body.mentions` for one document already known to parse:
+    /// every checked link and reference definition `links::scan` finds, resolved the same way a
+    /// frontmatter path-form ref is (`refs::classify_body`, `refs::resolve_path`), and every
+    /// mention `links::mentions` finds, looked up by key. Nothing here is computed when all three
+    /// rules are `off`, since a document with a large body would otherwise be scanned for no
+    /// reason.
+    fn check_body(
+        &self,
+        path: &str,
+        entry: &Indexed,
+        text: &str,
+        name: &DocName,
+        strict: bool,
+        ref_project: &RefProject,
+    ) -> Vec<Finding> {
+        let collection = &self.collections[entry.collection];
+        let links_level = validate::effective_level(
+            Level::Error,
+            "body.links",
+            &self.config.validation,
+            &collection.validation,
+            strict,
+        );
+        let anchors_level = validate::effective_level(
+            Level::Error,
+            "body.anchors",
+            &self.config.validation,
+            &collection.validation,
+            strict,
+        );
+        let mentions_level = validate::effective_level(
+            Level::Off,
+            "body.mentions",
+            &self.config.validation,
+            &collection.validation,
+            strict,
+        );
+        if links_level.is_none() && anchors_level.is_none() && mentions_level.is_none() {
+            return Vec::new();
+        }
+
+        let scanned =
+            links::scan(text).expect("frontmatter.parse already refused an unclosed block");
+        let ctx = refs::Ctx {
+            doc_namespace: entry.namespace,
+            doc_path: path,
+            ref_base: collection.ref_base,
+            namespaces: &self.config.namespaces,
+            codes: &ref_project.codes,
+            index: &self.index,
+            root: &self.root,
+        };
+        let link_options = rule_options(
+            "body.links",
+            &self.config.validation,
+            &collection.validation,
+        );
+        let ignore: Vec<Template> = ignore_globs(&link_options)
+            .into_iter()
+            .filter_map(|glob| Template::parse(&glob).ok())
+            .collect();
+
+        let doc = BodyDocContext {
+            name,
+            doc_path: path,
+            doc_text: text,
+            ctx: &ctx,
+            ignore: &ignore,
+            moved: &ref_project.moved,
+            collection: &collection.validation,
+            strict,
+            links_level,
+            anchors_level,
+        };
+        let mut findings = Vec::new();
+        // A reference-style occurrence (`is_reference`) is checked once already, at its
+        // definition below: the design's own words, "the uses are not reported separately".
+        for link in scanned.links.iter().filter(|link| !link.is_reference) {
+            self.check_body_destination(
+                &link.written,
+                link.target.as_deref(),
+                link.anchor.as_deref(),
+                Position {
+                    line: link.line,
+                    col: link.col,
+                },
+                None,
+                &doc,
+                &mut findings,
+            );
+        }
+        for def in &scanned.definitions {
+            self.check_body_destination(
+                &def.written,
+                def.target.as_deref(),
+                def.anchor.as_deref(),
+                Position {
+                    line: def.line,
+                    col: def.col,
+                },
+                Some(def.uses),
+                &doc,
+                &mut findings,
+            );
+        }
+        if let Some(level) = links_level {
+            for dup in &scanned.duplicate_definitions {
+                findings.push(validate::finding_at(
+                    name,
+                    level,
+                    "body.links",
+                    None,
+                    Position {
+                        line: dup.line,
+                        col: dup.col,
+                    },
+                    format!(
+                        "already defined at line {}; this definition is ignored",
+                        dup.first_line
+                    ),
+                ));
+            }
+            for suspect in &scanned.suspects {
+                if matches!(
+                    refs::classify_body(&suspect.inner, &ctx),
+                    refs::BodyDestination::Skip
+                ) {
+                    continue;
+                }
+                let message = if suspect.definition {
+                    format!(
+                        "this line looks like a reference definition but is not one (an unescaped space?): write <{}> or use %20",
+                        suspect.inner
+                    )
+                } else {
+                    format!(
+                        "this looks like a link but is not one (an unescaped space?): write <{}> or use %20",
+                        suspect.inner
+                    )
+                };
+                findings.push(validate::finding_at(
+                    name,
+                    level,
+                    "body.links",
+                    None,
+                    Position {
+                        line: suspect.line,
+                        col: suspect.col,
+                    },
+                    message,
+                ));
+            }
+        }
+        if let Some(level) = mentions_level {
+            let options = rule_options(
+                "body.mentions",
+                &self.config.validation,
+                &collection.validation,
+            );
+            let inline_code = bool_option(&options, "inlineCode", true);
+            let fenced_code = bool_option(&options, "fencedCode", false);
+            let mentions = links::mentions(text, inline_code, fenced_code)
+                .expect("frontmatter.parse already refused an unclosed block");
+            for mention in mentions {
+                if self.mention_missing(&mention.written, entry.namespace, &ref_project.codes)
+                    != Some(true)
+                {
+                    continue;
+                }
+                let position = Position {
+                    line: mention.line,
+                    col: mention.col,
+                };
+                match self.moved_outcome(
+                    name,
+                    &mention.written,
+                    &mention.written,
+                    position,
+                    &ref_project.moved,
+                    &collection.validation,
+                    strict,
+                ) {
+                    Some(Some(finding)) => findings.push(finding),
+                    Some(None) => {}
+                    None => findings.push(validate::finding_at(
+                        name,
+                        level,
+                        "body.mentions",
+                        None,
+                        position,
+                        format!("{} not found", mention.written),
+                    )),
+                }
+            }
+        }
+        findings
+    }
+
+    /// One checked destination (a link, an image, or a reference definition — `uses` is `Some`
+    /// only for the latter, so its finding carries the design's `(used N times)`): resolved the
+    /// same way a frontmatter path-form ref is, then, if it resolves and carries a `#anchor`,
+    /// checked against the target's own headings. `None` for `target` is `[t](#local)`: the
+    /// document names itself, so there is nothing for `body.links` to check and `body.anchors`
+    /// reads this document's own headings. `doc` is the same for every destination of one
+    /// document; only `written`, `target`, `anchor`, `position` and `uses` change call to call.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "five parts genuinely vary per destination (written, target, anchor, position,
+    uses); doc and findings are the one context and the one output every call shares. Bundling
+    the five would hide which one a caller is passing, the same reasoning `unresolved_ref_finding`
+    already gives for a comparable list"
+    )]
+    fn check_body_destination(
+        &self,
+        written: &str,
+        target: Option<&str>,
+        anchor: Option<&str>,
+        position: Position,
+        uses: Option<usize>,
+        doc: &BodyDocContext,
+        findings: &mut Vec<Finding>,
+    ) {
+        let name = doc.name;
+        // A destination that does not resolve but matches a recorded `auto: moves` entry is
+        // `refs.moved`, not `body.links`, exactly as a frontmatter ref already reads it (design:
+        // "Refs come from two places, frontmatter fields and body links" — the Refs table's
+        // `refs.moved` row is written for "a ref", not for one of the two places alone). Looked
+        // up by `target`, the anchor-free path (`moved` never records a `#anchor`), not by
+        // `written`: `[t](old.md#section)` must be looked up as `old.md`, or a moved target with
+        // an anchor would miss this and silently read as an ordinary `body.links` finding.
+        let missing = |findings: &mut Vec<Finding>, lookup: &str| match self.moved_outcome(
+            name,
+            lookup,
+            written,
+            position,
+            doc.moved,
+            doc.collection,
+            doc.strict,
+        ) {
+            Some(Some(finding)) => findings.push(finding),
+            Some(None) => {}
+            None => {
+                if let Some(level) = doc.links_level {
+                    findings.push(validate::finding_at(
+                        name,
+                        level,
+                        "body.links",
+                        None,
+                        position,
+                        missing_target_message(written, uses),
+                    ));
+                }
+            }
+        };
+        let resolved_path = match target {
+            None => Some(doc.doc_path.to_owned()),
+            Some(target) => match refs::classify_body(target, doc.ctx) {
+                refs::BodyDestination::Skip => return,
+                refs::BodyDestination::BadPrefix => {
+                    missing(findings, target);
+                    None
+                }
+                refs::BodyDestination::Path(joined) => {
+                    if doc.ignore.iter().any(|glob| ignore_matches(glob, &joined)) {
+                        return;
+                    }
+                    match refs::resolve_path(&joined, &self.index, &self.root) {
+                        Ok(resolved) => Some(resolved.path),
+                        Err(_) => {
+                            missing(findings, target);
+                            None
+                        }
+                    }
+                }
+            },
+        };
+        let (Some(level), Some(anchor), Some(target_path)) =
+            (doc.anchors_level, anchor, &resolved_path)
+        else {
+            return;
+        };
+        let headings = self.target_headings(target_path, doc.doc_path, doc.doc_text);
+        let found = headings
+            .iter()
+            .any(|heading| heading.slug.to_lowercase() == anchor.to_lowercase());
+        if !found {
+            findings.push(validate::finding_at(
+                name,
+                level,
+                "body.anchors",
+                None,
+                position,
+                format!("the heading `#{anchor}` does not exist in `{target_path}`"),
+            ));
+        }
+    }
+
+    /// The headings of `target_path`, this document's own when it names itself, another
+    /// document's read fresh from disk otherwise. A target that cannot be read or parsed is
+    /// treated as having no headings, so an anchor into it is loudly reported rather than
+    /// silently passed: `body.anchors` only reaches a target `body.links` already resolved, so
+    /// this is the read failing after the existence check already passed, not a missing file.
+    fn target_headings(&self, target_path: &str, doc_path: &str, doc_text: &str) -> Vec<Heading> {
+        if target_path == doc_path {
+            return body::headings(doc_text).unwrap_or_default();
+        }
+        let text = match self.index.get(target_path) {
+            Some(entry) => fs::read_to_string(&entry.file).ok(),
+            None => fs::read_to_string(self.root.join(target_path)).ok(),
+        };
+        text.and_then(|text| body::headings(&text).ok())
+            .unwrap_or_default()
+    }
+
+    /// Whether a mention needs a finding: `None` when its code is not a known code of this
+    /// project (design: "not a known code" mentions, such as `UTF-8` or `SHA-256`, are never
+    /// checked); `Some(true)` when it does not resolve; `Some(false)` when it does. A prefixed
+    /// mention naming no sibling namespace, and one written with `::` (an import, ticket 17's),
+    /// both read as "not found": the design gives mentions one outcome for every way a lookup can
+    /// fail, unlike a ref's `bad-prefix`.
+    fn mention_missing(
+        &self,
+        written: &str,
+        doc_namespace: usize,
+        codes: &BTreeSet<String>,
+    ) -> Option<bool> {
+        let key = written.rsplit(':').next().unwrap_or(written);
+        if !codes.contains(refs::code_of(key)) {
+            return None;
+        }
+        if written.contains("::") {
+            return Some(true);
+        }
+        let namespace = match written.rsplit_once(':') {
+            Some((prefix, _)) => match self.namespace_index(prefix) {
+                Some(namespace) => namespace,
+                None => return Some(true),
+            },
+            None => doc_namespace,
+        };
+        Some(self.index.key(namespace, key).is_none())
+    }
+
+    /// The `refs.moved` outcome for a body destination or a mention that did not otherwise
+    /// resolve: `None` when `lookup` matches no recorded move, so the caller reports its own
+    /// ordinary missing finding; `Some(None)` when it does but `refs.moved` is configured `off`,
+    /// so nothing at all is reported (a rule set to `off` produces no finding, not a fallback to
+    /// a different one); `Some(Some(finding))` otherwise. The frontmatter equivalent,
+    /// `unresolved_ref_finding`, folds this together with the `refs.resolve` fallback it also
+    /// owns; a body destination's and a mention's fallback messages differ from each other and
+    /// from a frontmatter ref's, so this stays the one shared part and each caller builds its own
+    /// fallback.
+    ///
+    /// `lookup` is matched against `auto: moves`' recorded values, plain paths and keys that
+    /// never carry a `#anchor`; `display` is what the message names. A frontmatter ref and a
+    /// mention pass the same string for both; a body link does not, since `[t](old.md#section)`
+    /// must be looked up as `old.md`, not `old.md#section`, or a moved target with an anchor
+    /// would miss `refs.moved` and silently fall through to `body.links` instead.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "each part is independent context the two callers (a body destination, a
+    mention) already hold; bundling them would hide which one changes between the two, the same
+    reasoning `unresolved_ref_finding` already gives for a comparable list"
+    )]
+    fn moved_outcome(
+        &self,
+        name: &DocName,
+        lookup: &str,
+        display: &str,
+        position: Position,
+        moved: &BTreeMap<String, String>,
+        collection: &Rules,
+        strict: bool,
+    ) -> Option<Option<Finding>> {
+        let new_id = moved.get(lookup)?;
+        Some(
+            validate::effective_level(
+                Level::Error,
+                "refs.moved",
+                &self.config.validation,
+                collection,
+                strict,
+            )
+            .map(|level| {
+                validate::finding_at(
+                    name,
+                    level,
+                    "refs.moved",
+                    None,
+                    position,
+                    format!("the ref `{display}` no longer resolves: it was moved to `{new_id}`"),
+                )
+            }),
+        )
     }
 
     /// `refs.moved` when `written` matches a recorded move, `refs.resolve` otherwise (`None` only
@@ -871,6 +1287,85 @@ fn reason_message(written: &str, reason: refs::Reason) -> String {
             format!("the ref `{written}` does not resolve: its prefix names no namespace")
         }
     }
+}
+
+/// `body.links`' message for a destination that does not resolve, matching the design's own
+/// example (`"link target missing: ../x.md"`); a definition's finding also carries how many
+/// places used it (`uses` is `Some` only there), since it is checked once regardless of use.
+fn missing_target_message(written: &str, uses: Option<usize>) -> String {
+    match uses {
+        None => format!("link target missing: {written}"),
+        Some(1) => format!("link target missing: {written} (used 1 time)"),
+        Some(n) => format!("link target missing: {written} (used {n} times)"),
+    }
+}
+
+/// A rule's own options, `global`'s then `collection`'s merged key by key: design line 618, "A
+/// collection file merges key by key, so it states only what differs," read as holding inside
+/// one rule's own setting and not only for which rule names a collection's `validation` states —
+/// a collection that overrides only `level` keeps every option the global setting gave the same
+/// rule, and an option a collection does state replaces only that option, never the whole set.
+/// `level` itself already merges this way (`effective_level`); this is the same rule for options.
+fn rule_options(
+    rule: &str,
+    global: &Rules,
+    collection: &Rules,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut merged = global
+        .get(rule)
+        .map(|setting| setting.options.clone())
+        .unwrap_or_default();
+    if let Some(setting) = collection.get(rule) {
+        merged.extend(setting.options.clone());
+    }
+    merged
+}
+
+fn bool_option(
+    options: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    default: bool,
+) -> bool {
+    options
+        .get(key)
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(default)
+}
+
+/// `body.links`' `ignore` option: globs of relative targets to skip, matched after
+/// percent-decoding (design's `body.links` row). A value that is not a string, or missing
+/// entirely, contributes nothing, since `config.rule-unknown` already refuses any other shape for
+/// the option when the config loads.
+fn ignore_globs(options: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
+    options
+        .get("ignore")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Whether `path` (relative to the project folder) matches an `ignore` glob such as
+/// `assets/**`: the same template syntax `match` already reads (`Template::parse`), so `**`
+/// stands for any number of whole path segments and `*` for any run of characters within one,
+/// rather than a second glob syntax with its own rules.
+fn ignore_matches(pattern: &Template, path: &str) -> bool {
+    fn go(steps: &[Step], parts: &[&str]) -> bool {
+        match steps.split_first() {
+            None => parts.is_empty(),
+            Some((Step::Name(segment), rest)) => matches!(
+                parts.split_first(),
+                Some((first, more)) if segment.matches(first) && go(rest, more)
+            ),
+            Some((Step::Folders, rest)) => (0..=parts.len()).any(|skip| go(rest, &parts[skip..])),
+        }
+    }
+    let parts: Vec<&str> = path.split('/').collect();
+    go(pattern.steps(), &parts)
 }
 
 /// The message a `collections.overlap` finding and a refused direct read of the same path share:

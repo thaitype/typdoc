@@ -214,6 +214,7 @@ fn build_finding(
     collection: Option<&str>,
     key: Option<&str>,
     field: Option<&str>,
+    position: Option<Position>,
     message: String,
 ) -> Finding {
     Finding {
@@ -225,7 +226,7 @@ fn build_finding(
         collection: collection.map(str::to_owned),
         key: key.map(str::to_owned),
         field: field.map(str::to_owned),
-        position: None,
+        position,
     }
 }
 
@@ -250,6 +251,32 @@ pub(crate) fn finding(
         Some(name.collection),
         name.key,
         field,
+        None,
+        message,
+    )
+}
+
+/// A finding about `name`'s document at a known position: the body-side rules (`body.links`,
+/// `body.anchors`) are the first this crate builds whose position is known, from `links::scan`'s
+/// own line and column (`col` at the `[` or `!`, or at a definition's `[`, per the design's
+/// Output paragraph).
+pub(crate) fn finding_at(
+    name: &DocName,
+    level: Severity,
+    rule: &'static str,
+    field: Option<&str>,
+    position: Position,
+    message: String,
+) -> Finding {
+    build_finding(
+        level,
+        rule,
+        name.path,
+        Some(name.namespace),
+        Some(name.collection),
+        name.key,
+        field,
+        Some(position),
         message,
     )
 }
@@ -265,6 +292,7 @@ pub(crate) fn schema_finding(path: &str, field: Option<&str>, message: String) -
         None,
         None,
         field,
+        None,
         message,
     )
 }
@@ -285,6 +313,7 @@ pub(crate) fn stray_file_finding(
         None,
         None,
         None,
+        None,
         message,
     )
 }
@@ -301,6 +330,7 @@ pub(crate) fn overlap_finding(path: &str, namespace: &str, message: String) -> F
         None,
         None,
         None,
+        None,
         message,
     )
 }
@@ -313,6 +343,7 @@ pub(crate) fn names_shadowed_finding(level: Severity, path: &str, message: Strin
         level,
         "names.shadowed",
         path,
+        None,
         None,
         None,
         None,
@@ -338,6 +369,7 @@ pub(crate) fn duplicate_key_finding(
         Some(namespace),
         Some(collection),
         Some(key),
+        None,
         None,
         message,
     )

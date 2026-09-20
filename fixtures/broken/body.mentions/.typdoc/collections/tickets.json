@@ -1,0 +1,1 @@
+{ "match": "tickets/{key}.md", "schema": "schemas/wf.json" }

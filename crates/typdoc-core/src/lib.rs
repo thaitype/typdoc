@@ -10,6 +10,7 @@ mod error;
 mod frontmatter;
 mod index;
 mod lines;
+mod links;
 mod namespaces;
 mod project;
 mod refs;
@@ -28,6 +29,9 @@ pub use document::{Document, Value};
 pub use env::{Deps, Env};
 pub use error::{ConfigError, Error, ErrorKind};
 pub use lines::{LineMap, Position};
+pub use links::{
+    BodyLink, BodyLinks, Definition, DuplicateDefinition, Mention, Suspect, mentions, scan,
+};
 pub use project::{Project, Toc, ValidateReport, discover};
 pub use schema::{Auto, Field, FieldType, OptBool, Resolved, Schema, Target};
 pub use scope::{Scope, Source};

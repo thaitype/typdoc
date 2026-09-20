@@ -1,0 +1,6 @@
+---
+---
+
+# Heading
+
+[t](#missing)

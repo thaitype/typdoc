@@ -57,6 +57,9 @@ pub const RULES: &[&str] = &[
     "refs.codedByPath",
     "refs.moved",
     "names.shadowed",
+    "body.links",
+    "body.anchors",
+    "body.mentions",
 ];
 
 /// Ids the design names and the binary does not report yet. Each is a difference between
@@ -65,9 +68,6 @@ pub const RULES: &[&str] = &[
 pub const UNIMPLEMENTED_RULES: &[&str] = &[
     "frontmatter.transitions", // story 2
     "state.missing",           // story 1
-    "body.links",              // story 1
-    "body.anchors",            // story 1
-    "body.mentions",           // story 1
     "imports.absent",          // story 1
     "config.state-uncoded",    // story 1
     "config.state-orphan",     // story 1

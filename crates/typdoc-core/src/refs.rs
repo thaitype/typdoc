@@ -83,6 +83,16 @@ enum Form {
     BadPrefix,
 }
 
+/// What a body link's destination is, before anything is looked up: a path to resolve, `bad
+/// prefix` (an import form, unbuilt this story, same as a frontmatter `name::` ref), or skipped
+/// entirely — an ordinary URL scheme (`https:`, `mailto:` and so on), which the design says is
+/// "always skipped; no configuration is needed", never a finding of any kind.
+pub(crate) enum BodyDestination {
+    Path(String),
+    BadPrefix,
+    Skip,
+}
+
 /// Resolves one ref as written in frontmatter, through the forms the design's Refs table gives
 /// (bare key, sibling prefix, relative path with `refBase`) plus the import form, which this
 /// story does not read (see the module doc).
@@ -98,6 +108,56 @@ pub(crate) fn resolve_one(written: &str, ctx: &Ctx) -> Outcome {
         Form::Key { namespace, key } => resolve_key(namespace, &key, ctx.index),
         Form::Path { base, rest } => resolve_path(&join(&base, &rest), ctx.index, ctx.root),
         Form::BadPrefix => Err(Reason::BadPrefix),
+    }
+}
+
+/// What a body link's destination (`target`, already percent-decoded, with any `#anchor` already
+/// split off by `links::scan`) is, before it is looked up: the same prefix rules a frontmatter
+/// ref uses (a leading `./` or `../` escapes a colon that is part of the path; `::` is always
+/// `bad-prefix`, the import form this story does not read; a single `name:` is the sibling
+/// namespace `name` when one exists), except that a body link is always a path and never a key
+/// (design.md's Body links paragraph: "after the prefix comes a path, never a key" — read here as
+/// holding for the unprefixed form too, since nothing in Body links gives a body link a bare-key
+/// reading the way a frontmatter `ref` field's Refs table does), and a single colon whose prefix
+/// names no sibling is an ordinary URL scheme rather than `bad-prefix`: body text carries real
+/// URLs a typed frontmatter field never does, and the design's own words for this case are "a URL
+/// scheme... that is not a namespace name or an import alias are always skipped".
+pub(crate) fn classify_body(target: &str, ctx: &Ctx) -> BodyDestination {
+    let form = if target.starts_with("./") || target.starts_with("../") {
+        Form::Path {
+            base: base_of(
+                ctx.ref_base,
+                ctx.doc_path,
+                ctx.doc_namespace,
+                ctx.namespaces,
+            ),
+            rest: target.to_owned(),
+        }
+    } else if target.contains("::") {
+        Form::BadPrefix
+    } else if let Some((prefix, rest)) = target.split_once(':') {
+        match namespace_named(ctx.namespaces, prefix) {
+            Some(namespace) => Form::Path {
+                base: ctx.namespaces[namespace].folder.clone(),
+                rest: rest.to_owned(),
+            },
+            None => return BodyDestination::Skip,
+        }
+    } else {
+        Form::Path {
+            base: base_of(
+                ctx.ref_base,
+                ctx.doc_path,
+                ctx.doc_namespace,
+                ctx.namespaces,
+            ),
+            rest: target.to_owned(),
+        }
+    };
+    match form {
+        Form::Path { base, rest } => BodyDestination::Path(join(&base, &rest)),
+        Form::BadPrefix => BodyDestination::BadPrefix,
+        Form::Key { .. } => unreachable!("classify_body builds no key form"),
     }
 }
 
@@ -171,7 +231,7 @@ fn namespace_named(namespaces: &[Namespace], name: &str) -> Option<usize> {
 
 /// The part of a key before its dash: `WF` in `WF-3`. Only called once `looks_like_key` has
 /// already shown a dash is there.
-fn code_of(key: &str) -> &str {
+pub(crate) fn code_of(key: &str) -> &str {
     key.split_once('-')
         .map(|(code, _)| code)
         .expect("looks_like_key already found a dash")
@@ -214,7 +274,7 @@ fn join(base: &str, rest: &str) -> String {
 /// on disk but matches no collection resolves too, with no collection (only `target: "*"`
 /// accepts it: design.md's Target names, "`*` also accepts files outside any collection, such as
 /// a README"); anything else is `not-found`.
-fn resolve_path(path: &str, index: &Index, root: &Path) -> Outcome {
+pub(crate) fn resolve_path(path: &str, index: &Index, root: &Path) -> Outcome {
     if let Some(entry) = index.get(path) {
         return Ok(Resolved {
             path: path.to_owned(),
@@ -342,6 +402,25 @@ mod tests {
         )
     }
 
+    /// `classify_body` on a document `tickets/WF-1.md` of the two-namespace project `namespaces`
+    /// gives: `classify_body` itself never reads `codes` or `index` (a body link is never a bare
+    /// key), so an empty index stands in.
+    fn classify_body_default(target: &str, ref_base: RefBase) -> BodyDestination {
+        let namespaces = namespaces();
+        let codes = BTreeSet::new();
+        let index = Index::default();
+        let ctx = Ctx {
+            doc_namespace: 0,
+            doc_path: "tickets/WF-1.md",
+            ref_base,
+            namespaces: &namespaces,
+            codes: &codes,
+            index: &index,
+            root: Path::new("."),
+        };
+        classify_body(target, &ctx)
+    }
+
     fn code_set(codes: &[&str]) -> BTreeSet<String> {
         codes.iter().map(|c| c.to_string()).collect()
     }
@@ -419,6 +498,55 @@ mod tests {
         let form = classify_default("./weird:name.md", RefBase::File, &code_set(&[]));
 
         assert!(matches!(form, Form::Path { rest, .. } if rest == "./weird:name.md"));
+    }
+
+    #[test]
+    fn a_body_link_with_no_prefix_is_a_path_never_a_key_even_when_key_shaped() {
+        // Unlike a frontmatter ref, a body link never reads the "bare key" row: design.md's Body
+        // links paragraph gives it no bare-key form at all, only the forms a Markdown link
+        // destination can take, all of them paths.
+        let form = classify_body_default("WF-1", RefBase::File);
+
+        assert!(matches!(form, BodyDestination::Path(path) if path == "tickets/WF-1"));
+    }
+
+    #[test]
+    fn a_body_link_sibling_prefix_is_a_path_from_that_namespaces_folder_never_a_key() {
+        let form = classify_body_default("story-2:WF-5", RefBase::File);
+
+        assert!(matches!(form, BodyDestination::Path(path) if path == "story-2/WF-5"));
+    }
+
+    #[test]
+    fn a_body_link_double_colon_is_bad_prefix_the_import_form_this_story_does_not_read() {
+        let form = classify_body_default("memory::precedents/x.md", RefBase::File);
+
+        assert!(matches!(form, BodyDestination::BadPrefix));
+    }
+
+    #[test]
+    fn a_body_link_single_colon_naming_no_sibling_is_skipped_as_a_url_scheme() {
+        for target in ["https://example.com/a.md", "mailto:a@b.com", "file:///a.md"] {
+            let form = classify_body_default(target, RefBase::File);
+
+            assert!(matches!(form, BodyDestination::Skip), "{target}");
+        }
+    }
+
+    #[test]
+    fn a_body_link_unprefixed_path_joins_against_the_documents_folder_or_its_namespace() {
+        let file = classify_body_default("x.md", RefBase::File);
+        let namespace = classify_body_default("x.md", RefBase::Namespace);
+
+        assert!(matches!(file, BodyDestination::Path(path) if path == "tickets/x.md"));
+        assert!(matches!(namespace, BodyDestination::Path(path) if path == "x.md"));
+    }
+
+    #[test]
+    fn a_body_link_leading_dot_slash_escapes_a_colon_that_is_really_part_of_the_path() {
+        let form = classify_body_default("./weird:name.md", RefBase::File);
+
+        assert!(matches!(form, BodyDestination::Path(path) if path == "tickets/weird:name.md"));
     }
 
     #[test]
