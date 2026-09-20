@@ -1,7 +1,7 @@
 # 12: `typdoc refs`
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 3, 10, 11
 
 ## What this delivers
