@@ -14,6 +14,8 @@ cargo test --workspace                     # must pass offline
 cargo clippy --workspace -- -D warnings
 cargo fmt --check
 cargo run -p typdoc -- <args>              # run the CLI from the repo
+scripts/check-public-text.sh               # public-text gate: a floor, not a ceiling (see rule 7)
+scripts/check-public-text.sh --self-test   # proves the gate can fail; run whenever the gate changes
 ```
 
 ## Architecture Overview
@@ -44,9 +46,10 @@ cargo run -p typdoc -- <args>              # run the CLI from the repo
 
 ### Important Development Rules
 
-1. Before every commit, `cargo fmt --check`, `cargo clippy --workspace -- -D warnings` and `cargo test --workspace` must pass.
+1. Before every commit, `cargo fmt --check`, `cargo clippy --workspace -- -D warnings` and `cargo test --workspace` must pass, and so must `scripts/check-public-text.sh` (rule 7).
 2. Tests must run offline (remote schemas are mocked). Fixtures live in the repo: it is public, so a real document is copied in only after review, and a test never skips silently when a file is missing.
 3. Writes touch only the frontmatter block and never re-serialize the body (the exception is `mv`, which rewrites link paths).
 4. Always write files via temp file + rename.
 5. Every command must support `--json` and use the exit codes 0–4 from the design.
 6. The design doc is the source of truth — to deviate from it, change the doc first.
+7. This repository is public, and every line in it reads as the repository owner's own work: no names of people, teams, tools or assistants who worked on it, no record of who approved or decided something or how a decision arrived, and no wording that refers to someone else deciding. The reasoning is kept in full; only who decided and how it arrived is left out. A decision is written as `Decided ...`, a chosen fallback as `Default ...`, and something not checked as `Not verified ...`. This holds for every file, `.chief/` included, and for later edits, not only for a first cleanup. `scripts/check-public-text.sh` catches phrasing already known to fail. It is a floor, not a ceiling: a clean run proves nothing beyond its patterns, and the check that decides is reading each paragraph and asking whether it reads as the owner's own work.
