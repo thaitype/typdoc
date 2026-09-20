@@ -551,7 +551,7 @@ typdoc validate [<key|path> ...] [--schemas] [--strict] [--audit]
 - **Refs:** missing targets, disallowed target schemas, missing `#heading` anchors, cycles on `acyclic` fields, coded documents referenced by path (warning).
 - **Across namespaces:** a ref into an imported project that is absent on this machine is a warning; a present project missing the file is an error. `--strict` makes both errors.
 
-`--schemas` checks schemas only, including fields used across namespaces (schema drift). Suited to pre-commit, CI and agent post-edit hooks.
+`--schemas` checks schemas only, including fields used across namespaces (schema drift). Suited to pre-commit, CI and agent post-edit hooks. The arguments are keys or paths of documents, in any mix. A key that exists in more than one namespace in scope stops the command with exit 1 and every choice listed, and an argument that names no document stops it with exit 5; in both cases before any report is made, never as a finding.
 
 **Audit mode.** `validate` is a gate: it respects configured levels and fails, so CI, hooks and agents can stop a bad change. `--audit` answers a different question, "what would I have to fix to adopt typdoc here?", and is meant for writing a config for existing files. It runs the same checks, with these differences:
 
@@ -573,7 +573,7 @@ proposals     13 files   clean
 in no collection: README.md, drafts/old-idea.md, ... (12)
 ```
 
-A typical adoption: run `--audit`, adjust `match` until every intended file is covered, adjust schemas or fix files until the summary is clean, then turn on plain `validate` in CI. `--json` returns the summary and every finding. While the config cannot be loaded, `validate` (audit included) prints an error object with every config error it could determine; once the config loads it prints a report every time. The change from one form to the other is a change of state, from a config that cannot be loaded to one that can, and it does not alternate.
+A typical adoption: run `--audit`, adjust `match` until every intended file is covered, adjust schemas or fix files until the summary is clean, then turn on plain `validate` in CI. `--json` returns the summary and every finding, as described under JSON output. While the config cannot be loaded, `validate` (audit included) prints an error object with every config error it could determine; once the config loads it prints a report every time. The change from one form to the other is a change of state, from a config that cannot be loaded to one that can, and it does not alternate.
 
 ## Validation rules
 
@@ -706,7 +706,7 @@ One lock per namespace serializes writes, which is enough for number allocation,
 
 ## JSON output
 
-Every command accepts `--json`, and its result is one JSON object on standard output. Commands are of two kinds. A command whose result is a verdict on the project (`validate`, and `pull --check`) prints that verdict on standard output whether or not it is favourable: the findings are the result, and exit 2 says that some of them are errors. A command that does something (`get`, `list`, `toc`, `refs`, `new`, `set`, `mv`, `pull`) prints its result on standard output when it succeeds and, when it cannot, the error object described under Exit codes and errors on standard error. A new command falls on one side by asking whether its result is a judgement about the project or the outcome of an action. The result is held in a field named for it and is never printed bare, so that facts about the result can sit beside it: a `list` that `--limit` cuts short has to say so, and a bare array has no place to say it. Output may gain fields in later versions, so a consumer must ignore any field it does not know; this holds for the error object as well.
+Every command accepts `--json`, and its result is one JSON object on standard output. Commands are of two kinds. A command whose result is a verdict on the project (`validate`, and `pull --check`) prints that verdict on standard output whether or not it is favourable: the findings are the result, and exit 2 says that some of them are errors. A command that does something (`get`, `list`, `toc`, `refs`, `new`, `set`, `mv`, `pull`) prints its result on standard output when it succeeds and, when it cannot, the error object described under Exit codes and errors on standard error. A new command falls on one side by asking whether its result is a judgement about the project or the outcome of an action. The result is held in a field named for it and is never printed bare, so that facts about the result can sit beside it: a `list` that `--limit` cuts short has to say so, and a bare array has no place to say it. Output may gain fields in later versions, so a consumer must ignore any field it does not know; this holds for the error object as well. The output promises only what a caller cannot work out from what it is already given, because every field it promises has to stay true for as long as the version does: a count of findings per rule, for example, is not in it.
 
 **A document** is the same object wherever it appears, in `get` and in `list` alike. It has `path`, `key` (coded documents only), `code`, `collection`, `schema` and `namespace`, and `fields`, which holds all of the document's frontmatter. The frontmatter stays apart in `fields` because a field that is not in the schema is kept and can have any name, `path` and `key` included.
 
@@ -718,8 +718,21 @@ Every command accepts `--json`, and its result is one JSON object on standard ou
 | --- | --- |
 | `get` | `{ "document": <document> }` |
 | `list` | `{ "documents": [<document>, ...], "total": n, "truncated": b }` |
+| `validate` | `{ "summary": {...}, "findings": [<finding>, ...] }` |
 
 `total` is the number of documents that match, counted before `--limit`, and `truncated` is true when `total` is larger than the number listed. Because `total` is always reported, a `list` filters every document even when `--limit` is small.
+
+**The summary of `validate`** says what the report covers, so that a list of findings cannot be read as more than was checked. `scope` is `all` for the whole project, `paths` when arguments named the documents to check, and `schemas` for `--schemas`. `strict` is true when `--strict` was in effect. `checked` holds `namespaces`, the namespaces covered, sorted by name, and `documents`, the number of documents checked (0 for `schemas`); for `paths` it also holds `paths`, the `path` of each document checked, sorted and each once, so it can be matched with the `path` of a finding. `findings` counts the findings per `level` (`error`, `warn`, `info`) after the rule levels have been merged and after `--strict` has raised the warnings, so the numbers agree with the exit code. `strict` is there so that a count of errors is not read against a configuration file that calls the same findings warnings.
+
+```json
+{ "summary": { "scope": "all", "strict": false,
+               "checked": { "namespaces": ["default"], "documents": 214 },
+               "findings": { "error": 3, "warn": 12, "info": 0 } },
+  "findings": [ { "level": "error", "rule": "body.links", "message": "...",
+                  "path": "tickets/WF-7.md", "namespace": "default", "key": "WF-7", "line": 8, "col": 5 } ] }
+```
+
+**Order.** The order of `findings` is guaranteed: by `path`, then `line`, `col`, `rule` and `message`, a finding with no position before one with a position in the same file. `path` is compared as it is under Sorting: lexicographically, by the bytes of the path. This differs from `list` on purpose. `findings` are ordered by position in a file, so the path decides; `list` orders documents, and a document's key contains a number, which is compared as a number. They order different things, and making them agree would leave the order of findings depending on the numbers in keys.
 
 ## Exit codes and errors
 
