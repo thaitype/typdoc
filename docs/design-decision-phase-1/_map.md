@@ -44,6 +44,7 @@
 - For the contract: the error id of a write rejected by the re-read check; and proving `yaml-edit` on anchors and tags in the prototype.
 - For story 1's contract: which file a schema-drift finding (`validate --schemas`) names, and what a path given as an argument is counted from, so that a `path` printed by one command is accepted by the next, also from above the project when `TYPDOC_DIR` is used (ticket 15).
 - For story 1's contract: what `validate` does when `--schemas` or `--audit` is combined with key or path arguments (ticket 15).
+- For story 1's contract: which rule reports frontmatter that has a block but cannot be parsed (a block that is never closed, invalid YAML); the design lists none, and every rule needs a fixture (ticket 15).
 - Scale: the index is rebuilt on every run with no cache; at what document count does that stop being acceptable? Ticket 15 adds a fixed cost to this: `list` reports `total`, so a query filters the whole set and cannot stop at `--limit`.
 
 ## Out of scope
