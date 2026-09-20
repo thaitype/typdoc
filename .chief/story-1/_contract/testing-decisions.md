@@ -20,6 +20,8 @@ The strategy is decided in ticket 9 of `docs/design-decision-phase-1/` and is no
 
 Three lists in code record what the design describes and the binary does not have yet: `unimplemented_commands` (`new`, `set`, `mv`, `pull`), `unproduced_exit_codes` (3 and 4, and 6 if no deterministic test is found) and, as a Default, `unimplemented_rules` (`frontmatter.transitions`). Each list is checked in two directions: everything the design names is in the registry or in the list, and nothing in a list is in the registry or produced by a test, so a list cannot be used as a way out and an entry that outlives its work is red at once. An entry carries the story expected to deliver it as a comment, which no test reads. The lists only shrink, and empty is the correct state of a finished v1.
 
+A rule in `unimplemented_rules` has not been built, so it has no fixture, and the requirement of ticket 9 that every rule has a fixture in `broken/` must not turn red for a rule that is meant not to exist yet: two coverage checks that disagree end with someone switching one of them off. So a rule is exempt from the requirement for as long as it is in the list, and the moment it is taken out of the list, with the rule now in the registry, the requirement applies and the suite is red until the fixture exists. The requirement is read from the registry, so the exemption follows from the definition and needs no special case in the check.
+
 The check on rules is the only one that is new. Ticket 9 compares the design with the registry for commands, not for rules, so a rule that the design lists and nobody builds would go unnoticed; the check reads the rule ids from the design's rule tables, as the shell examples are read from the document.
 
 ## Two acceptance runs, made by hand

@@ -51,6 +51,7 @@
 - Parked, not waiting on an answer and blocking no ticket: a macOS runner, and running the public-text gate (`scripts/check-public-text.sh`) in CI or a hook. Today the gate runs only when someone remembers, so it is a habit, not a gate. Not raised again until someone takes it up.
 - For the contract: the error id of a write rejected by the re-read check; and proving `yaml-edit` on anchors and tags in the prototype.
 - For story 1's contract: what position a `frontmatter.parse` finding carries for the errors where the YAML reader gives none (a second YAML document in the block) or the start of the mapping (a duplicate key); the finding must not read as more exact than the reader (ticket 18).
+- Which files a run reads: whether it enters folders whose names start with `.`, follows symbolic links, or leaves out ignored files, and whether a project can exclude some. The design does not say, and the number in the first criterion of story 1's goal and the accounting invariant in its contract depend on it. It is a decision about what users see and is not settled here (story 1).
 - Measure the cost of a run once the index exists; v1 promises no figure (ticket 21).
 
 ## Out of scope
