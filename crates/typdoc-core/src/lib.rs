@@ -12,6 +12,7 @@ mod imports;
 mod index;
 mod lines;
 mod links;
+mod lock;
 mod namespaces;
 mod project;
 mod query;
@@ -20,6 +21,7 @@ pub mod rules;
 mod schema;
 mod scope;
 mod slug;
+mod state;
 mod template;
 mod validate;
 

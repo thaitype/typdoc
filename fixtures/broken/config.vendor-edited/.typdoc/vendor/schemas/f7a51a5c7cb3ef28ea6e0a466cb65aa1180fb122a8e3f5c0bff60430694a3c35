@@ -1,0 +1,2 @@
+{ "name": "note", "fields": { "title": { "type": "string" } } }
+this line was added by hand after the copy was pinned

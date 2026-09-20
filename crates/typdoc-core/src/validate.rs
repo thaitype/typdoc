@@ -375,6 +375,29 @@ pub(crate) fn duplicate_key_finding(
     )
 }
 
+/// A finding about a coded collection with documents in a namespace and no `last` recorded for
+/// it there (`state.missing`): nothing about one document is wrong, so the file it is about is
+/// the state file, not a document of the collection; `collection` names which one, and there is
+/// no `key`, the same reasoning `collections.overlap` already gives a file matched by two.
+pub(crate) fn state_missing_finding(
+    path: &str,
+    namespace: &str,
+    collection: &str,
+    message: String,
+) -> Finding {
+    build_finding(
+        Severity::Error,
+        "state.missing",
+        path,
+        Some(namespace),
+        Some(collection),
+        None,
+        None,
+        None,
+        message,
+    )
+}
+
 fn display_value(value: &Value) -> String {
     match value {
         Value::Text(text) => format!("`{text}`"),

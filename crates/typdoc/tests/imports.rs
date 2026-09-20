@@ -678,3 +678,141 @@ fn typdoc_config_dir_naming_a_directory_that_does_not_exist_is_config_dot_config
     let object = error_of(&ran, 2);
     assert_eq!(object["details"][0]["rule"], json!("config.config-dir"));
 }
+
+// ---------------------------------------------------------------------------------------------
+// `refs.target` and `refs.codedByPath` for a ref that crosses into an import, left unchecked by
+// ticket 17 and reachable now that every import is loaded before either runs
+// (`Project::schema_info_of`, shared with the schema drift check of `schemas.rs`).
+// ---------------------------------------------------------------------------------------------
+
+/// A tiny imported project of two schemas: `learning`, coded `LRN`, with one document to
+/// reference; and `other`, uncoded, used by nothing — a real schema of the imported project, so
+/// a `target` that names it is not itself a drift fault, and `refs.target`'s own refusal is the
+/// only thing a test built on it can be about.
+fn coded_import_project(dir: &std::path::Path) {
+    std::fs::create_dir_all(dir.join(".typdoc/collections")).unwrap();
+    std::fs::write(dir.join(".typdoc/config.json"), r#"{ "version": 1 }"#).unwrap();
+    std::fs::write(
+        dir.join(".typdoc/collections/learnings.json"),
+        r#"{ "match": "{key}.md", "schema": "learning.json" }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("learning.json"),
+        r#"{ "name": "learning", "code": "LRN", "fields": {} }"#,
+    )
+    .unwrap();
+    std::fs::write(dir.join("LRN-1.md"), "").unwrap();
+    std::fs::write(
+        dir.join(".typdoc/collections/other.json"),
+        r#"{ "match": "other/*.md", "schema": "other.json" }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("other.json"),
+        r#"{ "name": "other", "fields": {} }"#,
+    )
+    .unwrap();
+}
+
+/// `target` is `"*"` for `Target::Any` (bare string, the design's own shape for it) and, for
+/// anything else, one schema name, wrapped here into the one-element list `Target::Schemas`
+/// reads: `["*"]` is a different, stricter value from `"*"` (a list of one schema literally
+/// named `*`, which nothing is), so the two are not interchangeable.
+fn importer_project(imported: &std::path::Path, target: &str) -> Scratch {
+    let project = Scratch::project(&[]);
+    project.file(
+        ".typdoc/config.json",
+        &json!({ "version": 1, "imports": { "memory_import": imported.to_str().unwrap() } })
+            .to_string(),
+    );
+    project.file(
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "*.md", "schema": "note.json" }"#,
+    );
+    let target_json = if target == "*" {
+        json!("*")
+    } else {
+        json!([target])
+    };
+    project.file(
+        "note.json",
+        &json!({
+            "name": "note",
+            "fields": { "see": { "type": "ref", "target": target_json } }
+        })
+        .to_string(),
+    );
+    project
+}
+
+fn validate_json(project: &std::path::Path) -> Ran {
+    Spawn::args(["validate", "--json"]).cwd(project).run()
+}
+
+#[test]
+fn refs_target_allows_a_ref_that_crosses_an_import_to_the_qualified_schema_it_names() {
+    let imported = tempfile::tempdir().unwrap();
+    coded_import_project(imported.path());
+    let project = importer_project(imported.path(), "memory_import::learning");
+    project.file("a.md", "---\nsee: memory_import::LRN-1\n---\n");
+
+    let ran = validate_json(project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout_json()["findings"], json!([]));
+}
+
+#[test]
+fn refs_target_now_refuses_a_ref_that_crosses_an_import_to_a_schema_the_qualified_target_excludes()
+{
+    let imported = tempfile::tempdir().unwrap();
+    coded_import_project(imported.path());
+    // `other` is a real schema of the imported project (so this is not also a schema-drift
+    // fault), but the document actually named is a `learning`, which `target` does not list.
+    let project = importer_project(imported.path(), "memory_import::other");
+    project.file("a.md", "---\nsee: memory_import::LRN-1\n---\n");
+
+    let ran = validate_json(project.path());
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let findings = ran.stdout_json()["findings"].clone();
+    let findings = findings.as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0]["rule"], json!("refs.target"));
+}
+
+#[test]
+fn a_bare_name_in_target_does_not_reach_a_same_named_schema_across_an_import() {
+    let imported = tempfile::tempdir().unwrap();
+    coded_import_project(imported.path());
+    // design.md, Target names: "A bare name... means a schema in this project." A bare
+    // `learning` must not let the ref through just because the imported project happens to have
+    // a schema of that name too.
+    let project = importer_project(imported.path(), "learning");
+    project.file("a.md", "---\nsee: memory_import::LRN-1\n---\n");
+
+    let ran = validate_json(project.path());
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let findings = ran.stdout_json()["findings"].clone();
+    let findings = findings.as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0]["rule"], json!("refs.target"));
+}
+
+#[test]
+fn refs_coded_by_path_now_warns_for_a_coded_document_of_an_import_referenced_by_path() {
+    let imported = tempfile::tempdir().unwrap();
+    coded_import_project(imported.path());
+    let project = importer_project(imported.path(), "*");
+    project.file("a.md", "---\nsee: memory_import::LRN-1.md\n---\n");
+
+    let ran = validate_json(project.path());
+
+    assert_eq!(ran.code, 0, "warn does not fail the run: {}", ran.stderr);
+    let findings = ran.stdout_json()["findings"].clone();
+    let findings = findings.as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0]["rule"], json!("refs.codedByPath"));
+}

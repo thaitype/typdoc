@@ -45,6 +45,11 @@ pub const RULES: &[&str] = &[
     "config.namespace-name",
     "config.namespace-nested",
     "config.config-dir",
+    "config.state-uncoded",
+    "config.state-orphan",
+    "config.schema-unpinned",
+    "config.vendor-missing",
+    "config.vendor-edited",
     "frontmatter.parse",
     "frontmatter.types",
     "frontmatter.unknown",
@@ -52,6 +57,7 @@ pub const RULES: &[&str] = &[
     "keys.unique",
     "collections.overlap",
     "filename.pattern",
+    "state.missing",
     "refs.resolve",
     "refs.target",
     "refs.acyclic",
@@ -69,10 +75,4 @@ pub const RULES: &[&str] = &[
 /// when it enters `RULES`, and it is empty when v1 is finished.
 pub const UNIMPLEMENTED_RULES: &[&str] = &[
     "frontmatter.transitions", // story 2
-    "state.missing",           // story 1
-    "config.state-uncoded",    // story 1
-    "config.state-orphan",     // story 1
-    "config.schema-unpinned",  // story 1
-    "config.vendor-missing",   // story 1
-    "config.vendor-edited",    // story 1
 ];

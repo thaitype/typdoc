@@ -1,0 +1,9 @@
+{
+  "command": [
+    "validate",
+    "--json"
+  ],
+  "trips": [
+    "state.missing"
+  ]
+}

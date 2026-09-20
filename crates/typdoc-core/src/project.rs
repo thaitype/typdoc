@@ -22,6 +22,7 @@ use crate::query::{self, Condition, Dir, FieldRef, PlainCondition, Quant, RefCon
 use crate::refs;
 use crate::schema::{self, Auto, Field, FieldType, Resolved};
 use crate::scope::{self, Scope, Source};
+use crate::state;
 use crate::template::{Step, Template};
 use crate::validate::{self, DocName, Finding, Severity, ValidateScope};
 
@@ -182,6 +183,10 @@ pub struct Project {
     /// only). An alias absent from this map names neither a sibling namespace nor an import, and
     /// a ref or argument using it as an import prefix is `bad-prefix`.
     imports: BTreeMap<String, ImportState>,
+    /// Every namespace's state file, read once at load (contract: "`state/<namespace>.json` is
+    /// read and never written"), by namespace name: `state.missing` reads it when `validate`
+    /// runs, and `load_inner` itself already reads it once to report `config.state-uncoded`.
+    state: BTreeMap<String, state::StateFile>,
 }
 
 /// What one configured import resolves to, once `${NAME}` is substituted and the location is
@@ -194,12 +199,10 @@ pub(crate) enum ImportState {
 /// The whole-project context `refs.resolve`, `refs.target`, `refs.codedByPath` and `refs.moved`
 /// read beside a document's own frontmatter, bundled because the three always travel together
 /// from `Project::validate` through `check_entry` to `check_refs`.
-struct RefProject<'a> {
+struct RefProject {
     /// The code of every coded schema in the project (the bare-key ref form's "the code exists
     /// in this project" condition).
     codes: BTreeSet<String>,
-    /// The name and code of every collection's schema, by the collection's position.
-    schemas: Vec<refs::SchemaInfo<'a>>,
     /// A written ref that no longer resolves, to the current key or path of the document that
     /// recorded moving away from it (`auto: moves`).
     moved: BTreeMap<String, String>,
@@ -270,6 +273,7 @@ impl Project {
         let mut coded: BTreeMap<String, &str> = BTreeMap::new();
         let mut schema_state = schema::Checked::default();
         let mut schema_findings = Vec::new();
+        let mut qualified_targets: Vec<schema::QualifiedTarget> = Vec::new();
         for collection in &config.collections {
             let template = read_template(collection, &mut report);
             let schema_load = match schema::load(root, collection, &mut report) {
@@ -281,13 +285,15 @@ impl Project {
                     return Err(unreadable);
                 }
             };
-            for found in schema::check(&schema_load, &mut schema_state) {
+            let (problems, targets) = schema::check(&schema_load, &mut schema_state);
+            for found in problems {
                 schema_findings.push(validate::schema_finding(
                     &found.path,
                     found.field.as_deref(),
                     found.message,
                 ));
             }
+            qualified_targets.extend(targets);
             let schema_path = schema_load.chain[0].path.clone();
             let schema = schema::merge(&schema_load.chain);
             if schema.code.is_some() {
@@ -325,6 +331,10 @@ impl Project {
                 ref_base: collection.ref_base,
             });
         }
+        // State files are read now, still while `report` is open, so `config.state-orphan` and
+        // `config.state-uncoded` join every other config error this project has, the same way
+        // the machine file's own path is found below.
+        let state_by_namespace = read_state(root, &config, &loaded, &mut report)?;
         // The machine file's own path is found now, while `report` is still open, so a bad
         // `TYPDOC_CONFIG_DIR` (`config.config-dir`) joins every other config error this project
         // has, in the one object `report.finish()` below turns them into — never read as a
@@ -338,17 +348,16 @@ impl Project {
         report.finish()?;
         schema_findings.extend(duplicate_schema_findings(&loaded));
         for alias in config.imports.keys() {
-            if schema::is_scheme_name(alias) {
+            if schema::reserved_url_scheme(alias) {
                 schema_findings.push(validate::schema_finding(
                     CONFIG_FILE,
                     None,
                     format!(
-                        "the import name `{alias}` has the shape of a URL scheme, and the two would be told apart wrongly"
+                        "the import name `{alias}` is a URL scheme (`http`, `https`, `mailto` and `file` are reserved), and the two would be told apart wrongly"
                     ),
                 ));
             }
         }
-        validate::order(&mut schema_findings);
         let index = Index::build(root, &config.namespaces, &members)?;
         let stray_files = crate::index::stray_files(root, &config.namespaces, &members)?;
         let imports = if follow_imports {
@@ -362,6 +371,10 @@ impl Project {
         } else {
             BTreeMap::new()
         };
+        // Schema drift (design, Refs → Schema drift): a qualified `target` names a schema of an
+        // imported project, and only once every import is loaded can that name be checked.
+        schema_findings.extend(schema_drift_findings(&qualified_targets, &imports));
+        validate::order(&mut schema_findings);
         Ok(Project {
             root: root.to_owned(),
             config,
@@ -370,6 +383,7 @@ impl Project {
             schema_findings,
             stray_files,
             imports,
+            state: state_by_namespace,
         })
     }
 
@@ -1366,6 +1380,11 @@ impl Project {
             findings.extend(acyclic);
             let mut namespaces = BTreeSet::new();
             let mut documents = 0usize;
+            // `(namespace, collection)` pairs with at least one document in scope, for
+            // `state.missing` below: the rule reports a coded collection only once it actually
+            // has a document in the namespace (design, State: "A collection with no coded
+            // documents in the namespace and no record is new, and nothing is reported").
+            let mut present: BTreeSet<(usize, usize)> = BTreeSet::new();
             for (path, entry) in self.index.iter() {
                 let namespace = &self.config.namespaces[entry.namespace].name;
                 if !scope.contains(namespace) {
@@ -1373,9 +1392,11 @@ impl Project {
                 }
                 namespaces.insert(namespace.clone());
                 documents += 1;
+                present.insert((entry.namespace, entry.collection));
                 let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
                 findings.extend(self.check_entry(path, entry, &text, strict, &ref_project));
             }
+            findings.extend(self.state_missing_findings(&present, &scope));
             // An overlapping path has no one collection to check its frontmatter against, so it
             // was never checked (contract item 8's reasoning for a document whose block cannot
             // be parsed does not reach this far: that document at least had a schema to check
@@ -1599,22 +1620,14 @@ impl Project {
                         &collection.validation,
                         strict,
                     )),
-                    // `ref_project.schemas` indexes this project's own collections; `resolved.
-                    // collection`, once a ref has crossed into an import (`resolved.project`
-                    // is `Some`), indexes that other project's collections instead, which this
-                    // project has no list of. `refs.target` and `refs.codedByPath` are checked
-                    // only for a ref that stayed inside this project: extending either across an
-                    // import needs the imported project's own schema names (`target`'s qualified
-                    // form, `"memory::learning"`) or its own coded schemas, neither read here,
-                    // and reading `ref_project.schemas[index]` with an index from a different
-                    // project's list would be wrong at best and out of bounds at worst.
-                    Ok(resolved) if resolved.project.is_some() => {}
                     Ok(resolved) => {
-                        if !refs::target_allowed(
-                            field.target.as_ref(),
-                            &resolved,
-                            &ref_project.schemas,
-                        ) {
+                        // `schema_info_of` reads this project's own collections when the ref
+                        // stayed inside it, and the alias's own once it has crossed into an
+                        // import (`resolved.project` is `Some`), so both `refs.target` and
+                        // `refs.codedByPath` are now checked either way, once every import is
+                        // loaded (see `Project::schema_info_of`).
+                        let info = self.schema_info_of(&resolved);
+                        if !refs::target_allowed(field.target.as_ref(), &resolved, info.as_ref()) {
                             findings.push(validate::finding(
                                 name,
                                 Severity::Error,
@@ -1626,9 +1639,7 @@ impl Project {
                                 ),
                             ));
                         }
-                        let coded = resolved
-                            .collection
-                            .is_some_and(|index| ref_project.schemas[index].code.is_some());
+                        let coded = info.is_some_and(|found| found.code.is_some());
                         if coded
                             && resolved.via == refs::Via::Path
                             && let Some(level) = validate::effective_level(
@@ -2170,8 +2181,10 @@ impl Project {
     }
 
     /// The name and code of every collection's schema, by the collection's position, for
-    /// `refs.target` and `refs.codedByPath`.
-    fn schema_infos(&self) -> Vec<refs::SchemaInfo<'_>> {
+    /// `refs.target` and `refs.codedByPath`. `pub(crate)`: read on an imported project too, both
+    /// by the schema drift check (`load_inner`, once every import is loaded) and by
+    /// `schema_info_of` (below), for a ref that has crossed into that project.
+    pub(crate) fn schema_infos(&self) -> Vec<refs::SchemaInfo<'_>> {
         self.collections
             .iter()
             .map(|collection| refs::SchemaInfo {
@@ -2181,23 +2194,48 @@ impl Project {
             .collect()
     }
 
-    /// The whole-project context `check_entry` and `check_refs` read beside a document's own
-    /// frontmatter (`codes`, `schemas`, and the `refs.moved` map `prescan_refs` builds), bundled
-    /// into one reference since the three always travel together from here down to `check_refs`;
-    /// `refs.acyclic`'s findings are returned alongside rather than folded in, since whether they
-    /// are reported depends on the scope (see `validate`'s two callers of this).
-    fn ref_project(&self) -> Result<(RefProject<'_>, Vec<Finding>), Error> {
-        let codes = self.project_codes();
-        let schemas = self.schema_infos();
-        let (moved, acyclic) = self.prescan_refs(&codes)?;
-        Ok((
-            RefProject {
-                codes,
-                schemas,
-                moved,
+    /// The schema a resolved ref's target names, whether it stayed inside this project or
+    /// crossed into an import: `resolved.collection` indexes this project's own collections
+    /// when `resolved.project` is `None`, and the alias's own when it is `Some` (`refs::
+    /// Resolved`'s own doc comment). `None` when the ref has no collection at all (a file
+    /// outside every collection, reachable only through `target: "*"`) or, in principle, names
+    /// an alias this project no longer resolves — it should not, since `resolved.project` only
+    /// ever holds an alias `Ctx::imports` already resolved to `ImportState::Loaded` (`refs::
+    /// resolve_into_import` returns before that point otherwise), but a lookup that fails is
+    /// read as "no schema" rather than assumed impossible. This is what makes `refs.target` and
+    /// `refs.codedByPath` reachable for a ref that crosses an import, left unreachable by
+    /// ticket 17 (checking either needs the imported project's own schema names, which needs
+    /// every import loaded first).
+    fn schema_info_of(&self, resolved: &refs::Resolved) -> Option<refs::SchemaInfo<'_>> {
+        let collection = resolved.collection?;
+        match &resolved.project {
+            None => self
+                .collections
+                .get(collection)
+                .map(|found| refs::SchemaInfo {
+                    name: &found.schema.name,
+                    code: found.schema.code.as_deref(),
+                }),
+            Some(alias) => match self.imports.get(alias) {
+                Some(ImportState::Loaded(imported)) => {
+                    imported.schema_infos().into_iter().nth(collection)
+                }
+                _ => None,
             },
-            acyclic,
-        ))
+        }
+    }
+
+    /// The whole-project context `check_entry` and `check_refs` read beside a document's own
+    /// frontmatter (`codes` and the `refs.moved` map `prescan_refs` builds), bundled into one
+    /// reference since the two always travel together from here down to `check_refs`, which
+    /// reads a document's own schema through `schema_info_of` instead of a precomputed list, so
+    /// it can read an imported project's just as well; `refs.acyclic`'s findings are returned
+    /// alongside rather than folded in, since whether they are reported depends on the scope
+    /// (see `validate`'s two callers of this).
+    fn ref_project(&self) -> Result<(RefProject, Vec<Finding>), Error> {
+        let codes = self.project_codes();
+        let (moved, acyclic) = self.prescan_refs(&codes)?;
+        Ok((RefProject { codes, moved }, acyclic))
     }
 
     /// `names.shadowed`: a namespace name that is also an import alias, so `name:` and `name::`
@@ -2229,6 +2267,46 @@ impl Project {
                 )
             })
             .collect()
+    }
+
+    /// `state.missing`: a coded collection with at least one document in a namespace in scope,
+    /// and no `last` recorded for it there (design, State). `self.state` is read once at load
+    /// (`load_inner`) and never written; `present` is `(namespace, collection)` gathered by the
+    /// caller's own document walk, so a namespace this run does not scope over never reports a
+    /// missing record for one it never looked at.
+    fn state_missing_findings(
+        &self,
+        present: &BTreeSet<(usize, usize)>,
+        scope: &Scope,
+    ) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        for (namespace_idx, namespace) in self.config.namespaces.iter().enumerate() {
+            if !scope.contains(&namespace.name) {
+                continue;
+            }
+            let recorded = self.state.get(&namespace.name);
+            for (collection_idx, collection) in self.collections.iter().enumerate() {
+                if collection.schema.code.is_none() {
+                    continue;
+                }
+                if !present.contains(&(namespace_idx, collection_idx)) {
+                    continue;
+                }
+                if recorded.is_some_and(|state| state.has(&collection.name)) {
+                    continue;
+                }
+                findings.push(validate::state_missing_finding(
+                    &state::file_path(&namespace.name),
+                    &namespace.name,
+                    &collection.name,
+                    format!(
+                        "the collection `{}` has documents in this namespace and no `last` recorded in its state file",
+                        collection.name
+                    ),
+                ));
+            }
+        }
+        findings
     }
 
     /// The whole-project pass `refs.moved` and `refs.acyclic` both need before any single
@@ -2928,6 +3006,101 @@ fn ref_name_in(
 /// misconfiguration and propagated as an ordinary error: unlike an import simply not being set
 /// up yet, a broken config at a real location will not fix itself by installing more machines,
 /// and folding it into `imports.absent` would hide a mistake the design gives no way to catch.
+/// Every namespace's state file, read once: `config.state-orphan` for a file in `.typdoc/state/`
+/// that matches no current namespace, and `config.state-uncoded` for an entry that names
+/// anything other than a coded collection of this project (a collection this project does not
+/// have at all, or one whose schema has no code — the design's own wording, "a state entry
+/// names a collection whose schema has no code", does not separately name "no such collection",
+/// and no other id fits it). Both join `report`, the same one `load_inner` finishes with every
+/// other config error this project has.
+fn read_state(
+    root: &Path,
+    config: &Config,
+    loaded: &[Loaded],
+    report: &mut Report,
+) -> Result<BTreeMap<String, state::StateFile>, Error> {
+    let coded_collections: BTreeSet<&str> = loaded
+        .iter()
+        .filter(|found| found.schema.code.is_some())
+        .map(|found| found.name.as_str())
+        .collect();
+    for orphan in state::orphans(root, &config.namespaces)? {
+        report.add(
+            "config.state-orphan",
+            &orphan,
+            format!(
+                "{orphan} matches no current namespace: delete it after removing a namespace, or rename it after renaming a folder"
+            ),
+        );
+    }
+    let mut by_namespace: BTreeMap<String, state::StateFile> = BTreeMap::new();
+    for namespace in &config.namespaces {
+        let read = state::read(root, &namespace.name)?;
+        let state_path = state::file_path(&namespace.name);
+        for name in read.last.keys() {
+            if !coded_collections.contains(name.as_str()) {
+                report.add(
+                    "config.state-uncoded",
+                    &state_path,
+                    format!(
+                        "the state file records `{name}`, which is not a coded collection of this project: state applies only to a collection whose schema has a code"
+                    ),
+                );
+            }
+        }
+        by_namespace.insert(namespace.name.clone(), read);
+    }
+    Ok(by_namespace)
+}
+
+/// `schema.valid`'s findings for every qualified `target` name gathered while reading schemas
+/// (`schema::QualifiedTarget`), now that `imports` is loaded and can be checked against: an
+/// alias `imports` does not have at all is treated the same as one the imported project renamed
+/// the schema out of — "the target no longer names anything" reads the same either way, and no
+/// id besides `schema.valid` fits an alias that is not configured. An alias present but absent
+/// on this machine is left alone (design: "An import that is absent on this machine is reported
+/// by `imports.absent` instead and is not an error here") — there is no project loaded here to
+/// check the name against.
+fn schema_drift_findings(
+    targets: &[schema::QualifiedTarget],
+    imports: &BTreeMap<String, ImportState>,
+) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    for target in targets {
+        for name in &target.names {
+            let Some((alias, schema_name)) = name.split_once("::") else {
+                continue;
+            };
+            match imports.get(alias) {
+                None => findings.push(validate::schema_finding(
+                    &target.path,
+                    Some(&target.field),
+                    format!(
+                        "the target `{name}` names the import `{alias}`, which is not configured"
+                    ),
+                )),
+                Some(ImportState::Absent(_)) => {}
+                Some(ImportState::Loaded(imported)) => {
+                    let exists = imported
+                        .schema_infos()
+                        .iter()
+                        .any(|info| info.name == schema_name);
+                    if !exists {
+                        findings.push(validate::schema_finding(
+                            &target.path,
+                            Some(&target.field),
+                            format!(
+                                "the target `{name}` names the schema `{schema_name}`, which does not exist in the imported project `{alias}`"
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    findings
+}
+
 fn resolve_import(root: &Path, raw: &str, env: &dyn Env) -> Result<ImportState, Error> {
     let substituted = match crate::imports::substitute(raw, env) {
         Ok(text) => text,

@@ -1,0 +1,8 @@
+{
+  "schemas": {
+    "https://schemas.example.dev/note.json": {
+      "sha256": "f7a51a5c7cb3ef28ea6e0a466cb65aa1180fb122a8e3f5c0bff60430694a3c35",
+      "fetchedAt": "2026-09-19T14:30:00+07:00"
+    }
+  }
+}

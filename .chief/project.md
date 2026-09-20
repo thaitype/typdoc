@@ -31,6 +31,7 @@ scripts/check-public-text.sh --self-test   # proves the gate can fail; run whene
 - Markdown body: `pulldown-cmark` 0.13.4 with `default-features = false`; the frontmatter is cut first and the body slice parsed, with its offset added back so lines count from the top of the file
 - `unicode-general-category`: the slugger deletes characters by Unicode general category (punctuation, symbols, controls and so on), which the standard library does not expose; it is a table with no dependencies of its own, and `char::is_alphabetic` from the standard library covers the letters that are kept
 - Remote schemas: `ureq` 3.x (blocking, rustls) behind a `Fetch` trait and a typdoc-owned `FetchError`, so `typdoc-core` has no async runtime: no restriction on http or https (the connection is the user's choice), an explicit timeout, a maximum response size, at most ten redirects, and the proxy variables `HTTPS_PROXY` and `HTTP_PROXY` honoured
+- Pinned schemas: `sha2` 0.11, `default-features = false`, to hash a vendored copy's bytes against its file name (`config.vendor-edited`); it is the standard, dependency-light SHA-256 implementation in the Rust ecosystem, and the default features add only `std`, `alloc` conveniences this crate has no use for
 
 ### Key Architectural Patterns
 

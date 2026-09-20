@@ -64,7 +64,10 @@ pub(crate) type Outcome = Result<Resolved, Reason>;
 
 /// The name and code of a schema a collection uses, by the collection's position in the project
 /// (`Index::Entry::collection`), so `refs.target` and `refs.codedByPath` can read them without
-/// depending on `project.rs`'s own, private `Loaded` type.
+/// depending on `project.rs`'s own, private `Loaded` type. `Copy`: a caller reads one out of a
+/// project's list (this project's own, or an imported project's) and holds it alone, never the
+/// list it came from.
+#[derive(Clone, Copy)]
 pub(crate) struct SchemaInfo<'a> {
     pub name: &'a str,
     pub code: Option<&'a str>,
@@ -409,16 +412,33 @@ pub(crate) fn resolve_path(path: &str, index: &Index, root: &Path) -> Outcome {
 /// reads as `Target::Any`, the design's stated default. `Target::Other` is a value `schema.valid`
 /// already reports as invalid on its own; treated here as no restriction, so the same fault is
 /// not reported twice under two different rules.
+///
+/// `info` is the schema the ref actually resolved to, already read by the caller for whichever
+/// project `resolved.collection` indexes (this one, or, once a ref has crossed an import, the
+/// alias's own — `Project::schema_info_of`); `None` when the target has no schema at all (a
+/// file outside every collection, reachable only through `target: "*"`, which never reaches the
+/// `Target::Schemas` arm below since a written target list never allows it either way).
+///
+/// A bare name in `target` (design, Target names: "a bare name... means a schema in this
+/// project") never allows a ref that crossed into an import, and a qualified name
+/// (`"alias::name"`) never allows one that stayed inside this project: `resolved.project` picks
+/// which reading of `target`'s own list applies, so the two forms are never compared against
+/// the wrong kind of ref.
 pub(crate) fn target_allowed(
     target: Option<&Target>,
     resolved: &Resolved,
-    schemas: &[SchemaInfo],
+    info: Option<&SchemaInfo>,
 ) -> bool {
     match target.unwrap_or(&Target::Any) {
         Target::Any | Target::Other(_) => true,
-        Target::Schemas(names) => match resolved.collection {
-            Some(collection) => names.iter().any(|name| name == schemas[collection].name),
+        Target::Schemas(names) => match info {
             None => false,
+            Some(info) => match &resolved.project {
+                None => names.iter().any(|name| name == info.name),
+                Some(alias) => names
+                    .iter()
+                    .any(|name| *name == format!("{alias}::{}", info.name)),
+            },
         },
     }
 }
@@ -702,8 +722,8 @@ mod tests {
             project: None,
         };
 
-        assert!(target_allowed(None, &file, &[]));
-        assert!(target_allowed(Some(&Target::Any), &file, &[]));
+        assert!(target_allowed(None, &file, None));
+        assert!(target_allowed(Some(&Target::Any), &file, None));
     }
 
     #[test]
@@ -718,7 +738,7 @@ mod tests {
         assert!(!target_allowed(
             Some(&Target::Schemas(vec!["wayfinder".to_owned()])),
             &file,
-            &[]
+            None
         ));
     }
 
@@ -767,10 +787,10 @@ mod tests {
 
     #[test]
     fn a_target_list_of_schema_names_allows_exactly_the_named_schemas() {
-        let schemas = [SchemaInfo {
+        let info = SchemaInfo {
             name: "wayfinder",
             code: Some("WF"),
-        }];
+        };
         let matching = Resolved {
             path: "tickets/WF-1.md".to_owned(),
             collection: Some(0),
@@ -781,12 +801,70 @@ mod tests {
         assert!(target_allowed(
             Some(&Target::Schemas(vec!["wayfinder".to_owned()])),
             &matching,
-            &schemas
+            Some(&info)
         ));
         assert!(!target_allowed(
             Some(&Target::Schemas(vec!["other".to_owned()])),
             &matching,
-            &schemas
+            Some(&info)
         ));
+    }
+
+    #[test]
+    fn a_bare_name_in_target_never_allows_a_ref_that_crossed_an_import() {
+        let info = SchemaInfo {
+            name: "learning",
+            code: None,
+        };
+        let crossed = Resolved {
+            path: "precedents/x.md".to_owned(),
+            collection: Some(0),
+            via: Via::Path,
+            project: Some("memory".to_owned()),
+        };
+
+        assert!(
+            !target_allowed(
+                Some(&Target::Schemas(vec!["learning".to_owned()])),
+                &crossed,
+                Some(&info)
+            ),
+            "a bare name means a schema of this project (design, Target names), never one \
+             reached through an import"
+        );
+    }
+
+    #[test]
+    fn a_qualified_name_in_target_allows_exactly_the_schema_it_names_in_that_import() {
+        let info = SchemaInfo {
+            name: "learning",
+            code: None,
+        };
+        let crossed = Resolved {
+            path: "precedents/x.md".to_owned(),
+            collection: Some(0),
+            via: Via::Path,
+            project: Some("memory".to_owned()),
+        };
+
+        assert!(target_allowed(
+            Some(&Target::Schemas(vec!["memory::learning".to_owned()])),
+            &crossed,
+            Some(&info)
+        ));
+        assert!(!target_allowed(
+            Some(&Target::Schemas(vec!["memory::precedent".to_owned()])),
+            &crossed,
+            Some(&info)
+        ));
+        assert!(
+            !target_allowed(
+                Some(&Target::Schemas(vec!["other::learning".to_owned()])),
+                &crossed,
+                Some(&info)
+            ),
+            "the qualified name has to name the alias the ref actually crossed, not just any \
+             import"
+        );
     }
 }

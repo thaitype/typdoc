@@ -551,6 +551,8 @@ fn two_namespaces_sharing_a_key_is_clean() {
             "schemas/ticket.json",
             r#"{ "name": "ticket", "code": "WF", "fields": {} }"#,
         ),
+        (".typdoc/state/ns1.json", r#"{ "tickets": { "last": 1 } }"#),
+        (".typdoc/state/ns2.json", r#"{ "tickets": { "last": 1 } }"#),
         ("ns1/WF-1.md", ""),
         ("ns2/WF-1.md", ""),
     ]);
@@ -676,9 +678,11 @@ fn invalid_field_options_and_names_are_schema_valid_and_not_a_crash() {
     }
 }
 
-/// An import alias that has the shape of a URL scheme is `schema.valid`.
+/// An import alias that is one of the four URL schemes the design names is `schema.valid`
+/// (design, Frontmatter values: "Sibling names and import aliases may not collide with URL
+/// schemes (`http`, `https`, `mailto`, `file`)").
 #[test]
-fn an_import_name_shaped_like_a_url_scheme_is_schema_valid() {
+fn an_import_name_that_is_a_reserved_url_scheme_is_schema_valid() {
     let project = Scratch::project(&[(
         ".typdoc/config.json",
         r#"{ "version": 1, "imports": { "https": "../elsewhere" } }"#,
@@ -694,6 +698,27 @@ fn an_import_name_shaped_like_a_url_scheme_is_schema_valid() {
     assert_eq!(findings.as_array().unwrap().len(), 1, "{findings}");
     assert_eq!(findings[0]["rule"], json!("schema.valid"));
     assert_eq!(findings[0]["path"], json!(".typdoc/config.json"));
+}
+
+/// An ordinary alias that merely has the shape of a URL scheme (any letters-only word does) is
+/// not `schema.valid`: the design reserves four literal names, not a shape, and its own worked
+/// examples use exactly the two aliases checked here (`memory::precedents/x.md`,
+/// `chief::story-3:WF-5`) — a fixture or reader trying the design's own examples must not be
+/// refused by this check.
+#[test]
+fn import_names_the_designs_own_examples_use_are_not_schema_valid() {
+    let project = Scratch::project(&[(
+        ".typdoc/config.json",
+        r#"{ "version": 1, "imports": { "memory": "../elsewhere", "chief": "../elsewhere2" } }"#,
+    )]);
+    project.file("x.md", "");
+
+    let ran = Spawn::args(["validate", "--schemas", "--json"])
+        .cwd(project.path())
+        .run();
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout_json()["findings"], json!([]));
 }
 
 /// The design's own example: several coded collections can share one folder (`WF` and `RFC`
@@ -714,6 +739,10 @@ fn a_file_fitting_one_of_several_coplaced_coded_collections_is_not_a_stray() {
         (
             "rfc.json",
             r#"{ "name": "rfc", "code": "RFC", "fields": {} }"#,
+        ),
+        (
+            ".typdoc/state/default.json",
+            r#"{ "wf": { "last": 1 }, "rfc": { "last": 4 } }"#,
         ),
         ("tickets/WF-1.md", ""),
         ("tickets/RFC-4.md", ""),
@@ -832,6 +861,10 @@ fn a_bare_key_resolves_in_the_documents_own_namespace() {
             "note.json",
             r#"{ "name": "note", "fields": { "see": { "type": "ref", "target": "*" } } }"#,
         ),
+        (
+            ".typdoc/state/default.json",
+            r#"{ "tickets": { "last": 1 } }"#,
+        ),
     ]);
     project.file("tickets/WF-1.md", "");
     project.file("notes/a.md", "---\nsee: WF-1\n---\n");
@@ -911,6 +944,10 @@ fn a_coded_document_referenced_by_key_is_clean_and_by_path_warns() {
         (
             "note.json",
             r#"{ "name": "note", "fields": { "see": { "type": "ref", "target": "*" } } }"#,
+        ),
+        (
+            ".typdoc/state/default.json",
+            r#"{ "tickets": { "last": 1 } }"#,
         ),
     ];
     let by_key = Scratch::project(&files);

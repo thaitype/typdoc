@@ -534,7 +534,8 @@ fn a_config_error_from_a_schema_and_one_from_the_config_come_in_one_list() {
 fn a_fault_with_no_id_does_not_hide_the_config_errors_that_have_one() {
     let project = Scratch::project(&[]);
     project.file(".typdoc/config.json", r#"{ "version": 1, "name": "x" }"#);
-    collection(&project, "notes", "*.md", "https://example.invalid/n.json");
+    collection(&project, "notes", "*.md", "note.json");
+    project.file("note.json", "not json");
 
     let ran = get(project.path(), "a.md");
 
@@ -542,4 +543,157 @@ fn a_fault_with_no_id_does_not_hide_the_config_errors_that_have_one() {
         details(&ran),
         [pair("config.unknown-key", ".typdoc/config.json")]
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Pinned copies of remote schemas: read from `.typdoc/vendor/schemas/<sha256>` and hashed to
+// check the name, never fetched. `fixtures/valid/pinned-schema` and the three
+// `fixtures/broken/config.schema-unpinned`, `config.vendor-missing` and `config.vendor-edited`
+// fixtures carry the hand-computed hashes (a real `sha256sum` run on the exact bytes
+// committed, never typdoc's own output); this section checks the positive path once more
+// end to end, through the binary, past the fixture-coverage machinery.
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn a_pinned_remote_schema_is_read_and_checks_frontmatter_by_its_type() {
+    let ran = get(&fixture("valid/pinned-schema"), "note.md");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(
+        ran.stdout_json()["document"]["fields"],
+        json!({ "title": "A pinned note" })
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Schema drift on a qualified `target` (design, Refs → Schema drift): a `target` that names a
+// schema of an imported project through `"alias::name"` is checked once every import is loaded,
+// against that project's own schema names (`Project::schema_info_of`).
+// ---------------------------------------------------------------------------------------------
+
+/// A minimal project of one namespace and one coded collection, `learning` (code `LRN`), for
+/// the drift tests below to import.
+fn learning_project(dir: &std::path::Path) {
+    std::fs::create_dir_all(dir.join(".typdoc/collections")).unwrap();
+    std::fs::write(dir.join(".typdoc/config.json"), r#"{ "version": 1 }"#).unwrap();
+    std::fs::write(
+        dir.join(".typdoc/collections/learnings.json"),
+        r#"{ "match": "{key}.md", "schema": "learning.json" }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("learning.json"),
+        r#"{ "name": "learning", "code": "LRN", "fields": {} }"#,
+    )
+    .unwrap();
+}
+
+/// A project that imports `imported` as `memory_import` (an underscore, so the alias itself
+/// does not have the shape of a URL scheme and trip `schema.valid`'s own check for that) and
+/// has one local schema whose `see` field's `target` is exactly `[target]`.
+fn importing_project(imported: &std::path::Path, target: &str) -> Scratch {
+    let project = Scratch::project(&[]);
+    project.file(
+        ".typdoc/config.json",
+        &json!({ "version": 1, "imports": { "memory_import": imported.to_str().unwrap() } })
+            .to_string(),
+    );
+    collection(&project, "notes", "*.md", "note.json");
+    project.file(
+        "note.json",
+        &json!({
+            "name": "note",
+            "fields": { "see": { "type": "ref", "target": [target] } }
+        })
+        .to_string(),
+    );
+    project
+}
+
+fn validate_json(project: &std::path::Path) -> Ran {
+    Spawn::args(["validate", "--json"]).cwd(project).run()
+}
+
+#[test]
+fn a_qualified_target_naming_a_schema_the_imported_project_does_not_have_is_schema_valid() {
+    let imported = tempfile::tempdir().unwrap();
+    learning_project(imported.path());
+    let project = importing_project(imported.path(), "memory_import::precedent");
+
+    let ran = validate_json(project.path());
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let findings = ran.stdout_json()["findings"].clone();
+    let findings = findings.as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0]["rule"], json!("schema.valid"));
+    assert_eq!(findings[0]["path"], json!("note.json"));
+    assert!(
+        findings[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("memory_import::precedent"),
+        "{findings:?}"
+    );
+}
+
+#[test]
+fn a_qualified_target_naming_a_schema_the_imported_project_has_is_clean() {
+    let imported = tempfile::tempdir().unwrap();
+    learning_project(imported.path());
+    let project = importing_project(imported.path(), "memory_import::learning");
+
+    let ran = validate_json(project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout_json()["findings"], json!([]));
+}
+
+#[test]
+fn a_qualified_target_naming_an_alias_that_is_not_configured_is_schema_valid() {
+    let project = Scratch::project(&[]);
+    collection(&project, "notes", "*.md", "note.json");
+    project.file(
+        "note.json",
+        r#"{ "name": "note", "fields": { "see": { "type": "ref", "target": ["ghost_import::learning"] } } }"#,
+    );
+
+    let ran = validate_json(project.path());
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let findings = ran.stdout_json()["findings"].clone();
+    let findings = findings.as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0]["rule"], json!("schema.valid"));
+    assert!(
+        findings[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("ghost_import"),
+        "{findings:?}"
+    );
+}
+
+#[test]
+fn a_qualified_target_naming_an_import_absent_on_this_machine_is_not_a_schema_valid_finding() {
+    // design, Refs → Schema drift: "An import that is absent on this machine is reported by
+    // `imports.absent` instead and is not an error here." No pin (this ticket does not fetch)
+    // means there is no schema to check the name against either way, so this checks the
+    // silence, not `imports.absent` itself, which needs a ref to actually name the import
+    // before it fires.
+    let project = Scratch::project(&[]);
+    project.file(
+        ".typdoc/config.json",
+        r#"{ "version": 1, "imports": { "memory_import": "./not-a-real-project" } }"#,
+    );
+    collection(&project, "notes", "*.md", "note.json");
+    project.file(
+        "note.json",
+        r#"{ "name": "note", "fields": { "see": { "type": "ref", "target": ["memory_import::learning"] } } }"#,
+    );
+
+    let ran = validate_json(project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout_json()["findings"], json!([]));
 }

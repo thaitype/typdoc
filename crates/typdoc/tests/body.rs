@@ -225,7 +225,7 @@ fn an_anchor_that_matches_its_headings_slug_is_clean() {
     assert_eq!(ran.stdout_json()["findings"], json!([]));
 }
 
-const CODED: [(&str, &str); 4] = [
+const CODED: [(&str, &str); 5] = [
     (
         ".typdoc/config.json",
         r#"{ "version": 1, "validation": { "global": { "body.mentions": { "level": "error" } } } }"#,
@@ -236,6 +236,10 @@ const CODED: [(&str, &str); 4] = [
     ),
     ("wf.json", r#"{ "name": "wf", "code": "WF", "fields": {} }"#),
     ("tickets/WF-1.md", "---\n---\n"),
+    (
+        ".typdoc/state/default.json",
+        r#"{ "tickets": { "last": 1 } }"#,
+    ),
 ];
 
 #[test]
@@ -367,6 +371,10 @@ fn a_mention_that_matches_a_recorded_move_is_refs_moved_not_body_mentions() {
             } }"#,
         ),
         ("tickets/WF-2.md", "---\nmoved_from: [WF-1]\n---\n"),
+        (
+            ".typdoc/state/default.json",
+            r#"{ "tickets": { "last": 2 } }"#,
+        ),
     ];
     let project = Scratch::project(&files);
     project.file("tickets/WF-3.md", "---\n---\n\nSee WF-1 for context.\n");
