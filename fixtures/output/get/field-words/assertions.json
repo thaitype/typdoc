@@ -1,0 +1,11 @@
+{
+  "/document/path": "records/words.md",
+  "/document/namespace": "default",
+  "/document/collection": "records",
+  "/document/schema": "record",
+  "/document/fields/title": "no",
+  "/document/fields/note": "yes",
+  "/document/fields/owner": "on",
+  "/document/fields/label": "off",
+  "/document/fields/version": "1.10"
+}

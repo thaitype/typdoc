@@ -1,8 +1,15 @@
-/// A frontmatter value as it is written: text, or a list of text.
+/// A frontmatter value. `Text` and `List` are a value as it is written, which is what a value
+/// stays when it does not fit the type its schema gives it; the others are a value that does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     Text(String),
     List(Vec<String>),
+    Number(serde_json::Number),
+    Bool(bool),
+    /// A calendar date written `YYYY-MM-DD`, as written.
+    Date(String),
+    /// A date and time with an offset, as written.
+    Datetime(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

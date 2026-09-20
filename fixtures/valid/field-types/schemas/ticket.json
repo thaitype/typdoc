@@ -1,0 +1,9 @@
+{
+  "name": "ticket",
+  "code": "WF",
+  "extends": "./base.json",
+  "fields": {
+    "weight": { "type": "string", "override": true },
+    "blocked_by": { "type": "ref[]", "target": ["ticket"], "acyclic": true }
+  }
+}

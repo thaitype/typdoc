@@ -1,0 +1,9 @@
+{
+  "name": "base",
+  "fields": {
+    "status": { "type": "enum", "values": ["open", "resolved"], "default": "open" },
+    "estimate": { "type": "number" },
+    "weight": { "type": "number" },
+    "created_at": { "type": "datetime", "auto": "create" }
+  }
+}

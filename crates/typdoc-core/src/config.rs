@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::error::{ConfigError, Error};
@@ -69,6 +68,8 @@ pub struct Collection {
     pub validation: Rules,
     /// The collection file, for messages.
     pub file: PathBuf,
+    /// The collection file from the project folder, as a config error names it.
+    pub path: String,
 }
 
 #[derive(Debug)]
@@ -105,7 +106,7 @@ impl Report {
         }
     }
 
-    fn finish(self) -> Result<(), Error> {
+    pub(crate) fn finish(self) -> Result<(), Error> {
         if self.errors.is_empty() {
             return Ok(());
         }
@@ -122,21 +123,12 @@ fn ordered(mut errors: Vec<ConfigError>) -> Vec<ConfigError> {
     errors
 }
 
-/// Reads a JSON file that holds one value of type `T`.
-pub fn read_json<T: for<'de> Deserialize<'de>>(file: &Path) -> Result<T, Error> {
-    let text = fs::read_to_string(file).map_err(Error::io_at(file))?;
-    serde_json::from_str(&text).map_err(|e| Error::Config {
-        file: file.to_owned(),
-        message: e.to_string(),
-    })
-}
-
 impl Config {
-    /// Reads `config.json` and every collection file. Every config error that can be
-    /// determined is reported together, and the list ends early only where the rest of the
-    /// config cannot be interpreted.
-    pub fn load(root: &Path) -> Result<Config, Error> {
-        let mut report = Report::default();
+    /// Reads `config.json` and every collection file into `report`, which the caller finishes,
+    /// so that the errors of what is read next can join them. Every config error that can be
+    /// determined is reported together, and `Err` is a config that cannot be interpreted any
+    /// further, with the list ended there.
+    pub(crate) fn load(root: &Path, report: &mut Report) -> Result<Config, Error> {
         if root.join(LEGACY_FILE).symlink_metadata().is_ok() {
             report.add(
                 "config.legacy-file",
@@ -144,16 +136,16 @@ impl Config {
                 format!("{LEGACY_FILE} is not read: move it to {CONFIG_FILE}"),
             );
         }
-        let top = read_config_json(root, &mut report)?;
+        let top = read_config_json(root, report)?;
         let mut validation = Rules::new();
         let mut entries = None;
         for (key, value) in &top {
             match key.as_str() {
                 "version" => {}
-                "namespaces" => entries = Some(namespace_entries(value, &mut report)),
-                "validation" => validation = global_rules(value, &mut report)?,
+                "namespaces" => entries = Some(namespace_entries(value, report)),
+                "validation" => validation = global_rules(value, report)?,
                 "imports" => {}
-                "lock" => check_lock(value, &mut report)?,
+                "lock" => check_lock(value, report)?,
                 other => report.add(
                     "config.unknown-key",
                     CONFIG_FILE,
@@ -161,9 +153,8 @@ impl Config {
                 ),
             }
         }
-        let namespaces = namespaces::resolve(root, entries.as_deref(), &mut report)?;
-        let collections = read_collections(root, &mut report)?;
-        report.finish()?;
+        let namespaces = namespaces::resolve(root, entries.as_deref(), report)?;
+        let collections = read_collections(root, report)?;
         Ok(Config {
             namespaces,
             validation,
@@ -454,5 +445,6 @@ fn read_collection(
         ref_base,
         validation,
         file,
+        path: path.to_owned(),
     })
 }

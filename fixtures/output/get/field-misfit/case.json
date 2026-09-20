@@ -1,0 +1,4 @@
+{
+  "project": "valid/field-types",
+  "command": ["get", "records/misfit.md", "--json"]
+}

@@ -1,0 +1,1 @@
+{ "match": "drafts/{key}.md", "schema": "schemas/ticket.json" }

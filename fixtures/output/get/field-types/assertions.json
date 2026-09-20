@@ -1,0 +1,16 @@
+{
+  "/document/path": "records/typed.md",
+  "/document/namespace": "default",
+  "/document/collection": "records",
+  "/document/schema": "record",
+  "/document/fields/title": "Typed",
+  "/document/fields/count": 3,
+  "/document/fields/ratio": 1000.0,
+  "/document/fields/done": true,
+  "/document/fields/due": "2026-09-19",
+  "/document/fields/at": "2026-09-19T14:30:00+07:00",
+  "/document/fields/kind": "b",
+  "/document/fields/tags": ["x", "y"],
+  "/document/fields/parent": "WF-1",
+  "/document/fields/blockers": ["WF-1", "WF-2"]
+}

@@ -147,6 +147,9 @@ fn value_json(value: &Value) -> Json {
     match value {
         Value::Text(text) => json!(text),
         Value::List(items) => json!(items),
+        Value::Number(number) => Json::Number(number.clone()),
+        Value::Bool(flag) => json!(flag),
+        Value::Date(text) | Value::Datetime(text) => json!(text),
     }
 }
 

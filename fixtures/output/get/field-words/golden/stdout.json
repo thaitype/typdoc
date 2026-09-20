@@ -1,0 +1,15 @@
+{
+  "document": {
+    "path": "records/words.md",
+    "namespace": "default",
+    "collection": "records",
+    "schema": "record",
+    "fields": {
+      "title": "no",
+      "note": "yes",
+      "owner": "on",
+      "label": "off",
+      "version": "1.10"
+    }
+  }
+}

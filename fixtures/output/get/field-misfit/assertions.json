@@ -1,0 +1,16 @@
+{
+  "/document/path": "records/misfit.md",
+  "/document/namespace": "default",
+  "/document/collection": "records",
+  "/document/schema": "record",
+  "/document/fields/title": ["a", "b"],
+  "/document/fields/count": "abc",
+  "/document/fields/ratio": "0755",
+  "/document/fields/done": "no",
+  "/document/fields/due": "2026-02-30",
+  "/document/fields/at": "2026-09-19",
+  "/document/fields/kind": "z",
+  "/document/fields/tags": "single",
+  "/document/fields/parent": ["WF-1"],
+  "/document/fields/blockers": "WF-1"
+}

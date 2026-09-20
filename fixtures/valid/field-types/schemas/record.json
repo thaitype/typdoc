@@ -1,0 +1,19 @@
+{
+  "name": "record",
+  "fields": {
+    "title": { "type": "string", "required": true },
+    "note": { "type": "string" },
+    "owner": { "type": "string" },
+    "label": { "type": "string" },
+    "version": { "type": "string" },
+    "count": { "type": "number" },
+    "ratio": { "type": "number" },
+    "done": { "type": "bool" },
+    "due": { "type": "date" },
+    "at": { "type": "datetime" },
+    "kind": { "type": "enum", "values": ["a", "b", "c"] },
+    "tags": { "type": "list" },
+    "parent": { "type": "ref", "target": "*" },
+    "blockers": { "type": "ref[]", "target": ["ticket"] }
+  }
+}

@@ -1,0 +1,1 @@
+{ "match": "{key}.md", "schema": "schemas/note.json" }

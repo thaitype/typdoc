@@ -1,0 +1,4 @@
+{
+  "project": "valid/field-types",
+  "command": ["get", "records/words.md", "--json"]
+}

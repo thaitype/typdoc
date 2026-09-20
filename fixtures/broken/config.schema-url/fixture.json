@@ -1,0 +1,10 @@
+{
+  "command": [
+    "get",
+    "note.md",
+    "--json"
+  ],
+  "trips": [
+    "config.schema-url"
+  ]
+}

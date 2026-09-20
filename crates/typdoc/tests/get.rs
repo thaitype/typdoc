@@ -160,18 +160,6 @@ fn a_block_that_is_never_closed_exits_2() {
 }
 
 #[test]
-fn a_number_is_refused_and_not_read_as_a_guess() {
-    let project = Scratch::project(&NOTES);
-    project.file("number.md", "---\nversion: 1e3\n---\n");
-
-    let ran = Spawn::args(["get", "number.md", "--json"])
-        .cwd(project.path())
-        .run();
-
-    error_of(&ran, 2);
-}
-
-#[test]
 fn a_field_written_twice_exits_2() {
     let project = Scratch::project(&NOTES);
     project.file("twice.md", "---\ntitle: a\ntitle: b\n---\n");
