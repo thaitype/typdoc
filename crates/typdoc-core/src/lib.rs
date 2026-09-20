@@ -8,6 +8,7 @@ mod document;
 mod env;
 mod error;
 mod frontmatter;
+mod imports;
 mod index;
 mod lines;
 mod links;

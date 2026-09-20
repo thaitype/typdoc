@@ -7,8 +7,8 @@ use serde_json::{Map, Value as Json, json};
 use typdoc_core::{
     Argument, Condition, Deps, Document, DocumentArg, Env, Error, ErrorKind, FieldRef, Finding,
     ListFilter, ListResult, Project, RefField, RefOutcome, RefsDirection, RefsReference,
-    RefsReport, Severity, SortKey, Toc, ValidateReport, ValidateScope, Value, discover,
-    discover_for, parse_field, parse_query, resolve_on_disk,
+    RefsReport, Scope, Severity, SortKey, Source, Toc, ValidateReport, ValidateScope, Value,
+    discover, discover_for, parse_field, parse_query, resolve_on_disk,
 };
 
 #[derive(Parser)]
@@ -236,21 +236,45 @@ fn success(result: Json) -> Outcome {
     }
 }
 
+/// The scope to pass into `Project::get`/`toc`/`refs`: chosen the ordinary way (`Project::
+/// scope`) for a document of this project, or an unused placeholder for a `project::` argument.
+/// A project prefix picks a different project entirely, and `Project::get`/`toc`/`refs` compute
+/// their own scope inside it (`imported_scope`) before ever reading the `scope` this function
+/// returns; choosing this project's scope from `arg`'s inner `namespace:` prefix would validate
+/// it against the *wrong* project's namespaces (that prefix names one of the import's, not this
+/// project's) and refuse arguments such as `several::story-2:WF-5` for a reason that has nothing
+/// to do with them.
+fn scope_for(
+    project: &Project,
+    arg: &DocumentArg,
+    namespace: Option<&str>,
+    env: &dyn Env,
+) -> Result<Scope, Error> {
+    if arg.project_prefix().is_some() {
+        return Ok(Scope {
+            source: Source::Everything,
+            namespaces: Vec::new(),
+            imports: Vec::new(),
+        });
+    }
+    project.scope(arg.namespace_prefix(), namespace, env)
+}
+
 fn get(
     deps: &Deps,
     document: &std::ffi::OsStr,
     namespace: Option<&str>,
 ) -> Result<Document, Error> {
     let (root, arg) = discover_for(Argument::parse(document)?, deps.env)?;
-    let project = Project::load(&root)?;
-    let scope = project.scope(arg.namespace_prefix(), namespace, deps.env)?;
+    let project = Project::load(&root, deps.env)?;
+    let scope = scope_for(&project, &arg, namespace, deps.env)?;
     project.get(&arg, &scope, deps.env)
 }
 
 fn toc(deps: &Deps, document: &std::ffi::OsStr, namespace: Option<&str>) -> Result<Toc, Error> {
     let (root, arg) = discover_for(Argument::parse(document)?, deps.env)?;
-    let project = Project::load(&root)?;
-    let scope = project.scope(arg.namespace_prefix(), namespace, deps.env)?;
+    let project = Project::load(&root, deps.env)?;
+    let scope = scope_for(&project, &arg, namespace, deps.env)?;
     project.toc(&arg, &scope, deps.env)
 }
 
@@ -269,7 +293,7 @@ fn list(
     namespace: Option<&str>,
 ) -> Result<ListResult, Error> {
     let root = discover(deps.env)?;
-    let project = Project::load(&root)?;
+    let project = Project::load(&root, deps.env)?;
     let scope = project.scope(None, namespace, deps.env)?;
     let collections = split_list(collection);
     let codes = split_list(code);
@@ -287,7 +311,7 @@ fn list(
         wheres: &conditions,
         sort: &sort_keys,
     };
-    project.list(&scope, &filter)
+    project.list_all(&scope, &filter)
 }
 
 /// `--collection`/`--code`'s value, split on `,`; absent is the same as empty (every collection).
@@ -517,8 +541,8 @@ fn refs(
     namespace: Option<&str>,
 ) -> Result<RefsReport, Error> {
     let (root, arg) = discover_for(Argument::parse(document)?, deps.env)?;
-    let project = Project::load(&root)?;
-    let scope = project.scope(arg.namespace_prefix(), namespace, deps.env)?;
+    let project = Project::load(&root, deps.env)?;
+    let scope = scope_for(&project, &arg, namespace, deps.env)?;
     project.refs(&arg, &scope, reverse, field, deps.env)
 }
 
@@ -535,7 +559,7 @@ fn validate(
     // finding yet. This `?` is where a config error that answered the design's question on its
     // own, "does it make checking impossible?", with no, would instead let the project load and
     // reach `validate`'s report.
-    let project = Project::load(&root)?;
+    let project = Project::load(&root, deps.env)?;
     project.validate(&args, schemas, strict, namespace, deps.env)
 }
 
@@ -719,7 +743,12 @@ fn toc_json(toc: &Toc, depth: Option<u8>) -> Json {
         })
         .collect();
     json!({
-        "document": Json::Object(document_name(&toc.path, &toc.namespace, toc.key.as_deref())),
+        "document": Json::Object(document_name(
+            &toc.path,
+            &toc.namespace,
+            toc.key.as_deref(),
+            toc.project.as_deref(),
+        )),
         "headings": headings,
     })
 }
@@ -733,6 +762,7 @@ fn refs_json(report: &RefsReport) -> Json {
             &report.document.path,
             &report.document.namespace,
             report.document.key.as_deref(),
+            report.document.project.as_deref(),
         )),
         "direction": direction_name(report.direction),
         "refs": refs,
@@ -758,6 +788,9 @@ fn reference_json(reference: &RefsReference) -> Json {
             if let Some(key) = &name.key {
                 object.insert("key".to_owned(), json!(key));
             }
+            if let Some(project) = &name.project {
+                object.insert("project".to_owned(), json!(project));
+            }
         }
         RefOutcome::Unresolved(reason) => {
             object.insert("unresolved".to_owned(), json!(reason));
@@ -772,19 +805,34 @@ fn reference_json(reference: &RefsReference) -> Json {
     Json::Object(object)
 }
 
-/// The name of a document: `path` and `namespace` always, `key` only for a coded document.
-fn document_name(path: &str, namespace: &str, key: Option<&str>) -> Map<String, Json> {
+/// The name of a document: `path` and `namespace` always, `key` only for a coded document,
+/// `project` only for a document of an imported project (design: "`project`... is absent for a
+/// document of this project").
+fn document_name(
+    path: &str,
+    namespace: &str,
+    key: Option<&str>,
+    project: Option<&str>,
+) -> Map<String, Json> {
     let mut object = Map::new();
     object.insert("path".to_owned(), json!(path));
     object.insert("namespace".to_owned(), json!(namespace));
     if let Some(key) = key {
         object.insert("key".to_owned(), json!(key));
     }
+    if let Some(project) = project {
+        object.insert("project".to_owned(), json!(project));
+    }
     object
 }
 
 fn document_json(document: &Document) -> Json {
-    let mut object = document_name(&document.path, &document.namespace, document.key.as_deref());
+    let mut object = document_name(
+        &document.path,
+        &document.namespace,
+        document.key.as_deref(),
+        document.project.as_deref(),
+    );
     object.insert("code".to_owned(), json!(document.code));
     object.insert("collection".to_owned(), json!(document.collection));
     object.insert("schema".to_owned(), json!(document.schema));

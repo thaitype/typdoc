@@ -1,8 +1,12 @@
 //! What a broken fixture declares about itself, in `fixture.json` at the folder's root: the
-//! command to run in it, and the exact set of rules it is expected to trip. The set is written
-//! by hand from the design and never taken from a run of the tool.
+//! command to run in it, the exact set of rules it is expected to trip, and any environment
+//! variable the run needs declared (`env`, empty by default: most fixtures need none, since the
+//! spawn helper already gives every run a fresh `HOME`; a rule that can only be tripped by
+//! setting a variable on purpose, such as `config.config-dir`'s `TYPDOC_CONFIG_DIR`, is the
+//! exception `env` exists for). The set of rules is written by hand from the design and never
+//! taken from a run of the tool.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde::Deserialize;
@@ -14,6 +18,11 @@ pub struct FixtureSpec {
     pub command: Vec<String>,
     /// The rules the run is expected to trip. The rule the folder is named for is one of them.
     pub trips: BTreeSet<String>,
+    /// A variable the spawned run needs set, by name; empty when the fixture needs none (the
+    /// ordinary case). `HOME` and `PATH` are the spawn helper's own and cannot be named here
+    /// (the same rule `Spawn::var` already enforces for a test that builds one by hand).
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
 }
 
 impl FixtureSpec {

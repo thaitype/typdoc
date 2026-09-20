@@ -6,9 +6,10 @@
 //!
 //! A ref is not an argument (ticket 7's report): a bare form always means the document's own
 //! namespace, whatever the working directory, and a prefix that names neither a sibling
-//! namespace nor an import is `bad-prefix`, never a relative path. The import form (`name::`) is
-//! not resolved here — nothing in this story reads what an alias points at (ticket 17) — so it is
-//! always `bad-prefix`, the same reading ticket 7 gave a `project::` argument ("not read yet").
+//! namespace nor an import is `bad-prefix`, never a relative path. The import form (`name::`)
+//! resolves into the alias's own project (`Ctx::imports`): an alias this project does not
+//! configure is `bad-prefix`; one that is absent on this machine is `import-absent`; one that is
+//! present is resolved inside it, by the same rules a document of that project would use.
 //!
 //! `classify` reads no file and touches no index: it decides which of the design's forms a
 //! written ref is and, for a path form, the base it is joined against, all from the string and
@@ -22,15 +23,19 @@ use std::path::Path;
 
 use crate::argument::looks_like_key;
 use crate::config::{Namespace, RefBase};
+use crate::imports::Absence;
 use crate::index::Index;
+use crate::project::ImportState;
 use crate::schema::{Target, normalize};
 
-/// Why a ref did not resolve. `import-absent` is ticket 17's; a `name::` prefix reads as
-/// `bad-prefix` here for the same reason.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Why a ref did not resolve, under the design's own `unresolved` ids. `ImportAbsent` carries why
+/// the import itself is absent, so a caller can build `imports.absent`'s message naming the
+/// variable, the same way the design's own example does ("TYPMEM_DIR is not set").
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Reason {
     NotFound,
     BadPrefix,
+    ImportAbsent(Absence),
 }
 
 /// Whether a ref was written as a key or as a path: `refs.codedByPath` cares only about the
@@ -42,13 +47,16 @@ pub(crate) enum Via {
 }
 
 /// A ref that resolved: the path of the document or file it names, the collection it belongs to
-/// (`None` for a file outside every collection, reachable only through `target: "*"`), and the
-/// form it was written in.
+/// (`None` for a file outside every collection, reachable only through `target: "*"`), the form
+/// it was written in, and, when it landed in an imported project rather than this one, the alias
+/// it was reached through (`collection` then indexes that project's own collections, never this
+/// one's — a caller that reads `collection` to look up a schema must first check `project`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Resolved {
     pub path: String,
     pub collection: Option<usize>,
     pub via: Via,
+    pub project: Option<String>,
 }
 
 /// What one written ref resolves to.
@@ -72,30 +80,49 @@ pub(crate) struct Ctx<'a> {
     pub codes: &'a BTreeSet<String>,
     pub index: &'a Index,
     pub root: &'a Path,
+    /// This project's own `imports`, resolved once at load (`Project::imports`): every alias not
+    /// a key here names neither a sibling namespace nor an import, and is `bad-prefix`.
+    pub imports: &'a BTreeMap<String, ImportState>,
 }
 
 /// What a written ref's form decides, before anything is looked up: a key in one namespace, or a
 /// path already joined against its base (the document's own folder or namespace under `refBase`
 /// for the unprefixed form, always the named namespace's folder for a sibling prefix).
 enum Form {
-    Key { namespace: usize, key: String },
-    Path { base: String, rest: String },
+    Key {
+        namespace: usize,
+        key: String,
+    },
+    Path {
+        base: String,
+        rest: String,
+    },
+    /// `name::rest`: an import prefix, not yet looked up against `Ctx::imports` (`classify`
+    /// itself reads no index, and telling `bad-prefix` from `import-absent` from a real
+    /// resolution needs it).
+    Import {
+        alias: String,
+        rest: String,
+    },
     BadPrefix,
 }
 
-/// What a body link's destination is, before anything is looked up: a path to resolve, `bad
-/// prefix` (an import form, unbuilt this story, same as a frontmatter `name::` ref), or skipped
-/// entirely — an ordinary URL scheme (`https:`, `mailto:` and so on), which the design says is
-/// "always skipped; no configuration is needed", never a finding of any kind.
+/// What a body link's destination is, before anything is looked up: a path to resolve (in this
+/// project, or, for `Import`, in the alias's own project — its path is already joined against
+/// that project's folder, never this one's, so the caller resolves it against the imported
+/// project's own index and root), `bad-prefix`, `import-absent`, or skipped entirely — an
+/// ordinary URL scheme (`https:`, `mailto:` and so on), which the design says is "always
+/// skipped; no configuration is needed", never a finding of any kind.
 pub(crate) enum BodyDestination {
     Path(String),
+    Import { alias: String, path: String },
     BadPrefix,
+    ImportAbsent(Absence),
     Skip,
 }
 
-/// Resolves one ref as written in frontmatter, through the forms the design's Refs table gives
-/// (bare key, sibling prefix, relative path with `refBase`) plus the import form, which this
-/// story does not read (see the module doc).
+/// Resolves one ref as written in frontmatter, through the forms the design's Refs table gives:
+/// bare key, sibling prefix, relative path with `refBase`, and the import form.
 pub(crate) fn resolve_one(written: &str, ctx: &Ctx) -> Outcome {
     match classify(
         written,
@@ -107,8 +134,76 @@ pub(crate) fn resolve_one(written: &str, ctx: &Ctx) -> Outcome {
     ) {
         Form::Key { namespace, key } => resolve_key(namespace, &key, ctx.index),
         Form::Path { base, rest } => resolve_path(&join(&base, &rest), ctx.index, ctx.root),
+        Form::Import { alias, rest } => resolve_into_import(&alias, &rest, ctx.imports),
         Form::BadPrefix => Err(Reason::BadPrefix),
     }
+}
+
+/// `name::rest`: `alias` looked up against `imports` (`Project::imports`, resolved once at
+/// load). An alias this project does not configure is `bad-prefix`, the same reading a namespace
+/// prefix naming no sibling already gets; one absent on this machine is `import-absent`
+/// (`imports.absent`'s reason); one present is resolved inside it by `resolve_into_project`, and
+/// the result is tagged with the alias so the caller can name the document correctly (`project`
+/// in its `path`, `namespace` and `key`).
+fn resolve_into_import(
+    alias: &str,
+    rest: &str,
+    imports: &BTreeMap<String, ImportState>,
+) -> Outcome {
+    match imports.get(alias) {
+        None => Err(Reason::BadPrefix),
+        Some(ImportState::Absent(absence)) => Err(Reason::ImportAbsent(absence.clone())),
+        Some(ImportState::Loaded(imported)) => resolve_into_project(
+            rest,
+            imported.namespaces(),
+            imported.index_ref(),
+            imported.root_ref(),
+            &imported.codes(),
+        )
+        .map(|resolved| Resolved {
+            project: Some(alias.to_owned()),
+            ..resolved
+        }),
+    }
+}
+
+/// `rest` after an import prefix, resolved inside the project it names: `namespace:rest` is a
+/// key or a path in that project's namespace `namespace`, or `bad-prefix` when it has none by
+/// that name; a bare, key-shaped `rest` whose code the imported project has is a key in its one
+/// namespace, or `bad-prefix` when it has more than one (design: "a ref into a project with
+/// several namespaces must name one" — an unconditional syntax requirement, not "ambiguous only
+/// when the key happens to collide"); anything else is a path relative to the imported project's
+/// own folder, never to the referring document's (imports name a document by `project::path`,
+/// design's Arguments that name a document table, and a ref's path form follows the same rule
+/// Body links already gives a sibling-prefixed path: from the named project's folder, not
+/// `refBase`, which is a property of the *referring* document's own collection and has no
+/// meaning once the ref has crossed into another project entirely). A further `::` inside `rest`
+/// is `bad-prefix`: imports of imports are ignored.
+fn resolve_into_project(
+    rest: &str,
+    namespaces: &[Namespace],
+    index: &Index,
+    root: &Path,
+    codes: &BTreeSet<String>,
+) -> Outcome {
+    if rest.contains("::") {
+        return Err(Reason::BadPrefix);
+    }
+    if let Some((prefix, sub)) = rest.split_once(':') {
+        let namespace = namespace_named(namespaces, prefix).ok_or(Reason::BadPrefix)?;
+        return if looks_like_key(sub) {
+            resolve_key(namespace, sub, index)
+        } else {
+            resolve_path(&join(&namespaces[namespace].folder, sub), index, root)
+        };
+    }
+    if looks_like_key(rest) && codes.contains(code_of(rest)) {
+        if namespaces.len() != 1 {
+            return Err(Reason::BadPrefix);
+        }
+        return resolve_key(0, rest, index);
+    }
+    resolve_path(rest, index, root)
 }
 
 /// What a body link's destination (`target`, already percent-decoded, with any `#anchor` already
@@ -123,50 +218,62 @@ pub(crate) fn resolve_one(written: &str, ctx: &Ctx) -> Outcome {
 /// URLs a typed frontmatter field never does, and the design's own words for this case are "a URL
 /// scheme... that is not a namespace name or an import alias are always skipped".
 pub(crate) fn classify_body(target: &str, ctx: &Ctx) -> BodyDestination {
-    let form = if target.starts_with("./") || target.starts_with("../") {
-        Form::Path {
-            base: base_of(
-                ctx.ref_base,
-                ctx.doc_path,
-                ctx.doc_namespace,
-                ctx.namespaces,
-            ),
-            rest: target.to_owned(),
-        }
-    } else if target.contains("::") {
-        Form::BadPrefix
-    } else if let Some((prefix, rest)) = target.split_once(':') {
-        match namespace_named(ctx.namespaces, prefix) {
-            Some(namespace) => Form::Path {
-                base: ctx.namespaces[namespace].folder.clone(),
-                rest: rest.to_owned(),
-            },
-            None => return BodyDestination::Skip,
-        }
-    } else {
-        Form::Path {
-            base: base_of(
-                ctx.ref_base,
-                ctx.doc_path,
-                ctx.doc_namespace,
-                ctx.namespaces,
-            ),
-            rest: target.to_owned(),
-        }
-    };
-    match form {
-        Form::Path { base, rest } => BodyDestination::Path(join(&base, &rest)),
-        Form::BadPrefix => BodyDestination::BadPrefix,
-        Form::Key { .. } => unreachable!("classify_body builds no key form"),
+    if target.starts_with("./") || target.starts_with("../") {
+        let base = base_of(
+            ctx.ref_base,
+            ctx.doc_path,
+            ctx.doc_namespace,
+            ctx.namespaces,
+        );
+        return BodyDestination::Path(join(&base, target));
     }
+    if let Some((alias, rest)) = target.split_once("::") {
+        return match ctx.imports.get(alias) {
+            None => BodyDestination::BadPrefix,
+            Some(ImportState::Absent(absence)) => BodyDestination::ImportAbsent(absence.clone()),
+            Some(ImportState::Loaded(imported)) => {
+                // Mirrors the sibling-prefix branch below: an explicit namespace before the path
+                // is accepted, though a path is self-qualifying either way, since the design
+                // gives a sibling-prefixed path this same form and gives no reason an import
+                // should differ.
+                let (base, rest) = match rest.split_once(':') {
+                    Some((namespace, sub)) => {
+                        match namespace_named(imported.namespaces(), namespace) {
+                            Some(index) => (imported.namespaces()[index].folder.clone(), sub),
+                            None => return BodyDestination::BadPrefix,
+                        }
+                    }
+                    None => (String::new(), rest),
+                };
+                BodyDestination::Import {
+                    alias: alias.to_owned(),
+                    path: join(&base, rest),
+                }
+            }
+        };
+    }
+    if let Some((prefix, rest)) = target.split_once(':') {
+        return match namespace_named(ctx.namespaces, prefix) {
+            Some(namespace) => BodyDestination::Path(join(&ctx.namespaces[namespace].folder, rest)),
+            None => BodyDestination::Skip,
+        };
+    }
+    let base = base_of(
+        ctx.ref_base,
+        ctx.doc_path,
+        ctx.doc_namespace,
+        ctx.namespaces,
+    );
+    BodyDestination::Path(join(&base, target))
 }
 
 /// A path that really contains a colon is written with a leading `./` or `../`; that escape is
 /// read first and skips prefix detection entirely, so a literal file name is never misread as a
-/// namespace. Otherwise: `name::` (an import) is always `bad-prefix` here (see the module doc);
-/// `name:rest` is a key or a path in the sibling namespace `name`, or `bad-prefix` when no
-/// sibling has that name; anything else is a bare key in the document's own namespace when it has
-/// the shape of one and the code exists somewhere in the project, and a relative path otherwise.
+/// namespace. Otherwise: `name::rest` is an import prefix (looked up against `Ctx::imports` by
+/// the caller, not here); `name:rest` is a key or a path in the sibling namespace `name`, or
+/// `bad-prefix` when no sibling has that name; anything else is a bare key in the document's own
+/// namespace when it has the shape of one and the code exists somewhere in the project, and a
+/// relative path otherwise.
 fn classify(
     written: &str,
     doc_namespace: usize,
@@ -181,8 +288,11 @@ fn classify(
             rest: written.to_owned(),
         };
     }
-    if written.contains("::") {
-        return Form::BadPrefix;
+    if let Some((alias, rest)) = written.split_once("::") {
+        return Form::Import {
+            alias: alias.to_owned(),
+            rest: rest.to_owned(),
+        };
     }
     if let Some((prefix, rest)) = written.split_once(':') {
         return match namespace_named(namespaces, prefix) {
@@ -248,6 +358,7 @@ fn resolve_key(namespace: usize, key: &str, index: &Index) -> Outcome {
         path: path.to_owned(),
         collection: Some(entry.collection),
         via: Via::Key,
+        project: None,
     })
 }
 
@@ -280,6 +391,7 @@ pub(crate) fn resolve_path(path: &str, index: &Index, root: &Path) -> Outcome {
             path: path.to_owned(),
             collection: Some(entry.collection),
             via: Via::Path,
+            project: None,
         });
     }
     if root.join(path).is_file() {
@@ -287,6 +399,7 @@ pub(crate) fn resolve_path(path: &str, index: &Index, root: &Path) -> Outcome {
             path: path.to_owned(),
             collection: None,
             via: Via::Path,
+            project: None,
         });
     }
     Err(Reason::NotFound)
@@ -409,6 +522,7 @@ mod tests {
         let namespaces = namespaces();
         let codes = BTreeSet::new();
         let index = Index::default();
+        let imports = BTreeMap::new();
         let ctx = Ctx {
             doc_namespace: 0,
             doc_path: "tickets/WF-1.md",
@@ -417,6 +531,7 @@ mod tests {
             codes: &codes,
             index: &index,
             root: Path::new("."),
+            imports: &imports,
         };
         classify_body(target, &ctx)
     }
@@ -440,18 +555,23 @@ mod tests {
     }
 
     #[test]
-    fn a_double_colon_is_bad_prefix_not_a_relative_path() {
+    fn a_double_colon_is_an_import_form_never_a_relative_path() {
+        // `classify` itself reads no index and cannot yet know whether `chief` is configured;
+        // that is `resolve_one`'s job once it has `Ctx::imports` in hand (see the module doc and
+        // `resolve_into_import`'s own tests through `Project`, in `crates/typdoc/tests`).
         let form = classify_default("chief::WF-5", RefBase::File, &code_set(&[]));
 
-        assert!(matches!(form, Form::BadPrefix));
+        assert!(
+            matches!(&form, Form::Import { alias, rest } if alias == "chief" && rest == "WF-5")
+        );
     }
 
     #[test]
-    fn a_double_colon_is_bad_prefix_even_naming_several_namespaces() {
-        // The ticket's own example: `chief::WF-5` in a project with several namespaces. Since
-        // the import form is not resolved in this story (see the module doc), it is `bad-prefix`
-        // regardless of how many namespaces this project has, not only when `chief` happens to
-        // name none of them.
+    fn a_double_colon_is_an_import_form_whatever_the_project_has() {
+        // The ticket's own example: `chief::WF-5` in a project with several namespaces. The
+        // alias and the rest after it are read the same way whether or not this project happens
+        // to have a namespace of that name, since `::` and `:` are never confused with each
+        // other (design: the two syntaxes never fall back to each other).
         let form = classify(
             "chief::WF-5",
             0,
@@ -461,7 +581,9 @@ mod tests {
             &code_set(&[]),
         );
 
-        assert!(matches!(form, Form::BadPrefix));
+        assert!(
+            matches!(&form, Form::Import { alias, rest } if alias == "chief" && rest == "WF-5")
+        );
     }
 
     #[test]
@@ -577,6 +699,7 @@ mod tests {
             path: "README.md".to_owned(),
             collection: None,
             via: Via::Path,
+            project: None,
         };
 
         assert!(target_allowed(None, &file, &[]));
@@ -589,6 +712,7 @@ mod tests {
             path: "README.md".to_owned(),
             collection: None,
             via: Via::Path,
+            project: None,
         };
 
         assert!(!target_allowed(
@@ -651,6 +775,7 @@ mod tests {
             path: "tickets/WF-1.md".to_owned(),
             collection: Some(0),
             via: Via::Key,
+            project: None,
         };
 
         assert!(target_allowed(

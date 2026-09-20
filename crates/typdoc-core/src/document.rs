@@ -14,7 +14,8 @@ pub enum Value {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Document {
-    /// Relative to the project folder.
+    /// Relative to the project the document belongs to (its own project folder when `project` is
+    /// `None`, the imported project's when it is `Some`).
     pub path: String,
     pub namespace: String,
     /// Present only when the schema has a code.
@@ -23,6 +24,10 @@ pub struct Document {
     pub code: Option<String>,
     pub collection: String,
     pub schema: String,
+    /// The alias this document was reached through, when it belongs to an imported project;
+    /// `None` for a document of this project (design: "`project`... is absent for a document of
+    /// this project").
+    pub project: Option<String>,
     /// In the order of the file.
     pub fields: Vec<(String, Value)>,
 }

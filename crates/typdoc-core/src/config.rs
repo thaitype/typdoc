@@ -79,10 +79,10 @@ pub struct Config {
     pub validation: Rules,
     /// Sorted by name.
     pub collections: Vec<Collection>,
-    /// The alias of every entry of `imports`, read only for `schema.valid`'s check that an
-    /// import name does not collide with a URL scheme; reading what an alias points at, and
-    /// following it, is ticket 17.
-    pub import_names: Vec<String>,
+    /// `imports`, alias to the path as written, `${NAME}` included: read here, resolved (the
+    /// machine file merged in, `${NAME}` substituted, the project loaded) by `Project::load`,
+    /// which is the one place that has `Env`.
+    pub imports: BTreeMap<String, String>,
 }
 
 /// The config errors found so far.
@@ -157,13 +157,13 @@ impl Config {
         let top = read_config_json(root, report)?;
         let mut validation = Rules::new();
         let mut entries = None;
-        let mut import_names = Vec::new();
+        let mut imports = BTreeMap::new();
         for (key, value) in &top {
             match key.as_str() {
                 "version" => {}
                 "namespaces" => entries = Some(namespace_entries(value, report)),
                 "validation" => validation = global_rules(value, report)?,
-                "imports" => import_names = import_alias_names(value),
+                "imports" => imports = parse_imports(value, report)?,
                 "lock" => check_lock(value, report)?,
                 other => report.add(
                     "config.unknown-key",
@@ -178,19 +178,29 @@ impl Config {
             namespaces,
             validation,
             collections,
-            import_names,
+            imports,
         })
     }
 }
 
-/// The alias of every entry of `imports`, read for `schema.valid`'s check on colliding with a
-/// URL scheme and nothing else: a shape other than an object is left for ticket 17 to refuse,
-/// since what `imports` should hold beyond its keys is not this ticket's to decide.
-fn import_alias_names(value: &Value) -> Vec<String> {
-    match value {
-        Value::Object(imports) => imports.keys().cloned().collect(),
-        _ => Vec::new(),
+/// `imports`: an object of alias to a text path (`${NAME}` allowed, substituted later, by
+/// `Project::load`, which is the one place that has `Env`). A shape other than an object of text
+/// values is `config.parse`, the same treatment ticket 4 already gave a wrong-typed `validation`
+/// or `lock`: no other id fits a value of the wrong shape.
+fn parse_imports(value: &Value, report: &mut Report) -> Result<BTreeMap<String, String>, Error> {
+    let Value::Object(entries) = value else {
+        let message = "`imports` must be an object of alias to path".to_owned();
+        return Err(report.stop("config.parse", CONFIG_FILE, message));
+    };
+    let mut imports = BTreeMap::new();
+    for (alias, path) in entries {
+        let Value::String(path) = path else {
+            let message = format!("the import `{alias}` is {path}: it must be a text path");
+            return Err(report.stop("config.parse", CONFIG_FILE, message));
+        };
+        imports.insert(alias.clone(), path.clone());
     }
+    Ok(imports)
 }
 
 /// `config.json` as an object whose `version` is known. Anything else ends the list.

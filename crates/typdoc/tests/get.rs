@@ -134,14 +134,15 @@ fn a_namespace_prefix_on_a_path_that_is_not_a_namespace_of_a_one_namespace_proje
 }
 
 #[test]
-fn an_argument_that_names_an_imported_project_exits_1() {
+fn an_argument_naming_an_import_this_project_does_not_configure_exits_1() {
+    // `valid/minimal` configures no `imports` at all, so `chief` names none.
     let ran = Spawn::args(["get", "chief::WF-3", "--json"])
         .cwd(fixture("valid/minimal"))
         .run();
 
     let object = error_of(&ran, 1);
     assert!(
-        object["error"].as_str().unwrap().contains("chief::WF-3"),
+        object["error"].as_str().unwrap().contains("chief"),
         "{object}"
     );
 }

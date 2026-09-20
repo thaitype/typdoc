@@ -33,8 +33,12 @@ fn env(cwd: &str, vars: &[(&'static str, &str)]) -> FakeEnv {
 
 const SEVERAL: &str = "valid/several-namespaces";
 
+fn no_vars() -> FakeEnv {
+    env(SEVERAL, &[])
+}
+
 fn several() -> Project {
-    Project::load(&path(SEVERAL)).expect("the fixture loads")
+    Project::load(&path(SEVERAL), &no_vars()).expect("the fixture loads")
 }
 
 fn scope(prefix: Option<&str>, flag: Option<&str>, env: &FakeEnv) -> Result<Scope, Error> {
@@ -45,6 +49,7 @@ fn chosen(source: Source, names: &[&str]) -> Scope {
     Scope {
         source,
         namespaces: names.iter().map(|n| n.to_string()).collect(),
+        imports: Vec::new(),
     }
 }
 
@@ -208,16 +213,16 @@ fn a_list_that_is_malformed_is_bad_arguments() {
 }
 
 #[test]
-fn a_name_that_reaches_an_imported_project_is_refused_because_imports_are_not_read_yet() {
+fn a_name_that_is_no_import_of_the_project_is_bad_arguments() {
     let error = scope(None, Some("other::*"), &env(SEVERAL, &[])).unwrap_err();
 
-    assert!(matches!(error, Error::BadArgument(_)));
-    assert!(error.to_string().contains("imported"), "{error}");
+    assert!(matches!(error, Error::BadArgument(_)), "{error}");
+    assert!(error.to_string().contains("other"), "{error}");
 }
 
 #[test]
 fn a_project_with_one_namespace_is_in_scope_whatever_narrows_it() {
-    let project = Project::load(&path("valid/minimal")).unwrap();
+    let project = Project::load(&path("valid/minimal"), &no_vars()).unwrap();
     let inside = env("valid/minimal/schemas", &[]);
 
     assert_eq!(

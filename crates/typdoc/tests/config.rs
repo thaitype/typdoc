@@ -524,7 +524,11 @@ fn broken_config_runs() -> Vec<(String, Ran)> {
         .map(|id| {
             let dir = fixture("broken").join(&id);
             let spec = typdoc_testkit::spec::FixtureSpec::load(&dir, &id).expect("a spec");
-            let ran = Spawn::args(&spec.command).cwd(&dir).run();
+            let mut spawn = Spawn::args(&spec.command).cwd(&dir);
+            for (name, value) in &spec.env {
+                spawn = spawn.var(name, value);
+            }
+            let ran = spawn.run();
             (id, ran)
         })
         .collect()
@@ -568,6 +572,7 @@ fn a_config_error_in_a_fixture_names_the_file_it_is_about() {
         ("config.namespaces-entry", ".typdoc/config.json"),
         ("config.namespace-name", ".typdoc/config.json"),
         ("config.namespace-nested", ".typdoc/config.json"),
+        ("config.config-dir", ".typdoc/config.json"),
     ] {
         let (_, ran) = runs.iter().find(|(found, _)| found == id).expect(id);
 

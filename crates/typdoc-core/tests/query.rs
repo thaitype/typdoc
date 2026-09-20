@@ -68,6 +68,7 @@ fn doc(fields: &[(&str, Value)]) -> Document {
         code: None,
         collection: "docs".to_owned(),
         schema: "test".to_owned(),
+        project: None,
         fields: fields
             .iter()
             .map(|(name, v)| ((*name).to_owned(), v.clone()))

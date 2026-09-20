@@ -1,0 +1,7 @@
+{
+  "name": "learning",
+  "code": "LRN",
+  "fields": {
+    "title": { "type": "string" }
+  }
+}

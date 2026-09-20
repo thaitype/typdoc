@@ -44,6 +44,7 @@ pub const RULES: &[&str] = &[
     "config.namespaces-entry",
     "config.namespace-name",
     "config.namespace-nested",
+    "config.config-dir",
     "frontmatter.parse",
     "frontmatter.types",
     "frontmatter.unknown",
@@ -60,6 +61,7 @@ pub const RULES: &[&str] = &[
     "body.links",
     "body.anchors",
     "body.mentions",
+    "imports.absent",
 ];
 
 /// Ids the design names and the binary does not report yet. Each is a difference between
@@ -68,11 +70,9 @@ pub const RULES: &[&str] = &[
 pub const UNIMPLEMENTED_RULES: &[&str] = &[
     "frontmatter.transitions", // story 2
     "state.missing",           // story 1
-    "imports.absent",          // story 1
     "config.state-uncoded",    // story 1
     "config.state-orphan",     // story 1
     "config.schema-unpinned",  // story 1
     "config.vendor-missing",   // story 1
     "config.vendor-edited",    // story 1
-    "config.config-dir",       // story 1
 ];

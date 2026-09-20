@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "imports": {
+    "memory_import": "../memory",
+    "several_import": "../../several-namespaces",
+    "named_import": "../named",
+    "gone_import": "./not-a-real-project"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "note",
+  "fields": {
+    "see": { "type": "ref", "target": "*" },
+    "context": { "type": "ref[]", "target": "*" }
+  }
+}

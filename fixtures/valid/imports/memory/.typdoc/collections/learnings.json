@@ -1,0 +1,1 @@
+{ "match": "learnings/{key}.md", "schema": "schemas/learning.json" }

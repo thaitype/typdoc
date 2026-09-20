@@ -55,7 +55,11 @@ fn every_broken_fixture_names_a_rule_that_exists_and_every_rule_that_exists_has_
 /// Runs the fixture for `rule` in `dir` as its spec says, and compares the rules it trips.
 fn check_fixture(dir: &Path, rule: &str) -> Result<(), String> {
     let spec = FixtureSpec::load(dir, rule)?;
-    let ran = Spawn::args(&spec.command).cwd(dir).run();
+    let mut spawn = Spawn::args(&spec.command).cwd(dir);
+    for (name, value) in &spec.env {
+        spawn = spawn.var(name, value);
+    }
+    let ran = spawn.run();
     let tripped = tripped_rules(&ran.stdout, &ran.stderr)?;
     exact_set(rule, &spec.trips, &tripped)
 }

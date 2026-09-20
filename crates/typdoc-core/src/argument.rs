@@ -12,30 +12,68 @@ use crate::error::Error;
 use crate::project::discover;
 
 /// The argument of a command that names a document, once the project is known. A path or a
-/// key may carry a namespace prefix (`story-2:notes/x.md`, `story-2:WF-5`); the prefix only
-/// chooses scope; it never changes what the path is read against, which stays the project
-/// folder (see `Project::resolve`; ticket 4 already decided a path is not narrowed by scope).
+/// key may carry a namespace prefix (`story-2:notes/x.md`, `story-2:WF-5`), an import prefix
+/// (`memory::precedents/x.md`), or both together when the import has several namespaces
+/// (`chief::story-3:WF-5`). A namespace prefix only chooses scope; it never changes what the
+/// path is read against, which stays the project folder (see `Project::resolve`; ticket 4
+/// already decided a path is not narrowed by scope). An import prefix does change which
+/// project the rest is read against entirely (`Project::get`/`toc`/`refs` each check
+/// `project_prefix` first).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocumentArg {
-    /// Relative to the project folder, with the case of the file kept.
+    /// Relative to the project the document belongs to (this one, or, with `project` set, the
+    /// imported one), with the case of the file kept.
     Path {
+        project: Option<String>,
         namespace: Option<String>,
         path: String,
     },
-    /// The namespace a prefix on it named, if any (`story-2:WF-5`).
+    /// The namespace a prefix on it named, if any (`story-2:WF-5`), and the project an import
+    /// prefix named, if any (`memory::WF-5`, `chief::story-3:WF-5`).
     Key {
+        project: Option<String>,
         namespace: Option<String>,
         key: String,
     },
 }
 
 impl DocumentArg {
-    /// The namespace a prefix on the argument named, if it had one.
+    /// The namespace a `namespace:` prefix on the argument named, if it had one — present or
+    /// absent independently of `project_prefix` (`chief::story-3:WF-5` carries both).
     pub fn namespace_prefix(&self) -> Option<&str> {
         match self {
             DocumentArg::Path { namespace, .. } | DocumentArg::Key { namespace, .. } => {
                 namespace.as_deref()
             }
+        }
+    }
+
+    /// The alias a `project::` prefix on the argument named, if it had one.
+    pub fn project_prefix(&self) -> Option<&str> {
+        match self {
+            DocumentArg::Path { project, .. } | DocumentArg::Key { project, .. } => {
+                project.as_deref()
+            }
+        }
+    }
+
+    /// This argument with its import prefix removed, for resolving the rest directly against the
+    /// imported project (`Project::get`/`toc`/`refs`'s own dispatch): the namespace prefix, if
+    /// any, is kept, since it may still be needed to choose among that project's namespaces.
+    pub fn without_project_prefix(&self) -> DocumentArg {
+        match self {
+            DocumentArg::Path {
+                namespace, path, ..
+            } => DocumentArg::Path {
+                project: None,
+                namespace: namespace.clone(),
+                path: path.clone(),
+            },
+            DocumentArg::Key { namespace, key, .. } => DocumentArg::Key {
+                project: None,
+                namespace: namespace.clone(),
+                key: key.clone(),
+            },
         }
     }
 }
@@ -50,11 +88,14 @@ pub enum Argument {
 
 impl Argument {
     /// Classifies `arg` by its form alone: on disk (`/`, `./`, `../`, and it must end in
-    /// `.md`), a project-relative path (ends in `.md`), or a key (`CODE-number`); either of the
-    /// last two may carry a `namespace:` prefix ("Choosing a namespace" names both a key and a
-    /// path argument as candidates for one). A path and a key can never be confused, since a
-    /// key never ends in `.md`; a `project::` prefix (an import) is not read yet. Nothing here
-    /// reads the disk or knows what project the argument is in.
+    /// `.md`), a project-relative path (ends in `.md`), or a key (`CODE-number`); any of the
+    /// three may carry a `project::` prefix (an import), and the path and key forms may also
+    /// carry a `namespace:` prefix after it ("Choosing a namespace" names both a key and a path
+    /// argument as candidates for one; the design's own `project::path` and
+    /// `project::namespace:key` forms nest the two). A path and a key can never be confused,
+    /// since a key never ends in `.md`. Nothing here reads the disk, knows what project the
+    /// argument is in, or knows whether an alias it names is actually configured — that is
+    /// `Project::get`/`toc`/`refs`'s job, once the project is known.
     pub fn parse(arg: &OsStr) -> Result<Argument, Error> {
         let text = arg.to_str().ok_or_else(|| {
             Error::BadArgument(format!(
@@ -70,23 +111,31 @@ impl Argument {
                 )))
             };
         }
-        if text.contains("::") {
-            return Err(Error::BadArgument(format!(
-                "`{text}` names an imported project, which is not read yet"
-            )));
-        }
+        let (project, text) = match text.split_once("::") {
+            Some((alias, rest)) => {
+                if alias.is_empty() || rest.contains("::") {
+                    return Err(Error::BadArgument(format!(
+                        "`{text}` is not a valid import prefix: imports of imports are not read"
+                    )));
+                }
+                (Some(alias.to_owned()), rest)
+            }
+            None => (None, text),
+        };
         let (namespace, rest) = match text.split_once(':') {
             Some((namespace, rest)) => (Some(namespace.to_owned()), rest),
             None => (None, text),
         };
         if rest.ends_with(".md") {
             return Ok(Argument::Named(DocumentArg::Path {
+                project,
                 namespace,
                 path: rest.to_owned(),
             }));
         }
         if looks_like_key(rest) {
             return Ok(Argument::Named(DocumentArg::Key {
+                project,
                 namespace,
                 key: rest.to_owned(),
             }));
@@ -139,6 +188,7 @@ pub fn discover_for(arg: Argument, env: &dyn Env) -> Result<(PathBuf, DocumentAr
             Ok((
                 root,
                 DocumentArg::Path {
+                    project: None,
                     namespace: None,
                     path,
                 },
@@ -166,6 +216,7 @@ pub fn resolve_on_disk(root: &Path, given: &Path, env: &dyn Env) -> Result<Docum
     })?;
     let path = to_project_path(relative, given)?;
     Ok(DocumentArg::Path {
+        project: None,
         namespace: None,
         path,
     })
@@ -232,6 +283,7 @@ mod tests {
         assert_eq!(
             resolve_on_disk(root, Path::new("./a.md"), &env).unwrap(),
             DocumentArg::Path {
+                project: None,
                 namespace: None,
                 path: "sub/a.md".to_owned()
             }
@@ -239,6 +291,7 @@ mod tests {
         assert_eq!(
             resolve_on_disk(root, Path::new("/proj/b.md"), &env).unwrap(),
             DocumentArg::Path {
+                project: None,
                 namespace: None,
                 path: "b.md".to_owned()
             }
@@ -270,6 +323,7 @@ mod tests {
         assert_eq!(
             parse("notes/a.md"),
             Argument::Named(DocumentArg::Path {
+                project: None,
                 namespace: None,
                 path: "notes/a.md".to_owned()
             })
@@ -277,6 +331,7 @@ mod tests {
         assert_eq!(
             parse("WF-3"),
             Argument::Named(DocumentArg::Key {
+                project: None,
                 namespace: None,
                 key: "WF-3".to_owned()
             })
@@ -288,6 +343,7 @@ mod tests {
         assert_eq!(
             parse("story-2:WF-5"),
             Argument::Named(DocumentArg::Key {
+                project: None,
                 namespace: Some("story-2".to_owned()),
                 key: "WF-5".to_owned()
             })
@@ -295,6 +351,7 @@ mod tests {
         assert_eq!(
             parse("story-2:notes/x.md"),
             Argument::Named(DocumentArg::Path {
+                project: None,
                 namespace: Some("story-2".to_owned()),
                 path: "notes/x.md".to_owned()
             })
@@ -313,6 +370,7 @@ mod tests {
         assert_eq!(
             parse("..two/a.md"),
             Argument::Named(DocumentArg::Path {
+                project: None,
                 namespace: None,
                 path: "..two/a.md".to_owned()
             })
@@ -327,11 +385,67 @@ mod tests {
     }
 
     #[test]
-    fn a_double_colon_is_an_import_prefix_which_is_not_read_yet() {
-        let error = parse_err("chief::WF-3");
+    fn a_double_colon_is_an_import_prefix_read_the_same_way_as_a_path_or_a_key() {
+        assert_eq!(
+            parse("memory::precedents/x.md"),
+            Argument::Named(DocumentArg::Path {
+                project: Some("memory".to_owned()),
+                namespace: None,
+                path: "precedents/x.md".to_owned()
+            })
+        );
+        assert_eq!(
+            parse("memory::LRN-5"),
+            Argument::Named(DocumentArg::Key {
+                project: Some("memory".to_owned()),
+                namespace: None,
+                key: "LRN-5".to_owned()
+            })
+        );
+    }
 
-        assert!(error.contains("chief::WF-3"), "{error}");
-        assert!(error.contains("not read yet"), "{error}");
+    #[test]
+    fn an_import_prefix_and_a_namespace_prefix_nest_for_a_key() {
+        assert_eq!(
+            parse("chief::story-3:WF-5"),
+            Argument::Named(DocumentArg::Key {
+                project: Some("chief".to_owned()),
+                namespace: Some("story-3".to_owned()),
+                key: "WF-5".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn a_double_colon_with_an_empty_alias_is_bad_arguments() {
+        assert!(parse_err("::WF-3").contains("import"));
+    }
+
+    #[test]
+    fn imports_of_imports_are_not_read_as_an_argument() {
+        let error = parse_err("chief::other::WF-3");
+
+        assert!(error.contains("imports of imports"), "{error}");
+    }
+
+    #[test]
+    fn project_prefix_and_without_project_prefix_read_a_parsed_argument_apart() {
+        let with_both = DocumentArg::Key {
+            project: Some("chief".to_owned()),
+            namespace: Some("story-3".to_owned()),
+            key: "WF-5".to_owned(),
+        };
+
+        assert_eq!(with_both.project_prefix(), Some("chief"));
+        assert_eq!(with_both.namespace_prefix(), Some("story-3"));
+        assert_eq!(
+            with_both.without_project_prefix(),
+            DocumentArg::Key {
+                project: None,
+                namespace: Some("story-3".to_owned()),
+                key: "WF-5".to_owned(),
+            }
+        );
     }
 
     #[test]

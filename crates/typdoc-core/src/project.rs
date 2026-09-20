@@ -8,7 +8,9 @@ use chrono::{DateTime, FixedOffset, NaiveDate};
 
 use crate::argument::DocumentArg;
 use crate::body::{self, Heading};
-use crate::config::{CONFIG_FILE, Collection, Config, Level, RefBase, Report, Rules, config_file};
+use crate::config::{
+    CONFIG_FILE, Collection, Config, Level, Namespace, RefBase, Report, Rules, config_file,
+};
 use crate::document::{Document, Value};
 use crate::env::Env;
 use crate::error::Error;
@@ -19,7 +21,7 @@ use crate::links::{self, BodyLink, BodyLinks};
 use crate::query::{self, Condition, Dir, FieldRef, PlainCondition, Quant, RefCondition, RefField};
 use crate::refs;
 use crate::schema::{self, Auto, Field, FieldType, Resolved};
-use crate::scope::{self, Scope};
+use crate::scope::{self, Scope, Source};
 use crate::template::{Step, Template};
 use crate::validate::{self, DocName, Finding, Severity, ValidateScope};
 
@@ -44,28 +46,30 @@ pub fn discover(env: &dyn Env) -> Result<PathBuf, Error> {
 /// The headings of one document, named as the design names a document.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Toc {
-    /// Relative to the project folder.
+    /// Relative to the project the document belongs to.
     pub path: String,
     pub namespace: String,
     /// Present only when the schema has a code.
     pub key: Option<String>,
+    /// The alias this document was reached through, when it belongs to an imported project.
+    pub project: Option<String>,
     pub headings: Vec<Heading>,
 }
 
 /// The name of a document at the other end of a reference, once it is known to exist: `path`,
 /// `namespace` and `key` (only for a coded document), the same three parts `get` and `toc` name
-/// a document with. Imports are not read in this story, so `project` (an imported document's
-/// alias) never appears here.
+/// a document with, plus `project` when the document belongs to an imported project (the alias
+/// it was imported under; `None` for a document of this project).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefName {
     pub path: String,
     pub namespace: String,
     pub key: Option<String>,
+    pub project: Option<String>,
 }
 
 /// What one written ref names, once it is looked up: the document it resolves to, or why it
-/// does not (`refs::Reason` under the design's own ids; `"import-absent"` is ticket 17's and
-/// never produced here).
+/// does not (`refs::Reason` under the design's own ids, `"import-absent"` included).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RefOutcome {
     Resolved(RefName),
@@ -172,6 +176,19 @@ pub struct Project {
     /// file directly in a coded collection's folder that fits no collection there. It is
     /// configurable, so its level is decided when `validate` runs, not here.
     stray_files: Vec<(String, String)>,
+    /// Every alias of `config.imports` (the project's own, merged with the machine file's),
+    /// resolved once at load: absent on this machine, or the imported project itself, loaded
+    /// with its own imports left unread (design: "imports of imports are ignored" — one level
+    /// only). An alias absent from this map names neither a sibling namespace nor an import, and
+    /// a ref or argument using it as an import prefix is `bad-prefix`.
+    imports: BTreeMap<String, ImportState>,
+}
+
+/// What one configured import resolves to, once `${NAME}` is substituted and the location is
+/// checked for a project of its own.
+pub(crate) enum ImportState {
+    Absent(crate::imports::Absence),
+    Loaded(Box<Project>),
 }
 
 /// The whole-project context `refs.resolve`, `refs.target`, `refs.codedByPath` and `refs.moved`
@@ -237,7 +254,15 @@ pub struct ValidateReport {
 }
 
 impl Project {
-    pub fn load(root: &Path) -> Result<Project, Error> {
+    /// Loads the project at `root`, its schemas, its index, and every import it configures,
+    /// followed one level (design: "imports of imports are ignored" — an imported project's own
+    /// `imports` are read for `schema.valid`'s name-collision check but never resolved into a
+    /// further `Project`).
+    pub fn load(root: &Path, env: &dyn Env) -> Result<Project, Error> {
+        Project::load_inner(root, env, true)
+    }
+
+    fn load_inner(root: &Path, env: &dyn Env, follow_imports: bool) -> Result<Project, Error> {
         let mut report = Report::default();
         let config = Config::load(root, &mut report)?;
         let mut loaded = Vec::new();
@@ -300,9 +325,19 @@ impl Project {
                 ref_base: collection.ref_base,
             });
         }
+        // The machine file's own path is found now, while `report` is still open, so a bad
+        // `TYPDOC_CONFIG_DIR` (`config.config-dir`) joins every other config error this project
+        // has, in the one object `report.finish()` below turns them into — never read as a
+        // second, later failure. `follow_imports` is false for an imported project (one level
+        // only), so its own machine file is never searched for; its `imports` still contributed
+        // to `schema_findings` above (`schema.valid`'s name-collision check reads every alias,
+        // not only the followed ones).
+        let machine_file = follow_imports
+            .then(|| crate::imports::imports_file_path(env, &mut report))
+            .flatten();
         report.finish()?;
         schema_findings.extend(duplicate_schema_findings(&loaded));
-        for alias in &config.import_names {
+        for alias in config.imports.keys() {
             if schema::is_scheme_name(alias) {
                 schema_findings.push(validate::schema_finding(
                     CONFIG_FILE,
@@ -316,6 +351,17 @@ impl Project {
         validate::order(&mut schema_findings);
         let index = Index::build(root, &config.namespaces, &members)?;
         let stray_files = crate::index::stray_files(root, &config.namespaces, &members)?;
+        let imports = if follow_imports {
+            let machine = crate::imports::read_machine_file(machine_file.as_ref())?;
+            let merged = crate::imports::merge(&config.imports, machine);
+            let mut resolved = BTreeMap::new();
+            for (alias, raw) in &merged {
+                resolved.insert(alias.clone(), resolve_import(root, raw, env)?);
+            }
+            resolved
+        } else {
+            BTreeMap::new()
+        };
         Ok(Project {
             root: root.to_owned(),
             config,
@@ -323,11 +369,32 @@ impl Project {
             collections: loaded,
             schema_findings,
             stray_files,
+            imports,
         })
     }
 
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    /// This project's own namespaces, for `refs.rs`'s resolution of a ref that lands here after
+    /// crossing an import (`resolve_into_import`, `classify_body`'s import branch).
+    pub(crate) fn namespaces(&self) -> &[Namespace] {
+        &self.config.namespaces
+    }
+
+    pub(crate) fn index_ref(&self) -> &Index {
+        &self.index
+    }
+
+    pub(crate) fn root_ref(&self) -> &Path {
+        &self.root
+    }
+
+    /// The code of every coded schema in this project, for the bare-key sub-form a ref keeps
+    /// once it has crossed into this project through an import.
+    pub(crate) fn codes(&self) -> BTreeSet<String> {
+        self.project_codes()
     }
 
     /// The namespaces a command reads. `prefix` is the namespace an argument names.
@@ -337,10 +404,74 @@ impl Project {
         flag: Option<&str>,
         env: &dyn Env,
     ) -> Result<Scope, Error> {
-        scope::choose(&self.config.namespaces, &self.root, prefix, flag, env)
+        // Owns each loaded import's namespace names for the length of this call, so
+        // `ImportListing` below can borrow them: `scope::choose` never outlives this function.
+        let loaded: BTreeMap<&str, Vec<String>> = self
+            .imports
+            .iter()
+            .filter_map(|(alias, state)| match state {
+                ImportState::Loaded(project) => Some((
+                    alias.as_str(),
+                    project
+                        .config
+                        .namespaces
+                        .iter()
+                        .map(|n| n.name.clone())
+                        .collect(),
+                )),
+                ImportState::Absent(_) => None,
+            })
+            .collect();
+        let listing: Vec<scope::ImportListing> = self
+            .imports
+            .keys()
+            .map(|alias| scope::ImportListing {
+                alias,
+                namespaces: loaded.get(alias.as_str()).map(Vec::as_slice),
+            })
+            .collect();
+        scope::choose(
+            &self.config.namespaces,
+            &self.root,
+            prefix,
+            flag,
+            env,
+            &listing,
+        )
+    }
+
+    /// The imported project a `project::` argument prefix names, or why it cannot be read right
+    /// now: an alias this project does not configure is bad arguments, the same reading a
+    /// `namespace:` prefix naming no sibling already gets (ticket 4/7's own choice); one absent
+    /// on this machine is bad arguments too, naming why — an explicit `project::` argument is a
+    /// direct request for that document, and the design's own escape for a required import
+    /// (`imports.absent` set to `error` in CI) exists for refs, which are implicit; an argument
+    /// typed by hand deserves the loud answer immediately, the same choice `--namespace
+    /// 'alias::*'` already makes (`scope::select`'s own doc).
+    fn imported(&self, alias: &str) -> Result<&Project, Error> {
+        match self.imports.get(alias) {
+            None => {
+                let known: Vec<&str> = self.imports.keys().map(String::as_str).collect();
+                Err(Error::BadArgument(crate::imports::unknown_alias_message(
+                    alias, &known,
+                )))
+            }
+            Some(ImportState::Absent(absence)) => Err(Error::BadArgument(format!(
+                "the import `{alias}` is absent on this machine: {}",
+                absence.message()
+            ))),
+            Some(ImportState::Loaded(project)) => Ok(project),
+        }
     }
 
     pub fn get(&self, arg: &DocumentArg, scope: &Scope, env: &dyn Env) -> Result<Document, Error> {
+        if let Some(alias) = arg.project_prefix() {
+            let imported = self.imported(alias)?;
+            let inner = imported_scope(imported, arg.namespace_prefix())?;
+            let mut document = imported.get(&arg.without_project_prefix(), &inner, env)?;
+            document.project = Some(alias.to_owned());
+            return Ok(document);
+        }
         let (path, entry, text) = self.resolve(arg, scope, env)?;
         let bad = |message| Error::Frontmatter {
             file: entry.file.clone(),
@@ -358,6 +489,7 @@ impl Project {
             code: collection.schema.code.clone(),
             collection: collection.name.clone(),
             schema: collection.schema.name.clone(),
+            project: None,
             fields,
         })
     }
@@ -454,6 +586,7 @@ impl Project {
                 code: collection.schema.code.clone(),
                 collection: collection.name.clone(),
                 schema: collection.schema.name.clone(),
+                project: None,
                 fields: fields.clone(),
             };
             let body = if needs_own_body {
@@ -510,6 +643,92 @@ impl Project {
             documents: matched.into_iter().map(|(_, doc)| doc).collect(),
             dangling_refs,
         })
+    }
+
+    /// `list`, widened to the imports `scope.imports` names (`--namespace 'chief::*'`): this
+    /// project's own match (`Project::list`, unchanged) plus, for each `(alias, namespaces)`,
+    /// that import's own match under its own namespaces — computed by calling `list` again on
+    /// the imported project itself (design: "a document... in `list` alike, including a `list`
+    /// that reaches an imported project"), so the whole of `--where`/`--sort`/the scope-wide
+    /// field check runs exactly as it does for this project, against that project's own schemas.
+    /// Every returned `Document` is tagged with `project: Some(alias)`; the combined set is then
+    /// sorted once more as a whole (`Project::list` already sorted each half on its own, but a
+    /// combined list needs one order, and `sort_compare`/`compare_identity` take an explicit
+    /// schema rather than a `self.collections` index, so this works the same for either half).
+    /// `scope.namespaces` empty and `scope.imports` non-empty is the ordinary case of `--namespace
+    /// 'chief::*'` alone; `dangling_refs` from an import are prefixed with its alias, since a
+    /// bare path from another project is ambiguous with this one's.
+    pub fn list_all(&self, scope: &Scope, filter: &ListFilter) -> Result<ListResult, Error> {
+        let mut result = self.list(scope, filter)?;
+        if scope.imports.is_empty() {
+            return Ok(result);
+        }
+        for (alias, namespaces) in &scope.imports {
+            let Some(ImportState::Loaded(imported)) = self.imports.get(alias) else {
+                unreachable!(
+                    "scope::select only ever names an alias this project has loaded: {alias}"
+                )
+            };
+            let import_scope = Scope {
+                source: scope.source,
+                namespaces: namespaces.clone(),
+                imports: Vec::new(),
+            };
+            let mut theirs = imported.list(&import_scope, filter)?;
+            for doc in &mut theirs.documents {
+                doc.project = Some(alias.clone());
+            }
+            result.documents.extend(theirs.documents);
+            result.dangling_refs.extend(
+                theirs
+                    .dangling_refs
+                    .into_iter()
+                    .map(|w| format!("{alias}::{w}")),
+            );
+        }
+        result.documents.sort_by(|a, b| {
+            for key in filter.sort {
+                let schema_a = self.schema_for(a);
+                let schema_b = self.schema_for(b);
+                let ord = sort_compare(key, schema_a, a, schema_b, b);
+                if ord != Ordering::Equal {
+                    return ord;
+                }
+            }
+            compare_identity(a, b)
+        });
+        result.dangling_refs.sort();
+        result.dangling_refs.dedup();
+        Ok(result)
+    }
+
+    /// The schema of the document `doc` was read under, whichever project it belongs to
+    /// (`doc.project`): used only by `list_all`'s combined sort, which cannot reuse `Project::
+    /// list`'s own `self.collections[index]` lookup once documents from more than one project are
+    /// mixed together.
+    fn schema_for(&self, doc: &Document) -> &Resolved {
+        let project = match &doc.project {
+            None => self,
+            Some(alias) => match self.imports.get(alias) {
+                Some(ImportState::Loaded(imported)) => imported,
+                _ => self,
+            },
+        };
+        project
+            .schema_of_collection(&doc.collection)
+            .unwrap_or_else(|| {
+                panic!(
+                    "list_all only ever builds a Document from a real collection: {} has none named {}",
+                    doc.path, doc.collection
+                )
+            })
+    }
+
+    fn schema_of_collection(&self, name: &str) -> Option<&Resolved> {
+        self.collections
+            .iter()
+            .find(|c| c.name == name)
+            .map(|c| &c.schema)
     }
 
     /// The collections `--collection`/`--code` select, by their position in `self.collections`:
@@ -698,7 +917,7 @@ impl Project {
                         Some(inner) => match &r.other {
                             RefOutcome::Unresolved(_) => inner.op.absent_result(),
                             RefOutcome::Resolved(target) => {
-                                self.evaluate_reached(&target.path, inner)?
+                                self.evaluate_reached_target(target, inner)?
                             }
                         },
                     });
@@ -744,6 +963,31 @@ impl Project {
     /// be parsed has nothing to test either and is read the same way: absent, never an error, the
     /// same as it is left out of `list`'s own candidates and given no other finding (design: "no
     /// other rule is evaluated for that file").
+    /// `evaluate_reached`, dispatched to the project `target` actually names: this project when
+    /// `target.project` is `None`, the imported project when it names one — read under that
+    /// project's own collections and index, the same as if the query had been run there
+    /// directly, since a reached document is "read under its own schema" regardless of which
+    /// project asked (design, Query, "Reached documents"). The pattern that would make this
+    /// unreachable (`self.imports.get(alias)` finding no loaded import) cannot occur: `target`
+    /// only ever carries an alias `ref_name_of_resolved` already confirmed is loaded, the same
+    /// invariant `resolve_import_outcome` documents; the fallback reads this project instead of
+    /// panicking, since a query condition is not the place to crash a whole run over it.
+    fn evaluate_reached_target(
+        &self,
+        target: &RefName,
+        inner: &PlainCondition,
+    ) -> Result<bool, Error> {
+        match &target.project {
+            None => self.evaluate_reached(&target.path, inner),
+            Some(alias) => match self.imports.get(alias) {
+                Some(ImportState::Loaded(imported)) => {
+                    imported.evaluate_reached(&target.path, inner)
+                }
+                _ => self.evaluate_reached(&target.path, inner),
+            },
+        }
+    }
+
     fn evaluate_reached(&self, path: &str, inner: &PlainCondition) -> Result<bool, Error> {
         let Some(entry) = self.index.get(path) else {
             let name = self.ref_name_of(path);
@@ -755,6 +999,7 @@ impl Project {
                 code: None,
                 collection: String::new(),
                 schema: String::new(),
+                project: None,
                 fields: Vec::new(),
             };
             return condition_matches(inner, &empty_schema, &doc);
@@ -771,6 +1016,7 @@ impl Project {
             code: collection.schema.code.clone(),
             collection: collection.name.clone(),
             schema: collection.schema.name.clone(),
+            project: None,
             fields,
         };
         condition_matches(inner, &collection.schema, &doc)
@@ -798,6 +1044,7 @@ impl Project {
                 code: collection.schema.code.clone(),
                 collection: collection.name.clone(),
                 schema: collection.schema.name.clone(),
+                project: None,
                 fields: fields.clone(),
             };
             for reference in self.document_out_refs(path, entry, &fields, &body, codes) {
@@ -813,6 +1060,13 @@ impl Project {
 
     /// The headings of a document's body, in the order of `line`.
     pub fn toc(&self, arg: &DocumentArg, scope: &Scope, env: &dyn Env) -> Result<Toc, Error> {
+        if let Some(alias) = arg.project_prefix() {
+            let imported = self.imported(alias)?;
+            let inner = imported_scope(imported, arg.namespace_prefix())?;
+            let mut toc = imported.toc(&arg.without_project_prefix(), &inner, env)?;
+            toc.project = Some(alias.to_owned());
+            return Ok(toc);
+        }
         let (path, entry, text) = self.resolve(arg, scope, env)?;
         let headings = body::headings(&text).map_err(|message| Error::Frontmatter {
             file: entry.file.clone(),
@@ -822,14 +1076,21 @@ impl Project {
             path,
             namespace: self.config.namespaces[entry.namespace].name.clone(),
             key: entry.key.clone(),
+            project: None,
             headings,
         })
     }
 
-    /// `refs`: outgoing refs by default, or, with `reverse`, every ref of the whole project
-    /// (imports are not read in this story) that resolves to the document asked about, the
-    /// design's `refby` index. `field` keeps only the refs held in that field, `"$body"` for
-    /// body links, in either direction.
+    /// `refs`: outgoing refs by default, or, with `reverse`, every ref of the whole project that
+    /// resolves to the document asked about, the design's `refby` index. `--reverse` scans this
+    /// project only. A `project::` argument's own outgoing refs delegate entirely to the
+    /// imported project's `refs` (read exactly as if `typdoc` ran inside it), but `--reverse`
+    /// with a `project::` argument is refused: the design also wants incoming refs *from this
+    /// project* into that document ("refby sees refs from... also the imported projects", read
+    /// from the importer's side), which needs this project's own reverse scan to widen into the
+    /// import too — not built this ticket, and delegating only to the import's own reverse scan
+    /// would silently under-report rather than say so. `field` keeps only the refs held in that
+    /// field, `"$body"` for body links, in either direction.
     ///
     /// The document asked about is read the same way `get` and `toc` read theirs (`Project::
     /// resolve`, under `scope`): a broken frontmatter block fails the whole command, matching
@@ -847,6 +1108,19 @@ impl Project {
         field: Option<&str>,
         env: &dyn Env,
     ) -> Result<RefsReport, Error> {
+        if let Some(alias) = arg.project_prefix() {
+            if reverse {
+                return Err(Error::BadArgument(format!(
+                    "`{alias}::` with --reverse is not built yet: refs from this project into an imported document are not scanned; run refs --reverse inside the imported project instead"
+                )));
+            }
+            let imported = self.imported(alias)?;
+            let inner = imported_scope(imported, arg.namespace_prefix())?;
+            let mut report =
+                imported.refs(&arg.without_project_prefix(), &inner, false, field, env)?;
+            report.document.project = Some(alias.to_owned());
+            return Ok(report);
+        }
         let (path, entry, text) = self.resolve(arg, scope, env)?;
         let document = self.ref_name_of(&path);
         let codes = self.project_codes();
@@ -935,6 +1209,7 @@ impl Project {
             codes,
             index: &self.index,
             root: &self.root,
+            imports: &self.imports,
         };
         let mut refs = Vec::new();
         for (field_name, value) in fields {
@@ -948,8 +1223,8 @@ impl Project {
             }
             for written in ref_values(value) {
                 let other = match refs::resolve_one(written, &ctx) {
-                    Ok(resolved) => RefOutcome::Resolved(self.ref_name_of(&resolved.path)),
-                    Err(reason) => RefOutcome::Unresolved(reason_id(reason)),
+                    Ok(resolved) => RefOutcome::Resolved(self.ref_name_of_resolved(&resolved)),
+                    Err(reason) => RefOutcome::Unresolved(reason_id(&reason)),
                 };
                 refs.push(RefsReference {
                     other,
@@ -974,11 +1249,15 @@ impl Project {
             let other = match refs::classify_body(target, &ctx) {
                 refs::BodyDestination::Skip => continue,
                 refs::BodyDestination::BadPrefix => RefOutcome::Unresolved("bad-prefix"),
+                refs::BodyDestination::ImportAbsent(_) => RefOutcome::Unresolved("import-absent"),
                 refs::BodyDestination::Path(joined) => {
                     match refs::resolve_path(&joined, &self.index, &self.root) {
                         Ok(resolved) => RefOutcome::Resolved(self.ref_name_of(&resolved.path)),
                         Err(_) => RefOutcome::Unresolved("not-found"),
                     }
+                }
+                refs::BodyDestination::Import { alias, path } => {
+                    self.resolve_import_outcome(&alias, &path)
                 }
             };
             refs.push(RefsReference {
@@ -1002,35 +1281,52 @@ impl Project {
     /// never nest (config rule) and every project has exactly one namespace with an empty
     /// folder.
     fn ref_name_of(&self, path: &str) -> RefName {
-        if let Some(entry) = self.index.get(path) {
-            return RefName {
-                path: path.to_owned(),
-                namespace: self.config.namespaces[entry.namespace].name.clone(),
-                key: entry.key.clone(),
-            };
+        ref_name_in(&self.config.namespaces, &self.index, None, path)
+    }
+
+    /// A `refs::Resolved` already known to exist, named: this project's own naming when it
+    /// stayed inside this project (`resolved.project` is `None`), the imported project's own
+    /// naming when a `name::` prefix carried it across an import (`Some(alias)` — the same
+    /// alias `resolve_into_import` tagged it with). `document_out_refs`' own bug before this
+    /// existed: calling `self.ref_name_of(&resolved.path)` unconditionally read the *path*
+    /// right (a path already fully resolved does not change) but always named it in *this*
+    /// project's namespaces, so a frontmatter ref that crossed an import printed no `project`
+    /// and the wrong `namespace` whenever the two projects' namespace lists differed.
+    fn ref_name_of_resolved(&self, resolved: &refs::Resolved) -> RefName {
+        match &resolved.project {
+            None => self.ref_name_of(&resolved.path),
+            Some(alias) => match self.imports.get(alias) {
+                Some(ImportState::Loaded(imported)) => ref_name_in(
+                    imported.namespaces(),
+                    imported.index_ref(),
+                    Some(alias),
+                    &resolved.path,
+                ),
+                _ => self.ref_name_of(&resolved.path),
+            },
         }
-        let namespace = self
-            .config
-            .namespaces
-            .iter()
-            .filter(|space| {
-                !space.folder.is_empty()
-                    && (path == space.folder || path.starts_with(&format!("{}/", space.folder)))
-            })
-            .max_by_key(|space| space.folder.len())
-            .or_else(|| {
-                self.config
-                    .namespaces
-                    .iter()
-                    .find(|space| space.folder.is_empty())
-            })
-            .expect(
-                "every project has a namespace with an empty folder when none matches by prefix",
-            );
-        RefName {
-            path: path.to_owned(),
-            namespace: namespace.name.clone(),
-            key: None,
+    }
+
+    /// A body link's `BodyDestination::Import { alias, path }`, resolved: the alias is already
+    /// known to be a loaded import (`refs::classify_body` only builds this variant for one), so
+    /// this reads that import's own index and root, never this project's. Whether the target
+    /// carries the linked `#anchor`, when there is one, is not checked (`check_body_destination`
+    /// leaves the resolved path unread further for this case): that would mean reading the
+    /// imported project's headings under its own rules, which is not built this ticket.
+    fn resolve_import_outcome(&self, alias: &str, path: &str) -> RefOutcome {
+        let Some(ImportState::Loaded(imported)) = self.imports.get(alias) else {
+            unreachable!(
+                "classify_body builds BodyDestination::Import only for a loaded import: {alias}"
+            )
+        };
+        match refs::resolve_path(path, imported.index_ref(), imported.root_ref()) {
+            Ok(resolved) => RefOutcome::Resolved(ref_name_in(
+                imported.namespaces(),
+                imported.index_ref(),
+                Some(alias),
+                &resolved.path,
+            )),
+            Err(_) => RefOutcome::Unresolved("not-found"),
         }
     }
 
@@ -1048,6 +1344,7 @@ impl Project {
     ) -> Result<ValidateReport, Error> {
         if schemas_only {
             let scope = self.scope(None, flag, env)?;
+            reject_import_scope(&scope)?;
             let mut findings = self.schema_findings.clone();
             findings.extend(self.shadowed_names_findings(strict));
             validate::order(&mut findings);
@@ -1062,6 +1359,7 @@ impl Project {
         }
         if args.is_empty() {
             let scope = self.scope(None, flag, env)?;
+            reject_import_scope(&scope)?;
             let (ref_project, acyclic) = self.ref_project()?;
             let mut findings = self.schema_findings.clone();
             findings.extend(self.shadowed_names_findings(strict));
@@ -1140,7 +1438,16 @@ impl Project {
         // by its own set so naming it twice reports it once.
         let mut overlapping = BTreeSet::new();
         for arg in args {
+            if let Some(alias) = arg.project_prefix() {
+                // Ownership rule 1 (design, Refs → Ownership rules): "A file is validated only
+                // by the namespace that owns it." An imported project is read-only here and
+                // owns its own documents; `validate` never checks them on this project's behalf.
+                return Err(Error::BadArgument(format!(
+                    "`{alias}::` cannot be validated from here: a file is validated only by the project that owns it"
+                )));
+            }
             let scope = self.scope(arg.namespace_prefix(), flag, env)?;
+            reject_import_scope(&scope)?;
             if let DocumentArg::Path { path, .. } = arg
                 && let Some((namespace_idx, collections)) = self.index.overlap(path)
             {
@@ -1269,6 +1576,7 @@ impl Project {
             codes: &ref_project.codes,
             index: &self.index,
             root: &self.root,
+            imports: &self.imports,
         };
         let mut findings = Vec::new();
         for (field_name, value) in &fields {
@@ -1291,6 +1599,16 @@ impl Project {
                         &collection.validation,
                         strict,
                     )),
+                    // `ref_project.schemas` indexes this project's own collections; `resolved.
+                    // collection`, once a ref has crossed into an import (`resolved.project`
+                    // is `Some`), indexes that other project's collections instead, which this
+                    // project has no list of. `refs.target` and `refs.codedByPath` are checked
+                    // only for a ref that stayed inside this project: extending either across an
+                    // import needs the imported project's own schema names (`target`'s qualified
+                    // form, `"memory::learning"`) or its own coded schemas, neither read here,
+                    // and reading `ref_project.schemas[index]` with an index from a different
+                    // project's list would be wrong at best and out of bounds at worst.
+                    Ok(resolved) if resolved.project.is_some() => {}
                     Ok(resolved) => {
                         if !refs::target_allowed(
                             field.target.as_ref(),
@@ -1389,6 +1707,7 @@ impl Project {
             codes: &ref_project.codes,
             index: &self.index,
             root: &self.root,
+            imports: &self.imports,
         };
         let link_options = rule_options(
             "body.links",
@@ -1600,6 +1919,22 @@ impl Project {
                     missing(findings, target);
                     None
                 }
+                refs::BodyDestination::ImportAbsent(absence) => {
+                    if let Some(level) = self.imports_absent_level(doc.collection, doc.strict) {
+                        findings.push(validate::finding_at(
+                            name,
+                            level,
+                            "imports.absent",
+                            None,
+                            position,
+                            format!(
+                                "the link `{target}` does not resolve: {}",
+                                absence.message()
+                            ),
+                        ));
+                    }
+                    None
+                }
                 refs::BodyDestination::Path(joined) => {
                     if doc.ignore.iter().any(|glob| ignore_matches(glob, &joined)) {
                         return;
@@ -1607,6 +1942,22 @@ impl Project {
                     match refs::resolve_path(&joined, &self.index, &self.root) {
                         Ok(resolved) => Some(resolved.path),
                         Err(_) => {
+                            missing(findings, target);
+                            None
+                        }
+                    }
+                }
+                refs::BodyDestination::Import { alias, path } => {
+                    if doc.ignore.iter().any(|glob| ignore_matches(glob, &path)) {
+                        return;
+                    }
+                    match self.resolve_import_outcome(&alias, &path) {
+                        // The document exists in the imported project; whether the `#anchor`
+                        // (if any) exists there too is not checked (see `resolve_import_outcome`'s
+                        // own doc): `resolved_path` stays `None`, so the anchor check below never
+                        // runs for this destination.
+                        RefOutcome::Resolved(_) => None,
+                        RefOutcome::Unresolved(_) => {
                             missing(findings, target);
                             None
                         }
@@ -1771,13 +2122,42 @@ impl Project {
                 format!("the ref `{written}` no longer resolves: it was moved to `{new_id}`"),
             ));
         }
+        if let refs::Reason::ImportAbsent(absence) = &reason {
+            return self.imports_absent_level(collection, strict).map(|level| {
+                validate::finding(
+                    name,
+                    level,
+                    "imports.absent",
+                    Some(field_name),
+                    format!(
+                        "the ref `{written}` does not resolve: {}",
+                        absence.message()
+                    ),
+                )
+            });
+        }
         Some(validate::finding(
             name,
             Severity::Error,
             "refs.resolve",
             Some(field_name),
-            reason_message(written, reason),
+            reason_message(written, &reason),
         ))
+    }
+
+    /// The level `imports.absent` is reported at, once `validation.global`, `collection`'s own
+    /// `validation` and `strict` are merged (default `warn`): `None` means the rule is `off`, so
+    /// a ref into an absent import is reported under neither it nor `refs.resolve` — a rule set
+    /// to `off` produces no finding, not a fallback to a different one, the same reading
+    /// `moved_outcome` already gives `refs.moved`.
+    fn imports_absent_level(&self, collection: &Rules, strict: bool) -> Option<Severity> {
+        validate::effective_level(
+            Level::Warn,
+            "imports.absent",
+            &self.config.validation,
+            collection,
+            strict,
+        )
     }
 
     /// The code of every coded schema in the project, for the bare-key ref form's "the code
@@ -1838,7 +2218,7 @@ impl Project {
             .namespaces
             .iter()
             .map(|namespace| namespace.name.as_str())
-            .filter(|name| self.config.import_names.iter().any(|alias| alias == name))
+            .filter(|name| self.config.imports.contains_key(*name))
             .map(|name| {
                 validate::names_shadowed_finding(
                     level,
@@ -1882,6 +2262,7 @@ impl Project {
                 codes,
                 index: &self.index,
                 root: &self.root,
+                imports: &self.imports,
             };
             let identity = entry.key.clone().unwrap_or_else(|| path.to_owned());
             for (field_name, value) in &fields {
@@ -1969,7 +2350,7 @@ impl Project {
                 }
                 path.clone()
             }
-            DocumentArg::Key { namespace, key } => {
+            DocumentArg::Key { namespace, key, .. } => {
                 self.resolve_key(namespace.as_deref(), key, scope)?
             }
         };
@@ -2292,23 +2673,32 @@ fn ref_values(value: &Value) -> Vec<&str> {
     }
 }
 
-/// The message for a ref that does not resolve, naming why (`refs.resolve`'s two reasons; the
-/// third, `import-absent`, is ticket 17's, since this story does not resolve an import).
-fn reason_message(written: &str, reason: refs::Reason) -> String {
+/// The message for a ref that does not resolve under `refs.resolve`, naming why. A reason of
+/// `ImportAbsent` never reaches this: `check_refs` reports it under `imports.absent` instead,
+/// before `unresolved_ref_finding` would call `reason_message` (see `Project::
+/// imports_absent_level`); the arm stays here so the match is exhaustive and correct if a future
+/// caller ever reaches it.
+fn reason_message(written: &str, reason: &refs::Reason) -> String {
     match reason {
         refs::Reason::NotFound => format!("the ref `{written}` does not resolve: not found"),
         refs::Reason::BadPrefix => {
             format!("the ref `{written}` does not resolve: its prefix names no namespace")
         }
+        refs::Reason::ImportAbsent(absence) => {
+            format!(
+                "the ref `{written}` does not resolve: {}",
+                absence.message()
+            )
+        }
     }
 }
 
-/// `refs::Reason` under the design's own `unresolved` ids (`"import-absent"` is ticket 17's and
-/// never produced by `refs::resolve_one` or `refs::classify_body` in this story).
-fn reason_id(reason: refs::Reason) -> &'static str {
+/// `refs::Reason` under the design's own `unresolved` ids.
+fn reason_id(reason: &refs::Reason) -> &'static str {
     match reason {
         refs::Reason::NotFound => "not-found",
         refs::Reason::BadPrefix => "bad-prefix",
+        refs::Reason::ImportAbsent(_) => "import-absent",
     }
 }
 
@@ -2416,6 +2806,152 @@ fn printed_key(prefix: Option<&str>, key: &str) -> String {
         Some(namespace) => format!("{namespace}:{key}"),
         None => key.to_owned(),
     }
+}
+
+/// Refuses a `--namespace`/`TYPDOC_NAMESPACE` value that named an import, for any `validate` run
+/// — the whole-project scan, `--schemas`, and named arguments alike: none of the three ever
+/// reads an import (a named argument is resolved by path or key against `self.resolve`, which
+/// reads only `self.index`, regardless of `scope`; the whole-project scan reads `self.index.
+/// iter()`; `--schemas` reads only findings gathered at load), so silently accepting the scope
+/// would report on nothing named, in a shape (a report with `documents: 0`, an empty `paths`
+/// entry, or a clean `findings: []`) that reads as "checked and clean" rather than "not checked"
+/// — the same silent-incompleteness the audit invariant elsewhere in this design exists to
+/// catch. `--namespace 'chief::*'` is for `list`, which does read imports (`Project::list_all`);
+/// ownership rule 1 keeps `validate` from ever reading one, `project::` arguments included (see
+/// `validate`'s own refusal of those, just above each of this function's three call sites: the
+/// named-argument loop, and the two whole-project branches).
+fn reject_import_scope(scope: &Scope) -> Result<(), Error> {
+    if scope.imports.is_empty() {
+        return Ok(());
+    }
+    let named: Vec<&str> = scope
+        .imports
+        .iter()
+        .map(|(alias, _)| alias.as_str())
+        .collect();
+    Err(Error::BadArgument(format!(
+        "--namespace named an import ({}), and validate never reads one: a file is validated only by the project that owns it",
+        named.join(", ")
+    )))
+}
+
+/// The scope a `project::` argument's own `namespace:` prefix chooses inside `imported`: the
+/// named namespace when there is a prefix; `imported`'s one namespace when it has exactly one
+/// and there is none; otherwise bad arguments (design: "a ref into a project with several
+/// namespaces must name one" — `chief::WF-5` is refused there whatever the key, unconditionally,
+/// not only when it happens to be ambiguous; ticket 10's report reads a ref the same way, and an
+/// argument follows it for the same reason).
+fn imported_scope(imported: &Project, namespace: Option<&str>) -> Result<Scope, Error> {
+    if let Some(name) = namespace {
+        let index = imported.namespace_index(name).ok_or_else(|| {
+            let known: Vec<&str> = imported
+                .config
+                .namespaces
+                .iter()
+                .map(|n| n.name.as_str())
+                .collect();
+            Error::BadArgument(format!(
+                "`{name}` is not a namespace of the imported project, which has: {}",
+                known.join(", ")
+            ))
+        })?;
+        return Ok(Scope {
+            source: Source::Prefix,
+            namespaces: vec![imported.config.namespaces[index].name.clone()],
+            imports: Vec::new(),
+        });
+    }
+    if imported.config.namespaces.len() == 1 {
+        return Ok(Scope {
+            source: Source::Everything,
+            namespaces: vec![imported.config.namespaces[0].name.clone()],
+            imports: Vec::new(),
+        });
+    }
+    Err(Error::BadArgument(
+        "the imported project has more than one namespace: name one, e.g. `alias::namespace:key`"
+            .to_owned(),
+    ))
+}
+
+/// The name (`path`, `namespace`, `key`, `project`) of a document at `path` in the project whose
+/// `namespaces` and `index` are given: looked up in the index when it is one, which is the only
+/// place a coded document's `key` comes from. A path that resolved but is outside every
+/// collection (`target: "*"` accepts one, e.g. a README) has no entry of its own; its namespace
+/// is the one whose folder is the longest prefix of `path`, or the namespace with no folder
+/// (`default`) when none matches, since namespaces never nest (config rule) and every project has
+/// exactly one namespace with an empty folder. `project` is the alias `path` was reached through,
+/// `None` for a document of the project doing the reaching; shared between `Project::ref_name_of`
+/// (`project: None`, this project) and the import-resolving code in `refs.rs` (`project: Some
+/// (alias)`), so the two read a document's name the same way whichever side of an import it is.
+fn ref_name_in(
+    namespaces: &[crate::config::Namespace],
+    index: &Index,
+    project: Option<&str>,
+    path: &str,
+) -> RefName {
+    let project = project.map(str::to_owned);
+    if let Some(entry) = index.get(path) {
+        return RefName {
+            path: path.to_owned(),
+            namespace: namespaces[entry.namespace].name.clone(),
+            key: entry.key.clone(),
+            project,
+        };
+    }
+    let namespace = namespaces
+        .iter()
+        .filter(|space| {
+            !space.folder.is_empty()
+                && (path == space.folder || path.starts_with(&format!("{}/", space.folder)))
+        })
+        .max_by_key(|space| space.folder.len())
+        .or_else(|| namespaces.iter().find(|space| space.folder.is_empty()))
+        .expect("every project has a namespace with an empty folder when none matches by prefix");
+    RefName {
+        path: path.to_owned(),
+        namespace: namespace.name.clone(),
+        key: None,
+        project,
+    }
+}
+
+/// One configured import, resolved: `${NAME}` substituted in `raw` (an unset or empty variable
+/// makes it `Absence::Variable`, never an empty-string substitution — design, "Environment
+/// variables in import paths"); the result joined against `root` when it is not already
+/// absolute; and, when a `.typdoc/config.json` really sits there, the project loaded with its
+/// own imports left unread (one level only). A location that substitutes cleanly but has no
+/// project of its own is `Absence::NoProject`, the same "absent on this machine" outcome as an
+/// unset variable — both are the design's `imports.absent`, never a fatal error, since the whole
+/// point of a machine-specific import is that it may not be there yet. A location that does have
+/// a project, but one whose own config cannot be loaded, is treated as a real, fixable
+/// misconfiguration and propagated as an ordinary error: unlike an import simply not being set
+/// up yet, a broken config at a real location will not fix itself by installing more machines,
+/// and folding it into `imports.absent` would hide a mistake the design gives no way to catch.
+fn resolve_import(root: &Path, raw: &str, env: &dyn Env) -> Result<ImportState, Error> {
+    let substituted = match crate::imports::substitute(raw, env) {
+        Ok(text) => text,
+        Err(variable) => {
+            return Ok(ImportState::Absent(crate::imports::Absence::Variable(
+                variable,
+            )));
+        }
+    };
+    let path = {
+        let candidate = Path::new(&substituted);
+        if candidate.is_absolute() {
+            candidate.to_owned()
+        } else {
+            root.join(candidate)
+        }
+    };
+    if !config_file(&path).is_file() {
+        return Ok(ImportState::Absent(crate::imports::Absence::NoProject(
+            path,
+        )));
+    }
+    let imported = Project::load_inner(&path, env, false)?;
+    Ok(ImportState::Loaded(Box::new(imported)))
 }
 
 /// The template of a collection as it is written, before it is bound to a schema. A template

@@ -16,13 +16,30 @@
 //! ticket but `T-2`) from "a holder, and it matches" or "a holder, and it does not". `T-1`'s
 //! body links to `archive/x.md`.
 
-use typdoc_core::{Condition, ListFilter, Project, Scope, Source};
+use std::ffi::OsString;
+use std::io;
+use std::path::PathBuf;
+
+use typdoc_core::{Condition, Env, ListFilter, Project, Scope, Source};
 use typdoc_testkit::fixtures::path;
 
 const REF_QUERY: &str = "valid/ref-query";
 
+/// No variable is ever read here: nothing in this file's fixture uses `imports`.
+struct NoEnv;
+
+impl Env for NoEnv {
+    fn var(&self, _name: &str) -> Option<OsString> {
+        None
+    }
+
+    fn current_dir(&self) -> io::Result<PathBuf> {
+        Ok(PathBuf::from("."))
+    }
+}
+
 fn project() -> Project {
-    Project::load(&path(REF_QUERY)).expect("the fixture loads")
+    Project::load(&path(REF_QUERY), &NoEnv).expect("the fixture loads")
 }
 
 fn everything(project: &Project) -> Scope {
@@ -34,6 +51,7 @@ fn everything(project: &Project) -> Scope {
             .iter()
             .map(|n| n.name.clone())
             .collect(),
+        imports: Vec::new(),
     }
 }
 

@@ -23,8 +23,13 @@ pub enum Source {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Scope {
     pub source: Source,
-    /// The namespaces in scope, sorted by name.
+    /// The namespaces of this project in scope, sorted by name.
     pub namespaces: Vec<String>,
+    /// The imports in scope, each with the namespaces of that import chosen: only `--namespace`/
+    /// `TYPDOC_NAMESPACE` can name one (`alias::pattern`, e.g. `'chief::*'`); a document
+    /// argument's own prefix and the current directory never reach an import, so every other
+    /// source of a `Scope` leaves this empty. Sorted by alias, each once.
+    pub imports: Vec<(String, Vec<String>)>,
 }
 
 impl Scope {
@@ -33,45 +38,69 @@ impl Scope {
     }
 }
 
+/// One import `--namespace`/`TYPDOC_NAMESPACE` can name (`alias::pattern`): the alias and the
+/// namespace names of the project it resolves to, or `None` when it is absent on this machine.
+/// Naming an absent import explicitly is refused rather than silently giving no documents, since
+/// the request was explicit (unlike a ref, which `imports.absent` treats as a warning by
+/// default): the design's escape for a required import is CI setting `imports.absent` to
+/// `error`, and an explicit `--namespace 'alias::*'` deserves the same loudness without waiting
+/// for that configuration.
+pub(crate) struct ImportListing<'a> {
+    pub alias: &'a str,
+    pub namespaces: Option<&'a [String]>,
+}
+
 /// The scope of a command in the project at `root`. `prefix` is the namespace an argument
-/// names, and `flag` is the value of `--namespace`.
+/// names, and `flag` is the value of `--namespace`. `imports` lists every alias this project
+/// configures, for `--namespace`/`TYPDOC_NAMESPACE` items of the form `alias::pattern`; a
+/// document argument's own prefix never reaches an import this way (an import prefix on an
+/// argument is a separate mechanism, resolved directly against that import, never through a
+/// `Scope`), so `imports` is read only in the `flag` and `TYPDOC_NAMESPACE` branches below.
 pub(crate) fn choose(
     namespaces: &[Namespace],
     root: &Path,
     prefix: Option<&str>,
     flag: Option<&str>,
     env: &dyn Env,
+    imports: &[ImportListing],
 ) -> Result<Scope, Error> {
     if let Some(prefix) = prefix {
         return Ok(Scope {
             source: Source::Prefix,
-            namespaces: select(namespaces, prefix, "a prefix")?,
+            namespaces: select(namespaces, prefix, "a prefix", &[])?.0,
+            imports: Vec::new(),
         });
     }
     if let Some(list) = flag {
+        let (own, other) = select(namespaces, list, "--namespace", imports)?;
         return Ok(Scope {
             source: Source::Flag,
-            namespaces: select(namespaces, list, "--namespace")?,
+            namespaces: own,
+            imports: other,
         });
     }
     if let Some(list) = env.var("TYPDOC_NAMESPACE").filter(|v| !v.is_empty()) {
         let list = list.into_string().map_err(|value| {
             Error::BadArgument(format!("TYPDOC_NAMESPACE is not valid UTF-8: {value:?}"))
         })?;
+        let (own, other) = select(namespaces, &list, "TYPDOC_NAMESPACE", imports)?;
         return Ok(Scope {
             source: Source::Variable,
-            namespaces: select(namespaces, &list, "TYPDOC_NAMESPACE")?,
+            namespaces: own,
+            imports: other,
         });
     }
     if let Some(inside) = inside(namespaces, root, env) {
         return Ok(Scope {
             source: Source::CurrentDirectory,
             namespaces: vec![inside],
+            imports: Vec::new(),
         });
     }
     Ok(Scope {
         source: Source::Everything,
         namespaces: names(namespaces),
+        imports: Vec::new(),
     })
 }
 
@@ -81,39 +110,83 @@ fn names(namespaces: &[Namespace]) -> Vec<String> {
     names
 }
 
+/// `select`'s result: this project's own namespaces chosen, and, for each import chosen
+/// (`alias::pattern`), its alias with the namespace names chosen inside it.
+type Selected = (Vec<String>, Vec<(String, Vec<String>)>);
+
 /// The names in `list`, `,` between them, as names and globs with `*` only, that fit the
-/// namespaces of the project. A name that is none of them is refused; a glob may match none.
-fn select(namespaces: &[Namespace], list: &str, origin: &str) -> Result<Vec<String>, Error> {
+/// namespaces of the project, and the imports named `alias::pattern` (each once, its namespace
+/// patterns merged), when `imports` names one. A name that is none of them is refused; a glob may
+/// match none. The `prefix` origin never reaches this with an import form (`Project::scope`'s own
+/// caller never asks it to), so passing an empty `imports` for that origin is safe and is what
+/// `choose` above already does.
+fn select(
+    namespaces: &[Namespace],
+    list: &str,
+    origin: &str,
+    imports: &[ImportListing],
+) -> Result<Selected, Error> {
     let bad = |why: String| Error::BadArgument(format!("{origin} `{list}`: {why}"));
     let mut chosen = BTreeSet::new();
+    let mut chosen_imports: std::collections::BTreeMap<String, BTreeSet<String>> =
+        std::collections::BTreeMap::new();
     for item in list.split(',') {
-        if item.contains("::") {
-            return Err(bad(format!(
-                "`{item}` names an imported project, which is not read yet"
-            )));
+        if let Some((alias, pattern)) = item.split_once("::") {
+            let Some(listing) = imports.iter().find(|listing| listing.alias == alias) else {
+                let known: Vec<&str> = imports.iter().map(|listing| listing.alias).collect();
+                return Err(bad(crate::imports::unknown_alias_message(alias, &known)));
+            };
+            let Some(import_namespaces) = listing.namespaces else {
+                return Err(bad(format!(
+                    "the import `{alias}` is absent on this machine"
+                )));
+            };
+            let matched = glob_match(pattern, import_namespaces, &bad)?;
+            chosen_imports
+                .entry(alias.to_owned())
+                .or_default()
+                .extend(matched);
+            continue;
         }
-        let names_only = item
-            .split('*')
-            .all(|part| part.is_empty() || plain_name(part));
-        if item.is_empty() || !names_only || item.contains("**") {
-            return Err(bad(format!(
-                "`{item}` is not a namespace name or a glob: a name uses ASCII letters, digits, `-` and `_`, and a glob only `*`"
-            )));
-        }
-        let glob = Segment::parse_glob(item).map_err(&bad)?;
-        let fitting: Vec<&Namespace> = namespaces
-            .iter()
-            .filter(|space| glob.matches(&space.name))
-            .collect();
-        if fitting.is_empty() && !item.contains('*') {
-            let known = names(namespaces).join(", ");
-            return Err(bad(format!(
-                "`{item}` is not a namespace of this project, which has: {known}"
-            )));
-        }
-        chosen.extend(fitting.into_iter().map(|space| space.name.clone()));
+        let fitting = glob_match(item, &names(namespaces), &bad)?;
+        chosen.extend(fitting);
     }
-    Ok(chosen.into_iter().collect())
+    let imports = chosen_imports
+        .into_iter()
+        .map(|(alias, names)| (alias, names.into_iter().collect()))
+        .collect();
+    Ok((chosen.into_iter().collect(), imports))
+}
+
+/// One `,`-separated item (a name or a glob with `*` only) matched against `available`: refused
+/// when it is not the shape of a name or a glob, and when it names nothing and carries no `*`
+/// (a glob may legitimately match none).
+fn glob_match(
+    item: &str,
+    available: &[String],
+    bad: &dyn Fn(String) -> Error,
+) -> Result<Vec<String>, Error> {
+    let names_only = item
+        .split('*')
+        .all(|part| part.is_empty() || plain_name(part));
+    if item.is_empty() || !names_only || item.contains("**") {
+        return Err(bad(format!(
+            "`{item}` is not a namespace name or a glob: a name uses ASCII letters, digits, `-` and `_`, and a glob only `*`"
+        )));
+    }
+    let glob = Segment::parse_glob(item).map_err(bad)?;
+    let fitting: Vec<String> = available
+        .iter()
+        .filter(|name| glob.matches(name))
+        .cloned()
+        .collect();
+    if fitting.is_empty() && !item.contains('*') {
+        return Err(bad(format!(
+            "`{item}` is not a namespace of this project, which has: {}",
+            available.join(", ")
+        )));
+    }
+    Ok(fitting)
 }
 
 /// The namespace whose folder holds the current directory, or the current directory itself.

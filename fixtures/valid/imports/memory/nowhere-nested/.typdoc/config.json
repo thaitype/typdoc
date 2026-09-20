@@ -1,0 +1,1 @@
+{ this is not valid json, and loading it would fail if imports of imports were ever followed
