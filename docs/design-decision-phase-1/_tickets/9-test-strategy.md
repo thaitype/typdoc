@@ -306,6 +306,38 @@ A limit, stated as it is: a record can be lost without a trace when every coded 
 
 How it is tested: a fixture in `broken/state.missing` (documents with codes and no state file, and the command `new` as the declared argument), one for an existing file without the entry, and one for `mv --renumber` into a namespace in that state; each asserts exit 2, that the rule id is `state.missing` and that nothing under the tree changed. Cases 1 and 2 above are the pairs of hand-written expectations for `new`: a new collection gets its first number and the entry, a collection with documents and no record gets the refusal. The fix leaves the design's promise in one form: unconditional wording is replaced by a condition the design can keep.
 
+### Where each part is built
+
+The test strategy applies to all three stories that deliver v1 (see the map): reading in story 1, writing in story 2, remote schemas in story 3. Each story builds the part its commands need, and its contract lists that part under Testing Decisions.
+
+| Part | Story 1 (the read core) | Later |
+| --- | --- | --- |
+| Fixtures and packaging | `fixtures/valid` and `fixtures/broken`, both coverage tests, the loader that fails loudly outside a checkout, `examples/` validated as a user receives it | `fixtures/roundtrip`: story 2 |
+| What needs a broken fixture | a fixture for every rule and config error that story 1 builds, including `state.missing` (it only reads) | anything that needs a fetch: story 3 |
+| `--json` goldens | goldens for `get`, `list`, `toc`, `refs`, `validate` and the error object; the generator, with its guard (it writes no assertion file and has no regenerate-all) | the `Clock` and the goldens of commands that stamp time: story 2 |
+| `run(args, deps)` | `run` and `Env` in `deps`; the ban on `std::env::var` and on the home directory in `typdoc-core` | `Clock`: story 2; `Fetch` and `ureq`: story 3; the write seam: story 2 |
+| Environment of spawned processes | the spawn helper (empty environment, constant `PATH`, a fresh `HOME`), the ban on `Command::new` outside it, the `--all-targets` lint | the tripwire proxy: story 3, since story 1 has no network |
+| Shells | the examples harness for sh and bash, and a listed shell that is missing turns the suite red, because the quoting paragraph belongs to Query | none |
+| Imports | the five cases of finding `imports.json`, tested with a fake `Env` | none |
+| Round trip, the write seam, locks and signals, the write commands, the write-side of the state file | none | story 2 |
+| Remote schemas in tests, the offline tripwire | none | story 3 |
+| Pinned copies of remote schemas | hand-made pinned copies and the config errors about pins: allocation not yet confirmed (below) | fetching them: story 3 |
+
+The rows about pinned copies depend on how a read command treats a remote schema it cannot fetch. That is not decided, and the allocation of those rows is confirmed when it is. Every other row stands.
+
+### Differences between the design and the binary that are acknowledged
+
+Two coverage tests of Across all commands would be red from the first day of story 1, which builds only the read commands: nine commands need a golden, and exit codes 3 and 4 are produced by writes. A gate that starts red is switched off, not repaired, so a difference between the design and the binary is recorded openly in code, in two lists: `unimplemented_commands` and `unproduced_exit_codes`.
+
+What a list is: the design describes something the binary does not yet have, and each entry is a difference that is known and accepted. It is not a queue of things that are yet to come. Two checks give a list its meaning, for commands and in the same way for exit codes:
+
+1. Every command heading in the Commands section is in the registry or in the list, and every exit code in the design's table is produced by a test or is in the list.
+2. Something in the list is not in the registry, and a code in the list is not produced by any test. An entry that outlives the work is red at once, and so the list cannot be used as a way out: a command that was built and then put in the list to avoid writing its golden is caught by this check.
+
+An entry carries the story expected to deliver it as a comment for readers. No test looks at it, so that putting the stories in a different order, or moving a command from one to another, cannot turn the suite red for a reason that has nothing to do with the program. The lists only shrink. Empty is the correct state of a finished v1: not a list that happens to have no members, but one that is expected to disappear.
+
+Not decided: how exit code 6 is produced by a read command in a test. A failure caused by permissions does not work when the tests run as root, and there is no seam behind reads. If a deterministic way is not found, code 6 goes in `unproduced_exit_codes` until one is.
+
 ### Closing
 
 Every group of inputs has an answer above (Where each input landed). What stays with the contract, all on the map: exact `--json` shapes with the order of each array; whether a command that fails midway is all or nothing across two namespaces and whether a temp file may remain; the crate that catches signals, and that every command takes its locks through one path; the shape of the `mv --renumber` argument; the error id of a write rejected by the re-read check; proving `yaml-edit` on anchors and tags; the default filesystem of macOS, case, and `mv` that changes only case; what an interrupted write leaves behind; and tests that run the real HTTP adapter inside the test process. Parked, blocking nothing: a macOS runner and the public-text gate in CI.
