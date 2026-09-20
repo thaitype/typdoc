@@ -12,7 +12,7 @@ Decide: derive the number from the highest existing key in the collections shari
 
 ## Answer
 
-Decided with the human, 2026-09-19, after two reversals (below). Supersedes the first answer, which stored counters in `lock.json`.
+Decided 2026-09-19, after two reversals (below). Supersedes the first answer, which stored counters in `lock.json`.
 
 **Rule:** `typdoc new` allocates the larger of (a) the highest existing number in the collection and (b) the collection's `last`, plus one, and records it as the new `last`, all under the namespace's write lock.
 
@@ -24,13 +24,13 @@ Decided with the human, 2026-09-19, after two reversals (below). Supersedes the 
 
 **Rejected, and why**
 - Deriving from files alone: reuses a deleted number silently.
-- A separate counter file, and a `counters` section in `lock.json` (the first answer): the human wanted no new file, and a shared counter made the value live in two places.
+- A separate counter file, and a `counters` section in `lock.json` (the first answer): a new file was not wanted, and a shared counter made the value live in two places.
 - The value in `config.json` as it stands, or in the schema file: a schema may be remote and pinned by hash (writing to it breaks the pin) or shared by several collections; a schema also defines shape and should not carry state.
 - A shared `counter` across collections: removed as above. Cheap to add back later as an additive feature; not possible to remove later without breaking users.
 
 **Amended in `docs/design.md`:** the config example and the `collections[]` table (`counter` replaced by `last`), the match-template paragraph (one coded schema per collection), Collection vs schema wording, the `schemas/wayfinder.json` `kind` values, the remote-schema example, `typdoc new`, the Commands intro, Config errors, Concurrency (what is locked; the `git-common` note), and the Wayfinder worked example (one collection, frontier filtered by `kind`). The `.typdoc` folder listing and `lock.json` example are back to their original wording.
 
-**Follow-on, now a ticket:** where the collection definitions live. The human proposed one file per collection with `schema` as a field, so that state sits with the definition; that is [12](12-collection-definition-files.md). Until it is decided, `last` sits in the `collections[]` entry in `config.json`, where the design already defines a collection.
+**Follow-on:** where the collection definitions live was decided in [12](12-collection-definition-files.md): one file per collection with `schema` as a field, so that state sits with the definition. Ticket 13 later moved `last` out of that file (see the amendment below).
 
 ## Not verified
 
