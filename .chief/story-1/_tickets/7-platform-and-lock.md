@@ -89,9 +89,9 @@ Not verified: run on this machine were bash and dash (as `sh`), where single quo
 
 ### Tests for ticket 9
 
-- A lock held for more than thirty seconds is not taken.
+- A lock held by another process is not taken however old it is: the command waits for `--lock-timeout` and exits 4. There is no age threshold.
 - Two processes racing for a lock get one winner; the other exits 4.
-- A process interrupted by SIGINT leaves no lock.
+- A process interrupted by SIGINT or SIGTERM while it holds a lock leaves no lock, and one interrupted while it waits for a lock removes nothing (how these are tested: ticket 9).
 - When our lock is removed and another writer creates a new one during our work, we do not remove theirs at the end.
 - While `pull` writes `lock.json`, a concurrent reader always gets a file that parses completely, never half of one.
 - A file in `vendor/` whose hash differs from its name is reported as a config error.
