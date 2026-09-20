@@ -1,6 +1,6 @@
 # Research 3: Markdown body parsing for typdoc (line/col, code exclusion, links, slugs)
 
-Date: 2026-09-19. Feeds `.chief/story-1/_tickets/3-markdown-body-parsing.md` and blocks ticket 4 (slug rules). Nothing in the repo other than this file was touched.
+Date: 2026-09-19. Feeds `docs/design-decision-phase-1/_tickets/3-markdown-body-parsing.md` and blocks ticket 4 (slug rules). Nothing in the repo other than this file was touched.
 
 ## Recommendation (short)
 
