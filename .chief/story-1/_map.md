@@ -30,7 +30,7 @@
 
 ## Not yet specified
 
-- Exact `--json` output shape for every command (belongs in the contract `/chief-plan` writes, once the decisions above settle).
+- Exact `--json` output shape for every command (belongs in the contract `/chief-plan` writes, once the decisions above settle), including for each array whether its order is guaranteed (goldens sort the arrays that do not guarantee one).
 - Distribution and versioning of the tool itself (`cargo install`, release binaries, config `version` upgrade path). Also open there: whether the test suite must run from a published package. Fixtures and examples sit at the repository root, outside every crate's package root, so a package's `tests/` cannot find them (checked with `cargo package --list`); choosing between excluding `tests` from packages and moving fixtures inside a crate belongs to this decision.
 - A published meta-schema (JSON Schema describing typdoc's own schema files) so editors can complete `schemas/*.json`; no one has asked for it yet.
 - Exact argument shape of `mv --renumber` (how the destination namespace is named) and whether it is atomic across two namespaces when a write fails midway; belongs in the contract.

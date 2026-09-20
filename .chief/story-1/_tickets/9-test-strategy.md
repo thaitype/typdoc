@@ -62,3 +62,18 @@ Defaults: the only substitution a declared value may use is a placeholder for th
 
 For the contract: exit 1 currently covers three unrelated things (not found, bad arguments, I/O). For a tool whose main users are programs, a code that can mean three things says little, and a test that asserts exit 1 proves little. Not decided here.
 
+### `--json` output
+
+Decided: the `--json` output of every command is pinned with golden files. A golden is compared as parsed JSON (whitespace and key order do not matter; array order does, see below), and each command also has hand-written assertions on its load-bearing fields. The safeguards are structural, not a matter of discipline: anything that relies on people being careful breaks on the day someone is in a hurry, which is also the day the most output changes.
+
+1. **Hand-written assertions live in files the golden-generating command cannot write.** This matters most. If a whole set is regenerated, the hand-written assertions are what would catch it, but only if they are not regenerated along with it; a net that is updated by the thing it watches is not a net. The generating command touches golden files only, and no path lets it write an assertion file.
+2. **The generating command has no mode that regenerates everything.** It must be told which golden to regenerate. Regenerating one is easy; regenerating all of them is a visible chore, not one key. The day the output of the whole system changes is the most dangerous day, and the day one key would be pressed.
+3. **The clock is injected as a constant, not scrubbed out before comparing.** If time values were removed, they would never be pinned, and a wrong format (an epoch instead of ISO, a lost time zone) would leave the golden green. Injecting a fixed value pins the format too.
+4. **Which arrays guarantee an order is declared first.** If the order of an array is an accident of the implementation, pinning it gives either a flaky test or an accident frozen into a contract. The design states, per array, whether order has a meaning, and the golden compares accordingly: an array with no guaranteed order is sorted before comparing.
+
+A golden regenerated from the tool's own output certifies whatever the tool does, including what it does wrong. The same principle stands behind the hand-written expectations of the broken fixtures; point 1 is what makes it effective rather than intended.
+
+Defaults: the function that regenerates goldens refuses to write any path outside a `golden/` directory, and a test proves it by trying to make it write an assertion file, so the guard is shown to work. The clock is injected at the library boundary (a `Clock` passed into `typdoc-core`), and the shipped binary has no environment variable that fakes the time: such a knob could write a false `created_at` into a real document. So the outputs of commands that stamp the time (`new`, `set`, `pull`) are pinned through `typdoc-core` with the injected clock, and the binary-level goldens cover output that does not depend on the current time.
+
+For the contract: the per-array statement of ordering (point 4) is part of the exact `--json` shapes, which the contract fixes.
+
