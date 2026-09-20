@@ -676,7 +676,7 @@ What a config error does is decided by one question: does it make checking impos
 | `config.vendor-edited` | a pinned copy's contents hash differently from its file name (it was edited by hand; run `typdoc pull`) |
 | `config.config-dir` | `TYPDOC_CONFIG_DIR` is set but is not an absolute path to an existing directory |
 
-**Output.** One line per finding, `path:line:col  level  message  rule`; `--json` returns the same fields. `line` and `col` are 1-based. `line` counts from the top of the file, frontmatter included, so it matches editors and file tools. `col` counts Unicode scalar values, so a Thai consonant, a Thai vowel or tone mark, an emoji and a tab each count as 1. It agrees with a UTF-16 count (the Language Server Protocol default) except after a character outside the BMP, such as an emoji, which UTF-16 counts as 2. `col` marks where the offending element starts (for a link, its `[`). `--json` carries no byte offset in v1.
+**Output.** One line per finding, `path:line:col  level  message  rule`; `--json` returns the same fields, and the `path` in a line is the `path` in the JSON: relative to the project folder, so that a reader of either means the same file in any namespace. Every path `validate` prints, in a line or in the audit summary, is written that way. `line` and `col` are 1-based. `line` counts from the top of the file, frontmatter included, so it matches editors and file tools. `col` counts Unicode scalar values, so a Thai consonant, a Thai vowel or tone mark, an emoji and a tab each count as 1. It agrees with a UTF-16 count (the Language Server Protocol default) except after a character outside the BMP, such as an emoji, which UTF-16 counts as 2. `col` marks where the offending element starts (for a link, its `[`). `--json` carries no byte offset in v1.
 
 ```
 tickets/WF-7.md:8:5              error  WF-3 not found                  body.mentions
@@ -710,6 +710,10 @@ Every command accepts `--json`, and its result is one JSON object on standard ou
 
 **A document** is the same object wherever it appears, in `get` and in `list` alike. It has `path`, `key` (coded documents only), `code`, `collection`, `schema` and `namespace`, and `fields`, which holds all of the document's frontmatter. The frontmatter stays apart in `fields` because a field that is not in the schema is kept and can have any name, `path` and `key` included.
 
+`path` is the path of the file relative to the project folder, the folder that holds `.typdoc`, so it is the same in every namespace and can be opened as it stands. `namespace` is not redundant with it: the namespace `default` has no folder of its own, so the paths of its documents contain no namespace name and none can be recovered from them, and that is the commonest case. Where a project has several namespaces, two documents in different ones can have the same path below their namespace folder, and the namespace tells them apart from the path's first segment onward.
+
+**A finding** is the same object in the report of `validate` and in the `details` of an error object. It always has `rule`, `level` and `message`. It has `path`, the file it is about, relative to the project folder, for a document and for a configuration file alike; `namespace` and `key` when the file is a document (`key` for a coded one only); `field` when it is about one field; and `line` and `col`, 1-based, when a position is known. A finding is always located in a file of the project being checked, never in one of an imported project: a broken ref is a fault of the document that holds it, not of its target.
+
 | Command | Prints |
 | --- | --- |
 | `get` | `{ "document": <document> }` |
@@ -737,10 +741,12 @@ Errors go to stderr. With `--json`, stderr carries one object:
 
 ```json
 { "error": "transition not allowed: open -> resolved", "code": 2,
-  "details": [{ "doc": "WF-3", "field": "status", "rule": "transitions" }] }
+  "details": [{ "level": "error", "rule": "frontmatter.transitions",
+                "message": "transition not allowed: open -> resolved",
+                "path": "tickets/WF-3.md", "namespace": "default", "key": "WF-3", "field": "status" }] }
 ```
 
-For a config error, `details[].rule` holds the error's id from the table under Config errors (all start with `config.`), and `file` replaces `doc` when the error is about a file rather than a document.
+`details` holds findings, in the shape described under JSON output. For a config error, `rule` holds the error's id from the table under Config errors (all start with `config.`) and `path` is the configuration file it is about.
 
 When a key or a write is ambiguous across namespaces, the exit code is 1 and the object carries `candidates`: every choice, written as a prefixed key or a namespace name.
 
