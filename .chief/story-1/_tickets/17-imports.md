@@ -1,7 +1,7 @@
 # 17: Imports: finding other projects and following refs into them
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 7, 10, 14
 
 ## What this delivers
