@@ -644,7 +644,30 @@ Correctness rules are always on; quality rules are configured project-wide under
 
 A mention with no prefix is looked up in the document's own namespace only; a prefixed mention (`story-2:WF-5`, `memory::LRN-5`) in the namespace it names. No match reports *not found*; an imported project absent on this machine falls under `imports.absent`. `fencedCode` defaults to `false` because code blocks often hold logs, commands and diffs that contain key-like text.
 
-**Config errors** (reported when the config loads): a missing or unknown `version`; a collection file that cannot be parsed, has an unknown key, names a schema that does not exist, or has a name outside ASCII letters, digits, `-` and `_`; an unknown rule name or option; any attempt to configure an always-on rule; a `match` template breaking the placeholder rules; a state entry for a collection whose schema has no code; a file in `.typdoc/state/` that matches no current namespace (the message names the file and says to delete or rename it); an unknown key in `config.json`, `name` included; a `namespaces` entry containing `/` or `**`, or naming a folder that does not exist; a matched folder whose name uses anything but ASCII letters, digits, `-` and `_`, is named `default`, or holds its own `.typdoc`; two collections naming the same coded schema; a schema URL that is not `https://`; a remote schema with no pin that cannot be fetched; a pinned copy that is missing, or whose contents hash differently from its file name (it was edited by hand); run `typdoc pull` to restore it.
+**Config errors** are reported when the config loads. Each has an id, so a caller can branch on it without reading the message, and so that each one can have a fixture that shows it fires:
+
+| Id | Reported when |
+| --- | --- |
+| `config.version` | `version` is missing or unknown |
+| `config.unknown-key` | `config.json` or a collection file has an unknown key (`name` in `config.json` and `last` in a collection file included) |
+| `config.legacy-file` | a legacy `.typdoc.json` sits beside the folder |
+| `config.collection-parse` | a collection file cannot be parsed |
+| `config.collection-name` | a collection file's name uses anything but ASCII letters, digits, `-` and `_` |
+| `config.collection-schema` | a collection names a schema that does not exist |
+| `config.rule-unknown` | a rule name or option is unknown |
+| `config.rule-always-on` | an always-on rule is configured |
+| `config.match-template` | a `match` template breaks the placeholder rules |
+| `config.coded-schema-shared` | two collections name the same coded schema |
+| `config.state-uncoded` | a state entry names a collection whose schema has no code |
+| `config.state-orphan` | a file in `.typdoc/state/` matches no current namespace (the message names the file and says to delete or rename it) |
+| `config.namespaces-entry` | a `namespaces` entry contains `/` or `**`, or names a folder that does not exist |
+| `config.namespace-name` | a matched folder's name uses anything but ASCII letters, digits, `-` and `_`, or is `default` |
+| `config.namespace-nested` | a matched folder holds its own `.typdoc` |
+| `config.schema-url` | a schema URL is not `https://` |
+| `config.schema-unpinned` | a remote schema has no pin and cannot be fetched |
+| `config.vendor-missing` | a pinned copy is missing (run `typdoc pull`) |
+| `config.vendor-edited` | a pinned copy's contents hash differently from its file name (it was edited by hand; run `typdoc pull`) |
+| `config.config-dir` | `TYPDOC_CONFIG_DIR` is set but is not an absolute path to an existing directory |
 
 **Output.** One line per finding, `path:line:col  level  message  rule`; `--json` returns the same fields. `line` and `col` are 1-based. `line` counts from the top of the file, frontmatter included, so it matches editors and file tools. `col` counts Unicode scalar values, so a Thai consonant, a Thai vowel or tone mark, an emoji and a tab each count as 1. It agrees with a UTF-16 count (the Language Server Protocol default) except after a character outside the BMP, such as an emoji, which UTF-16 counts as 2. `col` marks where the offending element starts (for a link, its `[`). `--json` carries no byte offset in v1.
 
@@ -692,6 +715,8 @@ Errors go to stderr. With `--json`, stderr carries one object:
 { "error": "transition not allowed: open -> resolved", "code": 2,
   "details": [{ "doc": "WF-3", "field": "status", "rule": "transitions" }] }
 ```
+
+For a config error, `details[].rule` holds the error's id from the table under Config errors (all start with `config.`), and `file` replaces `doc` when the error is about a file rather than a document.
 
 When a key or a write is ambiguous across namespaces, the exit code is 1 and the object carries `candidates`: every choice, written as a prefixed key or a namespace name.
 
