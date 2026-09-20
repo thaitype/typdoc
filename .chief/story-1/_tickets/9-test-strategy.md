@@ -1,7 +1,7 @@
 # 9: What is the test strategy, given tests must run offline and gates must be able to fail?
 
 Type: wayfinder:grilling
-Status: claimed
+Status: resolved
 Blocked by: 1, 6
 
 ## Question
@@ -270,7 +270,7 @@ Decided: the write commands (`new`, `set`, `mv`, `mv --renumber`) are tested in 
 3. **Failure in the middle, through the seam.** For `mv --renumber` across two namespaces and for `set`, fail the Nth write and the write between temp file and rename, for every N up to the number of writes the command makes, and assert the invariants below. The count of writes is asserted, as above.
 4. **Invariants after every write command, whether it succeeded or a write was failed.** They carry most of the weight, as in the round trip, and need no expected file: (a) every file is byte-identical to its old contents or is a complete new version, never a mixture; (b) `validate` reports no defect other than the ones the command reported; (c) the `last` of a namespace never goes down, and a key that was issued is never issued again; (d) a namespace the command did not write has state and files byte-identical. What a failed command leaves behind, whether it is all or nothing across namespaces and whether a temp file may remain, is decided by the contract (map, Not yet specified); until then the tests assert (a) to (d) and not more, and a decision by the contract adds an assertion.
 
-State files: `state/<namespace>.json` is written by `new` and, for the destination namespace, by `mv --renumber`; `set` and a plain `mv` never write it. It is written through the same seam and by the same rule as any file, and invariant (d) is what shows that a namespace a command did not issue a number in keeps its state file byte-identical. How a state file that does not exist yet is treated is not stated in the design, so no test asserts it until the design does.
+State files: `state/<namespace>.json` is written by `new` and, for the destination namespace, by `mv --renumber`; `set` and a plain `mv` never write it. It is written through the same seam and by the same rule as any file, and invariant (d) is what shows that a namespace a command did not issue a number in keeps its state file byte-identical. How a missing record is treated is decided in the next section.
 
 ### Across all commands
 
@@ -286,3 +286,26 @@ Decided: two coverage tests in both directions, the same shape as for `broken/`.
 6. Network: Remote schemas in tests; the suite runs offline.
 7. Shells: the three Shells sections.
 8. Across all of it: the offline section, `--json` goldens, Across all commands, macOS, and the review of a copied fixture.
+
+### A missing state record
+
+Decided: "no state file" is two cases, told apart by a criterion that uses no number anyone chose. The unit is a collection within a namespace.
+
+1. No record for the collection, and no coded documents of it in the namespace: it is new. `new` starts numbering as usual, creates the file or the entry with the first number it issues, and reports nothing.
+2. No record for the collection, and coded documents of it exist in the namespace: the record was lost, or the documents were made before typdoc was used. This must be loud. `typdoc new` and `mv --renumber` refuse to issue a number for that collection in that namespace and exit 2, and `validate` reports the always-on rule `state.missing`.
+
+The reason is in the design. `typdoc new` promises without condition that a number is never reused after its document is deleted, and the design says the state file is what makes that true. Reading a missing file as "start from the highest number that exists" does not mean no number has been issued; it means the record is gone. A collection numbered 1 to 40 from which ten documents were deleted would get numbers reused, and a ref left behind would point at a different document, which is what ticket 7's rule that the source namespace's `last` never goes down exists to prevent. It happens easily: someone puts `state/` in `.gitignore`, or clones a repository where the file was never committed. The layout in the design already says `state/` is committed; nothing enforces it, and no second rule is written for it. The design's sentence that the two sources can only disagree by leaving a gap was true only while the record existed, and it is corrected together with the promise.
+
+Where it goes: `state.missing` is an always-on rule, in the table with `keys.unique` and `collections.overlap`, and not a row in the table of config errors next to `config.state-orphan`, although it is that error's mirror image (a namespace with documents and no file, against a file with no namespace). Config errors are reported when the config loads, without reading any document, and they stop the namespace. Recognising a lost record needs the index of documents, so it cannot be a config error, and as one it would stop every command in the situation of someone adopting typdoc on documents that already have codes, including `validate --audit`, the command the design gives for adoption. As an always-on rule it is reported by `validate` as an error, listed by `--audit` without stopping it, and cannot be switched off, which keeps the safe behaviour as the default: `new` never issues a number silently in that state.
+
+The cost of that, stated: adopting typdoc on documents that already have codes takes one deliberate act before `new` works, creating the state file with `last` set to the highest existing number (or higher, if a higher number was ever used and deleted). The message says so. The act is deliberate because only the person adopting knows whether any document was ever deleted, and typdoc cannot tell a lost record from a repository that never had one.
+
+The boundary is drawn per collection: a state file that exists but has no entry for a collection is the same two cases, decided by whether that collection has coded documents in the namespace.
+
+A limit, stated as it is: a record can be lost without a trace when every coded document of the collection in that namespace has also been deleted, since nothing is left to compare it with. Nothing detects that, and the guarantee does not claim to.
+
+How it is tested: a fixture in `broken/state.missing` (documents with codes and no state file, and the command `new` as the declared argument), one for an existing file without the entry, and one for `mv --renumber` into a namespace in that state; each asserts exit 2, that the rule id is `state.missing` and that nothing under the tree changed. Cases 1 and 2 above are the pairs of hand-written expectations for `new`: a new collection gets its first number and the entry, a collection with documents and no record gets the refusal. The fix leaves the design's promise in one form: unconditional wording is replaced by a condition the design can keep.
+
+### Closing
+
+Every group of inputs has an answer above (Where each input landed). What stays with the contract, all on the map: exact `--json` shapes with the order of each array; whether a command that fails midway is all or nothing across two namespaces and whether a temp file may remain; the crate that catches signals, and that every command takes its locks through one path; the shape of the `mv --renumber` argument; how exit 1 is split; the error id of a write rejected by the re-read check; proving `yaml-edit` on anchors and tags; the default filesystem of macOS, case, and `mv` that changes only case; what an interrupted write leaves behind; and tests that run the real HTTP adapter inside the test process. Parked, blocking nothing: a macOS runner and the public-text gate in CI.
