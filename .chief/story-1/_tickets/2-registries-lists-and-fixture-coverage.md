@@ -1,7 +1,7 @@
 # 2: Registries, the three lists of acknowledged differences, and fixture coverage
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 1
 
 ## What this delivers
