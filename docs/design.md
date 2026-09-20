@@ -721,6 +721,8 @@ For a config error, `details[].rule` holds the error's id from the table under C
 
 When a key or a write is ambiguous across namespaces, the exit code is 1 and the object carries `candidates`: every choice, written as a prefixed key or a namespace name.
 
+When typdoc is interrupted (SIGINT or SIGTERM on POSIX) it removes its own locks and then ends by that signal, so the caller sees a process killed by a signal and no code from this table, and no error object is written. The table describes the outcomes of a command, not every way a process can end.
+
 ## Worked examples
 
 Two projects: `chief` holds wayfinder and implementation tickets, `memory` holds typmem learnings, precedents and proposals, and `chief` imports `memory`.
