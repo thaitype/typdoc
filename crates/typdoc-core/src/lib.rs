@@ -13,6 +13,7 @@ mod lines;
 mod links;
 mod namespaces;
 mod project;
+mod query;
 mod refs;
 pub mod rules;
 mod schema;
@@ -36,6 +37,7 @@ pub use project::{
     Project, RefName, RefOutcome, RefsDirection, RefsReference, RefsReport, Toc, ValidateReport,
     discover,
 };
+pub use query::{Condition, FieldRef, Item, Op, QueryError, evaluate, parse as parse_query};
 pub use schema::{Auto, Field, FieldType, OptBool, Resolved, Schema, Target};
 pub use scope::{Scope, Source};
 pub use validate::{Finding, Severity, ValidateScope};

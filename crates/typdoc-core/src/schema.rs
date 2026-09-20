@@ -212,6 +212,13 @@ pub struct Resolved {
 }
 
 impl Resolved {
+    /// A resolved schema built directly from its fields, with no `extends` chain read: for a
+    /// caller that has already merged a chain itself, or a test that checks a condition against
+    /// a schema it writes by hand.
+    pub fn new(name: String, code: Option<String>, fields: BTreeMap<String, Field>) -> Resolved {
+        Resolved { name, code, fields }
+    }
+
     pub fn field(&self, name: &str) -> Option<&Field> {
         self.fields.get(name)
     }
