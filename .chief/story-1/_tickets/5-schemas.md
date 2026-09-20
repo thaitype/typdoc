@@ -1,7 +1,7 @@
 # 5: Schemas: field types, coercion, refs and targets
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 4
 
 ## What this delivers
