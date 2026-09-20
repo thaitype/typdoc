@@ -1,7 +1,7 @@
 # 7: Keys, arguments that name a document, and `get` by key
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 4, 5
 
 ## What this delivers
