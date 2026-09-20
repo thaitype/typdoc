@@ -1,7 +1,7 @@
 # 11: Body links, anchors and mentions
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 6, 10
 
 ## What this delivers
