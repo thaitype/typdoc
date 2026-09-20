@@ -1,7 +1,7 @@
 # 10: Refs in frontmatter and their rules
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 7, 8
 
 ## What this delivers
