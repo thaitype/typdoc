@@ -8,6 +8,7 @@ mod frontmatter;
 mod glob;
 mod index;
 mod project;
+pub mod rules;
 mod schema;
 
 pub use document::{Document, Value};

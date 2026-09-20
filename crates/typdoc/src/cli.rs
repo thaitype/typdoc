@@ -7,7 +7,7 @@ use typdoc_core::{Deps, Document, DocumentArg, Error, ErrorKind, Project, Value}
 
 #[derive(Parser)]
 #[command(name = "typdoc", version)]
-struct Cli {
+pub(crate) struct Cli {
     #[command(subcommand)]
     command: Command,
 }
@@ -119,7 +119,7 @@ mod tests {
     use std::collections::HashMap;
     use std::ffi::OsString;
     use std::io;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     use serde_json::json;
     use typdoc_core::{Deps, Env};
@@ -142,7 +142,7 @@ mod tests {
     }
 
     fn fixtures() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures")
+        typdoc_testkit::fixtures::path("")
     }
 
     fn get_note(env: &FakeEnv) -> super::Outcome {

@@ -1,0 +1,159 @@
+//! The design, the code and the fixtures agree: everything the design names is built or listed
+//! as a difference, nothing listed is built, and each broken fixture trips what it declares.
+
+#[allow(dead_code, reason = "each test file uses part of the shared helper")]
+mod common;
+
+use std::collections::BTreeSet;
+use std::path::Path;
+
+use common::{NOTES, Ran, Scratch, Spawn, fixture};
+use typdoc::registry;
+use typdoc_core::rules::{RULES, UNIMPLEMENTED_RULES};
+use typdoc_testkit::check::{Kind, acknowledged, broken_coverage, exact_set, tripped_rules};
+use typdoc_testkit::design::{command_names, exit_codes};
+use typdoc_testkit::fixtures::{broken_entries, design_text};
+use typdoc_testkit::spec::FixtureSpec;
+
+fn set<T: Ord + Clone>(items: &[T]) -> BTreeSet<T> {
+    items.iter().cloned().collect()
+}
+
+fn names(items: &[&str]) -> BTreeSet<String> {
+    items.iter().map(|item| item.to_string()).collect()
+}
+
+#[test]
+fn every_command_the_design_names_is_built_or_listed_and_nothing_listed_is_built() {
+    let built: BTreeSet<String> = registry::commands().into_iter().collect();
+
+    let result = acknowledged(
+        &Kind {
+            thing: "command",
+            present: "the registry",
+            list: "unimplemented_commands",
+        },
+        &command_names(&design_text()).unwrap(),
+        &built,
+        &names(registry::UNIMPLEMENTED_COMMANDS),
+    );
+
+    assert_eq!(result, Ok(()));
+}
+
+#[test]
+fn every_broken_fixture_names_a_rule_that_exists_and_every_rule_that_exists_has_one() {
+    let result = broken_coverage(
+        &broken_entries(),
+        &names(RULES),
+        &names(UNIMPLEMENTED_RULES),
+    );
+
+    assert_eq!(result, Ok(()));
+}
+
+/// Runs the fixture for `rule` in `dir` as its spec says, and compares the rules it trips.
+fn check_fixture(dir: &Path, rule: &str) -> Result<(), String> {
+    let spec = FixtureSpec::load(dir, rule)?;
+    let ran = Spawn::args(&spec.command).cwd(dir).run();
+    let tripped = tripped_rules(&ran.stdout, &ran.stderr)?;
+    exact_set(rule, &spec.trips, &tripped)
+}
+
+#[test]
+fn every_broken_fixture_trips_exactly_the_rules_it_declares() {
+    let mut problems = Vec::new();
+    for rule in broken_entries() {
+        let dir = fixture("broken").join(&rule);
+        if let Err(problem) = check_fixture(&dir, &rule) {
+            problems.push(problem);
+        }
+    }
+
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+#[test]
+fn a_fixture_whose_run_trips_nothing_is_red_through_the_built_binary() {
+    let project = Scratch::project(&NOTES);
+    project.file("note.md", "---\ntitle: Fine\n---\n");
+    project.file(
+        "fixture.json",
+        r#"{ "command": ["get", "note.md", "--json"], "trips": ["frontmatter.types"] }"#,
+    );
+
+    let error = check_fixture(project.path(), "frontmatter.types").unwrap_err();
+
+    assert_eq!(
+        error,
+        "fixture frontmatter.types did not trip frontmatter.types"
+    );
+}
+
+/// Each exit code a test makes the binary end with, shown by a run that ends with it and, for
+/// a failure, prints the error object with that code.
+fn produced_exit_codes() -> BTreeSet<u8> {
+    let unclosed = Scratch::project(&NOTES);
+    unclosed.file("bad.md", "---\ntitle: never closed\n");
+    let unreadable = Scratch::project(&NOTES);
+    unreadable.file(".typdoc/collections/folder.json/inside", "");
+
+    let runs: [(u8, Ran); 5] = [
+        (
+            0,
+            Spawn::args(["get", "note.md", "--json"])
+                .cwd(fixture("valid/minimal"))
+                .run(),
+        ),
+        (
+            1,
+            Spawn::args(["get", "note", "--json"])
+                .cwd(fixture("valid/minimal"))
+                .run(),
+        ),
+        (
+            2,
+            Spawn::args(["get", "bad.md", "--json"])
+                .cwd(unclosed.path())
+                .run(),
+        ),
+        (
+            5,
+            Spawn::args(["get", "absent.md", "--json"])
+                .cwd(fixture("valid/minimal"))
+                .run(),
+        ),
+        (
+            6,
+            Spawn::args(["get", "a.md", "--json"])
+                .cwd(unreadable.path())
+                .run(),
+        ),
+    ];
+
+    let mut produced = BTreeSet::new();
+    for (code, ran) in runs {
+        assert_eq!(ran.code, i32::from(code), "stderr: {}", ran.stderr);
+        if code != 0 {
+            assert_eq!(ran.stderr_json()["code"], serde_json::json!(code));
+        }
+        produced.insert(code);
+    }
+    produced
+}
+
+#[test]
+fn every_exit_code_of_the_design_is_produced_or_listed_and_nothing_listed_is_produced() {
+    let result = acknowledged(
+        &Kind {
+            thing: "exit code",
+            present: "the codes a test produces",
+            list: "unproduced_exit_codes",
+        },
+        &exit_codes(&design_text()).unwrap(),
+        &produced_exit_codes(),
+        &set(registry::UNPRODUCED_EXIT_CODES),
+    );
+
+    assert_eq!(result, Ok(()));
+}

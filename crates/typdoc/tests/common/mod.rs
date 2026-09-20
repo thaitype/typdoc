@@ -9,19 +9,7 @@ const PATH: &str = "/usr/bin:/bin";
 
 /// A fixture project by its path below `fixtures/`, e.g. `valid/minimal`.
 pub fn fixture(relative: &str) -> PathBuf {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
-    assert!(
-        root.is_dir(),
-        "the fixtures folder {} is missing: the tests run from a checkout of the repository",
-        root.display()
-    );
-    let project = root.join(relative);
-    assert!(
-        project.is_dir(),
-        "the fixture {} is missing",
-        project.display()
-    );
-    project
+    typdoc_testkit::fixtures::path(relative)
 }
 
 /// What a finished run left behind.

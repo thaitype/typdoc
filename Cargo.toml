@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/typdoc-core", "crates/typdoc"]
+members = ["crates/typdoc-core", "crates/typdoc", "crates/typdoc-testkit"]
 
 [workspace.package]
 edition = "2024"

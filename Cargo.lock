@@ -358,6 +358,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "typdoc-core",
+ "typdoc-testkit",
 ]
 
 [[package]]
@@ -367,7 +368,17 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "typdoc-testkit",
  "yaml_serde",
+]
+
+[[package]]
+name = "typdoc-testkit"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

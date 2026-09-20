@@ -40,7 +40,8 @@ scripts/check-public-text.sh --self-test   # proves the gate can fail; run whene
 ### Directory Structure
 
 - `crates/typdoc-core/` — lib
-- `crates/typdoc/` — bin (clap)
+- `crates/typdoc/` — bin (clap); the CLI itself is in its `src/lib.rs`, so that its tests reach the registry of commands
+- `crates/typdoc-testkit/` — dev-only, not published: the loader of `fixtures/` and `docs/design.md`, the reader of what the design names, and the checks that compare it with the code; both crates use it in tests
 - `fixtures/` — projects the tests read
 - `docs/` — design doc
 - `examples/` — sample namespaces (`.typdoc/config.json` + schemas)

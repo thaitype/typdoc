@@ -1,10 +1,9 @@
-mod cli;
-
 use std::ffi::OsString;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use typdoc::cli;
 use typdoc_core::{Deps, Env};
 
 struct ProcessEnv;
