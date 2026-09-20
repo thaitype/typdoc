@@ -312,7 +312,7 @@ A coded document's file name is its key and nothing else, so it never changes wh
 
 - The key is not stored in frontmatter; the filename is the single source of truth.
 - `title` is an ordinary frontmatter field, not the H1. The body has no required structure.
-- Writes preserve key order and existing YAML style where possible, and never reformat the body.
+- Writes never move an existing key and never reformat the body. A key that is added goes at the end of the frontmatter block. Existing YAML style (quotes, flow or block lists, comments) is kept as a best effort, which is not a promise.
 - Frontmatter fields not in the schema are kept on write and reported by `validate`.
 
 ## Refs
