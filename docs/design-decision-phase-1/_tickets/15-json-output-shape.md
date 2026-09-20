@@ -1,7 +1,7 @@
 # 15: What does `--json` print on success?
 
 Type: wayfinder:grilling
-Status: claimed
+Status: resolved
 Blocked by: 14
 
 ## Question
@@ -53,10 +53,15 @@ Open, found while checking this and not decided here: which rule reports frontma
 27. **`--field` filters and does not change the shape.** The design gave `--field f|$body` no meaning. It keeps the refs held in that field, in both directions; with `--reverse` it is the field of the document that holds the ref, since that is where the ref is written. `direction` already covers `--reverse`.
 28. **The order of `refs` is guaranteed.** For `out`: the fields in the order they appear in the document, then `$body` by position, and values within a field in the order written. For `in`: the documents that hold the refs (this project first, then imported projects by alias, each by `path`), then as for `out`. A golden compares it as it is.
 
+29. **`toc` prints `{ "document": <name>, "headings": [...] }`**, a flat list in the order of the file, each heading with `level`, `text`, `slug`, `line` and `end`. `document` is the name under the naming rule and not a whole document. Rejected: a nested tree, because it is worked out from `level`, its shape would change with the depth of the document, a golden file would be harder to keep, and it promises what the caller can compute.
+30. **`end` is the last line of the section and includes its subheadings.** The design's own use for `toc` is to find a section and edit all of it with a file tool. An `end` that stopped at the next heading of any level would cut that edit off at the first subheading with no sign of it, a wrong answer that looks right. Rejected for that concrete reason.
+31. **The ranges nest and do not tile the file.** With a section of lines 14 to 31 and a subheading of lines 20 to 31, reading every range in turn reads lines twice. It is right that they nest, and it is written down, because the plain reading of a list of ranges is that they split the file without overlap. The range of a heading always contains the ranges of the headings under it.
+32. **`end` is a property of the document, not of the command.** `--depth` chooses which headings are listed, and the `end` of a listed heading still covers the subheadings it hides. If `end` changed with a flag, the same document would give different values depending on how it was asked, and it would stop being a fact about the document. It is written as a rule under JSON output: a flag that chooses or limits what is listed changes which items appear and never the values of an item. The same holds for `list` and `--limit`, and for `refs` and `--field`, and all of them refer to the one sentence.
+33. **Two edge cases follow from the definition and are tested.** A heading with nothing under it has `end` equal to `line`; there is a fixture. The last section ends at the last line of the file, and how the last line is counted is a rule shared by every command that reports a line. Ticket 11 fixed the unit of `col` and that `line` counts from the top of the file, frontmatter included, and said nothing about the last line, a file with no final line ending, or a carriage return, so there was no rule to reuse, and two rules that happened to agree were not acceptable either. Default: a line ends at a line feed, at a carriage return and a line feed together, or at a carriage return alone (as CommonMark does, and the parser chosen in ticket 3 splits lines that way), and a line ending at the end of the file does not begin another line, so `a\nb` and `a\nb\n` both have two lines. It is written once, where `line` is defined (Output, under `validate`), and every command refers to it. Not verified against the line-splitting of the parser; fixtures for a file with no final line ending and for a file with `\r\n` line endings assert it.
+
 Consequences for the tests (ticket 9): `config.parse` needs a fixture in `broken/` like every config error; a fixture for `config.state-orphan` asserts a finding in the report and exit 2, not an error object; and one fixture asserts `"complete": false` for an unknown `version`.
 
 The design has a new section, JSON output, holding the rule, the document and the shapes decided so far. Each further shape and the order of each array is added to that section, not to the command that prints it, so that the shape and the order of an array stay in the same place (ticket 9 ties them together through the golden files).
 
 Already decided elsewhere and not reopened: `list` sorts by `--sort` and then in key or path order, with `key` compared by code and then numerically (`WF-2` before `WF-10`) and `string` and `path` compared lexicographically (Sorting under `list`).
 
-Still to decide in this ticket: the shape and order of `toc`.

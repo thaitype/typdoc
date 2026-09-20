@@ -75,7 +75,7 @@ A golden regenerated from the tool's own output certifies whatever the tool does
 
 Defaults: the function that regenerates goldens refuses to write any path outside a `golden/` directory, and a test proves it by trying to make it write an assertion file, so the guard is shown to work. The clock is injected at the library boundary (a `Clock` passed into `typdoc-core`), and the shipped binary has no environment variable that fakes the time: such a knob could write a false `created_at` into a real document. So the outputs of commands that stamp the time (`new`, `set`, `pull`) are pinned through `typdoc-core` with the injected clock, and the binary-level goldens cover output that does not depend on the current time.
 
-For the contract: the per-array statement of ordering (point 4) is part of the exact `--json` shapes, which the contract fixes.
+For the contract: the per-array statement of ordering (point 4) is part of the exact `--json` shapes, which the design fixes under JSON output (ticket 15).
 
 ### Remote schemas in tests
 
