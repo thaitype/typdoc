@@ -31,10 +31,11 @@
 ## Not yet specified
 
 - Exact `--json` output shape for every command (belongs in the contract `/chief-plan` writes, once the decisions above settle).
-- Distribution and versioning of the tool itself (`cargo install`, release binaries, config `version` upgrade path).
+- Distribution and versioning of the tool itself (`cargo install`, release binaries, config `version` upgrade path). Also open there: whether the test suite must run from a published package. Fixtures and examples sit at the repository root, outside every crate's package root, so a package's `tests/` cannot find them (checked with `cargo package --list`); choosing between excluding `tests` from packages and moving fixtures inside a crate belongs to this decision.
 - A published meta-schema (JSON Schema describing typdoc's own schema files) so editors can complete `schemas/*.json`; no one has asked for it yet.
 - Exact argument shape of `mv --renumber` (how the destination namespace is named) and whether it is atomic across two namespaces when a write fails midway; belongs in the contract.
 - From ticket 7, for the contract: the crate for catching interrupt signals; running zsh to earn its row in the quoting list; whether `imports.absent` should fire for an unresolved import that nothing refers to.
+- Whether the public-text gate (`scripts/check-public-text.sh`) runs automatically, in CI or a hook: today it runs only when someone remembers, so it is a habit, not a gate. Adding CI to this public repository is not yet decided.
 - Scale: the index is rebuilt on every run with no cache; at what document count does that stop being acceptable?
 
 ## Out of scope
