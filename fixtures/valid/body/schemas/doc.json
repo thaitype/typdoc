@@ -1,0 +1,6 @@
+{
+  "name": "doc",
+  "fields": {
+    "title": { "type": "string" }
+  }
+}

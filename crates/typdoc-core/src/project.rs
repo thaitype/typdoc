@@ -4,12 +4,13 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::body::{self, Heading};
 use crate::config::{Collection, Config, Report, config_file};
 use crate::document::Document;
 use crate::env::Env;
 use crate::error::Error;
 use crate::frontmatter;
-use crate::index::{Index, Member};
+use crate::index::{Entry as Indexed, Index, Member};
 use crate::schema::{self, Resolved};
 use crate::scope::{self, Scope};
 use crate::template::Template;
@@ -58,6 +59,15 @@ impl DocumentArg {
         }
         Ok(DocumentArg::Path(arg.to_owned()))
     }
+}
+
+/// The headings of one document, named as the design names a document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Toc {
+    /// Relative to the project folder.
+    pub path: String,
+    pub namespace: String,
+    pub headings: Vec<Heading>,
 }
 
 pub struct Project {
@@ -148,12 +158,7 @@ impl Project {
     }
 
     pub fn get(&self, arg: &DocumentArg) -> Result<Document, Error> {
-        let DocumentArg::Path(path) = arg;
-        let entry = self
-            .index
-            .get(path)
-            .ok_or_else(|| Error::NotFound { path: path.clone() })?;
-        let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
+        let (path, entry, text) = self.read(arg)?;
         let bad = |message| Error::Frontmatter {
             file: entry.file.clone(),
             message,
@@ -164,12 +169,37 @@ impl Project {
             None => Vec::new(),
         };
         Ok(Document {
-            path: path.clone(),
+            path,
             namespace: self.config.namespaces[entry.namespace].name.clone(),
             collection: collection.name.clone(),
             schema: collection.schema.name.clone(),
             fields,
         })
+    }
+
+    /// The headings of a document's body, in the order of `line`.
+    pub fn toc(&self, arg: &DocumentArg) -> Result<Toc, Error> {
+        let (path, entry, text) = self.read(arg)?;
+        let headings = body::headings(&text).map_err(|message| Error::Frontmatter {
+            file: entry.file.clone(),
+            message,
+        })?;
+        Ok(Toc {
+            path,
+            namespace: self.config.namespaces[entry.namespace].name.clone(),
+            headings,
+        })
+    }
+
+    /// The path a document argument names, its place in the index, and the text of the file.
+    fn read(&self, arg: &DocumentArg) -> Result<(String, &Indexed, String), Error> {
+        let DocumentArg::Path(path) = arg;
+        let entry = self
+            .index
+            .get(path)
+            .ok_or_else(|| Error::NotFound { path: path.clone() })?;
+        let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
+        Ok((path.clone(), entry, text))
     }
 }
 

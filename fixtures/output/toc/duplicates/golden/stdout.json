@@ -1,0 +1,36 @@
+{
+  "document": {
+    "path": "duplicates.md",
+    "namespace": "default"
+  },
+  "headings": [
+    {
+      "level": 1,
+      "text": "Dup",
+      "slug": "dup",
+      "line": 1,
+      "end": 7
+    },
+    {
+      "level": 2,
+      "text": "Dup",
+      "slug": "dup-1",
+      "line": 3,
+      "end": 7
+    },
+    {
+      "level": 3,
+      "text": "Dup 1",
+      "slug": "dup-1-1",
+      "line": 5,
+      "end": 7
+    },
+    {
+      "level": 4,
+      "text": "Dup",
+      "slug": "dup-2",
+      "line": 7,
+      "end": 7
+    }
+  ]
+}

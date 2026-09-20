@@ -1,0 +1,8 @@
+{
+  "project": "valid/body",
+  "command": [
+    "toc",
+    "slugs.md",
+    "--json"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "document": {
+    "path": "thai.md",
+    "namespace": "default"
+  },
+  "headings": [
+    {
+      "level": 1,
+      "text": "หัวข้อ",
+      "slug": "หัวข้อ",
+      "line": 5,
+      "end": 7
+    }
+  ]
+}

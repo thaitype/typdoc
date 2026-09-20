@@ -1,0 +1,11 @@
+[
+  { "file": "thai.md", "at": "หัวข้อ", "line": 5, "col": 3 },
+  { "file": "thai.md", "at": "[", "line": 7, "col": 7 },
+  { "file": "emoji.md", "at": "[", "line": 7, "col": 8 },
+  { "file": "no-final-newline.md", "at": "last", "line": 7, "col": 1 },
+  { "file": "no-final-newline.md", "at": "line", "line": 7, "col": 6 },
+  { "file": "crlf.md", "at": "## Two", "line": 5, "col": 1 },
+  { "file": "crlf.md", "at": "more", "line": 7, "col": 1 },
+  { "file": "lone-cr.md", "at": "## Two", "line": 5, "col": 1 },
+  { "file": "lone-cr.md", "at": "ore", "line": 7, "col": 2 }
+]

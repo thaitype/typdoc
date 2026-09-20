@@ -1,0 +1,2 @@
+# Some fixtures hold `\r\n` and lone `\r` line endings on purpose, so no file here is converted.
+* -text

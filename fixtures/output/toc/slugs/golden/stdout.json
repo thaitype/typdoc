@@ -1,0 +1,162 @@
+{
+  "document": {
+    "path": "slugs.md",
+    "namespace": "default"
+  },
+  "headings": [
+    {
+      "level": 2,
+      "text": "Sample Section",
+      "slug": "sample-section",
+      "line": 4,
+      "end": 5
+    },
+    {
+      "level": 2,
+      "text": "This'll be a Helpful Section About the Greek Letter Θ!",
+      "slug": "thisll-be-a-helpful-section-about-the-greek-letter-θ",
+      "line": 6,
+      "end": 7
+    },
+    {
+      "level": 2,
+      "text": "ทดสอบ ภาษาไทย ก็ได้",
+      "slug": "ทดสอบ-ภาษาไทย-ก็ได้",
+      "line": 8,
+      "end": 9
+    },
+    {
+      "level": 2,
+      "text": "หัวข้อ (สอง): ผ่านไหม?",
+      "slug": "หัวข้อ-สอง-ผ่านไหม",
+      "line": 10,
+      "end": 11
+    },
+    {
+      "level": 2,
+      "text": "Café Ünïcode ÀB",
+      "slug": "café-ünïcode-àb",
+      "line": 12,
+      "end": 13
+    },
+    {
+      "level": 2,
+      "text": "code and link em & R&D",
+      "slug": "code-and-link-em--rd",
+      "line": 14,
+      "end": 15
+    },
+    {
+      "level": 2,
+      "text": "A_B__C  d---e a.b/c",
+      "slug": "a_b__c--d---e-abc",
+      "line": 16,
+      "end": 17
+    },
+    {
+      "level": 2,
+      "text": "日本語 見出し",
+      "slug": "日本語-見出し",
+      "line": 18,
+      "end": 19
+    },
+    {
+      "level": 2,
+      "text": "Trailing hyphen -",
+      "slug": "trailing-hyphen--",
+      "line": 20,
+      "end": 21
+    },
+    {
+      "level": 2,
+      "text": "- leading",
+      "slug": "--leading",
+      "line": 22,
+      "end": 23
+    },
+    {
+      "level": 2,
+      "text": "1. Numbered",
+      "slug": "1-numbered",
+      "line": 24,
+      "end": 25
+    },
+    {
+      "level": 2,
+      "text": "⚙️ emoji 🎉 x",
+      "slug": "️-emoji--x",
+      "line": 26,
+      "end": 27
+    },
+    {
+      "level": 2,
+      "text": "Foo {#custom-id}",
+      "slug": "foo-custom-id",
+      "line": 28,
+      "end": 29
+    },
+    {
+      "level": 2,
+      "text": "Setext Title",
+      "slug": "setext-title",
+      "line": 30,
+      "end": 32
+    },
+    {
+      "level": 2,
+      "text": "a  b",
+      "slug": "a--b",
+      "line": 33,
+      "end": 34
+    },
+    {
+      "level": 2,
+      "text": "bold x",
+      "slug": "bold-x",
+      "line": 35,
+      "end": 36
+    },
+    {
+      "level": 2,
+      "text": "ab",
+      "slug": "ab",
+      "line": 37,
+      "end": 38
+    },
+    {
+      "level": 2,
+      "text": "Line oneline two",
+      "slug": "line-oneline-two",
+      "line": 39,
+      "end": 42
+    },
+    {
+      "level": 2,
+      "text": "Tab\there",
+      "slug": "tabhere",
+      "line": 43,
+      "end": 44
+    },
+    {
+      "level": 2,
+      "text": "<tag> © 2026",
+      "slug": "tag--2026",
+      "line": 45,
+      "end": 46
+    },
+    {
+      "level": 2,
+      "text": "WF-3: thing",
+      "slug": "wf-3-thing",
+      "line": 47,
+      "end": 48
+    },
+    {
+      "level": 2,
+      "text": "strike b c",
+      "slug": "strike-b-c",
+      "line": 49,
+      "end": 49
+    }
+  ]
+}

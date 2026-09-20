@@ -1,0 +1,36 @@
+{
+  "document": {
+    "path": "empty-slug.md",
+    "namespace": "default"
+  },
+  "headings": [
+    {
+      "level": 1,
+      "text": "!!!",
+      "slug": "",
+      "line": 1,
+      "end": 7
+    },
+    {
+      "level": 2,
+      "text": "😀",
+      "slug": "-1",
+      "line": 3,
+      "end": 7
+    },
+    {
+      "level": 3,
+      "text": "???",
+      "slug": "-2",
+      "line": 5,
+      "end": 7
+    },
+    {
+      "level": 4,
+      "text": "!!!",
+      "slug": "-3",
+      "line": 7,
+      "end": 7
+    }
+  ]
+}

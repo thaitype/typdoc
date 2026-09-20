@@ -1,0 +1,36 @@
+{
+  "document": {
+    "path": "nothing-under.md",
+    "namespace": "default"
+  },
+  "headings": [
+    {
+      "level": 1,
+      "text": "Top",
+      "slug": "top",
+      "line": 1,
+      "end": 7
+    },
+    {
+      "level": 2,
+      "text": "Empty",
+      "slug": "empty",
+      "line": 3,
+      "end": 4
+    },
+    {
+      "level": 3,
+      "text": "Deeper",
+      "slug": "deeper",
+      "line": 4,
+      "end": 4
+    },
+    {
+      "level": 2,
+      "text": "Sibling",
+      "slug": "sibling",
+      "line": 5,
+      "end": 7
+    }
+  ]
+}

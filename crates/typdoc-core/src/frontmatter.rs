@@ -5,26 +5,50 @@ use serde::de::{self, DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqA
 
 use crate::coerce::coerce;
 use crate::document::Value;
+use crate::lines::next_line;
 use crate::schema::Resolved;
 
 const FENCE: &str = "---";
 
-/// The lines between the opening and the closing `---`, or `None` when the file has no block.
-pub fn block(text: &str) -> Result<Option<&str>, String> {
-    let mut lines = text.split_inclusive('\n');
-    let opening = lines.next().unwrap_or("");
-    if opening.trim_end_matches(['\r', '\n']) != FENCE {
-        return Ok(None);
+/// A file cut into its frontmatter block and the body after it.
+pub struct Split<'a> {
+    /// The lines between the opening and the closing `---`, or `None` when the file has no block.
+    pub block: Option<&'a str>,
+    /// Where the body begins in the file: after the closing `---` line, or 0 with no block.
+    pub body: usize,
+}
+
+/// Cuts a file where its block ends. A line ends as the design says, so a file with `\r\n` or
+/// lone `\r` endings has its block found too.
+pub fn split(text: &str) -> Result<Split<'_>, String> {
+    let line = |start: usize| {
+        let end = next_line(text, start);
+        (text[start..end].trim_end_matches(['\r', '\n']), end)
+    };
+    let (opening, start) = line(0);
+    if opening != FENCE {
+        return Ok(Split {
+            block: None,
+            body: 0,
+        });
     }
-    let start = opening.len();
-    let mut end = start;
-    for line in lines {
-        if line.trim_end_matches(['\r', '\n']) == FENCE {
-            return Ok(Some(&text[start..end]));
+    let mut at = start;
+    while at < text.len() {
+        let (content, next) = line(at);
+        if content == FENCE {
+            return Ok(Split {
+                block: Some(&text[start..at]),
+                body: next,
+            });
         }
-        end += line.len();
+        at = next;
     }
     Err("the frontmatter block is never closed".to_owned())
+}
+
+/// The lines between the opening and the closing `---`, or `None` when the file has no block.
+pub fn block(text: &str) -> Result<Option<&str>, String> {
+    split(text).map(|split| split.block)
 }
 
 /// The fields of a block, in the order written, each read by the type `schema` gives it.

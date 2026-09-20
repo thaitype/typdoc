@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use clap::error::ErrorKind as ClapKind;
 use clap::{Parser, Subcommand};
 use serde_json::{Map, Value as Json, json};
-use typdoc_core::{Deps, Document, DocumentArg, Error, ErrorKind, Project, Value};
+use typdoc_core::{Deps, Document, DocumentArg, Error, ErrorKind, Project, Toc, Value};
 
 #[derive(Parser)]
 #[command(name = "typdoc", version)]
@@ -22,6 +22,16 @@ enum Command {
     Get {
         /// The path of the document, from the project folder
         document: OsString,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List the headings of a document's body with their line ranges
+    Toc {
+        /// The path of the document, from the project folder
+        document: OsString,
+        /// List only the headings down to this level, 1 to 6
+        #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(1..))]
+        depth: Option<u8>,
         #[arg(long)]
         json: bool,
     },
@@ -53,14 +63,31 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 return failure_text(false, 1, "the output without --json is not built yet");
             }
             match get(deps, &document, cli.namespace.as_deref()) {
-                Ok(document) => Outcome {
-                    code: 0,
-                    stdout: format!("{}\n", json!({ "document": document_json(&document) })),
-                    stderr: String::new(),
-                },
+                Ok(document) => success(json!({ "document": document_json(&document) })),
                 Err(e) => failure(true, exit_code(e.kind()), &e),
             }
         }
+        Command::Toc {
+            document,
+            depth,
+            json,
+        } => {
+            if !json {
+                return failure_text(false, 1, "the output without --json is not built yet");
+            }
+            match toc(deps, &document, cli.namespace.as_deref()) {
+                Ok(toc) => success(toc_json(&toc, depth)),
+                Err(e) => failure(true, exit_code(e.kind()), &e),
+            }
+        }
+    }
+}
+
+fn success(result: Json) -> Outcome {
+    Outcome {
+        code: 0,
+        stdout: format!("{result}\n"),
+        stderr: String::new(),
     }
 }
 
@@ -74,6 +101,14 @@ fn get(
     let project = Project::load(&root)?;
     project.scope(None, namespace, deps.env)?;
     project.get(&arg)
+}
+
+fn toc(deps: &Deps, document: &std::ffi::OsStr, namespace: Option<&str>) -> Result<Toc, Error> {
+    let arg = DocumentArg::parse(document)?;
+    let root = typdoc_core::discover(deps.env)?;
+    let project = Project::load(&root)?;
+    project.scope(None, namespace, deps.env)?;
+    project.toc(&arg)
 }
 
 fn exit_code(kind: ErrorKind) -> u8 {
@@ -126,6 +161,28 @@ fn failure(json: bool, code: u8, error: &Error) -> Outcome {
             format!("typdoc: {error}\n")
         },
     }
+}
+
+/// The headings down to `depth`, each with the `end` it has in the whole document.
+fn toc_json(toc: &Toc, depth: Option<u8>) -> Json {
+    let headings: Vec<Json> = toc
+        .headings
+        .iter()
+        .filter(|heading| depth.is_none_or(|depth| heading.level <= depth))
+        .map(|heading| {
+            json!({
+                "level": heading.level,
+                "text": heading.text,
+                "slug": heading.slug,
+                "line": heading.line,
+                "end": heading.end,
+            })
+        })
+        .collect();
+    json!({
+        "document": { "path": toc.path, "namespace": toc.namespace },
+        "headings": headings,
+    })
 }
 
 fn document_json(document: &Document) -> Json {

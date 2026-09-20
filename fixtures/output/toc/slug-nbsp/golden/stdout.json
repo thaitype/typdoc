@@ -1,0 +1,15 @@
+{
+  "document": {
+    "path": "slug-nbsp.md",
+    "namespace": "default"
+  },
+  "headings": [
+    {
+      "level": 2,
+      "text": "a b",
+      "slug": "ab",
+      "line": 3,
+      "end": 3
+    }
+  ]
+}
