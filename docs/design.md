@@ -92,7 +92,7 @@ Each project has one `.typdoc/config.json` that sets project-wide options, optio
 | Key | Required | Meaning |
 | --- | --- | --- |
 | `match` | yes | Which files belong to the collection. See Match templates. |
-| `schema` | yes | Relative path or `https://` URL of the schema. See Remote schemas. |
+| `schema` | yes | Relative path or `http://` or `https://` URL of the schema. See Remote schemas. |
 | `refBase` | no | How frontmatter paths resolve: `file` (default, relative to the document) or `namespace` (relative to the namespace folder) |
 | `validation` | no | Rule levels and options for this collection only, merged over `validation.global`. See Validation rules. |
 
@@ -178,7 +178,7 @@ A schema is a JSON file with a name, an optional code, an optional parent, and i
 | --- | --- | --- |
 | `name` | yes | Schema name, unique within its project |
 | `code` | no | `[A-Z][A-Z0-9]*`. Present: documents get keys and `typdoc new` allocates numbers. Absent: documents are identified by path. |
-| `extends` | no | Parent schema: a relative path or an `https://` URL. Chains allowed; cycles rejected. A parent is usually abstract (no `code`, not used by any collection). |
+| `extends` | no | Parent schema: a relative path or an `http://` or `https://` URL. Chains allowed; cycles rejected. A parent is usually abstract (no `code`, not used by any collection). |
 | `fields` | yes | Map of field name to definition |
 
 **Field types:** `string`, `number`, `bool`, `date` (ISO `YYYY-MM-DD`), `datetime` (ISO 8601 with offset, e.g. `2026-09-19T14:30:00+07:00`), `enum`, `list` (array of strings), `ref`, `ref[]`.
@@ -202,7 +202,7 @@ A schema is a JSON file with a name, an optional code, an optional parent, and i
 
 **Extends rules.** New fields merge in. Redefining an inherited field without `"override": true` is a schema error, so a child cannot silently change what a shared field means. Sibling schemas may define same-named fields independently.
 
-**Remote schemas.** Anywhere a schema is referenced, in a collection's `schema` or in `extends`, an `https://` URL to a JSON file works as well as a path. A workflow can publish its schemas so users need not write them:
+**Remote schemas.** Anywhere a schema is referenced, in a collection's `schema` or in `extends`, an `https://` or `http://` URL to a JSON file works as well as a path. A workflow can publish its schemas so users need not write them:
 
 ```json
 // .typdoc/collections/wayfinder.json
@@ -222,7 +222,8 @@ A schema is a JSON file with a name, an optional code, an optional parent, and i
 
 - **Pinned, not live.** The first time a URL is needed, `typdoc` fetches it, stores a copy under `.typdoc/vendor/schemas/<sha256>`, and records its SHA-256 in `.typdoc/lock.json`. Every later run reads the stored copy, so results never change because a server did, and runs work offline. Commit both so CI and teammates use the same bytes. `typdoc pull` re-fetches on purpose.
 - **Relative references** inside a remote schema, such as its own `extends`, resolve against its URL.
-- **Only `https://`.** Plain `http://` is refused. A schema is JSON data; nothing in it is executed.
+- **The connection is the user's choice.** typdoc does not restrict it: `https://` and `http://` both work, and whether to use https is for the user to decide. A URL with any other scheme is a config error. A schema is JSON data; nothing in it is executed. The pin records the SHA-256 of the bytes received, so a later change is reported, but it cannot say that the first fetch was the document the publisher meant.
+- **Proxies.** The proxy named by `HTTPS_PROXY` or `HTTP_PROXY`, in either case, is used for every request whichever scheme it has, and an exact host in `NO_PROXY` skips it. Nothing more is claimed: precedence when several are set, `ALL_PROXY`, patterns in `NO_PROXY` and proxy authentication were not tried.
 - **Names.** Only schemas used directly by a collection share the project's names, since those are the names `target` refers to. A parent reached only through `extends` does not, so a local schema may reuse its parent's name, as above. Two collection schemas with one name are reported by `schema.valid`.
 - **Versioning** is the publisher's job: put the version in the URL (`.../v1.json`), so a breaking change is a new URL that users adopt deliberately.
 
@@ -663,7 +664,7 @@ A mention with no prefix is looked up in the document's own namespace only; a pr
 | `config.namespaces-entry` | a `namespaces` entry contains `/` or `**`, or names a folder that does not exist |
 | `config.namespace-name` | a matched folder's name uses anything but ASCII letters, digits, `-` and `_`, or is `default` |
 | `config.namespace-nested` | a matched folder holds its own `.typdoc` |
-| `config.schema-url` | a schema URL is not `https://` |
+| `config.schema-url` | a schema URL uses a scheme other than `http://` or `https://` |
 | `config.schema-unpinned` | a remote schema has no pin and cannot be fetched |
 | `config.vendor-missing` | a pinned copy is missing (run `typdoc pull`) |
 | `config.vendor-edited` | a pinned copy's contents hash differently from its file name (it was edited by hand; run `typdoc pull`) |
