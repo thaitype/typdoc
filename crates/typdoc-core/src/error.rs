@@ -9,6 +9,15 @@ pub enum ErrorKind {
     Io,
 }
 
+/// One config error: the id from the design's table, the configuration file it is about
+/// relative to the project folder, and a message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigError {
+    pub id: &'static str,
+    pub path: String,
+    pub message: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("{0}")]
@@ -23,6 +32,14 @@ pub enum Error {
     #[error("no document at {path}")]
     NotFound { path: String },
 
+    /// Every config error that could be determined, and whether that is all of them.
+    #[error("{}", summary(errors))]
+    ConfigErrors {
+        errors: Vec<ConfigError>,
+        complete: bool,
+    },
+
+    /// A fault in the configuration that has no id yet.
     #[error("{}: {message}", file.display())]
     Config { file: PathBuf, message: String },
 
@@ -47,14 +64,36 @@ impl Error {
         move |source| Error::Io { file, source }
     }
 
+    /// A symbolic link that a run reaches and does not read.
+    pub fn symbolic_link(file: &std::path::Path) -> Error {
+        Error::Unreadable {
+            file: file.to_owned(),
+            message: "a symbolic link is not read: whether a run follows one is not decided"
+                .to_owned(),
+        }
+    }
+
     pub fn kind(&self) -> ErrorKind {
         match self {
             Error::BadArgument(_) => ErrorKind::BadArguments,
             Error::NoProject { .. } | Error::NoProjectAt { .. } | Error::NotFound { .. } => {
                 ErrorKind::NotFound
             }
-            Error::Config { .. } | Error::Frontmatter { .. } => ErrorKind::Validation,
+            Error::Config { .. } | Error::ConfigErrors { .. } | Error::Frontmatter { .. } => {
+                ErrorKind::Validation
+            }
             Error::Unreadable { .. } | Error::Io { .. } => ErrorKind::Io,
         }
+    }
+}
+
+fn summary(errors: &[ConfigError]) -> String {
+    let Some(first) = errors.first() else {
+        return "the config is not valid".to_owned();
+    };
+    let first = format!("{}: {}", first.path, first.message);
+    match errors.len() {
+        1 => first,
+        n => format!("{n} config errors, the first is {first}"),
     }
 }

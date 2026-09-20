@@ -122,10 +122,11 @@ impl Scratch {
         std::os::unix::fs::symlink(target, self.dir.path().join(link)).expect("a symbolic link");
     }
 
-    /// A file whose name is not valid UTF-8.
+    /// A file whose path, from the project folder, is given as bytes and may not be valid UTF-8.
     pub fn file_named_by_bytes(&self, name: &[u8], text: &str) {
         use std::os::unix::ffi::OsStrExt;
         let file = self.dir.path().join(OsStr::from_bytes(name));
+        std::fs::create_dir_all(file.parent().expect("a parent")).expect("a folder");
         std::fs::write(file, text).expect("a file");
     }
 

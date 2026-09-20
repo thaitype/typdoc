@@ -211,21 +211,6 @@ fn a_config_with_an_unknown_version_exits_2() {
 }
 
 #[test]
-fn a_config_key_that_is_not_read_yet_exits_2_and_is_never_ignored() {
-    let project = Scratch::project(&NOTES);
-    project.file(
-        ".typdoc/config.json",
-        r#"{ "version": 1, "namespaces": "story-*" }"#,
-    );
-
-    let ran = Spawn::args(["get", "a.md", "--json"])
-        .cwd(project.path())
-        .run();
-
-    error_of(&ran, 2);
-}
-
-#[test]
 fn a_config_that_cannot_be_parsed_exits_2() {
     let project = Scratch::project(&NOTES);
     project.file(".typdoc/config.json", "{ version");
@@ -250,23 +235,6 @@ fn a_remote_schema_is_refused_and_not_read_as_a_path() {
         .run();
 
     error_of(&ran, 2);
-}
-
-#[test]
-fn a_match_with_a_folder_or_a_template_is_refused() {
-    for pattern in ["notes/*.md", "**/*.md", "{key}.md"] {
-        let project = Scratch::project(&NOTES);
-        project.file(
-            ".typdoc/collections/notes.json",
-            &format!(r#"{{ "match": "{pattern}", "schema": "note.json" }}"#),
-        );
-
-        let ran = Spawn::args(["get", "a.md", "--json"])
-            .cwd(project.path())
-            .run();
-
-        error_of(&ran, 2);
-    }
 }
 
 #[test]
@@ -412,48 +380,6 @@ fn a_schema_that_does_not_exist_is_a_config_error_that_names_the_collection_file
         object["error"].as_str().unwrap().contains("notes.json"),
         "{object}"
     );
-}
-
-#[test]
-fn a_key_that_the_design_has_and_this_version_does_not_read_is_not_called_unknown() {
-    let project = Scratch::project(&NOTES);
-    project.file(
-        ".typdoc/config.json",
-        r#"{ "version": 1, "namespaces": "story-*" }"#,
-    );
-
-    let ran = Spawn::args(["get", "a.md", "--json"])
-        .cwd(project.path())
-        .run();
-
-    let message = error_of(&ran, 2)["error"].as_str().unwrap().to_owned();
-    assert!(
-        message.contains("`namespaces` is not read yet"),
-        "{message}"
-    );
-}
-
-#[test]
-fn a_key_that_is_in_no_file_format_is_called_unknown() {
-    let project = Scratch::project(&NOTES);
-    project.file(".typdoc/config.json", r#"{ "version": 1, "name": "x" }"#);
-    let in_config = Spawn::args(["get", "a.md", "--json"])
-        .cwd(project.path())
-        .run();
-
-    let project = Scratch::project(&NOTES);
-    project.file(
-        ".typdoc/collections/notes.json",
-        r#"{ "match": "*.md", "schema": "note.json", "last": 3 }"#,
-    );
-    let in_collection = Spawn::args(["get", "a.md", "--json"])
-        .cwd(project.path())
-        .run();
-
-    for ran in [in_config, in_collection] {
-        let message = error_of(&ran, 2)["error"].as_str().unwrap().to_owned();
-        assert!(message.contains("is an unknown key"), "{message}");
-    }
 }
 
 #[test]

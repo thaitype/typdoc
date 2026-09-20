@@ -1,0 +1,576 @@
+//! The config errors that need no schema, import, state file or pin: what the error object on
+//! standard error carries for each, and that every error that can be determined is in it.
+
+#[allow(dead_code, reason = "each test file uses part of the shared helper")]
+mod common;
+
+use common::{NOTES, Ran, Scratch, Spawn, fixture};
+use serde_json::{Value, json};
+
+fn get_a(project: &Scratch) -> Ran {
+    Spawn::args(["get", "a.md", "--json"])
+        .cwd(project.path())
+        .run()
+}
+
+/// The error object of a run that ended with 2, checked to have the shape of a config error.
+fn config_error(ran: &Ran) -> Value {
+    assert_eq!(ran.code, 2, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stdout, "", "a failure prints nothing on stdout");
+    let object = ran.stderr_json();
+    assert_eq!(object["code"], json!(2));
+    assert!(object["error"].is_string(), "{object}");
+    assert!(object["complete"].is_boolean(), "{object}");
+    object
+}
+
+/// `(rule, path)` of each detail, in the order printed.
+fn details(object: &Value) -> Vec<(String, String)> {
+    object["details"]
+        .as_array()
+        .expect("details")
+        .iter()
+        .map(|d| {
+            assert_eq!(d["level"], json!("error"), "{d}");
+            assert!(d["message"].as_str().is_some_and(|m| !m.is_empty()), "{d}");
+            (
+                d["rule"].as_str().expect("rule").to_owned(),
+                d["path"].as_str().expect("path").to_owned(),
+            )
+        })
+        .collect()
+}
+
+fn pair(rule: &str, path: &str) -> (String, String) {
+    (rule.to_owned(), path.to_owned())
+}
+
+fn message_of(object: &Value, index: usize) -> String {
+    object["details"][index]["message"]
+        .as_str()
+        .expect("message")
+        .to_owned()
+}
+
+fn with_config(config: &str) -> Scratch {
+    let project = Scratch::project(&NOTES);
+    project.file(".typdoc/config.json", config);
+    project
+}
+
+fn with_collection(file: &str, text: &str) -> Scratch {
+    let project = Scratch::project(&NOTES);
+    project.file(file, text);
+    project
+}
+
+#[test]
+fn a_config_that_cannot_be_parsed_is_config_parse_and_the_list_is_not_complete() {
+    for text in ["{ version", "", "[1]", "null", r#"{ "version": 1, }"#] {
+        let object = config_error(&get_a(&with_config(text)));
+
+        assert_eq!(
+            details(&object),
+            [pair("config.parse", ".typdoc/config.json")],
+            "{text:?}"
+        );
+        assert_eq!(object["complete"], json!(false), "{text:?}");
+    }
+}
+
+#[test]
+fn a_version_that_is_missing_or_not_known_is_config_version_and_the_list_is_not_complete() {
+    for text in [
+        "{}",
+        r#"{ "version": 2 }"#,
+        r#"{ "version": 0 }"#,
+        r#"{ "version": "1" }"#,
+        r#"{ "version": 1.5 }"#,
+        r#"{ "version": null }"#,
+    ] {
+        let object = config_error(&get_a(&with_config(text)));
+
+        assert_eq!(
+            details(&object),
+            [pair("config.version", ".typdoc/config.json")],
+            "{text:?}"
+        );
+        assert_eq!(object["complete"], json!(false), "{text:?}");
+    }
+}
+
+#[test]
+fn an_unknown_version_ends_the_list_and_nothing_after_it_is_reported() {
+    let project = with_config(r#"{ "version": 2, "name": "x" }"#);
+    project.file(".typdoc/collections/bad name.json", "{");
+
+    let object = config_error(&get_a(&project));
+
+    assert_eq!(
+        details(&object),
+        [pair("config.version", ".typdoc/config.json")]
+    );
+    assert_eq!(object["complete"], json!(false));
+}
+
+#[test]
+fn a_key_that_is_not_in_the_file_is_config_unknown_key_for_each_key() {
+    let project = with_config(r#"{ "version": 1, "name": "x", "title": "y" }"#);
+
+    let object = config_error(&get_a(&project));
+
+    assert_eq!(
+        details(&object),
+        [
+            pair("config.unknown-key", ".typdoc/config.json"),
+            pair("config.unknown-key", ".typdoc/config.json"),
+        ]
+    );
+    assert_eq!(object["complete"], json!(true));
+    let messages = [message_of(&object, 0), message_of(&object, 1)].join("\n");
+    assert!(
+        messages.contains("`name`") && messages.contains("`title`"),
+        "{messages}"
+    );
+}
+
+#[test]
+fn a_key_in_a_collection_file_that_is_not_in_the_format_is_config_unknown_key() {
+    for key in ["last", "extra"] {
+        let project = with_collection(
+            ".typdoc/collections/notes.json",
+            &format!(r#"{{ "match": "*.md", "schema": "note.json", "{key}": 3 }}"#),
+        );
+
+        let object = config_error(&get_a(&project));
+
+        assert_eq!(
+            details(&object),
+            [pair("config.unknown-key", ".typdoc/collections/notes.json")]
+        );
+        assert!(message_of(&object, 0).contains(key));
+        assert_eq!(object["complete"], json!(true));
+    }
+}
+
+#[test]
+fn a_legacy_config_beside_the_folder_is_config_legacy_file_and_says_where_to_move_it() {
+    let project = Scratch::project(&NOTES);
+    project.file(".typdoc.json", r#"{ "version": 1 }"#);
+
+    let object = config_error(&get_a(&project));
+
+    assert_eq!(
+        details(&object),
+        [pair("config.legacy-file", ".typdoc.json")]
+    );
+    assert!(message_of(&object, 0).contains(".typdoc/config.json"));
+    assert_eq!(object["complete"], json!(true));
+}
+
+#[test]
+fn a_legacy_config_is_reported_together_with_a_config_that_cannot_be_parsed() {
+    let project = with_config("{");
+    project.file(".typdoc.json", "{}");
+
+    let object = config_error(&get_a(&project));
+
+    assert_eq!(
+        details(&object),
+        [
+            pair("config.legacy-file", ".typdoc.json"),
+            pair("config.parse", ".typdoc/config.json"),
+        ]
+    );
+    assert_eq!(object["complete"], json!(false));
+}
+
+#[test]
+fn a_collection_file_that_cannot_be_parsed_or_is_the_wrong_shape_is_config_collection_parse() {
+    for text in [
+        "{",
+        "[]",
+        "",
+        r#"{ "schema": "note.json" }"#,
+        r#"{ "match": "*.md" }"#,
+        r#"{ "match": 3, "schema": "note.json" }"#,
+        r#"{ "match": "*.md", "schema": ["note.json"] }"#,
+        r#"{ "match": "*.md", "schema": "note.json", "refBase": "folder" }"#,
+        r#"{ "match": "*.md", "schema": "note.json", "refBase": 1 }"#,
+    ] {
+        let project = with_collection(".typdoc/collections/notes.json", text);
+
+        let object = config_error(&get_a(&project));
+
+        assert_eq!(
+            details(&object),
+            [pair(
+                "config.collection-parse",
+                ".typdoc/collections/notes.json"
+            )],
+            "{text:?}"
+        );
+        assert_eq!(object["complete"], json!(true), "{text:?}");
+    }
+}
+
+#[test]
+fn both_values_of_ref_base_and_a_validation_object_are_read() {
+    for extra in [
+        r#""refBase": "file""#,
+        r#""refBase": "namespace""#,
+        r#""validation": { "body.links": { "level": "warn" } }"#,
+        r#""validation": {}"#,
+    ] {
+        let project = with_collection(
+            ".typdoc/collections/notes.json",
+            &format!(r#"{{ "match": "*.md", "schema": "note.json", {extra} }}"#),
+        );
+        project.file("a.md", "");
+
+        let ran = get_a(&project);
+
+        assert_eq!(ran.code, 0, "{extra}: {}", ran.stderr);
+    }
+}
+
+#[test]
+fn a_collection_file_name_with_anything_but_ascii_letters_digits_dash_and_underscore_is_config_collection_name()
+ {
+    for name in ["my notes", "notes.v2", "n\u{e9}", "\u{200b}x", "a+b", "a:b"] {
+        let path = format!(".typdoc/collections/{name}.json");
+        let project = with_collection(&path, r#"{ "match": "*.md", "schema": "note.json" }"#);
+
+        let object = config_error(&get_a(&project));
+
+        let rules: Vec<String> = details(&object).into_iter().map(|(rule, _)| rule).collect();
+        assert!(
+            rules.contains(&"config.collection-name".to_owned()),
+            "{name:?}: {object}"
+        );
+        assert_eq!(object["complete"], json!(true));
+    }
+}
+
+#[test]
+fn a_collection_file_named_only_by_its_extension_or_by_bytes_that_are_not_utf8_is_named_wrongly() {
+    let project = Scratch::project(&NOTES);
+    project.file(
+        ".typdoc/collections/.json",
+        r#"{ "match": "*.md", "schema": "note.json" }"#,
+    );
+    project.file_named_by_bytes(
+        b".typdoc/collections/\xff.json",
+        r#"{ "match": "*.md", "schema": "note.json" }"#,
+    );
+
+    let object = config_error(&get_a(&project));
+
+    let found = details(&object);
+    assert_eq!(found.len(), 2, "{object}");
+    assert!(
+        found
+            .iter()
+            .all(|(rule, _)| rule == "config.collection-name")
+    );
+}
+
+#[test]
+fn a_name_that_is_valid_is_read_and_a_file_that_is_not_json_is_ignored() {
+    let project = Scratch::project(&NOTES);
+    project.file(
+        ".typdoc/collections/Other_2-x.json",
+        r#"{ "match": "other-*.md", "schema": "note.json" }"#,
+    );
+    project.file(".typdoc/collections/README.md", "not a collection {");
+    project.file(".typdoc/collections/notes.json.bak", "{");
+    project.file("a.md", "");
+
+    let ran = get_a(&project);
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+}
+
+#[test]
+fn a_rule_name_that_is_not_in_the_design_is_config_rule_unknown() {
+    for rule in ["body.linkz", "links", "config.parse", "state.orphan", ""] {
+        let config =
+            json!({ "version": 1, "validation": { "global": { rule: { "level": "warn" } } } });
+        let object = config_error(&get_a(&with_config(&config.to_string())));
+
+        assert_eq!(
+            details(&object),
+            [pair("config.rule-unknown", ".typdoc/config.json")],
+            "{rule:?}"
+        );
+        assert_eq!(object["complete"], json!(true));
+    }
+}
+
+#[test]
+fn an_option_or_a_level_that_a_rule_does_not_accept_is_config_rule_unknown() {
+    for setting in [
+        json!({ "level": "fatal" }),
+        json!({ "level": 1 }),
+        json!({ "level": "warn", "colour": true }),
+        json!({ "level": "warn", "ignore": "assets/**" }),
+        json!({ "level": "warn", "ignore": [1] }),
+        json!({ "level": "warn", "inlineCode": true }),
+    ] {
+        let config = json!({ "version": 1, "validation": { "global": { "body.links": setting } } });
+        let object = config_error(&get_a(&with_config(&config.to_string())));
+
+        assert_eq!(
+            details(&object),
+            [pair("config.rule-unknown", ".typdoc/config.json")],
+            "{setting}"
+        );
+    }
+    let config = json!({ "version": 1, "validation": { "global": {
+        "body.mentions": { "level": "warn", "inlineCode": "yes" } } } });
+    let object = config_error(&get_a(&with_config(&config.to_string())));
+    assert_eq!(
+        details(&object),
+        [pair("config.rule-unknown", ".typdoc/config.json")]
+    );
+}
+
+#[test]
+fn a_rule_that_is_always_on_and_is_configured_is_config_rule_always_on() {
+    for rule in [
+        "schema.valid",
+        "frontmatter.parse",
+        "frontmatter.types",
+        "frontmatter.transitions",
+        "refs.resolve",
+        "refs.target",
+        "refs.acyclic",
+        "keys.unique",
+        "collections.overlap",
+        "state.missing",
+    ] {
+        let config =
+            json!({ "version": 1, "validation": { "global": { rule: { "level": "off" } } } });
+        let object = config_error(&get_a(&with_config(&config.to_string())));
+
+        assert_eq!(
+            details(&object),
+            [pair("config.rule-always-on", ".typdoc/config.json")],
+            "{rule}"
+        );
+        assert!(message_of(&object, 0).contains(rule));
+    }
+}
+
+#[test]
+fn the_rules_of_a_collection_are_checked_the_same_way_and_name_the_collection_file() {
+    let project = with_collection(
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "*.md", "schema": "note.json", "validation": {
+            "keys.unique": { "level": "off" }, "body.linkz": { "level": "off" } } }"#,
+    );
+
+    let object = config_error(&get_a(&project));
+
+    assert_eq!(
+        details(&object),
+        [
+            pair("config.rule-always-on", ".typdoc/collections/notes.json"),
+            pair("config.rule-unknown", ".typdoc/collections/notes.json"),
+        ]
+    );
+}
+
+#[test]
+fn every_configurable_rule_with_its_options_is_read() {
+    let config = json!({ "version": 1, "validation": { "global": {
+        "body.links": { "level": "error", "ignore": ["assets/**", "generated/**"] },
+        "body.anchors": { "level": "warn" },
+        "body.mentions": { "level": "warn", "inlineCode": true, "fencedCode": false },
+        "refs.codedByPath": { "level": "off" },
+        "refs.moved": { "level": "error" },
+        "names.shadowed": { "level": "warn" },
+        "frontmatter.unknown": { "level": "off" },
+        "filename.pattern": { "level": "error" },
+        "imports.absent": { "level": "error" }
+    } } });
+    let project = with_config(&config.to_string());
+    project.file("a.md", "");
+
+    let ran = get_a(&project);
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+}
+
+#[test]
+fn a_rule_may_state_only_the_options_that_differ() {
+    let config = json!({ "version": 1, "validation": { "global": { "body.mentions": { "fencedCode": true } } } });
+    let project = with_config(&config.to_string());
+    project.file("a.md", "");
+
+    assert_eq!(get_a(&project).code, 0);
+}
+
+#[test]
+fn a_validation_key_that_is_not_global_is_config_unknown_key() {
+    let config = json!({ "version": 1, "validation": { "collections": {} } });
+
+    let object = config_error(&get_a(&with_config(&config.to_string())));
+
+    assert_eq!(
+        details(&object),
+        [pair("config.unknown-key", ".typdoc/config.json")]
+    );
+}
+
+#[test]
+fn a_value_of_the_wrong_kind_in_a_key_of_config_json_is_config_parse() {
+    for config in [
+        json!({ "version": 1, "validation": [] }),
+        json!({ "version": 1, "validation": { "global": [] } }),
+        json!({ "version": 1, "validation": { "global": { "body.links": "error" } } }),
+        json!({ "version": 1, "lock": "elsewhere" }),
+        json!({ "version": 1, "lock": 1 }),
+    ] {
+        let object = config_error(&get_a(&with_config(&config.to_string())));
+
+        assert_eq!(
+            details(&object),
+            [pair("config.parse", ".typdoc/config.json")],
+            "{config}"
+        );
+        assert_eq!(object["complete"], json!(false), "{config}");
+    }
+}
+
+#[test]
+fn imports_and_lock_are_keys_of_the_file_and_are_not_called_unknown() {
+    let config =
+        json!({ "version": 1, "imports": { "docs": "${DOCS_DIR}/docs" }, "lock": "git-common" });
+    let project = with_config(&config.to_string());
+    project.file("a.md", "");
+
+    assert_eq!(get_a(&project).code, 0);
+}
+
+#[test]
+fn every_error_that_can_be_determined_is_reported_in_one_object_in_the_order_of_path_rule_message()
+{
+    let project = with_config(
+        r#"{ "version": 1, "name": "x", "validation": { "global": { "keys.unique": {} } } }"#,
+    );
+    project.file(".typdoc.json", "{}");
+    project.file(".typdoc/collections/b.json", "{");
+    project.file(
+        ".typdoc/collections/a.json",
+        r#"{ "match": "*.md", "schema": "note.json", "last": 1 }"#,
+    );
+    project.file(
+        ".typdoc/collections/bad name.json",
+        r#"{ "match": "*.md", "schema": "note.json" }"#,
+    );
+
+    let object = config_error(&get_a(&project));
+
+    assert_eq!(
+        details(&object),
+        [
+            pair("config.legacy-file", ".typdoc.json"),
+            pair("config.unknown-key", ".typdoc/collections/a.json"),
+            pair("config.collection-parse", ".typdoc/collections/b.json"),
+            pair(
+                "config.collection-name",
+                ".typdoc/collections/bad name.json"
+            ),
+            pair("config.rule-always-on", ".typdoc/config.json"),
+            pair("config.unknown-key", ".typdoc/config.json"),
+        ]
+    );
+    assert_eq!(object["complete"], json!(true));
+}
+
+#[test]
+fn a_config_error_stops_the_command_before_any_document_is_read() {
+    let project = with_config(r#"{ "version": 1, "name": "x" }"#);
+    project.file("a.md", "---\nnever closed\n");
+
+    let ran = get_a(&project);
+
+    let object = config_error(&ran);
+    assert_eq!(
+        details(&object),
+        [pair("config.unknown-key", ".typdoc/config.json")]
+    );
+}
+
+#[test]
+fn an_error_that_is_not_a_config_error_has_no_complete_key() {
+    let ran = Spawn::args(["get", "absent.md", "--json"])
+        .cwd(fixture("valid/minimal"))
+        .run();
+
+    assert_eq!(ran.code, 5);
+    assert!(ran.stderr_json().get("complete").is_none());
+}
+
+/// The fixtures for the config errors, each run as its `fixture.json` says.
+fn broken_config_runs() -> Vec<(String, Ran)> {
+    let ids: Vec<String> = typdoc_testkit::fixtures::broken_entries()
+        .into_iter()
+        .filter(|id| id.starts_with("config."))
+        .collect();
+    assert!(!ids.is_empty(), "no fixture for a config error");
+    ids.into_iter()
+        .map(|id| {
+            let dir = fixture("broken").join(&id);
+            let spec = typdoc_testkit::spec::FixtureSpec::load(&dir, &id).expect("a spec");
+            let ran = Spawn::args(&spec.command).cwd(&dir).run();
+            (id, ran)
+        })
+        .collect()
+}
+
+#[test]
+fn every_fixture_of_a_config_error_ends_with_2_and_the_error_object_on_standard_error() {
+    for (id, ran) in broken_config_runs() {
+        let object = config_error(&ran);
+
+        let ids: Vec<String> = details(&object).into_iter().map(|(rule, _)| rule).collect();
+        assert_eq!(ids, std::slice::from_ref(&id), "{id}");
+    }
+}
+
+#[test]
+fn only_a_config_that_cannot_be_parsed_and_an_unknown_version_say_the_list_is_not_complete() {
+    for (id, ran) in broken_config_runs() {
+        let complete = config_error(&ran)["complete"].clone();
+
+        let expected = !matches!(id.as_str(), "config.parse" | "config.version");
+        assert_eq!(complete, json!(expected), "{id}");
+    }
+}
+
+#[test]
+fn a_config_error_in_a_fixture_names_the_file_it_is_about() {
+    let runs = broken_config_runs();
+    for (id, path) in [
+        ("config.parse", ".typdoc/config.json"),
+        ("config.version", ".typdoc/config.json"),
+        ("config.unknown-key", ".typdoc/config.json"),
+        ("config.legacy-file", ".typdoc.json"),
+        ("config.collection-parse", ".typdoc/collections/notes.json"),
+        (
+            "config.collection-name",
+            ".typdoc/collections/my notes.json",
+        ),
+        ("config.rule-unknown", ".typdoc/config.json"),
+        ("config.rule-always-on", ".typdoc/config.json"),
+        ("config.namespaces-entry", ".typdoc/config.json"),
+        ("config.namespace-name", ".typdoc/config.json"),
+        ("config.namespace-nested", ".typdoc/config.json"),
+    ] {
+        let (_, ran) = runs.iter().find(|(found, _)| found == id).expect(id);
+
+        assert_eq!(details(&config_error(ran)), [pair(id, path)], "{id}");
+    }
+}

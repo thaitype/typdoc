@@ -8,6 +8,8 @@ use crate::error::Error;
 #[derive(Debug, Deserialize)]
 pub struct Schema {
     pub name: String,
+    #[serde(default)]
+    pub code: Option<String>,
     #[allow(dead_code, reason = "read so that a schema without fields is refused")]
     fields: serde_json::Map<String, serde_json::Value>,
 }

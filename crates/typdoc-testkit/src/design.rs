@@ -21,6 +21,35 @@ pub fn rule_ids(design: &str) -> Result<BTreeSet<String>, String> {
     Ok(ids)
 }
 
+/// The ids of the table of always-on rules: the table headed `Rule` whose second column is
+/// `Checks`.
+pub fn always_on_rule_ids(design: &str) -> Result<BTreeSet<String>, String> {
+    rules_of_table(design, "Checks")
+}
+
+/// The ids of the table of configurable rules: the table headed `Rule` whose second column is
+/// `Default`.
+pub fn configurable_rule_ids(design: &str) -> Result<BTreeSet<String>, String> {
+    rules_of_table(design, "Default")
+}
+
+fn rules_of_table(design: &str, second_column: &str) -> Result<BTreeSet<String>, String> {
+    let mut ids = BTreeSet::new();
+    for table in tables(&section(design, "Validation rules")) {
+        if table.header == "Rule" && table.second == second_column {
+            for cell in table.first_cells {
+                ids.insert(rule_id(&cell)?);
+            }
+        }
+    }
+    if ids.is_empty() {
+        return Err(format!(
+            "no table headed Rule with the second column {second_column} is in the section Validation rules"
+        ));
+    }
+    Ok(ids)
+}
+
 /// The commands that have a heading `### typdoc <name>` in the section "Commands".
 pub fn command_names(design: &str) -> Result<BTreeSet<String>, String> {
     let names: BTreeSet<String> = section(design, "Commands")
@@ -81,6 +110,7 @@ fn section(design: &str, title: &str) -> Vec<String> {
 
 struct Table {
     header: String,
+    second: String,
     first_cells: Vec<String>,
 }
 
@@ -94,17 +124,13 @@ fn tables(lines: &[String]) -> Vec<Table> {
             tables.extend(open.take());
             continue;
         }
-        let first = line
-            .trim_start_matches('|')
-            .split('|')
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_owned();
+        let mut cells = line.trim_start_matches('|').split('|').map(str::trim);
+        let first = cells.next().unwrap_or("").to_owned();
         match &mut open {
             None => {
                 open = Some(Table {
                     header: first,
+                    second: cells.next().unwrap_or("").to_owned(),
                     first_cells: Vec::new(),
                 });
                 rows_seen = 0;
@@ -190,6 +216,27 @@ Some text.
             rule_ids(RULES).unwrap(),
             strings(&["schema.valid", "refs.resolve", "body.links", "config.parse"])
         );
+    }
+
+    #[test]
+    fn the_two_tables_of_rules_are_told_apart_by_their_second_column() {
+        assert_eq!(
+            always_on_rule_ids(RULES).unwrap(),
+            strings(&["schema.valid", "refs.resolve"])
+        );
+        assert_eq!(
+            configurable_rule_ids(RULES).unwrap(),
+            strings(&["body.links"])
+        );
+    }
+
+    #[test]
+    fn a_design_without_one_of_the_two_tables_is_an_error() {
+        let only_always_on =
+            "## Validation rules\n\n| Rule | Checks |\n| --- | --- |\n| `a.b` | x |\n";
+
+        assert!(always_on_rule_ids(only_always_on).is_ok());
+        assert!(configurable_rule_ids(only_always_on).is_err());
     }
 
     #[test]
@@ -302,5 +349,15 @@ Text.
             ])
         );
         assert_eq!(exit_codes(&design).unwrap(), set(&[0u8, 1, 2, 3, 4, 5, 6]));
+        assert!(
+            always_on_rule_ids(&design)
+                .unwrap()
+                .contains("state.missing")
+        );
+        assert!(
+            configurable_rule_ids(&design)
+                .unwrap()
+                .contains("body.links")
+        );
     }
 }

@@ -8,6 +8,10 @@ use typdoc_core::{Deps, Document, DocumentArg, Error, ErrorKind, Project, Value}
 #[derive(Parser)]
 #[command(name = "typdoc", version)]
 pub(crate) struct Cli {
+    /// The namespaces to read: names or globs, separated by `,`
+    #[arg(long, global = true, value_name = "LIST")]
+    namespace: Option<String>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -41,29 +45,35 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 stderr: String::new(),
             };
         }
-        Err(e) => return failure(json, 1, e.to_string().trim_end()),
+        Err(e) => return failure_text(json, 1, e.to_string().trim_end()),
     };
     match cli.command {
         Command::Get { document, json } => {
             if !json {
-                return failure(false, 1, "the output without --json is not built yet");
+                return failure_text(false, 1, "the output without --json is not built yet");
             }
-            match get(deps, &document) {
+            match get(deps, &document, cli.namespace.as_deref()) {
                 Ok(document) => Outcome {
                     code: 0,
                     stdout: format!("{}\n", json!({ "document": document_json(&document) })),
                     stderr: String::new(),
                 },
-                Err(e) => failure(true, exit_code(e.kind()), &e.to_string()),
+                Err(e) => failure(true, exit_code(e.kind()), &e),
             }
         }
     }
 }
 
-fn get(deps: &Deps, document: &std::ffi::OsStr) -> Result<Document, Error> {
+fn get(
+    deps: &Deps,
+    document: &std::ffi::OsStr,
+    namespace: Option<&str>,
+) -> Result<Document, Error> {
     let arg = DocumentArg::parse(document)?;
     let root = typdoc_core::discover(deps.env)?;
-    Project::load(&root)?.get(&arg)
+    let project = Project::load(&root)?;
+    project.scope(None, namespace, deps.env)?;
+    project.get(&arg)
 }
 
 fn exit_code(kind: ErrorKind) -> u8 {
@@ -76,19 +86,45 @@ fn exit_code(kind: ErrorKind) -> u8 {
 }
 
 /// The error object on standard error with `--json`, and one line of text without.
-fn failure(json: bool, code: u8, message: &str) -> Outcome {
+fn failure_text(json: bool, code: u8, text: &str) -> Outcome {
     let stderr = if json {
         format!(
             "{}\n",
-            json!({ "error": message, "code": code, "details": [] })
+            json!({ "error": text, "code": code, "details": [] })
         )
     } else {
-        format!("typdoc: {message}\n")
+        format!("typdoc: {text}\n")
     };
     Outcome {
         code,
         stdout: String::new(),
         stderr,
+    }
+}
+
+/// The error object of a failure that ended a command, with the config errors as `details`.
+fn failure(json: bool, code: u8, error: &Error) -> Outcome {
+    let Error::ConfigErrors { errors, complete } = error else {
+        return failure_text(json, code, &error.to_string());
+    };
+    let details: Vec<Json> = errors
+        .iter()
+        .map(|e| json!({ "level": "error", "rule": e.id, "message": e.message, "path": e.path }))
+        .collect();
+    let object = json!({
+        "error": error.to_string(),
+        "code": code,
+        "details": details,
+        "complete": complete,
+    });
+    Outcome {
+        code,
+        stdout: String::new(),
+        stderr: if json {
+            format!("{object}\n")
+        } else {
+            format!("typdoc: {error}\n")
+        },
     }
 }
 

@@ -1,0 +1,10 @@
+{
+  "command": [
+    "get",
+    "story-1/note.md",
+    "--json"
+  ],
+  "trips": [
+    "config.namespace-name"
+  ]
+}

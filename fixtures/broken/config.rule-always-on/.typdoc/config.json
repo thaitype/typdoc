@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "validation": {
+    "global": { "keys.unique": { "level": "off" } }
+  }
+}

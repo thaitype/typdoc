@@ -1,7 +1,46 @@
 //! The rules and config errors the binary has, by id, and the ones it does not have yet.
 
+/// The always-on rules.
+pub const ALWAYS_ON: &[&str] = &[
+    "schema.valid",
+    "frontmatter.parse",
+    "frontmatter.types",
+    "frontmatter.transitions",
+    "refs.resolve",
+    "refs.target",
+    "refs.acyclic",
+    "keys.unique",
+    "collections.overlap",
+    "state.missing",
+];
+
+/// The configurable rules, each with the options it accepts besides `level`.
+pub const CONFIGURABLE: &[(&str, &[&str])] = &[
+    ("body.links", &["ignore"]),
+    ("body.anchors", &[]),
+    ("body.mentions", &["inlineCode", "fencedCode"]),
+    ("refs.codedByPath", &[]),
+    ("refs.moved", &[]),
+    ("names.shadowed", &[]),
+    ("frontmatter.unknown", &[]),
+    ("filename.pattern", &[]),
+    ("imports.absent", &[]),
+];
+
 /// The ids the binary reports. An id that is here needs a fixture in `fixtures/broken/`.
-pub const RULES: &[&str] = &[];
+pub const RULES: &[&str] = &[
+    "config.parse",
+    "config.version",
+    "config.unknown-key",
+    "config.legacy-file",
+    "config.collection-parse",
+    "config.collection-name",
+    "config.rule-unknown",
+    "config.rule-always-on",
+    "config.namespaces-entry",
+    "config.namespace-name",
+    "config.namespace-nested",
+];
 
 /// Ids the design names and the binary does not report yet. Each is a difference between
 /// the design and the binary, with the story expected to deliver it as a comment. The list only shrinks: an id leaves it
@@ -26,22 +65,11 @@ pub const UNIMPLEMENTED_RULES: &[&str] = &[
     "frontmatter.unknown",        // story 1
     "filename.pattern",           // story 1
     "imports.absent",             // story 1
-    "config.parse",               // story 1
-    "config.version",             // story 1
-    "config.unknown-key",         // story 1
-    "config.legacy-file",         // story 1
-    "config.collection-parse",    // story 1
-    "config.collection-name",     // story 1
     "config.collection-schema",   // story 1
-    "config.rule-unknown",        // story 1
-    "config.rule-always-on",      // story 1
     "config.match-template",      // story 1
     "config.coded-schema-shared", // story 1
     "config.state-uncoded",       // story 1
     "config.state-orphan",        // story 1
-    "config.namespaces-entry",    // story 1
-    "config.namespace-name",      // story 1
-    "config.namespace-nested",    // story 1
     "config.schema-url",          // story 1
     "config.schema-unpinned",     // story 1
     "config.vendor-missing",      // story 1

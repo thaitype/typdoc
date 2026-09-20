@@ -2,15 +2,15 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::config::{self, config_file};
+use crate::config::{Config, config_file};
 use crate::document::Document;
 use crate::env::Env;
 use crate::error::Error;
 use crate::frontmatter;
-use crate::index::Index;
+use crate::index::{Index, Member};
 use crate::schema;
-
-const NAMESPACE: &str = "default";
+use crate::scope::{self, Scope};
+use crate::template::Template;
 
 /// The folder that holds `.typdoc/config.json`: `TYPDOC_DIR` when it is set, and otherwise
 /// the nearest one above the current directory, that directory included.
@@ -59,6 +59,8 @@ impl DocumentArg {
 }
 
 pub struct Project {
+    root: PathBuf,
+    config: Config,
     index: Index,
     collections: Vec<Loaded>,
 }
@@ -70,21 +72,48 @@ struct Loaded {
 
 impl Project {
     pub fn load(root: &Path) -> Result<Project, Error> {
-        config::check_version(root)?;
-        let collections = config::collections(root)?;
+        let config = Config::load(root)?;
         let mut loaded = Vec::new();
-        for collection in &collections {
+        let mut members = Vec::new();
+        for collection in &config.collections {
             let schema = schema::load(root, &collection.schema, &collection.file)?;
+            let template = Template::parse(&collection.pattern)
+                .and_then(|template| template.bind(&collection.pattern, schema.code.as_deref()))
+                .map_err(|message| Error::Config {
+                    file: collection.file.clone(),
+                    message,
+                })?;
             loaded.push(Loaded {
                 name: collection.name.clone(),
                 schema: schema.name,
             });
+            members.push(Member {
+                name: collection.name.clone(),
+                template,
+                file: collection.file.clone(),
+            });
         }
-        let index = Index::build(root, &collections)?;
+        let index = Index::build(root, &config.namespaces, &members)?;
         Ok(Project {
+            root: root.to_owned(),
+            config,
             index,
             collections: loaded,
         })
+    }
+
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    /// The namespaces a command reads. `prefix` is the namespace an argument names.
+    pub fn scope(
+        &self,
+        prefix: Option<&str>,
+        flag: Option<&str>,
+        env: &dyn Env,
+    ) -> Result<Scope, Error> {
+        scope::choose(&self.config.namespaces, &self.root, prefix, flag, env)
     }
 
     pub fn get(&self, arg: &DocumentArg) -> Result<Document, Error> {
@@ -105,7 +134,7 @@ impl Project {
         let collection = &self.collections[entry.collection];
         Ok(Document {
             path: path.clone(),
-            namespace: NAMESPACE.to_owned(),
+            namespace: self.config.namespaces[entry.namespace].name.clone(),
             collection: collection.name.clone(),
             schema: collection.schema.clone(),
             fields,
