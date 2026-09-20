@@ -58,7 +58,7 @@ The line must not dissolve. Some rules need more than files (`imports.absent` ne
 
 Config errors get ids. The design listed them as plain sentences, so a caller that met one had to read the message; ids let it branch on them, as the exit codes do for a rule, and let each one have a fixture. About twenty ids are added to the design, in a table under Config errors, and `--json` carries them in `details[].rule`. This is what the design wanted from the start, not a cost of the test strategy.
 
-Defaults: the only substitution a declared value may use is a placeholder for the fixture's own directory (an import path has to point at a neighbouring fixture); a config id is carried in `details[].rule` alongside rule ids (a single registry) and `file` replaces `doc` when the error is about a file.
+Defaults: the only substitution a declared value may use is a placeholder for the fixture's own directory (an import path has to point at a neighbouring fixture); a config id is carried in `details[].rule` alongside rule ids (a single registry), and `path` names the configuration file it is about (ticket 15 replaced `doc` and `file` by `path`).
 
 Exit 1 covered three unrelated things (not found, bad arguments, I/O), which says little to a program and made a test that asserted exit 1 prove little. Ticket 14 splits it.
 
