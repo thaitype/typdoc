@@ -1,7 +1,7 @@
 # 18: Reading the state file and pinned copies of remote schemas
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 9, 17
 
 ## What this delivers
