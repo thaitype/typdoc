@@ -1,4 +1,7 @@
-# A process is started by the spawn helper of the CLI tests and nowhere else.
+# A process is started in exactly two places, each with its own narrow allow: the CLI
+# tests' spawn helper (crates/typdoc/tests/common/mod.rs), which starts the built typdoc
+# binary directly, and the shell examples harness (crates/typdoc/tests/shell_examples.rs),
+# which starts a real shell to test what the shell itself does with an example's quoting.
 disallowed-methods = [
-    { path = "std::process::Command::new", reason = "a test starts a process through the spawn helper only" },
+    { path = "std::process::Command::new", reason = "a process is started only through the CLI spawn helper or the shell examples harness" },
 ]

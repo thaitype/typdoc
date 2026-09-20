@@ -5,4 +5,5 @@ pub mod check;
 pub mod design;
 pub mod fixtures;
 pub mod golden;
+pub mod shell_examples;
 pub mod spec;

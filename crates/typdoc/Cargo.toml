@@ -11,3 +11,11 @@ typdoc-core = { version = "0.1.0", path = "../typdoc-core" }
 [dev-dependencies]
 tempfile = "3.27.0"
 typdoc-testkit = { path = "../typdoc-testkit" }
+
+# A stand-in for `typdoc` that the shell examples harness places on `PATH`, so its tests can
+# find it through `env!("CARGO_BIN_EXE_typdoc_stand_in")`: only guaranteed for a binary of
+# the same package as the test that looks it up. It lives beside the tests that use it and
+# not under `src/`, since it ships no behavior of the CLI itself.
+[[bin]]
+name = "typdoc_stand_in"
+path = "tests/support/typdoc_stand_in.rs"
