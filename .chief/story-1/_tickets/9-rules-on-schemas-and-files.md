@@ -1,7 +1,7 @@
 # 9: Rules on schemas, collections, keys and file names
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 8
 
 ## What this delivers
