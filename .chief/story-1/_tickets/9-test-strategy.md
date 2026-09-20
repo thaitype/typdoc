@@ -77,3 +77,23 @@ Defaults: the function that regenerates goldens refuses to write any path outsid
 
 For the contract: the per-array statement of ordering (point 4) is part of the exact `--json` shapes, which the contract fixes.
 
+### Remote schemas in tests
+
+Decided: three layers, and the shipped binary gets no way to trust a test certificate or to switch off https.
+
+1. **Almost all tests use an in-memory `Fetch`** (a map from URL to bytes), through a `run(args, deps)` function at the library boundary. The shipped binary calls `run` with the real dependencies; tests call it with fakes (the clock of the `--json` decision is one of them).
+2. **One test of the real adapter against a loopback TLS server** with a test certificate: https only, a redirect only from https to https, a downgrade refused, the timeout, and the response size limit. A loopback listener that plays a proxy belongs here too: it records the first request line, and the adapter has to send `CONNECT` for the proxy named in `HTTPS_PROXY`.
+3. **One test of the real binary against the same loopback server, without giving the binary the test certificate.** It must fail with a certificate error, not a connection error. A probe aimed at a closed port would pass equally well if the binary were wired to a fake fetcher that always fails, so it cannot tell a real adapter that is wired in from a fake one, which is the only thing this layer exists to show. A certificate error can only come from a real TLS stack, and it goes through the real root store: the certificate fails because the store does not know its issuer, not because nobody checked. No trust knob is needed in the binary, since the point is that it fails.
+
+For the contract: layer 3 needs the cause of a failed fetch to be visible in the output. `FetchError` carries a kind (certificate, connection, timeout, response status, too large, redirect refused), and the details of `config.schema-unpinned` name it; without that the test cannot tell the two failures apart.
+
+Not proven, stated plainly so that nobody reads the three layers as complete: a successful full fetch through the real binary. That would need the binary to trust a test certificate, which is the door deliberately left shut (a trust knob in the shipped binary), or the `platform-verifier` feature with `SSL_CERT_FILE`, which was not tried. Layer 3 closes almost all of the gap. What remains is whether a genuinely valid certificate is accepted, which is the job of `webpki-roots`, not of typdoc. The cost of closing it is one of those two options.
+
+`HTTPS_PROXY`: a behaviour is not claimed in the documentation until it has been run, the same rule as for a shell in the quoting list. It has now been run. Probe of 2026-09-20 (`ureq` 3.4.2, `rustls` 0.23.45, rustc 1.96.0), with a loopback listener acting as the proxy: an agent with default settings and an agent built with `https_only(true)` and `timeout_global` both sent `CONNECT schemas.invalid:443` to the proxy named by `HTTPS_PROXY`, and also to the one named by lowercase `https_proxy`; with `NO_PROXY=schemas.invalid` the proxy was not used; with no variable the request went direct (a DNS failure). Not verified: `NO_PROXY` patterns other than an exact host, `ALL_PROXY`, proxy authentication, an `https://` proxy, and a completed tunnel followed by TLS. The documentation may therefore say that `HTTPS_PROXY` and an exact-host `NO_PROXY` are honoured, and claims nothing more.
+
+### `run(args, deps)` is the only path
+
+Decided: `deps` is the only way a module reaches the outside world. If any module can pick up a real client, the real clock or a global on its own, that route escapes testing with no signal and nobody finds out until it breaks. It follows the principle stated for the golden files: the net has to sit outside what it watches.
+
+Defaults, so that this is enforced by structure and not by care: `ureq` is a dependency of the binary crate only, so `typdoc-core` cannot reach a real client at all. The clock, the environment and the home directory are reached in `typdoc-core` only through `deps` (a `Clock` and an `Env`; the location of `imports.json` in ticket 7 is tested with a fake environment for that reason), and `clippy.toml` lists `chrono::Utc::now`, `std::time::SystemTime::now`, `std::env::var`, `std::env::var_os` and `std::env::home_dir` as disallowed methods there, which the existing `cargo clippy -D warnings` rule enforces. The guard is shown to work the way the text gate was: plant a violation, see clippy go red, remove it.
+
