@@ -1,7 +1,7 @@
 # 4: Config, namespaces and collections, and the config errors
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 2
 
 ## What this delivers
