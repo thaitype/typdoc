@@ -34,7 +34,7 @@ Defaults:
 6. **Writing `last`.** `typdoc new` replaces only the number, in place, then re-parses and compares before renaming the temp file over the original. The guard is the same one ticket 1 recommends for frontmatter.
 7. **Nested namespaces** are unchanged: the nearer `.typdoc/config.json` owns its files, and each namespace has its own `.typdoc/collections/`.
 
-**Costs accepted:** a broken collection file stops every command in its namespace (as a broken config does today); rules for a namespace are no longer visible in one place; the format of a collection file cannot advance its version independently of the config.
+**Costs accepted:** a broken collection file stops every command in its namespace (as a broken config does today; since ticket 13 collection files belong to the project, so it stops every namespace of that project); rules for a namespace are no longer visible in one place; the format of a collection file cannot advance its version independently of the config.
 
 **Amended in `docs/design.md`:** the Model table, Collection vs schema, the whole Config section (config example and table, new Collection files section with loading and writing), Discovery, the `.typdoc` folder listing, the `lock.json` example (no `version`), the remote-schema example, Validation rules (config shape, merge order, new `collections.overlap`), Config errors, and the memory-namespace worked example. Grepped afterwards: no remaining `collections[]`, `validation.collections` or "Ordered".
 
