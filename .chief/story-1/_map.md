@@ -4,7 +4,7 @@
 
 ## Notes
 
-- **Story scope: the whole of v1 as written in `docs/design.md`** (all nine commands, remote schemas, imports, refs, query language, validation rules, locking). Chosen by the human at charting time. The design's own "Out of scope for v1" list carries over as this story's out of scope.
+- **Story scope: the whole of v1 as written in `docs/design.md`** (all nine commands, remote schemas, imports, refs, query language, validation rules, locking). Chosen at charting time. The design's own "Out of scope for v1" list carries over as this story's out of scope.
 - **`docs/design.md` is the source of truth** (project rule 6): to deviate from it, amend the doc first. Its original at `~/tmp/typdoc-design/` is a snapshot; this repo's copy is canonical from now on.
 - Stack is fixed by `.chief/project.md`: Rust 2024, workspace with `typdoc-core` (lib) and `typdoc` (bin). Decisions here refine it; they do not reopen it.
 - The design moves wayfinder-ticket fields (`Type:`, `Status:`, `Blocked by:`) into frontmatter, but the installed `chief-wayfinder` (`v5.canary-2.exp`) still uses inline lines. Tickets in this story use the inline form; typdoc does not manage its own tickets yet.
@@ -15,15 +15,18 @@
 
 <!-- index: one line per resolved ticket, enough to judge relevance, zoom the link for detail -->
 
-- [YAML frontmatter approach](../_tickets/1-yaml-frontmatter-approach.md): read with `yaml_serde` into typed `String` fields; write with `yaml-edit` (exact-pinned, three operations) behind a mandatory reparse guard; `yaml-edit` is two days old, so the guard is load-bearing (research recommendation, human may override).
-- [Markdown body parsing](../_tickets/3-markdown-body-parsing.md): build on `pulldown-cmark` 0.13.4; cut frontmatter first and parse the body slice; hand-write the line/col mapping and a GitHub-style slugger (research recommendation, human may override).
-- [HTTP client for remote schemas](../_tickets/6-remote-schema-fetching.md): `ureq` 3.x blocking behind a `Fetch` trait; `typdoc-core` stays runtime-free (research recommendation, human may override).
+- [YAML frontmatter approach](../_tickets/1-yaml-frontmatter-approach.md): read with `yaml_serde` into typed `String` fields; write with `yaml-edit` (exact-pinned, three operations) behind a mandatory reparse guard; `yaml-edit` is two days old, so the guard is load-bearing (decided 2026-09-19).
+- [Markdown body parsing](../_tickets/3-markdown-body-parsing.md): build on `pulldown-cmark` 0.13.4; cut frontmatter first and parse the body slice; hand-write the line/col mapping and a GitHub-style slugger (decided 2026-09-19).
+- [HTTP client for remote schemas](../_tickets/6-remote-schema-fetching.md): `ureq` 3.x blocking behind a `Fetch` trait; `typdoc-core` stays runtime-free (decided 2026-09-19).
 - [Query grammar](../_tickets/5-query-grammar.md): `!=` is exactly NOT `=` and absent things satisfy it (ordering comparisons stay false); escapes are `\` for `,` `*` `\` only, glob is `*` only; names, scope, `$body` and reserved pseudo-fields fixed; `ref.all` and `refby.all` need `.EXPR`; dangling refs found with `ref.any(f).path!=*`; a Grammar block is in the design.
 - [Schema format identity](../_tickets/8-schema-format-identity.md): typdoc's own JSON format, not JSON Schema; no interop in v1; design wording fixed in three places.
 - [Collection definition files](../_tickets/12-collection-definition-files.md): one file per collection at `.typdoc/collections/<name>.json` (`match`, `schema`, `refBase`, `validation`, `last`); one `version` in `config.json` covers all typdoc-owned formats; no collection order; overlapping matches are an error; a broken collection file stops the namespace.
 - [Counter allocation](../_tickets/2-counter-allocation.md): next number = max(highest existing in the collection, the collection's `last`) + 1, written back under the lock; never reused after a delete; the shared `counter` option is removed (one ticket schema, one collection, told apart by `kind`); a coded schema serves exactly one collection; no new file. Where `last` lives is ticket 12.
 - [Slug rules](../_tickets/4-slug-rules.md): heading slugs follow GitHub's algorithm (Thai kept, `dup-1` collision-aware, empty slugs deduped like any other); link fragments are percent-decoded and compared case-insensitively; `{slug}` is removed from file names, which are never derived from a title.
 - [Multiple namespaces in one `.typdoc`](../_tickets/13-multiple-namespaces-in-one-typdoc.md): a project (`.typdoc`) holds one namespace `default` or several named by child folders (`namespaces`, one level, `[A-Za-z0-9_-]`); `name` removed from config; `name:` sibling, `name::` import; whole-project import in v1; scope by prefix > `--namespace` > `TYPDOC_NAMESPACE` > cwd, `TYPDOC_DIR` replaces `--dir`; state in `state/<namespace>.json`, locks per namespace; coded docs cannot move across namespaces except `mv --renumber`, with `auto: moves` and `refs.moved`. Amends 2, 12, 7, 5, 4.
+- [Column unit](../_tickets/11-column-unit.md): `col` counts Unicode scalar values, 1-based (Thai and emoji each 1, tab 1), `line` from the top of the file frontmatter included; no byte offset in `--json` in v1; tests with a Thai line and an emoji line.
+- [Link forms checked](../_tickets/10-link-forms-checked.md): `body.links` checks inline, image and reference-style links (definitions reported once, with use count; unused ones checked, not in `$body`; duplicate label reported); text that looks like a link but is not (space in a destination ending in a file extension) is reported with a `<…>`/`%20` hint; `[t][ref]` with no definition is not; `mv` keeps each link's written form.
+- [Platforms and lock](../_tickets/7-platform-and-lock.md): Linux and macOS only (Windows build fails clearly); no automatic lock takeover, exit 4 explains, one remover at a time; project lock for pins, `lock.json` without `path`, `vendor/` never pruned in v1; machine file `imports.json` found by `TYPDOC_CONFIG_DIR`, `XDG_CONFIG_HOME`, then the platform default; unset `${ENV}` makes the import absent (`imports.absent`), never an empty string; quoting advice only for shells that were run.
 
 ## Not yet specified
 
@@ -31,6 +34,7 @@
 - Distribution and versioning of the tool itself (`cargo install`, release binaries, config `version` upgrade path).
 - A published meta-schema (JSON Schema describing typdoc's own schema files) so editors can complete `schemas/*.json`; no one has asked for it yet.
 - Exact argument shape of `mv --renumber` (how the destination namespace is named) and whether it is atomic across two namespaces when a write fails midway; belongs in the contract.
+- From ticket 7, for the contract: the crate for catching interrupt signals; running zsh to earn its row in the quoting list; whether `imports.absent` should fire for an unresolved import that nothing refers to.
 - Scale: the index is rebuilt on every run with no cache; at what document count does that stop being acceptable?
 
 ## Out of scope
