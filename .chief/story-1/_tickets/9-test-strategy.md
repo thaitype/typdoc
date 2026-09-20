@@ -99,3 +99,30 @@ Decided: `deps` is the only way a module reaches the outside world. If any modul
 
 Defaults, so that this is enforced by structure and not by care: `ureq` is a dependency of the binary crate only, so `typdoc-core` cannot reach a real client at all. The clock, the environment and the home directory are reached in `typdoc-core` only through `deps` (a `Clock` and an `Env`; the location of `imports.json` in ticket 7 is tested with a fake environment for that reason), and `clippy.toml` lists `chrono::Utc::now`, `std::time::SystemTime::now`, `std::env::var`, `std::env::var_os` and `std::env::home_dir` as disallowed methods there, which the existing `cargo clippy -D warnings` rule enforces. The guard is shown to work the way the text gate was: plant a violation, see clippy go red, remove it.
 
+### Frontmatter round trip
+
+Decided: two layers, and the second is cut by a criterion instead of by difficulty ("hard cases" is a line nobody derived from anything).
+
+**Layer one: invariants, over every document and every operation, with no expected file.** It carries almost all the weight.
+
+- Frontmatter lines that were not asked to change are byte-identical, and so is the body.
+- Reading the result back gives exactly the intended change, no more and no less.
+- A no-op write (read, then write with no operation at all) returns the file byte-identical. It is the cheapest check, it covers every fixture for free, and it catches the worst failure mode: a writer that reformats on load.
+- Type preservation is not only `no`, `yes`, `on` and `off`. The research found `1e3` becoming 1000.0 and `1.10` becoming 1.1 as well, all one class and a real concern of typdoc because typing comes from the schema. `0755`, dates and datetimes belong to this layer too.
+
+**Layer two: whole expected files, only for a case that meets one criterion.** Whoever writes the expected file must be able to write it from the design without running the tool. If they cannot, it is not a promise, and there are only two ways out: make it a promise (write it into the design and the trait, after which the file can be written) or drop the case. There is no third way. Running the tool and copying its output into the expected file is the golden-from-the-tool option dressed as this one, and it breaks the rule already stated in this ticket, that the tool's own output certifies whatever the tool does. The criterion has no number and no line drawn by anyone, and it says at once on which side a new case falls, the same shape as the criterion that cuts `broken/`: does it read a project and report a defect.
+
+**Where keys go: decided.** An existing key keeps its position and is never re-sorted; the design already promised that. A key that is added goes at the end of the block, always. The design had said nothing about this and now says it. The reason is that it is one fixed rule, and whoever writes the expected file can apply it without opening the tool; "sorted by schema" would mean computing a position in a file that is probably not in schema order already, with a result nobody could predict. The quote style of a new value is not a promise, so it has no expected file and no test. The design sentence that said writes preserve key order and existing style "where possible" covered both with one qualifier; it is split. Key order has no case where it cannot be kept, so it is promised in full and can be tested. Existing YAML style stays a best effort, and because it is a best effort it has no test.
+
+Observation: under this criterion, whole-file expectations exist only where the resulting text is fully determined without a choice of style (numbers, booleans and similar). For an added key, position is a hand-written assertion, not a whole file. Layer one therefore does most of the work, which is the point of it.
+
+**The guard test comes first in this group, not last.** An editor double returns damaged text of the kind the research found (`note: newb: 2`, from replacing a block scalar), through the trait of three operations, and the test confirms that the re-read check rejects the write. By the rule this ticket set for `broken/`, it must go red for the reason claimed: the test asserts that exact error, not just a failure. The reason for the order is that `yaml-edit` 0.3.2 was two days old when the research was done and has a single maintainer; this guard is the one thing between that crate and a user's real documents. The re-read uses the reader (`yaml_serde`) and not the writer's own parser, so the net sits outside what it watches. That is the same rule as the golden files and as `deps` in this ticket: one rule, not three coincidences.
+
+**The list of documents must not be trusted to be complete.** A list that someone thinks of finds only what someone thought of. The corpus must contain real files, as ticket 1 decided, because real files carry formats nobody listed. This repository's own files carry no frontmatter (its tickets use inline lines), so the real documents come from the public `chief` repository (26 files with frontmatter) and the public `typmem` repository (23), counted on 2026-09-20, copied after review and after the public-text gate. Hand-made cases are added as well: several quote styles, flow lists, block scalars, comments, CRLF, a BOM, Thai text, a file with no frontmatter, `---` inside the body, no final newline. Layer one catches formats nobody thought of; layer two catches only what someone listed.
+
+**Anchors and tags:** `yaml-edit` has never been tested on them (ticket 1). That is not left to disappear: it is not known, and it is to be proven in the prototype for the contract, under the same rule as the proxy variables.
+
+Rejected: expected files that the tool produced and that were then kept as goldens.
+
+For the contract: the error for a write rejected by the re-read check has its own id, so that a test can assert it exactly.
+
