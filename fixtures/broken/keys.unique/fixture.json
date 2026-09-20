@@ -1,0 +1,4 @@
+{
+  "command": ["validate", "--json"],
+  "trips": ["keys.unique", "schema.valid"]
+}

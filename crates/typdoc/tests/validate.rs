@@ -362,3 +362,367 @@ fn the_frontmatter_parse_fixture_reports_no_position() {
         assert!(finding.get("field").is_none(), "{finding}");
     }
 }
+
+// Ticket 9: `schema.valid`, `collections.overlap`, `keys.unique` and `filename.pattern`.
+
+/// A schema-file finding is not about a document: no `namespace`, `collection` or `key`.
+#[test]
+fn a_schema_valid_finding_carries_no_namespace_collection_or_key() {
+    let object = broken("schema.valid");
+
+    let findings = object["findings"].as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    let finding = &findings[0];
+    assert_eq!(finding["rule"], json!("schema.valid"));
+    assert!(finding["path"].is_string(), "{finding}");
+    assert!(finding.get("namespace").is_none(), "{finding}");
+    assert!(finding.get("collection").is_none(), "{finding}");
+    assert!(finding.get("key").is_none(), "{finding}");
+}
+
+/// The design never settles an overlap by precedence, so which collection is "the" collection
+/// of the file is exactly what is wrong: `collection` and `key` are left out. The fixture also
+/// holds `b.md`, matched by one collection only, with an `extra` field its empty schema does
+/// not name: its `frontmatter.unknown` finding is what proves the overlap did not swallow the
+/// rest of the report (see the `checked` assertions below).
+#[test]
+fn a_collections_overlap_finding_carries_a_namespace_and_no_collection_or_key() {
+    let object = broken("collections.overlap");
+
+    let findings: Vec<&Value> = object["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["rule"] == json!("collections.overlap"))
+        .collect();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    let finding = findings[0];
+    assert_eq!(finding["path"], json!("a.md"));
+    assert_eq!(finding["namespace"], json!("default"));
+    assert!(finding.get("collection").is_none(), "{finding}");
+    assert!(finding.get("key").is_none(), "{finding}");
+    assert!(
+        finding["message"].as_str().unwrap().contains("one")
+            && finding["message"].as_str().unwrap().contains("two"),
+        "{finding}"
+    );
+}
+
+/// Two collections that both match `a.md`, one that matches only `b.md` besides, and a schema
+/// with no fields, so any field written in `b.md` is `frontmatter.unknown`. The same shape as
+/// `fixtures/broken/collections.overlap`, built fresh so a test can name its own arguments.
+fn overlap_and_a_clean_sibling() -> Scratch {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/one.json",
+            r#"{ "match": "*.md", "schema": "schemas/note.json" }"#,
+        ),
+        (
+            ".typdoc/collections/two.json",
+            r#"{ "match": "a.md", "schema": "schemas/note.json" }"#,
+        ),
+        ("schemas/note.json", r#"{ "name": "note", "fields": {} }"#),
+    ]);
+    project.file("a.md", "");
+    project.file("b.md", "---\nextra: surprise\n---\n");
+    project
+}
+
+/// design.md:567 stops `validate` before any report for only two reasons (a key ambiguous
+/// across namespaces, an argument naming no document) and `collections.overlap` is neither: an
+/// overlapping path named as an argument is a finding, the same shape the whole-project scan
+/// gives it, and does not throw away the report of another argument named alongside it.
+/// design.md:743 ties `checked.documents`/`checked.paths` to what was actually checked, and an
+/// overlapping path was never checked against a schema, so it is counted in neither, even
+/// though its own finding is in `findings` — the one place a finding's `path` is not found in
+/// `checked.paths`, and on purpose: there is no document there to have been checked.
+#[test]
+fn validate_on_an_overlapping_path_argument_reports_it_instead_of_aborting() {
+    let project = overlap_and_a_clean_sibling();
+
+    let alone = Spawn::args(["validate", "a.md", "--json"])
+        .cwd(project.path())
+        .run();
+    assert_eq!(alone.code, 2, "{}", alone.stderr);
+    assert_eq!(
+        alone.stderr, "",
+        "the report goes to stdout, not an aborted error object"
+    );
+    let object = alone.stdout_json();
+    let findings = object["findings"].as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0]["rule"], json!("collections.overlap"));
+    assert_eq!(findings[0]["path"], json!("a.md"));
+    assert_eq!(object["summary"]["checked"]["documents"], json!(0));
+    assert_eq!(object["summary"]["checked"]["paths"], json!([]));
+
+    // Naming the overlapping path alongside `b.md`: `b.md`'s own finding is not thrown away,
+    // and `b.md` alone is in `checked.paths` and `checked.documents`.
+    let both = Spawn::args(["validate", "a.md", "b.md", "--json"])
+        .cwd(project.path())
+        .run();
+    assert_eq!(both.code, 2, "{}", both.stderr);
+    let object = both.stdout_json();
+    let findings = object["findings"].as_array().unwrap();
+    assert_eq!(findings.len(), 2, "{findings:?}");
+    let rules: Vec<&str> = findings
+        .iter()
+        .map(|f| f["rule"].as_str().unwrap())
+        .collect();
+    assert!(rules.contains(&"collections.overlap"), "{findings:?}");
+    assert!(rules.contains(&"frontmatter.unknown"), "{findings:?}");
+    assert_eq!(object["summary"]["checked"]["documents"], json!(1));
+    assert_eq!(object["summary"]["checked"]["paths"], json!(["b.md"]));
+}
+
+/// The whole-project scan reports the same `collections.overlap` finding, but its `documents`
+/// count is the same question `checked.documents` answers for a `paths` scope: only `b.md` was
+/// checked against a schema.
+#[test]
+fn validate_on_the_whole_project_does_not_count_an_overlapping_document_as_checked() {
+    let project = overlap_and_a_clean_sibling();
+
+    let ran = Spawn::args(["validate", "--json"])
+        .cwd(project.path())
+        .run();
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    let findings = object["findings"].as_array().unwrap();
+    let rules: Vec<&str> = findings
+        .iter()
+        .map(|f| f["rule"].as_str().unwrap())
+        .collect();
+    assert!(rules.contains(&"collections.overlap"), "{findings:?}");
+    assert!(rules.contains(&"frontmatter.unknown"), "{findings:?}");
+    assert_eq!(object["summary"]["checked"]["documents"], json!(1));
+}
+
+/// Unlike an overlap, a duplicate key is not ambiguous about which collection or key is
+/// involved, so both are carried.
+#[test]
+fn a_keys_unique_finding_carries_its_namespace_collection_and_key() {
+    let object = broken("keys.unique");
+
+    let findings: Vec<&Value> = object["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["rule"] == json!("keys.unique"))
+        .collect();
+    assert_eq!(findings.len(), 2, "{findings:?}");
+    for finding in findings {
+        assert_eq!(finding["namespace"], json!("default"));
+        assert_eq!(finding["key"], json!("WF-1"));
+        assert!(finding["collection"].is_string(), "{finding}");
+    }
+}
+
+/// `filename.pattern` is about a file no collection matched, so it is not a document: it
+/// carries the namespace it was found in, but no `collection` or `key`.
+#[test]
+fn a_filename_pattern_finding_carries_a_namespace_and_no_collection_or_key() {
+    let object = broken("filename.pattern");
+
+    let findings = object["findings"].as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    let finding = &findings[0];
+    assert_eq!(finding["rule"], json!("filename.pattern"));
+    assert_eq!(finding["path"], json!("tickets/README.md"));
+    assert_eq!(finding["namespace"], json!("default"));
+    assert!(finding.get("collection").is_none(), "{finding}");
+    assert!(finding.get("key").is_none(), "{finding}");
+}
+
+/// The ticket's own example: two namespaces that each number a document `WF-1` are clean,
+/// since a key is unique within its namespace, not across them.
+#[test]
+fn two_namespaces_sharing_a_key_is_clean() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/config.json",
+            r#"{ "version": 1, "namespaces": ["ns1", "ns2"] }"#,
+        ),
+        (
+            ".typdoc/collections/tickets.json",
+            r#"{ "match": "{key}.md", "schema": "schemas/ticket.json" }"#,
+        ),
+        (
+            "schemas/ticket.json",
+            r#"{ "name": "ticket", "code": "WF", "fields": {} }"#,
+        ),
+        ("ns1/WF-1.md", ""),
+        ("ns2/WF-1.md", ""),
+    ]);
+
+    let ran = Spawn::args(["validate", "--json"])
+        .cwd(project.path())
+        .run();
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout_json()["findings"], json!([]));
+}
+
+/// A cycle in `extends` is rejected, not ended silently (ticket 5 left rejecting it to this
+/// ticket).
+#[test]
+fn an_extends_cycle_is_rejected_by_schema_valid() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "*.md", "schema": "a.json" }"#,
+        ),
+        (
+            "a.json",
+            r#"{ "name": "a", "extends": "./b.json", "fields": {} }"#,
+        ),
+        (
+            "b.json",
+            r#"{ "name": "b", "extends": "./a.json", "fields": {} }"#,
+        ),
+    ]);
+    project.file("x.md", "");
+
+    let ran = Spawn::args(["validate", "--json"])
+        .cwd(project.path())
+        .run();
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let findings = ran.stdout_json()["findings"].clone();
+    let rules: Vec<&str> = findings
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["rule"].as_str().unwrap())
+        .collect();
+    assert!(rules.contains(&"schema.valid"), "{findings}");
+}
+
+/// Redefining an inherited field without `"override": true` is `schema.valid`; the same field
+/// declared with `"override": true` is clean.
+#[test]
+fn redefining_an_inherited_field_needs_override_true() {
+    let base = |kind: &str| {
+        format!(r#"{{ "name": "base", "fields": {{ "title": {{ "type": "{kind}" }} }} }}"#)
+    };
+    for (override_written, expect_finding) in [(false, true), (true, false)] {
+        let child = format!(
+            r#"{{ "name": "child", "extends": "./base.json", "fields": {{ "title": {{ "type": "string", "override": {override_written} }} }} }}"#
+        );
+        let project = Scratch::project(&[
+            (
+                ".typdoc/collections/notes.json",
+                r#"{ "match": "*.md", "schema": "child.json" }"#,
+            ),
+            ("base.json", &base("string")),
+            ("child.json", &child),
+        ]);
+        project.file("x.md", "");
+
+        let ran = Spawn::args(["validate", "--json"])
+            .cwd(project.path())
+            .run();
+
+        let findings = ran.stdout_json()["findings"].clone();
+        let tripped = findings
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["rule"] == json!("schema.valid"));
+        assert_eq!(
+            tripped, expect_finding,
+            "override={override_written}: {findings}"
+        );
+    }
+}
+
+/// A boolean option written as something else, an option that does not apply to the field's
+/// type, and a reserved or malformed field name are all `schema.valid`, and do not crash the
+/// read (the relaxing of ticket 5's strict reading, decided by ticket 9).
+#[test]
+fn invalid_field_options_and_names_are_schema_valid_and_not_a_crash() {
+    for fields in [
+        r#"{ "a": { "type": "string", "required": "yes" } }"#,
+        r#"{ "a": { "type": "string", "values": ["x"] } }"#,
+        r#"{ "a": { "type": "date", "target": "*" } }"#,
+        r#"{ "path": { "type": "string" } }"#,
+        r#"{ "$body": { "type": "string" } }"#,
+        r#"{ "not valid": { "type": "string" } }"#,
+    ] {
+        let schema = format!(r#"{{ "name": "n", "fields": {fields} }}"#);
+        let project = Scratch::project(&[
+            (
+                ".typdoc/collections/notes.json",
+                r#"{ "match": "*.md", "schema": "n.json" }"#,
+            ),
+            ("n.json", &schema),
+        ]);
+        project.file("x.md", "");
+
+        let ran = Spawn::args(["validate", "--json"])
+            .cwd(project.path())
+            .run();
+
+        assert_eq!(ran.code, 2, "{fields}: {}", ran.stderr);
+        let findings = ran.stdout_json()["findings"].clone();
+        assert!(
+            findings
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["rule"] == json!("schema.valid")),
+            "{fields}: {findings}"
+        );
+    }
+}
+
+/// An import alias that has the shape of a URL scheme is `schema.valid`.
+#[test]
+fn an_import_name_shaped_like_a_url_scheme_is_schema_valid() {
+    let project = Scratch::project(&[(
+        ".typdoc/config.json",
+        r#"{ "version": 1, "imports": { "https": "../elsewhere" } }"#,
+    )]);
+    project.file("x.md", "");
+
+    let ran = Spawn::args(["validate", "--schemas", "--json"])
+        .cwd(project.path())
+        .run();
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let findings = ran.stdout_json()["findings"].clone();
+    assert_eq!(findings.as_array().unwrap().len(), 1, "{findings}");
+    assert_eq!(findings[0]["rule"], json!("schema.valid"));
+    assert_eq!(findings[0]["path"], json!(".typdoc/config.json"));
+}
+
+/// The design's own example: several coded collections can share one folder (`WF` and `RFC`
+/// both under `tickets/{key}.md`); a file that fits one of them is not a `filename.pattern`
+/// stray just because it fits none of the others.
+#[test]
+fn a_file_fitting_one_of_several_coplaced_coded_collections_is_not_a_stray() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/wf.json",
+            r#"{ "match": "tickets/{key}.md", "schema": "wf.json" }"#,
+        ),
+        (
+            ".typdoc/collections/rfc.json",
+            r#"{ "match": "tickets/{key}.md", "schema": "rfc.json" }"#,
+        ),
+        ("wf.json", r#"{ "name": "wf", "code": "WF", "fields": {} }"#),
+        (
+            "rfc.json",
+            r#"{ "name": "rfc", "code": "RFC", "fields": {} }"#,
+        ),
+        ("tickets/WF-1.md", ""),
+        ("tickets/RFC-4.md", ""),
+    ]);
+
+    let ran = Spawn::args(["validate", "--json"])
+        .cwd(project.path())
+        .run();
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout_json()["findings"], json!([]));
+}

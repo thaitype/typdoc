@@ -255,8 +255,17 @@ fn severity_name(level: Severity) -> &'static str {
 }
 
 fn finding_json(finding: &Finding) -> Json {
-    let mut object = document_name(&finding.path, &finding.namespace, finding.key.as_deref());
-    object.insert("collection".to_owned(), json!(finding.collection));
+    let mut object = Map::new();
+    object.insert("path".to_owned(), json!(finding.path));
+    if let Some(namespace) = &finding.namespace {
+        object.insert("namespace".to_owned(), json!(namespace));
+    }
+    if let Some(collection) = &finding.collection {
+        object.insert("collection".to_owned(), json!(collection));
+    }
+    if let Some(key) = &finding.key {
+        object.insert("key".to_owned(), json!(key));
+    }
     if let Some(field) = &finding.field {
         object.insert("field".to_owned(), json!(field));
     }

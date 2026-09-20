@@ -47,19 +47,20 @@ pub const RULES: &[&str] = &[
     "frontmatter.parse",
     "frontmatter.types",
     "frontmatter.unknown",
+    "schema.valid",
+    "keys.unique",
+    "collections.overlap",
+    "filename.pattern",
 ];
 
 /// Ids the design names and the binary does not report yet. Each is a difference between
 /// the design and the binary, with the story expected to deliver it as a comment. The list only shrinks: an id leaves it
 /// when it enters `RULES`, and it is empty when v1 is finished.
 pub const UNIMPLEMENTED_RULES: &[&str] = &[
-    "schema.valid",            // story 1
     "frontmatter.transitions", // story 2
     "refs.resolve",            // story 1
     "refs.target",             // story 1
     "refs.acyclic",            // story 1
-    "keys.unique",             // story 1
-    "collections.overlap",     // story 1
     "state.missing",           // story 1
     "body.links",              // story 1
     "body.anchors",            // story 1
@@ -67,7 +68,6 @@ pub const UNIMPLEMENTED_RULES: &[&str] = &[
     "refs.codedByPath",        // story 1
     "refs.moved",              // story 1
     "names.shadowed",          // story 1
-    "filename.pattern",        // story 1
     "imports.absent",          // story 1
     "config.state-uncoded",    // story 1
     "config.state-orphan",     // story 1

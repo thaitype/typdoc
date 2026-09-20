@@ -64,11 +64,11 @@ fn every_option_of_a_field_is_read_as_declared() {
 
     let title = &schema.fields["title"];
     assert_eq!(title.kind, FieldType::String);
-    assert!(title.required);
+    assert!(title.is_required());
 
     let status = &schema.fields["status"];
     assert_eq!(status.kind, FieldType::Enum);
-    assert!(!status.required);
+    assert!(!status.is_required());
     assert_eq!(status.default, Some(json!("open")));
     assert_eq!(
         status.transitions,
@@ -91,7 +91,7 @@ fn every_option_of_a_field_is_read_as_declared() {
     let blocked_by = &schema.fields["blocked_by"];
     assert_eq!(blocked_by.kind, FieldType::RefList);
     assert_eq!(blocked_by.target, Some(Target::Any));
-    assert!(blocked_by.acyclic);
+    assert!(blocked_by.is_acyclic());
     assert_eq!(blocked_by.default, Some(json!([])));
 
     assert_eq!(schema.fields["created_at"].auto, Some(Auto::Create));
@@ -166,8 +166,8 @@ fn override_and_moves_are_read() {
     );
 
     assert_eq!(schema.fields["was"].auto, Some(Auto::Moves));
-    assert!(schema.fields["kind"].overrides);
-    assert!(!schema.fields["was"].overrides);
+    assert!(schema.fields["kind"].is_override());
+    assert!(!schema.fields["was"].is_override());
 }
 
 #[test]
@@ -199,10 +199,22 @@ fn a_schema_that_has_not_the_shape_of_the_format_cannot_be_read() {
         r#"{ "name": "n" }"#,
         r#"{ "name": "n", "fields": [] }"#,
         r#"{ "name": "n", "fields": { "a": {} } }"#,
-        r#"{ "name": "n", "fields": { "a": { "type": "string", "required": "yes" } } }"#,
         r#"{ "name": "n", "fields": { "a": { "type": "enum", "values": "a" } } }"#,
         r#"{ "name": "n", "fields": { "a": { "type": 3 } } }"#,
     ] {
         assert!(Schema::parse(text).is_err(), "{text:?}");
     }
+}
+
+/// Ticket 5 read a wrongly typed option strictly, which crashed the whole read before
+/// `schema.valid` (ticket 9) could report it, unlike an unknown type, `auto` or `target` name,
+/// already read tolerantly for the same reason. Decided here: `required` (and `acyclic` and
+/// `override`, the format's other boolean options) are relaxed the same way, so a schema like
+/// this one is read, with the field's `required` false, and `schema.valid` is what reports it.
+#[test]
+fn a_boolean_option_written_as_something_else_is_read_tolerantly_and_not_refused() {
+    let schema =
+        parse(r#"{ "name": "n", "fields": { "a": { "type": "string", "required": "yes" } } }"#);
+
+    assert!(!schema.fields["a"].is_required());
 }

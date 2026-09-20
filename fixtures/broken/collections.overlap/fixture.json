@@ -1,0 +1,4 @@
+{
+  "command": ["validate", "--json"],
+  "trips": ["collections.overlap", "frontmatter.unknown"]
+}

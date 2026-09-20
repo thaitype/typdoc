@@ -28,17 +28,20 @@ pub enum Severity {
     Error,
 }
 
-/// One thing `validate` found. Its name is `path`, `namespace`, `collection` and `key`, as the
-/// design's finding shape gives it, plus `field` when it is about one field and a position when
-/// one is known.
+/// One thing `validate` found. Its name is `path` always, plus `namespace`, `collection` and
+/// `key` when the file is a document, as the design's finding shape gives it (a `schema.valid`
+/// finding is about a schema file or `config.json`, not a document, so it carries none of the
+/// three; `filename.pattern` is about a file in a namespace that no collection matched, so it
+/// carries `namespace` and not `collection` or `key`). `field` is present when the finding is
+/// about one field, and a position when one is known.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
     pub level: Severity,
     pub rule: &'static str,
     pub message: String,
     pub path: String,
-    pub namespace: String,
-    pub collection: String,
+    pub namespace: Option<String>,
+    pub collection: Option<String>,
     pub key: Option<String>,
     pub field: Option<String>,
     pub position: Option<Position>,
@@ -104,7 +107,7 @@ pub fn check_document(
     };
     let mut findings = Vec::new();
     for (field_name, field) in schema.fields() {
-        if field.required && !fields.iter().any(|(written, _)| written == field_name) {
+        if field.is_required() && !fields.iter().any(|(written, _)| written == field_name) {
             findings.push(finding(
                 name,
                 Severity::Error,
@@ -171,7 +174,7 @@ pub fn check_document(
 /// The level `rule` is reported at once the defaults, `validation.global` and the collection's
 /// own `validation` are merged, with `strict` raising a remaining `warn` to `error`. `None` is
 /// `off`: the rule produces no finding.
-fn effective_level(
+pub(crate) fn effective_level(
     default: Level,
     rule: &str,
     global: &Rules,
@@ -193,6 +196,39 @@ fn effective_level(
     }
 }
 
+/// Every finding this crate's rules construct is built here, so the nine-field shape of
+/// `Finding` is written out once; each rule below calls this with the parts it has and `None`
+/// for the parts a file that is not a document (a schema file, `config.json`, a stray file)
+/// does not carry.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a finding has this many parts; grouping them
+    loses the name of each at the call site, which is what catches a part passed in the wrong
+    place"
+)]
+fn build_finding(
+    level: Severity,
+    rule: &'static str,
+    path: &str,
+    namespace: Option<&str>,
+    collection: Option<&str>,
+    key: Option<&str>,
+    field: Option<&str>,
+    message: String,
+) -> Finding {
+    Finding {
+        level,
+        rule,
+        message,
+        path: path.to_owned(),
+        namespace: namespace.map(str::to_owned),
+        collection: collection.map(str::to_owned),
+        key: key.map(str::to_owned),
+        field: field.map(str::to_owned),
+        position: None,
+    }
+}
+
 /// A finding about `name`'s document, at `field` when it is about one field. Every finding this
 /// ticket's rules produce has no position (frontmatter.parse: contract item 7, checked by
 /// running; frontmatter.types and frontmatter.unknown: no field-position tracking is built
@@ -204,17 +240,89 @@ fn finding(
     field: Option<&str>,
     message: String,
 ) -> Finding {
-    Finding {
+    build_finding(
         level,
         rule,
+        name.path,
+        Some(name.namespace),
+        Some(name.collection),
+        name.key,
+        field,
         message,
-        path: name.path.to_owned(),
-        namespace: name.namespace.to_owned(),
-        collection: name.collection.to_owned(),
-        key: name.key.map(str::to_owned),
-        field: field.map(str::to_owned),
-        position: None,
-    }
+    )
+}
+
+/// A finding about a schema file or `config.json`: not a document, so it carries no
+/// `namespace`, `collection` or `key`. Used by `schema.valid`.
+pub(crate) fn schema_finding(path: &str, field: Option<&str>, message: String) -> Finding {
+    build_finding(
+        Severity::Error,
+        "schema.valid",
+        path,
+        None,
+        None,
+        None,
+        field,
+        message,
+    )
+}
+
+/// A finding about a file in a namespace that no collection matched: not a document, so it
+/// carries `namespace` but no `collection` or `key`. Used by `filename.pattern`.
+pub(crate) fn stray_file_finding(
+    level: Severity,
+    path: &str,
+    namespace: &str,
+    message: String,
+) -> Finding {
+    build_finding(
+        level,
+        "filename.pattern",
+        path,
+        Some(namespace),
+        None,
+        None,
+        None,
+        message,
+    )
+}
+
+/// A finding about a document matched by more than one collection (`collections.overlap`):
+/// which collection is "the" collection of this document is exactly what is wrong, so it is
+/// left out rather than guessed; the message names every collection that matched.
+pub(crate) fn overlap_finding(path: &str, namespace: &str, message: String) -> Finding {
+    build_finding(
+        Severity::Error,
+        "collections.overlap",
+        path,
+        Some(namespace),
+        None,
+        None,
+        None,
+        message,
+    )
+}
+
+/// A finding about a document whose key is also used by another document in the same namespace
+/// (`keys.unique`): the key and the collection are not in doubt, only which document is the
+/// right holder of it, so both are carried and the message names the other document.
+pub(crate) fn duplicate_key_finding(
+    path: &str,
+    namespace: &str,
+    collection: &str,
+    key: &str,
+    message: String,
+) -> Finding {
+    build_finding(
+        Severity::Error,
+        "keys.unique",
+        path,
+        Some(namespace),
+        Some(collection),
+        Some(key),
+        None,
+        message,
+    )
 }
 
 fn display_value(value: &Value) -> String {
@@ -254,7 +362,10 @@ mod tests {
         let schema = crate::schema::Schema::parse(&text).expect("a schema");
         // A chain of one schema is what `load` builds for a collection with no `extends`, so
         // this goes through the same merge a real read does.
-        crate::schema::merge(&[schema])
+        crate::schema::merge(&[crate::schema::ChainLink {
+            path: "schema.json".to_owned(),
+            schema,
+        }])
     }
 
     fn no_rules() -> Rules {
@@ -450,7 +561,10 @@ mod tests {
         })
         .to_string();
         let parsed = crate::schema::Schema::parse(&schema_text).expect("a schema");
-        let schema = crate::schema::merge(&[parsed]);
+        let schema = crate::schema::merge(&[crate::schema::ChainLink {
+            path: "schema.json".to_owned(),
+            schema: parsed,
+        }]);
         let text = "---\nkind: z\n---\n";
 
         let findings = check_document(text, &schema, &no_rules(), &no_rules(), false, &name());
@@ -491,8 +605,8 @@ mod tests {
             rule,
             message: message.to_owned(),
             path: path.to_owned(),
-            namespace: "default".to_owned(),
-            collection: "notes".to_owned(),
+            namespace: Some("default".to_owned()),
+            collection: Some("notes".to_owned()),
             key: None,
             field: None,
             position,

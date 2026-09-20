@@ -79,6 +79,10 @@ pub struct Config {
     pub validation: Rules,
     /// Sorted by name.
     pub collections: Vec<Collection>,
+    /// The alias of every entry of `imports`, read only for `schema.valid`'s check that an
+    /// import name does not collide with a URL scheme; reading what an alias points at, and
+    /// following it, is ticket 17.
+    pub import_names: Vec<String>,
 }
 
 /// The config errors found so far.
@@ -153,12 +157,13 @@ impl Config {
         let top = read_config_json(root, report)?;
         let mut validation = Rules::new();
         let mut entries = None;
+        let mut import_names = Vec::new();
         for (key, value) in &top {
             match key.as_str() {
                 "version" => {}
                 "namespaces" => entries = Some(namespace_entries(value, report)),
                 "validation" => validation = global_rules(value, report)?,
-                "imports" => {}
+                "imports" => import_names = import_alias_names(value),
                 "lock" => check_lock(value, report)?,
                 other => report.add(
                     "config.unknown-key",
@@ -173,7 +178,18 @@ impl Config {
             namespaces,
             validation,
             collections,
+            import_names,
         })
+    }
+}
+
+/// The alias of every entry of `imports`, read for `schema.valid`'s check on colliding with a
+/// URL scheme and nothing else: a shape other than an object is left for ticket 17 to refuse,
+/// since what `imports` should hold beyond its keys is not this ticket's to decide.
+fn import_alias_names(value: &Value) -> Vec<String> {
+    match value {
+        Value::Object(imports) => imports.keys().cloned().collect(),
+        _ => Vec::new(),
     }
 }
 

@@ -238,8 +238,11 @@ fn a_folder_whose_name_is_not_utf8_under_a_double_star_is_refused() {
     assert_eq!(ran.code, 6, "{}", ran.stderr);
 }
 
+/// The design never settles a `collections.overlap` by precedence, so `get` has no collection to
+/// answer with and refuses the file, however the two collections reach it (`validate` reports
+/// the overlap instead, as a finding: `crates/typdoc/tests/validate.rs`).
 #[test]
-fn a_file_two_collections_reach_is_an_overlap_however_they_reach_it() {
+fn a_file_two_collections_reach_is_refused_by_get_however_they_reach_it() {
     let project = with_match("**/*.md", &["a/b.md"]);
     project.file(
         ".typdoc/collections/more.json",
@@ -249,7 +252,7 @@ fn a_file_two_collections_reach_is_an_overlap_however_they_reach_it() {
     let ran = get(project.path(), "a/b.md");
 
     assert_eq!(ran.code, 2, "{}", ran.stderr);
-    assert!(ran.stderr.contains("`more`"), "{}", ran.stderr);
+    assert!(ran.stderr.contains("collections.overlap"), "{}", ran.stderr);
 }
 
 #[test]

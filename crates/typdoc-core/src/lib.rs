@@ -28,6 +28,6 @@ pub use env::{Deps, Env};
 pub use error::{ConfigError, Error, ErrorKind};
 pub use lines::{LineMap, Position};
 pub use project::{Project, Toc, ValidateReport, discover};
-pub use schema::{Auto, Field, FieldType, Resolved, Schema, Target};
+pub use schema::{Auto, Field, FieldType, OptBool, Resolved, Schema, Target};
 pub use scope::{Scope, Source};
 pub use validate::{Finding, Severity, ValidateScope};

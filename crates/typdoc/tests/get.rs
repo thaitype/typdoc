@@ -358,8 +358,11 @@ fn a_remote_schema_is_refused_and_not_read_as_a_path() {
     error_of(&ran, 2);
 }
 
+/// The design never settles a `collections.overlap` by precedence, so `get` has no collection to
+/// read such a file with and refuses it; `validate` is where the overlap is reported, as a
+/// finding rather than a stop (`crates/typdoc/tests/validate.rs`).
 #[test]
-fn a_file_matched_by_two_collections_exits_2() {
+fn a_file_matched_by_two_collections_is_refused_by_get() {
     let project = Scratch::project(&NOTES);
     project.file(
         ".typdoc/collections/all.json",

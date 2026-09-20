@@ -1,0 +1,1 @@
+{ "match": "alpha/{key}.md", "schema": "schemas/a.json" }

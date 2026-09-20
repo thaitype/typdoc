@@ -86,6 +86,15 @@ impl Segment {
         }
         fits_capture(&self.parts, name).flatten()
     }
+
+    /// The whole segment as plain text, when it holds no `*` and no `{key}`.
+    fn literal(&self) -> Option<&str> {
+        match self.parts.as_slice() {
+            [Part::Literal(text)] => Some(text.as_str()),
+            [] => Some(""),
+            _ => None,
+        }
+    }
 }
 
 fn push_literal(parts: &mut Vec<Part>, literal: &mut String) {
@@ -193,6 +202,39 @@ impl Template {
 
     pub fn steps(&self) -> &[Step] {
         &self.steps
+    }
+
+    /// Whether the last step holds `{key}`, the shape `filename.pattern` scans a folder for: a
+    /// file directly beside a matched one that fits no collection there. A coded template can
+    /// also hold `{key}` in an earlier step (`{key}/index.md`); that shape is not this rule's,
+    /// since there is no one folder to list files in (doubt: not generalised here).
+    pub fn key_in_last_step(&self) -> bool {
+        matches!(
+            self.steps.last(),
+            Some(Step::Name(segment)) if segment.parts.iter().any(|part| matches!(part, Part::Key(_)))
+        )
+    }
+
+    /// The literal folder every step before the last one names, when each is plain text with no
+    /// `*` (always true of a bound coded template, since `bind` refuses a wildcard once a code
+    /// is given); `None` for a template with one step, or with `**` before the last.
+    pub fn literal_folder(&self) -> Option<Vec<&str>> {
+        let (_, prefix) = self.steps.split_last()?;
+        prefix
+            .iter()
+            .map(|step| match step {
+                Step::Name(segment) => segment.literal(),
+                Step::Folders => None,
+            })
+            .collect()
+    }
+
+    /// The last step's segment, for testing whether a file name fits it.
+    pub fn last_segment(&self) -> Option<&Segment> {
+        match self.steps.last()? {
+            Step::Name(segment) => Some(segment),
+            Step::Folders => None,
+        }
     }
 
     /// The key `below` carries, counted from the namespace folder, if this template names one.
@@ -411,6 +453,22 @@ mod tests {
         );
         assert_eq!(coded("tickets/{key}.md").key("tickets/wf-3.md"), None);
         assert_eq!(coded("tickets/{key}.md").key("notes/a.md"), None);
+    }
+
+    #[test]
+    fn the_literal_folder_is_every_step_before_the_last_as_plain_text() {
+        assert_eq!(
+            coded("tickets/{key}.md").literal_folder(),
+            Some(vec!["tickets"])
+        );
+        assert_eq!(coded("{key}.md").literal_folder(), Some(vec![]));
+        assert_eq!(coded("a/b/{key}.md").literal_folder(), Some(vec!["a", "b"]));
+    }
+
+    #[test]
+    fn the_key_is_in_the_last_step_only_when_the_last_segment_holds_it() {
+        assert!(coded("tickets/{key}.md").key_in_last_step());
+        assert!(!coded("{key}/index.md").key_in_last_step());
     }
 
     #[test]
