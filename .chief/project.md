@@ -14,6 +14,7 @@ cargo test --workspace                     # must pass offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 cargo run -p typdoc -- <args>              # run the CLI from the repo
+TYPDOC_REGENERATE_GOLDEN=<command>/<case> cargo test -p typdoc --test golden regenerate -- --ignored   # regenerate one golden, never all
 scripts/check-public-text.sh               # public-text gate: a floor, not a ceiling (see rule 7)
 scripts/check-public-text.sh --self-test   # proves the gate can fail; run whenever the gate changes
 ```
@@ -41,8 +42,8 @@ scripts/check-public-text.sh --self-test   # proves the gate can fail; run whene
 
 - `crates/typdoc-core/` — lib
 - `crates/typdoc/` — bin (clap); the CLI itself is in its `src/lib.rs`, so that its tests reach the registry of commands
-- `crates/typdoc-testkit/` — dev-only, not published: the loader of `fixtures/` and `docs/design.md`, the reader of what the design names, and the checks that compare it with the code; both crates use it in tests
-- `fixtures/` — projects the tests read
+- `crates/typdoc-testkit/` — dev-only, not published: the loader of `fixtures/` and `docs/design.md`, the reader of what the design names, the checks that compare it with the code, and the comparison of golden files with the guard of the generator that writes them; both crates use it in tests
+- `fixtures/` — projects the tests read (`valid/`, `broken/`), and the golden cases of `--json` output in `output/<command>/<case>/`
 - `docs/` — design doc
 - `examples/` — sample namespaces (`.typdoc/config.json` + schemas)
 - `.chief/` — planning artifacts

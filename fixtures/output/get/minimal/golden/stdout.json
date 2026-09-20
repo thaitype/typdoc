@@ -1,0 +1,15 @@
+{
+  "document": {
+    "path": "note.md",
+    "namespace": "default",
+    "collection": "notes",
+    "schema": "note",
+    "fields": {
+      "title": "A minimal note",
+      "tags": [
+        "alpha",
+        "beta"
+      ]
+    }
+  }
+}

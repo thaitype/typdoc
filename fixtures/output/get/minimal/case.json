@@ -1,0 +1,4 @@
+{
+  "project": "valid/minimal",
+  "command": ["get", "note.md", "--json"]
+}

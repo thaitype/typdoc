@@ -1,0 +1,8 @@
+{
+  "/document/path": "note.md",
+  "/document/namespace": "default",
+  "/document/collection": "notes",
+  "/document/schema": "note",
+  "/document/fields/title": "A minimal note",
+  "/document/fields/tags": ["alpha", "beta"]
+}

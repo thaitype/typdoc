@@ -4,4 +4,5 @@
 pub mod check;
 pub mod design;
 pub mod fixtures;
+pub mod golden;
 pub mod spec;
