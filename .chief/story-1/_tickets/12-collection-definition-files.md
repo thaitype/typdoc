@@ -6,7 +6,7 @@ Blocked by: None (can start immediately)
 
 ## Question
 
-Ticket 2 put the number allocator's state, `last`, in the collection's own definition. Today a collection is an entry in the `collections[]` array of `.typdoc/config.json`, next to human-authored settings. The human proposed instead that each collection be its own JSON file, with `schema` as one of its fields, so that state lives with the definition it describes. Benefits argued so far: adding a collection means adding a file rather than editing a shared config; a merge conflict is confined to one collection; `validation.collections.<name>` can sit beside the collection it tunes.
+Ticket 2 put the number allocator's state, `last`, in the collection's own definition. Today a collection is an entry in the `collections[]` array of `.typdoc/config.json`, next to hand-authored settings. The proposal is that each collection be its own JSON file, with `schema` as one of its fields, so that state lives with the definition it describes. Benefits argued: adding a collection means adding a file rather than editing a shared config; a merge conflict is confined to one collection; `validation.collections.<name>` can sit beside the collection it tunes.
 
 Decide:
 
@@ -20,11 +20,11 @@ Amend `docs/design.md` (Config section, examples, Discovery, Concurrency).
 
 ## Answer
 
-Decided with the human, 2026-09-19.
+Decided 2026-09-19.
 
 **Split: one file per collection at `.typdoc/collections/<name>.json`.** It holds `match`, `schema`, optional `refBase`, optional `validation` for that collection, and `last`. `config.json` keeps `version`, `name`, `imports`, `validation.global` and `lock`. Placement was settled by the design itself: a namespace is the folder that holds the documents, and `.typdoc/` sits at its top, so the collection files are beside the markdown already. Putting a definition inside a documents subfolder was rejected because a collection is not one folder: `match` is a template or glob, and several collections may share a folder.
 
-Defaults, all accepted by the human:
+Defaults:
 
 1. **Name** is the file name without `.json`: ASCII letters, digits, `-` and `_`. Unique by construction.
 2. **One `version`**, in `config.json` only. It covers every format typdoc owns: `config.json`, the collection files, `lock.json` (which loses its own `version`) and the schema format. Pinned copies of remote schemas follow the publisher's version in their URL.
