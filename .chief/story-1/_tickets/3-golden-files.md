@@ -1,7 +1,7 @@
 # 3: Golden files: the generator, its guard, and ordered comparison
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 1
 
 ## What this delivers
