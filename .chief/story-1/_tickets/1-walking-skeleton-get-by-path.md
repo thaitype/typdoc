@@ -1,7 +1,7 @@
 # 1: Walking skeleton: `typdoc get <path> --json`
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: None (can start immediately)
 
 ## What this delivers
