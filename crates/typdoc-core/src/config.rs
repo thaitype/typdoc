@@ -82,6 +82,20 @@ pub struct Config {
 }
 
 /// The config errors found so far.
+///
+/// Every error added here stops the command today, whichever way it was added: `stop` ends the
+/// list at once (`complete: false`, the rest of the config could not be interpreted); `finish`
+/// turns whatever `add` collected into the same kind of failure (`complete: true`, everything
+/// else was determined). The design's own question for a config error, "does it make checking
+/// impossible?", is answered here only once, for the whole type, and not error by error: an
+/// error added through `add`, not `stop`, has already been read as one that leaves the rest of
+/// the config readable (parsing continues past it), which is the design's condition for a
+/// finding in `validate`'s report rather than a stopped command — `config.legacy-file` is a
+/// plain example, since a stray `.typdoc.json` beside the folder says nothing about whether
+/// `.typdoc/config.json` itself can be read. None of the errors this crate adds answers that
+/// question on its own yet, `config.legacy-file` included: `finish` stops the command for all
+/// of them alike. Letting one answer it on its own, so it could reach `validate` as a finding
+/// instead, is a change to this type and is not made here.
 #[derive(Default)]
 pub(crate) struct Report {
     errors: Vec<ConfigError>,

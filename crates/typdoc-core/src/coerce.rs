@@ -27,6 +27,27 @@ pub fn coerce(kind: &FieldType, written: &Value) -> Option<Value> {
     }
 }
 
+/// Whether `value`, already read by `coerce` or kept as written, is what `kind` asks for.
+/// `coerce` returns the written value unchanged when nothing fits, so a field that is not one
+/// of the typed variants below is a value that did not coerce: `fits` and `coerce` agree by
+/// construction, without redoing the parse. `Other`, a type name the format does not have, is
+/// read tolerantly and always fits.
+pub fn fits(kind: &FieldType, value: &Value) -> bool {
+    matches!(
+        (kind, value),
+        (FieldType::Other(_), Value::Text(_) | Value::List(_))
+            | (
+                FieldType::String | FieldType::Enum | FieldType::Ref,
+                Value::Text(_)
+            )
+            | (FieldType::List | FieldType::RefList, Value::List(_))
+            | (FieldType::Number, Value::Number(_))
+            | (FieldType::Bool, Value::Bool(_))
+            | (FieldType::Date, Value::Date(_))
+            | (FieldType::Datetime, Value::Datetime(_))
+    )
+}
+
 fn date(text: &str) -> bool {
     let bytes = text.as_bytes();
     let shaped = bytes.len() == 10

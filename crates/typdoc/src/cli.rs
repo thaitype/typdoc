@@ -1,9 +1,13 @@
 use std::ffi::OsString;
+use std::path::PathBuf;
 
 use clap::error::ErrorKind as ClapKind;
 use clap::{Parser, Subcommand};
 use serde_json::{Map, Value as Json, json};
-use typdoc_core::{Argument, Deps, Document, Error, ErrorKind, Project, Toc, Value, discover_for};
+use typdoc_core::{
+    Argument, Deps, Document, DocumentArg, Env, Error, ErrorKind, Finding, Project, Severity, Toc,
+    ValidateReport, ValidateScope, Value, discover, discover_for, resolve_on_disk,
+};
 
 #[derive(Parser)]
 #[command(name = "typdoc", version)]
@@ -32,6 +36,22 @@ enum Command {
         /// List only the headings down to this level, 1 to 6
         #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(1..))]
         depth: Option<u8>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Check the project, or named documents, against its schemas and rules
+    Validate {
+        /// The keys or paths of the documents to check; the whole project when none is given
+        documents: Vec<OsString>,
+        /// Check schemas only, for the whole project
+        #[arg(long)]
+        schemas: bool,
+        /// Raise every remaining `warn` to `error`
+        #[arg(long)]
+        strict: bool,
+        /// What has to be fixed before typdoc can be adopted
+        #[arg(long)]
+        audit: bool,
         #[arg(long)]
         json: bool,
     },
@@ -80,6 +100,40 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 Err(e) => failure(true, exit_code(e.kind()), &e),
             }
         }
+        Command::Validate {
+            documents,
+            schemas,
+            strict,
+            audit,
+            json,
+        } => {
+            if !json {
+                return failure_text(false, 1, "the output without --json is not built yet");
+            }
+            if (schemas || audit) && !documents.is_empty() {
+                let flag = if schemas { "--schemas" } else { "--audit" };
+                return failure_text(
+                    true,
+                    1,
+                    &format!(
+                        "{flag} describes the whole project and cannot be combined with arguments"
+                    ),
+                );
+            }
+            // `--audit` answers a different question from plain `validate` (design, "Audit
+            // mode": `summary.audit`, `summary.unreported`, the `audit` object, rules at `off`
+            // shown as `info`, exit 0 unless the config itself is invalid), and none of that is
+            // built yet (ticket 19). Refusing it here is the same choice already made for
+            // `--json`'s absence and for a `project::` prefix: a flag or form the binary does
+            // not answer yet is refused plainly, not run as something else with no word said.
+            if audit {
+                return failure_text(true, 1, "--audit is not built yet");
+            }
+            match validate(deps, &documents, schemas, strict, cli.namespace.as_deref()) {
+                Ok(report) => validate_outcome(&report),
+                Err(e) => failure(true, exit_code(e.kind()), &e),
+            }
+        }
     }
 }
 
@@ -107,6 +161,113 @@ fn toc(deps: &Deps, document: &std::ffi::OsStr, namespace: Option<&str>) -> Resu
     let project = Project::load(&root)?;
     let scope = project.scope(arg.namespace_prefix(), namespace, deps.env)?;
     project.toc(&arg, &scope, deps.env)
+}
+
+fn validate(
+    deps: &Deps,
+    documents: &[OsString],
+    schemas: bool,
+    strict: bool,
+    namespace: Option<&str>,
+) -> Result<ValidateReport, Error> {
+    let (root, args) = validate_args(deps.env, documents)?;
+    // A config error stops here today (`Error::ConfigErrors`, see `config::Report`'s own
+    // comment on why), before `project.validate` below ever runs: nothing reaches it as a
+    // finding yet. This `?` is where a config error that answered the design's question on its
+    // own, "does it make checking impossible?", with no, would instead let the project load and
+    // reach `validate`'s report.
+    let project = Project::load(&root)?;
+    project.validate(&args, schemas, strict, namespace, deps.env)
+}
+
+/// The project every argument is read against, found from the first argument as `get` finds
+/// it, and the arguments themselves. An on-disk argument after the first is read against that
+/// same, already-known root rather than walking up from its own folder again.
+fn validate_args(env: &dyn Env, raw: &[OsString]) -> Result<(PathBuf, Vec<DocumentArg>), Error> {
+    let Some((first, rest)) = raw.split_first() else {
+        return Ok((discover(env)?, Vec::new()));
+    };
+    let (root, first) = discover_for(Argument::parse(first)?, env)?;
+    let mut args = vec![first];
+    for raw_arg in rest {
+        args.push(match Argument::parse(raw_arg)? {
+            Argument::Named(document) => document,
+            Argument::OnDisk(path) => resolve_on_disk(&root, &path, env)?,
+        });
+    }
+    Ok((root, args))
+}
+
+/// `validate`'s own outcome: the report on standard output whether or not it is favourable
+/// (design, JSON output), with exit 2 when a finding is an error and 0 otherwise.
+fn validate_outcome(report: &ValidateReport) -> Outcome {
+    let code = if report.findings.iter().any(|f| f.level == Severity::Error) {
+        2
+    } else {
+        0
+    };
+    Outcome {
+        code,
+        stdout: format!("{}\n", validate_json(report)),
+        stderr: String::new(),
+    }
+}
+
+fn validate_json(report: &ValidateReport) -> Json {
+    let mut checked = Map::new();
+    checked.insert("namespaces".to_owned(), json!(report.namespaces));
+    checked.insert("documents".to_owned(), json!(report.documents));
+    if let Some(paths) = &report.paths {
+        checked.insert("paths".to_owned(), json!(paths));
+    }
+    let (error, warn) = report
+        .findings
+        .iter()
+        .fold((0u32, 0u32), |(error, warn), finding| match finding.level {
+            Severity::Error => (error + 1, warn),
+            Severity::Warn => (error, warn + 1),
+        });
+    let mut summary = Map::new();
+    summary.insert("scope".to_owned(), json!(scope_name(report.scope)));
+    summary.insert("strict".to_owned(), json!(report.strict));
+    summary.insert("checked".to_owned(), Json::Object(checked));
+    summary.insert(
+        "findings".to_owned(),
+        json!({ "error": error, "warn": warn, "info": 0 }),
+    );
+    let findings: Vec<Json> = report.findings.iter().map(finding_json).collect();
+    json!({ "summary": Json::Object(summary), "findings": findings })
+}
+
+fn scope_name(scope: ValidateScope) -> &'static str {
+    match scope {
+        ValidateScope::All => "all",
+        ValidateScope::Paths => "paths",
+        ValidateScope::Schemas => "schemas",
+    }
+}
+
+fn severity_name(level: Severity) -> &'static str {
+    match level {
+        Severity::Error => "error",
+        Severity::Warn => "warn",
+    }
+}
+
+fn finding_json(finding: &Finding) -> Json {
+    let mut object = document_name(&finding.path, &finding.namespace, finding.key.as_deref());
+    object.insert("collection".to_owned(), json!(finding.collection));
+    if let Some(field) = &finding.field {
+        object.insert("field".to_owned(), json!(field));
+    }
+    if let Some(position) = finding.position {
+        object.insert("line".to_owned(), json!(position.line));
+        object.insert("col".to_owned(), json!(position.col));
+    }
+    object.insert("rule".to_owned(), json!(finding.rule));
+    object.insert("level".to_owned(), json!(severity_name(finding.level)));
+    object.insert("message".to_owned(), json!(finding.message));
+    Json::Object(object)
 }
 
 fn exit_code(kind: ErrorKind) -> u8 {

@@ -44,6 +44,9 @@ pub const RULES: &[&str] = &[
     "config.namespaces-entry",
     "config.namespace-name",
     "config.namespace-nested",
+    "frontmatter.parse",
+    "frontmatter.types",
+    "frontmatter.unknown",
 ];
 
 /// Ids the design names and the binary does not report yet. Each is a difference between
@@ -51,8 +54,6 @@ pub const RULES: &[&str] = &[
 /// when it enters `RULES`, and it is empty when v1 is finished.
 pub const UNIMPLEMENTED_RULES: &[&str] = &[
     "schema.valid",            // story 1
-    "frontmatter.parse",       // story 1
-    "frontmatter.types",       // story 1
     "frontmatter.transitions", // story 2
     "refs.resolve",            // story 1
     "refs.target",             // story 1
@@ -66,7 +67,6 @@ pub const UNIMPLEMENTED_RULES: &[&str] = &[
     "refs.codedByPath",        // story 1
     "refs.moved",              // story 1
     "names.shadowed",          // story 1
-    "frontmatter.unknown",     // story 1
     "filename.pattern",        // story 1
     "imports.absent",          // story 1
     "config.state-uncoded",    // story 1

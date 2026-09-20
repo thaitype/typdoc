@@ -1,0 +1,21 @@
+{
+  "summary": {
+    "scope": "paths",
+    "strict": false,
+    "checked": {
+      "namespaces": [
+        "default"
+      ],
+      "documents": 1,
+      "paths": [
+        "note.md"
+      ]
+    },
+    "findings": {
+      "error": 0,
+      "warn": 0,
+      "info": 0
+    }
+  },
+  "findings": []
+}

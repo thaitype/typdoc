@@ -41,6 +41,22 @@ impl FieldType {
             other => FieldType::Other(other.to_owned()),
         }
     }
+
+    /// The name a message can show for this type, the same word the schema is written with.
+    pub fn name(&self) -> &str {
+        match self {
+            FieldType::String => "string",
+            FieldType::Number => "number",
+            FieldType::Bool => "bool",
+            FieldType::Date => "date",
+            FieldType::Datetime => "datetime",
+            FieldType::Enum => "enum",
+            FieldType::List => "list",
+            FieldType::Ref => "ref",
+            FieldType::RefList => "ref[]",
+            FieldType::Other(name) => name,
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for FieldType {
@@ -152,6 +168,13 @@ pub struct Resolved {
 impl Resolved {
     pub fn field(&self, name: &str) -> Option<&Field> {
         self.fields.get(name)
+    }
+
+    /// Every field of the schema, by name, in no particular order.
+    pub fn fields(&self) -> impl Iterator<Item = (&str, &Field)> {
+        self.fields
+            .iter()
+            .map(|(name, field)| (name.as_str(), field))
     }
 }
 
@@ -266,8 +289,10 @@ pub(crate) fn load(
     Ok(Some(merge(&chain)))
 }
 
-/// The chain from the collection's schema up to its most distant parent.
-fn merge(chain: &[Schema]) -> Resolved {
+/// The chain from the collection's schema up to its most distant parent. `pub(crate)` so a
+/// test elsewhere in the crate can build a `Resolved` from a `Schema` it wrote by hand, without
+/// going through a project on disk.
+pub(crate) fn merge(chain: &[Schema]) -> Resolved {
     let mut fields = BTreeMap::new();
     for schema in chain.iter().rev() {
         fields.extend(schema.fields.clone());

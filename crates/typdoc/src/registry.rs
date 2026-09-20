@@ -16,13 +16,12 @@ pub fn commands() -> Vec<String> {
 /// the design and the binary, with the story expected to deliver it as a comment. The list only shrinks, and it is empty
 /// when v1 is finished.
 pub const UNIMPLEMENTED_COMMANDS: &[&str] = &[
-    "new",      // story 2
-    "list",     // story 1
-    "set",      // story 2
-    "refs",     // story 1
-    "mv",       // story 2
-    "pull",     // story 3
-    "validate", // story 1
+    "new",  // story 2
+    "list", // story 1
+    "set",  // story 2
+    "refs", // story 1
+    "mv",   // story 2
+    "pull", // story 3
 ];
 
 /// Exit codes the design's table names and no test makes the binary end with. Each is a

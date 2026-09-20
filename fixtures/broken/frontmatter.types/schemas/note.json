@@ -1,0 +1,7 @@
+{
+  "name": "note",
+  "fields": {
+    "title": { "type": "string", "required": true },
+    "count": { "type": "number" }
+  }
+}

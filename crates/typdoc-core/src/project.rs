@@ -1,11 +1,11 @@
-use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::argument::DocumentArg;
 use crate::body::{self, Heading};
-use crate::config::{Collection, Config, Report, config_file};
+use crate::config::{Collection, Config, Report, Rules, config_file};
 use crate::document::Document;
 use crate::env::Env;
 use crate::error::Error;
@@ -14,6 +14,7 @@ use crate::index::{Entry as Indexed, Index, Member};
 use crate::schema::{self, Resolved};
 use crate::scope::{self, Scope};
 use crate::template::Template;
+use crate::validate::{self, DocName, Finding, ValidateScope};
 
 /// The folder that holds `.typdoc/config.json`: `TYPDOC_DIR` when it is set, and otherwise
 /// the nearest one above the current directory, that directory included.
@@ -54,6 +55,24 @@ pub struct Project {
 struct Loaded {
     name: String,
     schema: Resolved,
+    /// The collection file's own `validation`, merged over the project's `validation.global`.
+    validation: Rules,
+}
+
+/// The report of a `validate` run, in the shape the design's summary and findings hold, before
+/// the CLI turns it into JSON.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidateReport {
+    pub scope: ValidateScope,
+    pub strict: bool,
+    /// Sorted, each once.
+    pub namespaces: Vec<String>,
+    /// 0 for `Schemas`.
+    pub documents: usize,
+    /// Only for `Paths`: sorted, each once, matching the `path` of every finding.
+    pub paths: Option<Vec<String>>,
+    /// In the order the design guarantees.
+    pub findings: Vec<Finding>,
 }
 
 impl Project {
@@ -105,6 +124,7 @@ impl Project {
             loaded.push(Loaded {
                 name: collection.name.clone(),
                 schema,
+                validation: collection.validation.clone(),
             });
         }
         report.finish()?;
@@ -166,6 +186,98 @@ impl Project {
             key: entry.key.clone(),
             headings,
         })
+    }
+
+    /// The report of `validate`: `Schemas` when `schemas_only`, `Paths` when `args` is not
+    /// empty, and `All` (every document in scope) otherwise. Combining `schemas_only` with
+    /// arguments is a caller error and is refused before this runs (design: "combining either
+    /// with arguments is bad arguments"), so it is not checked again here.
+    pub fn validate(
+        &self,
+        args: &[DocumentArg],
+        schemas_only: bool,
+        strict: bool,
+        flag: Option<&str>,
+        env: &dyn Env,
+    ) -> Result<ValidateReport, Error> {
+        if schemas_only {
+            let scope = self.scope(None, flag, env)?;
+            return Ok(ValidateReport {
+                scope: ValidateScope::Schemas,
+                strict,
+                namespaces: scope.namespaces,
+                documents: 0,
+                paths: None,
+                findings: Vec::new(),
+            });
+        }
+        if args.is_empty() {
+            let scope = self.scope(None, flag, env)?;
+            let mut findings = Vec::new();
+            let mut namespaces = BTreeSet::new();
+            let mut documents = 0usize;
+            for (path, entry) in self.index.iter() {
+                let namespace = &self.config.namespaces[entry.namespace].name;
+                if !scope.contains(namespace) {
+                    continue;
+                }
+                namespaces.insert(namespace.clone());
+                documents += 1;
+                let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
+                findings.extend(self.check_entry(path, entry, &text, strict));
+            }
+            validate::order(&mut findings);
+            return Ok(ValidateReport {
+                scope: ValidateScope::All,
+                strict,
+                namespaces: namespaces.into_iter().collect(),
+                documents,
+                paths: None,
+                findings,
+            });
+        }
+        let mut findings = Vec::new();
+        let mut namespaces = BTreeSet::new();
+        let mut paths = BTreeSet::new();
+        for arg in args {
+            let scope = self.scope(arg.namespace_prefix(), flag, env)?;
+            let (path, entry, text) = self.resolve(arg, &scope, env)?;
+            if paths.insert(path.clone()) {
+                let namespace = &self.config.namespaces[entry.namespace].name;
+                namespaces.insert(namespace.clone());
+                findings.extend(self.check_entry(&path, entry, &text, strict));
+            }
+        }
+        validate::order(&mut findings);
+        Ok(ValidateReport {
+            scope: ValidateScope::Paths,
+            strict,
+            namespaces: namespaces.into_iter().collect(),
+            documents: paths.len(),
+            paths: Some(paths.into_iter().collect()),
+            findings,
+        })
+    }
+
+    /// The findings of one document already read: `frontmatter.parse`, `frontmatter.types` and
+    /// `frontmatter.unknown`, at the level the collection's own `validation`, merged over the
+    /// project's `validation.global`, and `strict` give them.
+    fn check_entry(&self, path: &str, entry: &Indexed, text: &str, strict: bool) -> Vec<Finding> {
+        let collection = &self.collections[entry.collection];
+        let name = DocName {
+            path,
+            namespace: &self.config.namespaces[entry.namespace].name,
+            collection: &collection.name,
+            key: entry.key.as_deref(),
+        };
+        validate::check_document(
+            text,
+            &collection.schema,
+            &self.config.validation,
+            &collection.validation,
+            strict,
+            &name,
+        )
     }
 
     /// The path a document argument names, its place in the index, and the text of the file.

@@ -38,6 +38,14 @@ impl Index {
         self.entries.get(path)
     }
 
+    /// Every document of the project, by its path, in no particular order (the caller sorts
+    /// what it needs sorted).
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &Entry)> {
+        self.entries
+            .iter()
+            .map(|(path, entry)| (path.as_str(), entry))
+    }
+
     /// The path of the document that carries `key` in the namespace at `namespace`.
     pub fn key(&self, namespace: usize, key: &str) -> Option<&str> {
         self.keys

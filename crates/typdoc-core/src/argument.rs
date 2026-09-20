@@ -145,6 +145,29 @@ pub fn discover_for(arg: Argument, env: &dyn Env) -> Result<(PathBuf, DocumentAr
     }
 }
 
+/// An on-disk path argument, resolved against a project root already known (unlike
+/// `discover_for`, which finds the root by walking up from the file itself). Used when several
+/// document arguments are given to one command and the root was already fixed by the first of
+/// them: every later on-disk argument is read against that same root, and one outside it is
+/// not found, since a path on disk names no document of a different project.
+pub fn resolve_on_disk(root: &Path, given: &Path, env: &dyn Env) -> Result<DocumentArg, Error> {
+    let cwd = env.current_dir().map_err(Error::io_at(Path::new(".")))?;
+    let absolute = normalize(&if given.is_absolute() {
+        given.to_owned()
+    } else {
+        cwd.join(given)
+    });
+    let relative = absolute.strip_prefix(root).map_err(|_| Error::NotFound {
+        path: given.to_string_lossy().into_owned(),
+        hint: false,
+    })?;
+    let path = to_project_path(relative, given)?;
+    Ok(DocumentArg::Path {
+        namespace: None,
+        path,
+    })
+}
+
 /// `path` with `.` dropped and each `..` taken against the segment before it, lexically: no
 /// symbolic link is read and nothing named here has to exist.
 fn normalize(path: &Path) -> PathBuf {
@@ -177,7 +200,59 @@ fn to_project_path(relative: &Path, original: &Path) -> Result<String, Error> {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+    use std::io;
+
     use super::*;
+
+    struct FixedEnv {
+        cwd: PathBuf,
+    }
+
+    impl Env for FixedEnv {
+        fn var(&self, _name: &str) -> Option<OsString> {
+            None
+        }
+
+        fn current_dir(&self) -> io::Result<PathBuf> {
+            Ok(self.cwd.clone())
+        }
+    }
+
+    #[test]
+    fn resolve_on_disk_reads_a_path_against_a_root_already_known_and_not_by_walking_up() {
+        let root = Path::new("/proj");
+        let env = FixedEnv {
+            cwd: PathBuf::from("/proj/sub"),
+        };
+
+        assert_eq!(
+            resolve_on_disk(root, Path::new("./a.md"), &env).unwrap(),
+            DocumentArg::Path {
+                namespace: None,
+                path: "sub/a.md".to_owned()
+            }
+        );
+        assert_eq!(
+            resolve_on_disk(root, Path::new("/proj/b.md"), &env).unwrap(),
+            DocumentArg::Path {
+                namespace: None,
+                path: "b.md".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_on_disk_outside_the_known_root_is_not_found() {
+        let root = Path::new("/proj");
+        let env = FixedEnv {
+            cwd: PathBuf::from("/elsewhere"),
+        };
+
+        let error = resolve_on_disk(root, Path::new("./a.md"), &env).unwrap_err();
+
+        assert!(matches!(error, Error::NotFound { .. }), "{error}");
+    }
 
     fn parse(text: &str) -> Argument {
         Argument::parse(OsStr::new(text)).unwrap()

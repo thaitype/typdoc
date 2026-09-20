@@ -1,0 +1,1 @@
+{ "project": "valid/minimal", "command": ["validate", "--json"] }

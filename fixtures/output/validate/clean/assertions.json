@@ -1,0 +1,8 @@
+{
+  "/summary/scope": "all",
+  "/summary/strict": false,
+  "/summary/checked/namespaces": ["default"],
+  "/summary/checked/documents": 1,
+  "/summary/findings": { "error": 0, "warn": 0, "info": 0 },
+  "/findings": []
+}

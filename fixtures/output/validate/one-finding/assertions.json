@@ -1,0 +1,9 @@
+{
+  "/summary/scope": "all",
+  "/summary/findings": { "error": 0, "warn": 1, "info": 0 },
+  "/findings/0/rule": "frontmatter.unknown",
+  "/findings/0/level": "warn",
+  "/findings/0/field": "extra",
+  "/findings/0/path": "note.md",
+  "/findings/0/collection": "notes"
+}

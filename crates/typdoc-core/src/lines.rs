@@ -4,8 +4,9 @@
 
 use std::num::NonZeroUsize;
 
-/// A place in a text, 1-based.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A place in a text, 1-based. Ordered by `line` then `col`, so findings can be sorted by
+/// position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Position {
     pub line: usize,
     pub col: usize,
