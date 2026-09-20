@@ -22,7 +22,10 @@ cargo run -p typdoc -- <args>              # run the CLI from the repo
 
 - Rust, edition 2024, stable toolchain
 - Cargo workspace at the repo root, crates under `crates/`
-- clap (derive), serde + serde_json, a YAML frontmatter parser, thiserror (lib) + anyhow (bin), chrono
+- clap (derive), serde + serde_json, thiserror (lib) + anyhow (bin), chrono
+- YAML frontmatter: read with `yaml_serde` into typed `String` fields (types come from the schema); write with `yaml-edit`, exact-pinned, behind a typdoc-owned trait of three operations (set a scalar, append or remove a list item, add a key), and every write is re-read with `yaml_serde` and compared with the intent before the temp file is renamed. A mismatch rejects the write with an error, with no automatic fallback (`yaml-edit` is young; the trait makes a hand-written editor a later swap)
+- Markdown body: `pulldown-cmark` 0.13.4 with `default-features = false`; the frontmatter is cut first and the body slice parsed, with its offset added back so lines count from the top of the file
+- Remote schemas: `ureq` 3.x (blocking, rustls) behind a `Fetch` trait and a typdoc-owned `FetchError`, so `typdoc-core` has no async runtime: https only, redirects only https to https, an explicit timeout and a maximum response size, `HTTPS_PROXY` honoured
 
 ### Key Architectural Patterns
 
@@ -42,7 +45,7 @@ cargo run -p typdoc -- <args>              # run the CLI from the repo
 ### Important Development Rules
 
 1. Before every commit, `cargo fmt --check`, `cargo clippy --workspace -- -D warnings` and `cargo test --workspace` must pass.
-2. Tests must run offline (remote schemas are mocked).
+2. Tests must run offline (remote schemas are mocked). Fixtures live in the repo: it is public, so a real document is copied in only after review, and a test never skips silently when a file is missing.
 3. Writes touch only the frontmatter block and never re-serialize the body (the exception is `mv`, which rewrites link paths).
 4. Always write files via temp file + rename.
 5. Every command must support `--json` and use the exit codes 0–4 from the design.
