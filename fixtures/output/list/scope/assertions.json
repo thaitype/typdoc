@@ -1,0 +1,14 @@
+{
+  "/total": 3,
+  "/truncated": true,
+  "/documents/0/key": "WF-3",
+  "/documents/0/path": "tickets/WF-3.md",
+  "/documents/0/namespace": "default",
+  "/documents/0/code": "WF",
+  "/documents/0/collection": "tickets",
+  "/documents/0/schema": "ticket",
+  "/documents/0/fields/title": "Ticket three",
+  "/documents/1/key": "WF-2",
+  "/documents/1/path": "tickets/WF-2.md",
+  "/documents/1/fields/title": "Ticket two"
+}

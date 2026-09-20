@@ -34,10 +34,12 @@ pub use links::{
     BodyLink, BodyLinks, Definition, DuplicateDefinition, Mention, Suspect, mentions, scan,
 };
 pub use project::{
-    Project, RefName, RefOutcome, RefsDirection, RefsReference, RefsReport, Toc, ValidateReport,
-    discover,
+    ListFilter, Project, RefName, RefOutcome, RefsDirection, RefsReference, RefsReport, SortKey,
+    Toc, ValidateReport, discover,
 };
-pub use query::{Condition, FieldRef, Item, Op, QueryError, evaluate, parse as parse_query};
+pub use query::{
+    Condition, FieldRef, Item, Op, QueryError, evaluate, parse as parse_query, parse_field,
+};
 pub use schema::{Auto, Field, FieldType, OptBool, Resolved, Schema, Target};
 pub use scope::{Scope, Source};
 pub use validate::{Finding, Severity, ValidateScope};

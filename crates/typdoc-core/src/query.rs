@@ -105,10 +105,7 @@ impl std::fmt::Display for QueryError {
                 Ok(())
             }
             QueryError::UnknownField(name) => {
-                write!(
-                    f,
-                    "the field `{name}` is not one the schema in scope declares"
-                )
+                write!(f, "no schema in scope declares the field `{name}`")
             }
             QueryError::OrderingNotAllowed { field, kind } => write!(
                 f,
@@ -157,6 +154,19 @@ pub fn parse(expr: &str) -> Result<Condition, QueryError> {
         }
     }
     first
+}
+
+/// One field name on its own, read the same way a condition's own field is (`[A-Za-z_]
+/// [A-Za-z0-9_-]*`, or a pseudo-field): for `list`'s `--sort field[:asc|:desc]`, whose field
+/// part names a sort key and not a condition.
+pub fn parse_field(name: &str) -> Result<FieldRef, QueryError> {
+    let (parsed, rest) = take_field_name(name)?;
+    if !rest.is_empty() {
+        return Err(syntax(format!(
+            "`{name}` is not a field name: a field name is [A-Za-z_][A-Za-z0-9_-]*"
+        )));
+    }
+    Ok(to_field_ref(parsed))
 }
 
 fn parse_strict(expr: &str) -> Result<Condition, QueryError> {
@@ -336,8 +346,9 @@ fn field_display_name(field: &FieldRef) -> String {
 
 /// The value a document holds for `field`, own fields and pseudo-fields alike, as one `Value`.
 /// `None` is absence: the field is not in `doc.fields`, or the pseudo-field does not apply to
-/// this document (`key`, `code`, on one with no code).
-fn field_value(field: &FieldRef, doc: &Document) -> Option<Value> {
+/// this document (`key`, `code`, on one with no code). `pub(crate)` so `list` (`project.rs`) can
+/// read a sort key's value the same way a condition does, without a second lookup.
+pub(crate) fn field_value(field: &FieldRef, doc: &Document) -> Option<Value> {
     match field {
         FieldRef::Path => Some(Value::Text(doc.path.clone())),
         FieldRef::Key => doc.key.clone().map(Value::Text),
@@ -620,14 +631,19 @@ fn compare(op: Op, ordering: Option<CmpOrdering>) -> bool {
     }
 }
 
-fn parse_date(text: &str) -> Option<NaiveDate> {
+/// A calendar date read the same way a `date` field's value is, for `list`'s `--sort` (a date
+/// compares by value, the Sorting table under `list`). `pub(crate)` for the same reason as
+/// `field_value`.
+pub(crate) fn parse_date(text: &str) -> Option<NaiveDate> {
     match coerce::coerce(&FieldType::Date, &Value::Text(text.to_owned())) {
         Some(Value::Date(text)) => NaiveDate::parse_from_str(&text, "%Y-%m-%d").ok(),
         _ => None,
     }
 }
 
-fn parse_datetime(text: &str) -> Option<DateTime<FixedOffset>> {
+/// A datetime read the same way a `datetime` field's value is, for `list`'s `--sort`.
+/// `pub(crate)` for the same reason as `field_value`.
+pub(crate) fn parse_datetime(text: &str) -> Option<DateTime<FixedOffset>> {
     match coerce::coerce(&FieldType::Datetime, &Value::Text(text.to_owned())) {
         Some(Value::Datetime(text)) => DateTime::parse_from_rfc3339(&text).ok(),
         _ => None,

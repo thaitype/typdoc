@@ -5,9 +5,10 @@ use clap::error::ErrorKind as ClapKind;
 use clap::{Parser, Subcommand};
 use serde_json::{Map, Value as Json, json};
 use typdoc_core::{
-    Argument, Deps, Document, DocumentArg, Env, Error, ErrorKind, Finding, Project, RefOutcome,
-    RefsDirection, RefsReference, RefsReport, Severity, Toc, ValidateReport, ValidateScope, Value,
-    discover, discover_for, resolve_on_disk,
+    Argument, Deps, Document, DocumentArg, Env, Error, ErrorKind, FieldRef, Finding, ListFilter,
+    Project, RefOutcome, RefsDirection, RefsReference, RefsReport, Severity, SortKey, Toc,
+    ValidateReport, ValidateScope, Value, discover, discover_for, parse_field, parse_query,
+    resolve_on_disk,
 };
 
 #[derive(Parser)]
@@ -27,6 +28,33 @@ enum Command {
     Get {
         /// The path of the document, from the project folder
         document: OsString,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Query documents
+    List {
+        /// Collection names, separated by `,`
+        #[arg(long, value_name = "LIST")]
+        collection: Option<String>,
+        /// A shorthand that selects the collections whose schema has this code, separated by `,`
+        #[arg(long, value_name = "LIST")]
+        code: Option<String>,
+        /// A condition every listed document must satisfy; may repeat, ANDed
+        #[arg(long = "where", value_name = "EXPR")]
+        where_: Vec<String>,
+        /// The extra columns of the default table, separated by `,`
+        #[arg(long, value_name = "LIST")]
+        fields: Option<String>,
+        /// A sort key, `field` or `field:asc`/`field:desc`; may repeat, the first breaking ties
+        /// first
+        #[arg(long, value_name = "KEY")]
+        sort: Vec<String>,
+        /// The most documents to print; `total` still counts every match
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
+        /// Print one key or path per line instead of the table
+        #[arg(long)]
+        ids: bool,
         #[arg(long)]
         json: bool,
     },
@@ -99,6 +127,35 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
             match get(deps, &document, cli.namespace.as_deref()) {
                 Ok(document) => success(json!({ "document": document_json(&document) })),
                 Err(e) => failure(true, exit_code(e.kind()), &e),
+            }
+        }
+        Command::List {
+            collection,
+            code,
+            where_,
+            fields,
+            sort,
+            limit,
+            ids,
+            json,
+        } => {
+            if json && ids {
+                return failure_text(
+                    json,
+                    1,
+                    "--ids and --json cannot be combined: --ids has no place in the --json shape",
+                );
+            }
+            match list(
+                deps,
+                collection.as_deref(),
+                code.as_deref(),
+                &where_,
+                &sort,
+                cli.namespace.as_deref(),
+            ) {
+                Ok(matched) => list_outcome(&matched, limit, fields.as_deref(), &where_, ids, json),
+                Err(e) => failure(json, exit_code(e.kind()), &e),
             }
         }
         Command::Refs {
@@ -195,6 +252,228 @@ fn toc(deps: &Deps, document: &std::ffi::OsStr, namespace: Option<&str>) -> Resu
     let project = Project::load(&root)?;
     let scope = project.scope(arg.namespace_prefix(), namespace, deps.env)?;
     project.toc(&arg, &scope, deps.env)
+}
+
+/// `list`: no document argument, so the scope is chosen with no namespace prefix (`--namespace`,
+/// `TYPDOC_NAMESPACE` and the current directory still apply). Returns every matching document,
+/// sorted, `--limit` not yet applied: the caller (`list_outcome`) cuts the result for it, so a
+/// value the table prints (a column's width) can be computed from the whole match and stay the
+/// same whatever `--limit` is (design: a flag that limits what is listed never changes the
+/// values of an item).
+fn list(
+    deps: &Deps,
+    collection: Option<&str>,
+    code: Option<&str>,
+    wheres: &[String],
+    sort: &[String],
+    namespace: Option<&str>,
+) -> Result<Vec<Document>, Error> {
+    let root = discover(deps.env)?;
+    let project = Project::load(&root)?;
+    let scope = project.scope(None, namespace, deps.env)?;
+    let collections = split_list(collection);
+    let codes = split_list(code);
+    let conditions: Vec<_> = wheres
+        .iter()
+        .map(|expr| parse_query(expr).map_err(|e| Error::BadArgument(e.to_string())))
+        .collect::<Result<_, _>>()?;
+    let sort_keys: Vec<SortKey> = sort
+        .iter()
+        .map(|spec| parse_sort_key(spec))
+        .collect::<Result<_, _>>()?;
+    let filter = ListFilter {
+        collections: &collections,
+        codes: &codes,
+        wheres: &conditions,
+        sort: &sort_keys,
+    };
+    project.list(&scope, &filter)
+}
+
+/// `--collection`/`--code`'s value, split on `,`; absent is the same as empty (every collection).
+fn split_list(value: Option<&str>) -> Vec<String> {
+    value
+        .map(|v| v.split(',').map(str::to_owned).collect())
+        .unwrap_or_default()
+}
+
+/// One `--sort` entry: `field` alone (ascending) or `field:asc`/`field:desc`. Any other suffix
+/// after the `:` is an error (design, Sorting: "anything else is an error").
+fn parse_sort_key(spec: &str) -> Result<SortKey, Error> {
+    let (name, dir) = match spec.split_once(':') {
+        Some((name, dir)) => (name, Some(dir)),
+        None => (spec, None),
+    };
+    let field = parse_field(name).map_err(|e| Error::BadArgument(e.to_string()))?;
+    let desc = match dir {
+        None | Some("asc") => false,
+        Some("desc") => true,
+        Some(other) => {
+            return Err(Error::BadArgument(format!(
+                "`{other}` is not a sort direction: it is `asc` or `desc`"
+            )));
+        }
+    };
+    Ok(SortKey { field, desc })
+}
+
+/// `list`'s three output shapes, chosen by `--json`/`--ids`/neither: `total` and `truncated`
+/// (design: `truncated` is true exactly when `total`, the count before `--limit`, is larger than
+/// the number listed) are computed here, once, from `matched` (every document `list` matched, in
+/// order) and `limit`, so every shape agrees with the other two.
+fn list_outcome(
+    matched: &[Document],
+    limit: Option<usize>,
+    fields: Option<&str>,
+    wheres: &[String],
+    ids: bool,
+    json: bool,
+) -> Outcome {
+    let total = matched.len();
+    let listed = match limit {
+        Some(n) => &matched[..n.min(matched.len())],
+        None => matched,
+    };
+    let truncated = total > listed.len();
+    if json {
+        return success(list_json(listed, total, truncated));
+    }
+    if ids {
+        let mut stdout = String::new();
+        for doc in listed {
+            stdout.push_str(doc.key.as_deref().unwrap_or(doc.path.as_str()));
+            stdout.push('\n');
+        }
+        return Outcome {
+            code: 0,
+            stdout,
+            stderr: String::new(),
+        };
+    }
+    let columns = table_columns(fields, wheres);
+    Outcome {
+        code: 0,
+        stdout: list_table(matched, listed.len(), &columns),
+        stderr: String::new(),
+    }
+}
+
+fn list_json(documents: &[Document], total: usize, truncated: bool) -> Json {
+    let documents: Vec<Json> = documents.iter().map(document_json).collect();
+    json!({ "documents": documents, "total": total, "truncated": truncated })
+}
+
+/// The default table's extra columns (beyond the key-or-path identity and `title`): `--fields`
+/// when given, or else every field named by a `--where` condition, each once, in the order it
+/// first appears (design: "Default output is a table of key or path, title, and every field
+/// used in `--where`"). A `--where` expression that failed to parse never reaches here (`list`
+/// already returned its error), so re-parsing it for its field name alone is safe.
+fn table_columns(fields: Option<&str>, wheres: &[String]) -> Vec<String> {
+    if let Some(fields) = fields {
+        return fields.split(',').map(str::to_owned).collect();
+    }
+    let mut columns = Vec::new();
+    for expr in wheres {
+        if let Ok(condition) = parse_query(expr) {
+            let name = field_name(&condition.field);
+            if !columns.contains(&name) {
+                columns.push(name);
+            }
+        }
+    }
+    columns
+}
+
+fn field_name(field: &FieldRef) -> String {
+    match field {
+        FieldRef::Path => "path".to_owned(),
+        FieldRef::Key => "key".to_owned(),
+        FieldRef::Code => "code".to_owned(),
+        FieldRef::Collection => "collection".to_owned(),
+        FieldRef::Schema => "schema".to_owned(),
+        FieldRef::Namespace => "namespace".to_owned(),
+        FieldRef::Named(name) => name.clone(),
+    }
+}
+
+/// The default text table: one row per document of `matched[..listed_len]`, columns padded to
+/// the width their longest value takes across the whole of `matched` (not only the rows
+/// printed), so that a value the table prints does not change with `--limit` (the ticket's own
+/// criterion: a column's width computed from the listed rows only would move when `--limit`
+/// changes which rows are listed, and this construction cannot do that, since every row's cells
+/// are measured before any row is left out). Columns are separated by two spaces; there is no
+/// header row, since the design gives none.
+fn list_table(matched: &[Document], listed_len: usize, columns: &[String]) -> String {
+    let column_count = 2 + columns.len();
+    let rows: Vec<Vec<String>> = matched.iter().map(|doc| table_row(doc, columns)).collect();
+    let mut widths = vec![0usize; column_count];
+    for row in &rows {
+        for (i, cell) in row.iter().enumerate() {
+            widths[i] = widths[i].max(cell.chars().count());
+        }
+    }
+    let mut out = String::new();
+    for row in rows.iter().take(listed_len) {
+        let mut line = String::new();
+        for (i, cell) in row.iter().enumerate() {
+            if i > 0 {
+                line.push_str("  ");
+            }
+            line.push_str(cell);
+            if i + 1 < row.len() {
+                line.push_str(&" ".repeat(widths[i] - cell.chars().count()));
+            }
+        }
+        // The padding above never trails past a row's last non-empty cell except when that very
+        // last cell is itself empty (an unset field in the rightmost column): trimmed here so an
+        // empty trailing column leaves no trailing whitespace, without touching a column's own
+        // width (computed above, from `matched`, and untouched by this).
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    out
+}
+
+fn table_row(doc: &Document, columns: &[String]) -> Vec<String> {
+    let mut row = vec![doc.key.clone().unwrap_or_else(|| doc.path.clone())];
+    row.push(cell_value(doc, "title"));
+    for column in columns {
+        row.push(cell_value(doc, column));
+    }
+    row
+}
+
+/// One cell of the default table: a pseudo-field read straight off `doc`, a named field read
+/// from `doc.fields` (as `get`'s own `fields` already holds it), and a field this document has
+/// no value for as an empty cell (a document whose collection lacks it, or a document simply
+/// never given it).
+fn cell_value(doc: &Document, field: &str) -> String {
+    match field {
+        "path" => doc.path.clone(),
+        "key" => doc.key.clone().unwrap_or_default(),
+        "code" => doc.code.clone().unwrap_or_default(),
+        "collection" => doc.collection.clone(),
+        "schema" => doc.schema.clone(),
+        "namespace" => doc.namespace.clone(),
+        other => doc
+            .fields
+            .iter()
+            .find(|(found, _)| found == other)
+            .map(|(_, value)| render_cell(value))
+            .unwrap_or_default(),
+    }
+}
+
+/// A field's value as the table prints it: as written for text-shaped values, canonical for a
+/// number or a bool, and comma-joined for a list (the table has one cell per document, not one
+/// per element).
+fn render_cell(value: &Value) -> String {
+    match value {
+        Value::Text(text) | Value::Date(text) | Value::Datetime(text) => text.clone(),
+        Value::List(items) => items.join(","),
+        Value::Number(n) => n.to_string(),
+        Value::Bool(b) => b.to_string(),
+    }
 }
 
 fn refs(

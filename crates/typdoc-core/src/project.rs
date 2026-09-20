@@ -1,7 +1,10 @@
+use std::cmp::Ordering;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use chrono::{DateTime, FixedOffset, NaiveDate};
 
 use crate::argument::DocumentArg;
 use crate::body::{self, Heading};
@@ -13,8 +16,9 @@ use crate::frontmatter;
 use crate::index::{Entry as Indexed, Index, Member};
 use crate::lines::Position;
 use crate::links::{self, BodyLink, BodyLinks};
+use crate::query::{self, Condition, FieldRef, Op};
 use crate::refs;
-use crate::schema::{self, Auto, FieldType, Resolved};
+use crate::schema::{self, Auto, Field, FieldType, Resolved};
 use crate::scope::{self, Scope};
 use crate::template::{Step, Template};
 use crate::validate::{self, DocName, Finding, Severity, ValidateScope};
@@ -96,6 +100,29 @@ pub struct RefsReport {
     pub document: RefName,
     pub direction: RefsDirection,
     pub refs: Vec<RefsReference>,
+}
+
+/// One `--sort field[:asc|:desc]` of a `list` run, already parsed: `field` the same grammar a
+/// condition's own field uses (a pseudo-field or a name), `desc` for `:desc`, `false` (`asc`) by
+/// default.
+#[derive(Debug, Clone)]
+pub struct SortKey {
+    pub field: FieldRef,
+    pub desc: bool,
+}
+
+/// `list`'s filter, already parsed by the caller: `--collection` and `--code` (empty means every
+/// collection), the `--where` conditions (ANDed), and the `--sort` keys in priority order.
+/// `--limit`, `--fields` and `--ids` change nothing about which documents match or their order
+/// (design, JSON output: "a flag that... limits what is listed... never [changes] the values of
+/// an item"), so they are not part of the filter `list` itself reads; the caller cuts the result
+/// for `--limit` and chooses what to print for `--fields`/`--ids`.
+#[derive(Debug)]
+pub struct ListFilter<'a> {
+    pub collections: &'a [String],
+    pub codes: &'a [String],
+    pub wheres: &'a [Condition],
+    pub sort: &'a [SortKey],
 }
 
 pub struct Project {
@@ -298,6 +325,134 @@ impl Project {
             schema: collection.schema.name.clone(),
             fields,
         })
+    }
+
+    /// `list`: every document of `scope` whose collection is selected and whose fields satisfy
+    /// every `--where` condition, sorted by `--sort` and then, breaking every tie, in key or path
+    /// order (`docs/design-decision-phase-1/_tickets/15-json-output-shape.md`, "Already decided
+    /// elsewhere and not reopened"). `--limit` is not read here: the design reports `total` before
+    /// it and says a flag that limits what is listed never changes an item's values, so cutting
+    /// the result is the caller's job, done after this returns the whole match, in order.
+    ///
+    /// **The scope-wide field check this ticket owns.** The design's Names and scope paragraph
+    /// makes a field name unknown to *every* schema in scope an error, while a document whose own
+    /// schema merely lacks the field counts as absent; `query::evaluate` sees one schema at a time
+    /// and cannot tell those two apart (ticket 13's report). So every `--where` condition's own
+    /// field is checked here, once, against every schema `--collection`/`--code` (or, absent
+    /// those, every collection) selects, before any document is read; only once that has passed
+    /// does a document whose own schema happens to lack the field get to fall out as absent,
+    /// resolved directly by the op (`!=` satisfied, everything else failed) rather than by calling
+    /// `evaluate` with a schema that would misreport it as the scope-wide error.
+    pub fn list(&self, scope: &Scope, filter: &ListFilter) -> Result<Vec<Document>, Error> {
+        let selected = self.select_collections(filter.collections, filter.codes)?;
+        for condition in filter.wheres {
+            if let FieldRef::Named(name) = &condition.field
+                && !selected
+                    .iter()
+                    .any(|&i| self.collections[i].schema.field(name).is_some())
+            {
+                return Err(Error::BadArgument(
+                    query::QueryError::UnknownField(name.clone()).to_string(),
+                ));
+            }
+        }
+        let mut matched: Vec<(usize, Document)> = Vec::new();
+        for (path, entry) in self.index.iter() {
+            if !selected.contains(&entry.collection) {
+                continue;
+            }
+            let namespace = &self.config.namespaces[entry.namespace].name;
+            if !scope.contains(namespace) {
+                continue;
+            }
+            let collection = &self.collections[entry.collection];
+            let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
+            // A document whose frontmatter block cannot be parsed has no fields to filter, sort
+            // or print by; it is left out of the result, the same as it contributes no finding
+            // to `validate` beyond `frontmatter.parse` itself and no entry to `refs --reverse`'s
+            // scan (design: "no other rule is evaluated for that file").
+            let Some(fields) = parsed_fields(&text, &collection.schema) else {
+                continue;
+            };
+            let doc = Document {
+                path: path.to_owned(),
+                namespace: namespace.clone(),
+                key: entry.key.clone(),
+                code: collection.schema.code.clone(),
+                collection: collection.name.clone(),
+                schema: collection.schema.name.clone(),
+                fields,
+            };
+            let mut keep = true;
+            for condition in filter.wheres {
+                if !condition_matches(condition, &collection.schema, &doc)? {
+                    keep = false;
+                    break;
+                }
+            }
+            if keep {
+                matched.push((entry.collection, doc));
+            }
+        }
+        matched.sort_by(|(ca, a), (cb, b)| {
+            for key in filter.sort {
+                let ord = sort_compare(
+                    key,
+                    &self.collections[*ca].schema,
+                    a,
+                    &self.collections[*cb].schema,
+                    b,
+                );
+                if ord != Ordering::Equal {
+                    return ord;
+                }
+            }
+            compare_identity(a, b)
+        });
+        Ok(matched.into_iter().map(|(_, doc)| doc).collect())
+    }
+
+    /// The collections `--collection`/`--code` select, by their position in `self.collections`:
+    /// every collection whose name is in `collections` or whose schema's code is in `codes`, a
+    /// union of the two ways of naming one (design: "`--code` is a shorthand that selects the
+    /// collections whose schema has that code"). Every collection when both are empty. A name or
+    /// a code that matches nothing is refused, the same way an unknown namespace already is,
+    /// since it is more likely a typo than an intentional empty scope.
+    fn select_collections(
+        &self,
+        collections: &[String],
+        codes: &[String],
+    ) -> Result<Vec<usize>, Error> {
+        if collections.is_empty() && codes.is_empty() {
+            return Ok((0..self.collections.len()).collect());
+        }
+        let mut selected = BTreeSet::new();
+        for name in collections {
+            let found = self
+                .collections
+                .iter()
+                .position(|c| &c.name == name)
+                .ok_or_else(|| {
+                    Error::BadArgument(format!("`{name}` is not a collection of this project"))
+                })?;
+            selected.insert(found);
+        }
+        for code in codes {
+            let matches: Vec<usize> = self
+                .collections
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.schema.code.as_deref() == Some(code.as_str()))
+                .map(|(i, _)| i)
+                .collect();
+            if matches.is_empty() {
+                return Err(Error::BadArgument(format!(
+                    "`{code}` is not the code of any schema in this project"
+                )));
+            }
+            selected.extend(matches);
+        }
+        Ok(selected.into_iter().collect())
     }
 
     /// The headings of a document's body, in the order of `line`.
@@ -1523,6 +1678,211 @@ impl Project {
 fn parsed_fields(text: &str, schema: &Resolved) -> Option<Vec<(String, Value)>> {
     let block = frontmatter::block(text).ok()??;
     frontmatter::fields(block, schema).ok()
+}
+
+/// `list`'s per-document half of the scope-wide field check `Project::list` owns: a condition
+/// whose field is unknown to `schema` in scope (checked before this ever runs) reaches this only
+/// because *some other* schema in scope defines it, so `doc` is simply absent that field — never
+/// `query::evaluate`'s `UnknownField`, which would misreport a document whose own schema lacks a
+/// field the scope otherwise knows. Absence resolves by the op alone, exactly as the design's
+/// Absence and negation paragraph gives it for a missing field: `!=` is satisfied, `=` in any
+/// form and every ordering comparison fail. A pseudo-field is never unknown to a schema (it
+/// applies, or does not, independently of one), so it always reaches `evaluate` below.
+fn condition_matches(
+    condition: &Condition,
+    schema: &Resolved,
+    doc: &Document,
+) -> Result<bool, Error> {
+    if let FieldRef::Named(name) = &condition.field
+        && schema.field(name).is_none()
+    {
+        return Ok(condition.op == Op::Ne);
+    }
+    query::evaluate(condition, schema, doc).map_err(|e| Error::BadArgument(e.to_string()))
+}
+
+/// A sort key's value, comparable independently of type: `Missing` is greater than every other
+/// variant so it sorts last however the comparison is later reversed for `:desc` (Sorting under
+/// `list`, "Missing value | Last, in both directions"). Two fields of the same name whose schemas
+/// disagree on type compare as `Equal` (falling through to the next sort key, or to key/path
+/// order): the design gives sorting rules per declared type and says nothing about two schemas
+/// giving one field name different types, so this is read as a tie rather than an arbitrary
+/// cross-type order.
+enum SortValue {
+    Missing,
+    Number(f64),
+    Bool(bool),
+    Date(NaiveDate),
+    Datetime(DateTime<FixedOffset>),
+    /// Position in the schema's own `values`, for an `enum` field.
+    EnumPos(usize),
+    /// A `key`: the part before the trailing digits, and the digits read as a number, so `WF-2`
+    /// sorts before `WF-10` (Sorting under `list`).
+    Key(String, Option<u64>),
+    Text(String),
+}
+
+impl SortValue {
+    fn cmp_same_type(&self, other: &SortValue) -> Ordering {
+        match (self, other) {
+            (SortValue::Missing, SortValue::Missing) => Ordering::Equal,
+            (SortValue::Number(a), SortValue::Number(b)) => {
+                a.partial_cmp(b).unwrap_or(Ordering::Equal)
+            }
+            (SortValue::Bool(a), SortValue::Bool(b)) => a.cmp(b),
+            (SortValue::Date(a), SortValue::Date(b)) => a.cmp(b),
+            (SortValue::Datetime(a), SortValue::Datetime(b)) => a.cmp(b),
+            (SortValue::EnumPos(a), SortValue::EnumPos(b)) => a.cmp(b),
+            (SortValue::Key(pa, na), SortValue::Key(pb, nb)) => {
+                pa.cmp(pb).then_with(|| cmp_key_number(*na, *nb))
+            }
+            (SortValue::Text(a), SortValue::Text(b)) => a.cmp(b),
+            _ => Ordering::Equal,
+        }
+    }
+}
+
+fn cmp_key_number(a: Option<u64>, b: Option<u64>) -> Ordering {
+    match (a, b) {
+        (Some(a), Some(b)) => a.cmp(&b),
+        (None, None) => Ordering::Equal,
+        (Some(_), None) => Ordering::Greater,
+        (None, Some(_)) => Ordering::Less,
+    }
+}
+
+/// `key.field`'s value on `doc`, read under `doc`'s own schema, as a `SortValue`: a pseudo-field
+/// other than `key` is always present and sorts as `Text`; `key` and a named field read as
+/// `Missing` when `doc` does not carry one. A named field's declared type picks the variant
+/// (Sorting under `list`); a value that does not fit it (kept as written, `coerce` already
+/// returning `None` for it) sorts as `Missing`, the same as a genuinely absent field, since there
+/// is no typed value to compare.
+///
+/// **A field name no schema in scope declares is not checked here, on purpose.** The design's
+/// Names and scope paragraph ties its "unknown to every schema is an error" rule to "a plain
+/// condition" — a `--where`/`--if` expression, the seam ticket 13 built and `Project::list`
+/// checks scope-wide before evaluating any document (see `list`'s own doc comment). Sorting has
+/// its own paragraph and its own table, and neither states a validation rule: a name no schema
+/// declares simply means `doc.fields` never has it, so every document reads `Missing` here and
+/// the sort falls through to the next key, or to key/path order. This differs from `--where` in
+/// what a mistake costs: an unrecognised `--where` field could silently change which documents
+/// match (or look like an empty result); an unrecognised `--sort` field changes nothing about
+/// `total`, `truncated` or which documents are returned, only their order, so there is no result
+/// that reads as more complete or more correct than it is.
+fn sort_value(field: &FieldRef, schema: &Resolved, doc: &Document) -> SortValue {
+    match field {
+        FieldRef::Path => SortValue::Text(doc.path.clone()),
+        FieldRef::Namespace => SortValue::Text(doc.namespace.clone()),
+        FieldRef::Collection => SortValue::Text(doc.collection.clone()),
+        FieldRef::Schema => SortValue::Text(doc.schema.clone()),
+        FieldRef::Code => doc.code.clone().map_or(SortValue::Missing, SortValue::Text),
+        FieldRef::Key => match &doc.key {
+            Some(key) => key_sort_value(key),
+            None => SortValue::Missing,
+        },
+        FieldRef::Named(name) => {
+            let Some(schema_field) = schema.field(name) else {
+                return SortValue::Missing;
+            };
+            let Some(value) = query::field_value(field, doc) else {
+                return SortValue::Missing;
+            };
+            named_sort_value(schema_field, &value)
+        }
+    }
+}
+
+fn key_sort_value(key: &str) -> SortValue {
+    let split = key
+        .rfind(|c: char| !c.is_ascii_digit())
+        .map_or(0, |i| i + 1);
+    if split == key.len() {
+        return SortValue::Key(key.to_owned(), None);
+    }
+    let (prefix, digits) = key.split_at(split);
+    SortValue::Key(prefix.to_owned(), digits.parse::<u64>().ok())
+}
+
+fn named_sort_value(field: &Field, value: &Value) -> SortValue {
+    match &field.kind {
+        FieldType::Number => match value {
+            Value::Number(n) => n.as_f64().map_or(SortValue::Missing, SortValue::Number),
+            _ => SortValue::Missing,
+        },
+        FieldType::Bool => match value {
+            Value::Bool(b) => SortValue::Bool(*b),
+            _ => SortValue::Missing,
+        },
+        FieldType::Date => match value {
+            Value::Date(text) => {
+                query::parse_date(text).map_or(SortValue::Missing, SortValue::Date)
+            }
+            _ => SortValue::Missing,
+        },
+        FieldType::Datetime => match value {
+            Value::Datetime(text) => {
+                query::parse_datetime(text).map_or(SortValue::Missing, SortValue::Datetime)
+            }
+            _ => SortValue::Missing,
+        },
+        FieldType::Enum => match value {
+            Value::Text(text) => field
+                .values
+                .as_deref()
+                .and_then(|values| values.iter().position(|v| v == text))
+                .map_or(SortValue::Missing, SortValue::EnumPos),
+            _ => SortValue::Missing,
+        },
+        // `list`, `ref` and `ref[]` have no rule of their own in the Sorting table; read as
+        // plain text of the value as written, the same bucket as `string`, since the design
+        // never singles them out and a fallback that always ties would make `--sort` on such a
+        // field indistinguishable from not sorting at all.
+        _ => match value {
+            Value::Text(text) => SortValue::Text(text.clone()),
+            Value::List(items) => SortValue::Text(items.join(",")),
+            _ => SortValue::Missing,
+        },
+    }
+}
+
+/// One `--sort` key's contribution to the order of `a` (under `schema_a`) against `b` (under
+/// `schema_b`): `Missing` always sorts last, in front of and unaffected by `:desc`, and only a
+/// comparison of two present values is reversed for it (Sorting under `list`, "Missing value |
+/// Last, in both directions").
+fn sort_compare(
+    key: &SortKey,
+    schema_a: &Resolved,
+    a: &Document,
+    schema_b: &Resolved,
+    b: &Document,
+) -> Ordering {
+    let va = sort_value(&key.field, schema_a, a);
+    let vb = sort_value(&key.field, schema_b, b);
+    match (
+        matches!(va, SortValue::Missing),
+        matches!(vb, SortValue::Missing),
+    ) {
+        (true, true) => Ordering::Equal,
+        (true, false) => Ordering::Greater,
+        (false, true) => Ordering::Less,
+        (false, false) => {
+            let ord = va.cmp_same_type(&vb);
+            if key.desc { ord.reverse() } else { ord }
+        }
+    }
+}
+
+/// The tiebreak every `list` result falls back to, `--sort` given or not: key order (by code,
+/// then numerically) for a coded document, path order otherwise. A document with a key compared
+/// against one without falls back to comparing the key's text against the path's text, since the
+/// design gives no rule for that mix and it is rare enough that any total order is defensible.
+fn compare_identity(a: &Document, b: &Document) -> Ordering {
+    match (&a.key, &b.key) {
+        (Some(ka), Some(kb)) => key_sort_value(ka).cmp_same_type(&key_sort_value(kb)),
+        (None, None) => a.path.cmp(&b.path),
+        (Some(ka), None) => ka.as_str().cmp(b.path.as_str()),
+        (None, Some(kb)) => a.path.as_str().cmp(kb.as_str()),
+    }
 }
 
 /// The fields and body links of a document already read, for `refs --reverse`'s scan of every

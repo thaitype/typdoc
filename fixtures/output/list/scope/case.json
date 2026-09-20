@@ -1,0 +1,4 @@
+{
+  "project": "valid/refs",
+  "command": ["list", "--code", "WF", "--where", "title=Ticket*", "--sort", "key:desc", "--limit", "2", "--json"]
+}

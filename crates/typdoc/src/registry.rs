@@ -17,7 +17,6 @@ pub fn commands() -> Vec<String> {
 /// when v1 is finished.
 pub const UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "new",  // story 2
-    "list", // story 1
     "set",  // story 2
     "mv",   // story 2
     "pull", // story 3
