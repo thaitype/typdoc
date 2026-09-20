@@ -1,6 +1,6 @@
 # Research 3: Markdown body parsing for typdoc (line/col, code exclusion, links, slugs)
 
-Date: 2026-09-19. Researcher: Mina. Feeds `.chief/story-1/_tickets/3-markdown-body-parsing.md` and blocks ticket 4 (slug rules). Nothing in the repo other than this file was touched.
+Date: 2026-09-19. Feeds `.chief/story-1/_tickets/3-markdown-body-parsing.md` and blocks ticket 4 (slug rules). Nothing in the repo other than this file was touched.
 
 ## Recommendation (short)
 
@@ -226,4 +226,4 @@ Known traps to write into the design or contract: (a) never enable the YAML meta
 - html-pipeline: https://github.com/gjtorikian/html-pipeline/blob/v2.14.3/lib/html/pipeline/toc_filter.rb
 - comrak: https://docs.rs/comrak/latest/comrak/struct.Anchorizer.html; version from https://crates.io/api/v1/crates/comrak (0.55.0).
 - markdown-rs: https://docs.rs/markdown/latest/markdown/ ; version from https://crates.io/api/v1/crates/markdown (1.0.0).
-- Sibling dependency line: `/home/thw-home/gits/typ-fleet-home/typ-fleet-4/crates/ship/Cargo.toml` (`pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }`).
+- Sibling dependency line: the `ship` crate's `Cargo.toml` (`pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }`).

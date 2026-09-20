@@ -1,9 +1,9 @@
 # Research 6: HTTP client for remote schemas (ureq vs reqwest), and does typdoc-core stay async-free?
 
-Date: 2026-09-19. Feeds ticket `6-remote-schema-fetching` (and ticket 9, test strategy). Written by Mina.
+Date: 2026-09-19. Feeds ticket `6-remote-schema-fetching` (and ticket 9, test strategy).
 Toolchain used: cargo/rustc 1.96.0, Linux x86_64, 4 cores. Crate versions current on crates.io that day:
 `ureq 3.4.2` (published 2026-09-13), `reqwest 0.13.5`, latest 0.12 is `0.12.28`, `rustls 0.23.45`.
-Sibling workspace `typ-fleet-4` pins `reqwest 0.12` with `default-features = false, features = ["rustls-tls","json"]` and `tokio 1 full` (its `Cargo.toml` lines 12 and 19).
+The sibling workspace pins `reqwest 0.12` with `default-features = false, features = ["rustls-tls","json"]` and `tokio 1 full` (its `Cargo.toml` lines 12 and 19).
 
 ## Recommendation (short)
 
@@ -149,7 +149,7 @@ Client comparison for mocking: ureq is synchronous, so a loopback server is just
 
 Why: measured 23 s / 2.2 MB / 29 crates of overhead against 42-72 s / 3.2-5.3 MB / 85-89 crates for reqwest; no tokio anywhere in the tree, so `typdoc-core` stays runtime-free at no effort; `https_only` is enforced per redirect hop; mocking is plain threads and sockets.
 
-**Cost of the runner-up (`reqwest`):** roughly 1.4-2.8x the compile time, 1.4-2.2x the binary size and about 2.6-2.7x the crate count for a feature used in two places; tokio, hyper and tower enter the tree even with `blocking`, which spawns an internal runtime thread and panics if a caller is inside an async runtime; going async would force tokio on every `typdoc-core` consumer; 0.13's default crypto provider is `aws-lc-rs` (76 s build here; C code compiled by `cc`). In exchange reqwest would give real async concurrency, HTTP/2 by default, and consistency with `typ-fleet-4` (which shares no build cache with typdoc anyway, since they are separate workspaces).
+**Cost of the runner-up (`reqwest`):** roughly 1.4-2.8x the compile time, 1.4-2.2x the binary size and about 2.6-2.7x the crate count for a feature used in two places; tokio, hyper and tower enter the tree even with `blocking`, which spawns an internal runtime thread and panics if a caller is inside an async runtime; going async would force tokio on every `typdoc-core` consumer; 0.13's default crypto provider is `aws-lc-rs` (76 s build here; C code compiled by `cc`). In exchange reqwest would give real async concurrency, HTTP/2 by default, and consistency with the sibling workspace (which shares no build cache with typdoc anyway, since they are separate workspaces).
 
 **Cost of choosing ureq:** no async and thread-per-fetch concurrency (fine for the few schemas a namespace has); errors need classification by hand (DNS failure came back as `Io`, not `HostNotFound`); default timeout is none and must be set.
 
@@ -182,4 +182,4 @@ Why: measured 23 s / 2.2 MB / 29 crates of overhead against 42-72 s / 3.2-5.3 MB
 - https://github.com/rustls/rustls-platform-verifier (README, also in crate 0.7.0 source) : Linux behaviour, comparison table.
 - rustls-native-certs 0.8.4 source `src/lib.rs` : `SSL_CERT_FILE`, `SSL_CERT_DIR`.
 - https://docs.rs/native-tls/latest/native_tls/ : OpenSSL on Linux, `vendored`.
-- Local: `/home/thw-home/gits/thaitype/typdoc/docs/design.md` (lines 157-177, 443-446, 546), `.chief/project.md`, `/home/thw-home/gits/typ-fleet-home/typ-fleet-4/Cargo.toml` (read-only).
+- Local: `docs/design.md` (lines 157-177, 443-446, 546), `.chief/project.md`, and the sibling workspace's `Cargo.toml` (read-only).
