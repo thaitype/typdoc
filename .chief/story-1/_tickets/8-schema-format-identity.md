@@ -10,7 +10,7 @@ The design's overview says frontmatter is "validated against JSON schemas" and i
 
 ## Answer
 
-Decided with the human, 2026-09-19.
+Decided 2026-09-19.
 
 **The schema format is typdoc's own JSON format. It is not JSON Schema, and v1 has no interoperability with it** (no import, no export, no reading of JSON Schema files).
 
@@ -19,7 +19,7 @@ Decided with the human, 2026-09-19.
 - **Wording fixed in `docs/design.md`** in three places: the Overview ("schema files (a JSON format of typdoc's own, not JSON Schema)"), the Schema-driven principle (states why JSON Schema cannot express the model), and the opening of the Schema format section.
 - Consistent with ticket 12: the schema format is one of the formats covered by the single `version` in `config.json`.
 
-**Possible later, not decided:** publish a meta-schema (a JSON Schema describing typdoc's own schema files) so editors can complete and check `schemas/*.json`. That needs no new command and does not make the format JSON Schema. Recorded under Not yet specified in the map. No one has said they want editor completion; this was not investigated.
+**Possible later, not decided:** publish a meta-schema (a JSON Schema describing typdoc's own schema files) so editors can complete and check `schemas/*.json`. That needs no new command and does not make the format JSON Schema. Recorded under Not yet specified in the map. There is no request for editor completion yet; this was not investigated.
 
 ## Not verified
 
