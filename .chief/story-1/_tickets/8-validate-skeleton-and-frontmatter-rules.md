@@ -1,7 +1,7 @@
 # 8: `typdoc validate`: the report, levels, and the rules on frontmatter
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 2, 3, 5, 7
 
 ## What this delivers
