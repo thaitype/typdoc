@@ -11,7 +11,7 @@ Design source of truth: `docs/design.md` (original: `typdoc — Generic Markdown
 ```bash
 cargo build --workspace
 cargo test --workspace                     # must pass offline
-cargo clippy --workspace -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 cargo run -p typdoc -- <args>              # run the CLI from the repo
 scripts/check-public-text.sh               # public-text gate: a floor, not a ceiling (see rule 7)
@@ -46,7 +46,7 @@ scripts/check-public-text.sh --self-test   # proves the gate can fail; run whene
 
 ### Important Development Rules
 
-1. Before every commit, `cargo fmt --check`, `cargo clippy --workspace -- -D warnings` and `cargo test --workspace` must pass, and so must `scripts/check-public-text.sh` (rule 7).
+1. Before every commit, `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` must pass, and so must `scripts/check-public-text.sh` (rule 7).
 2. Tests must run offline (remote schemas are mocked). Fixtures live in the repo: it is public, so a real document is copied in only after review, and a test never skips silently when a file is missing.
 3. Writes touch only the frontmatter block and never re-serialize the body (the exception is `mv`, which rewrites link paths).
 4. Always write files via temp file + rename.
