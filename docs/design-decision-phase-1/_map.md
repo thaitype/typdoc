@@ -42,7 +42,7 @@
 - macOS: not yet a supported platform, because no run on macOS has shown it; a known gap that closes when a run exists (ticket 9). Separately, for the contract: the default filesystem on macOS does not distinguish case (general knowledge, not run), so keys that differ only in case collide there and not on Linux, and a `mv` that changes only the case is its own case.
 - Parked, not waiting on an answer and blocking no ticket: a macOS runner, and running the public-text gate (`scripts/check-public-text.sh`) in CI or a hook. Today the gate runs only when someone remembers, so it is a habit, not a gate. Not raised again until someone takes it up.
 - For the contract: the error id of a write rejected by the re-read check; and proving `yaml-edit` on anchors and tags in the prototype.
-- Scale: the index is rebuilt on every run with no cache; at what document count does that stop being acceptable?
+- Scale: the index is rebuilt on every run with no cache; at what document count does that stop being acceptable? Ticket 15 adds a fixed cost to this: `list` reports `total`, so a query filters the whole set and cannot stop at `--limit`.
 
 ## Out of scope
 
