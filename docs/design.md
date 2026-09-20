@@ -39,7 +39,7 @@ A document is identified by a key if its schema has a `code`, and by its path ot
 | Path | The identity of a document whose schema has no code | `precedents/secret-handling.md` |
 | Ref | A pointer to another document, from a frontmatter field or a body link | `blocked_by: [WF-1]` |
 
-Before any query or validation, `typdoc` builds one index mapping every key, within its namespace, and every path to its file. Refs of either kind resolve through it, so a keyed ticket can point at a path-identified note and the reverse.
+Before any query or validation, `typdoc` builds one index mapping every key, within its namespace, and every path to its file. Refs of either kind resolve through it, so a keyed ticket can point at a path-identified note and the reverse. Paths are compared exactly as they are written, case included, on every platform: a ref is resolved through the index of names as they are on disk, so a path that differs from the file's name in case does not resolve, even where the file system would open it. Two keys cannot differ only in case, because a code is capital letters and digits (see `code`), so `keys.unique` has nothing to do about case.
 
 **Collection vs schema.** A collection selects files; a schema describes their shape. One schema without a `code` may serve several collections (`notes` and `drafts` both using `note.json`), so anything about choosing documents uses the collection: `list --collection`, the `collection` pseudo-field, a collection's `validation`. Anything about data shape uses the schema: types, fields, `extends`, and a ref field's `target`. `target` names schemas rather than collections because a schema, possibly published remotely, cannot know what a given namespace calls its collections.
 
@@ -116,7 +116,18 @@ It is written by `typdoc new` and by `mv --renumber`, which are the commands tha
 
 One template serves both directions: it decides which files belong to the collection, and `typdoc new` uses it to name new files. Because `{key}` includes the schema's code, several coded collections can share one template in one folder: `tickets/{key}.md` matches `WF-3.md` for one schema and `RFC-4.md` for another. Each code counts on one number sequence of its own in each namespace, so a coded schema serves exactly one collection; two collections naming the same coded schema is a config error, as is a state entry for a collection whose schema has no code.
 
-**Discovery.** `typdoc` finds its project by walking up from the current directory, or from a document path given as an argument, to the nearest folder containing `.typdoc/config.json`. `TYPDOC_DIR` names that folder directly and skips the walk, for an agent that runs from a repository or worktree root above the project. A document path given as an argument wins over `TYPDOC_DIR`, which wins over the current directory. There is no `--dir` flag. Config, collection files and local schemas are read on every run with no cache; remote schemas are read from their pinned copies (see Remote schemas).
+**Discovery.** `typdoc` finds its project by walking up to the nearest folder containing `.typdoc/config.json`, starting from the first of these that applies: a document path given as an argument that is absolute or begins with `./` or `../`, read from the disk as the file it names; the folder `TYPDOC_DIR` names, which skips the walk, for an agent that runs from a repository or worktree root above the project; the current directory. Any other path argument is relative to the project folder. It cannot say which project it is in, so it takes no part in this choice and is read after the project is found. There is no `--dir` flag. Config, collection files and local schemas are read on every run with no cache; remote schemas are read from their pinned copies (see Remote schemas).
+
+**Arguments that name a document.** An argument that names a document is a path or a key, told apart by its form and never guessed. After any `project::` prefix, an argument that ends in `.md` is a path, and one that has the form of a key is a key. A key never ends in `.md` and a document is always a `.md` file, so the two cannot be confused. Anything else is bad arguments (exit 1). A path that begins with `/`, `./` or `../` is a path on disk, absolute or relative to the current directory. Any other path is relative to the project folder, the folder that holds `.typdoc`, which is what `path` is in `--json`. The path of a document of an imported project is written `project::path`, relative to that project's folder. `mv` reads both its arguments in this way, and its second may name a file that does not exist yet. When a path relative to the project names nothing in it but a file of that name exists relative to the current directory, the error is exit 5 and says that `./name` exists. That is a suggestion; nothing is done in its place.
+
+The string that names a document in an argument follows from the name it is printed with (see JSON output):
+
+| The document | As a path | As a key (a coded document only) |
+| --- | --- | --- |
+| In this project | `path` | `key` when the project has one namespace, `namespace:key` when it has several |
+| In an imported project | `project::path` | `project::key` when that project has one namespace, `project::namespace:key` when it has several |
+
+The path form works for every document and needs to know nothing about how many namespaces a project has, so it is the form for a program to pass on. A name that a command prints is accepted by every command that takes a key or a path, and a test walks every document of every project in the fixtures to check it.
 
 **Choosing a namespace.** In a project with more than one namespace, a command takes its scope from the first of these that applies:
 
@@ -279,7 +290,7 @@ A schema is a JSON file with a name, an optional code, an optional parent, and i
 
 ## Document files
 
-A document is YAML frontmatter plus a free Markdown body; `typdoc` owns only the frontmatter. A file has frontmatter when it begins with a `---` line that opens a block. A block that is present but empty counts: it is a document that declares itself and has no fields yet, and it is checked like any other, so every required field it lacks is a finding. A file with no block at all is an ordinary Markdown file. The two are not merged, because a document missing every required field would otherwise be filed with the files that are not typdoc's, with no signal.
+A document is YAML frontmatter plus a free Markdown body; `typdoc` owns only the frontmatter. A file has frontmatter when it begins with a `---` line that opens a block. A block that is present but empty counts: it is a document that declares itself and has no fields yet, and it is checked like any other, so every required field it lacks is a finding. A file with no block at all is an ordinary Markdown file. The two are not merged, because a document missing every required field would otherwise be filed with the files that are not typdoc's, with no signal. A block that is present but cannot be parsed is not an absent block: it is the finding `frontmatter.parse`, so a damaged document is never taken for an ordinary Markdown file. The finding has a position when the YAML reader gives one, and the reader does not give one for every error.
 
 ```markdown
 ---
@@ -360,7 +371,7 @@ Refs come from two places, frontmatter fields and body links, and both resolve t
 4. Imports are followed one level; imports of imports are ignored.
 5. Writes stay inside the namespace the scope names, except `mv`, which also rewrites refs in other namespaces and in imported projects.
 
-**Schema drift.** If an imported project renames a field that this project queries through a ref, queries silently return nothing. `validate --schemas` checks that every field used across namespaces still exists in the imported schemas; run it in CI when projects live in different repos.
+**Schema drift.** A schema names a schema of an imported project only through a qualified name in `target` (`"memory::learning"`). If the imported project renames or removes that schema, the `target` no longer names anything, and `validate` reports it under `schema.valid`, at the schema file of this project and naming the ref field. An import that is absent on this machine is reported by `imports.absent` instead and is not an error here. A field that an imported project renames is not checked ahead of time, because nothing in a project's files records which fields of another schema it relies on; a query that names a field no schema in scope defines is an error and not an empty result (see Names and scope), so such a change is loud when the query runs. Run `validate --schemas` in CI when projects live in different repos.
 
 ## Query
 
@@ -443,6 +454,8 @@ Nine commands cover the lifecycle; `new`, `set` and `mv` write documents, `pull`
 | `validate` | no | Check schemas, documents and refs |
 
 All commands accept `--json`; `--namespace` and `TYPDOC_NAMESPACE` choose the namespace (see Choosing a namespace) and `TYPDOC_DIR` names the project (see Discovery).
+
+**Cost.** Every run builds its index from the files with no cache, so the time of a run grows with the number of documents. v1 promises no figure for it; one will be measured when the index exists. `list` reports `total`, so it filters every document even under `--limit`: a choice made so that a result says how much it left out (see JSON output), and the cost of it is part of the cost above.
 
 ### typdoc new
 
@@ -546,12 +559,12 @@ Re-fetches remote schemas (all of them, or the URLs given), including remote par
 typdoc validate [<key|path> ...] [--schemas] [--strict] [--audit]
 ```
 
-- **Schemas:** duplicate names or codes, `extends` cycles, undeclared overrides, invalid options, field names that break the naming rule or use a reserved name, import names colliding with URL schemes.
-- **Documents:** types, required fields, enum values, unknown fields, duplicate keys, files not fitting the collection's `match` template.
+- **Schemas:** duplicate names or codes, `extends` cycles, undeclared overrides, invalid options, field names that break the naming rule or use a reserved name, import names colliding with URL schemes, a qualified `target` that names a schema that does not exist in the imported project.
+- **Documents:** frontmatter that cannot be parsed, types, required fields, enum values, unknown fields, duplicate keys, files not fitting the collection's `match` template.
 - **Refs:** missing targets, disallowed target schemas, missing `#heading` anchors, cycles on `acyclic` fields, coded documents referenced by path (warning).
 - **Across namespaces:** a ref into an imported project that is absent on this machine is a warning; a present project missing the file is an error. `--strict` makes both errors.
 
-`--schemas` checks schemas only, including fields used across namespaces (schema drift). Suited to pre-commit, CI and agent post-edit hooks. The arguments are keys or paths of documents, in any mix. A key that exists in more than one namespace in scope stops the command with exit 1 and every choice listed, and an argument that names no document stops it with exit 5; in both cases before any report is made, never as a finding.
+`--schemas` checks schemas only, including that each qualified `target` names a schema that exists (schema drift). Suited to pre-commit, CI and agent post-edit hooks. The arguments are keys or paths of documents, in any mix. A key that exists in more than one namespace in scope stops the command with exit 1 and every choice listed, and an argument that names no document stops it with exit 5; in both cases before any report is made, never as a finding. `--schemas` and `--audit` describe the whole project, so combining either with arguments is bad arguments (exit 1).
 
 **Audit mode.** `validate` is a gate: it respects configured levels and fails, so CI, hooks and agents can stop a bad change. `--audit` answers a different question, "what would I have to fix to adopt typdoc here?", and is meant for writing a config for existing files. It runs the same checks, with these differences:
 
@@ -609,7 +622,8 @@ Correctness rules are always on; quality rules are configured project-wide under
 
 | Rule | Checks |
 | --- | --- |
-| `schema.valid` | Duplicate names or codes, `extends` cycles, undeclared overrides, invalid options, field names that break the naming rule or use a reserved name, import names colliding with URL schemes |
+| `schema.valid` | Duplicate names or codes, `extends` cycles, undeclared overrides, invalid options, field names that break the naming rule or use a reserved name, import names colliding with URL schemes, a qualified `target` that names a schema that does not exist in the imported project |
+| `frontmatter.parse` | The frontmatter block cannot be parsed (invalid YAML, or a block that is never closed). No other rule is evaluated for that file |
 | `frontmatter.types` | Types, required fields, enum values |
 | `frontmatter.transitions` | State changes follow `transitions` (checked on write) |
 | `refs.resolve` | Frontmatter refs point at existing files |
@@ -631,7 +645,7 @@ Correctness rules are always on; quality rules are configured project-wide under
 | `names.shadowed` | `warn` | — | A name that is both a sibling namespace and an import alias, so `name:` and `name::` reach different documents |
 | `frontmatter.unknown` | `warn` | — | Frontmatter fields not in the schema |
 | `filename.pattern` | `error` | — | A file in a coded collection's folder that fits no `match` template, e.g. `tickets/README.md` |
-| `imports.absent` | `warn` | — | Refs into an imported project that is absent on this machine, including one whose path uses an environment variable that is unset or empty. A project that needs its imports to be there should set this to `error` in CI, because a mistyped variable name is otherwise only a warning |
+| `imports.absent` | `warn` | — | Refs into an imported project that is absent on this machine, including one whose path uses an environment variable that is unset or empty. A project that needs its imports to be there should set this to `error` in CI, because a mistyped variable name is otherwise only a warning. An import that is absent and that no ref names is not reported, even at `error`; a misspelt alias is caught where a ref names it (`bad-prefix`, see JSON output) |
 
 **body.mentions.** Checks plain-text keys; it never turns them into refs, so `refby` and `mv` ignore mentions. The codes to look for come from the schemas of this project and the projects it imports; nothing is listed in config.
 
@@ -708,7 +722,7 @@ One lock per namespace serializes writes, which is enough for number allocation,
 
 Every command accepts `--json`, and its result is one JSON object on standard output. Commands are of two kinds. A command whose result is a verdict on the project (`validate`, and `pull --check`) prints that verdict on standard output whether or not it is favourable: the findings are the result, and exit 2 says that some of them are errors. A command that does something (`get`, `list`, `toc`, `refs`, `new`, `set`, `mv`, `pull`) prints its result on standard output when it succeeds and, when it cannot, the error object described under Exit codes and errors on standard error. A new command falls on one side by asking whether its result is a judgement about the project or the outcome of an action. The result is held in a field named for it and is never printed bare, so that facts about the result can sit beside it: a `list` that `--limit` cuts short has to say so, and a bare array has no place to say it. Output may gain fields in later versions, so a consumer must ignore any field it does not know; this holds for the error object as well. A value in the output is a fact about the document, never about the command that asked: a flag that chooses or limits what is listed (`--depth`, `--limit`, `--field`) changes which items appear and never the values of an item. The output promises only what a caller cannot work out from what it is already given, because every field it promises has to stay true for as long as the version does: a count of findings per rule, for example, is not in it.
 
-**Naming a document.** There is one way to name a document, and every shape that has to mention one uses it: `path`, `namespace`, `key` when the document has a code, and `project` when the document belongs to an imported project. `project` is the alias under which this project imports it; it is absent for a document of this project. A document object is that name plus `code`, `collection`, `schema` and `fields`; a finding is that name, without `project` since a finding is always in this project, plus `rule`, `level`, `message` and a position; a reference is that name plus `field`, `written` and a position. A new shape that mentions a document adds to the name and never renames a part of it.
+**Naming a document.** There is one way to name a document, and every shape that has to mention one uses it: `path`, `namespace`, `key` when the document has a code, and `project` when the document belongs to an imported project. `project` is the alias under which this project imports it; it is absent for a document of this project. A document object is that name plus `code`, `collection`, `schema` and `fields`; a finding is that name, without `project` since a finding is always in this project, plus `rule`, `level`, `message` and a position; a reference is that name plus `field`, `written` and a position. A new shape that mentions a document adds to the name and never renames a part of it. The strings that name a document in an argument are under Arguments that name a document, after Discovery.
 
 **A document** is the same object wherever it appears, in `get` and in `list` alike, including a `list` that reaches an imported project with `--namespace 'chief::*'`. It has the name above, `code`, `collection`, `schema`, and `fields`, which holds all of the document's frontmatter. The frontmatter stays apart in `fields` because a field that is not in the schema is kept and can have any name, `path` and `key` included.
 
