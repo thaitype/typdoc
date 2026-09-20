@@ -36,6 +36,7 @@
 - Exact argument shape of `mv --renumber` (how the destination namespace is named) and whether it is atomic across two namespaces when a write fails midway; belongs in the contract.
 - From ticket 7, for the contract: the crate for catching interrupt signals; running zsh to earn its row in the quoting list; whether `imports.absent` should fire for an unresolved import that nothing refers to.
 - Whether the public-text gate (`scripts/check-public-text.sh`) runs automatically, in CI or a hook: today it runs only when someone remembers, so it is a habit, not a gate. Adding CI to this public repository is not yet decided.
+- For the contract: exit 1 covers three unrelated things (not found, bad arguments, I/O), which says little to a program that has to branch on it, and a test asserting exit 1 proves little.
 - Scale: the index is rebuilt on every run with no cache; at what document count does that stop being acceptable?
 
 ## Out of scope

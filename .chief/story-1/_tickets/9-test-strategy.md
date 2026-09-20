@@ -48,3 +48,17 @@ When fixtures cannot be found, the loader fails loudly with a message saying the
 
 Not decided here: whether tests must run from a published package, and so whether crate manifests exclude `tests`. That belongs to the distribution decision (see the map). Excluding `tests` now would settle distribution by side effect, and a published crate would look as if it had no tests at all, which is untrue and misleading. What is decided now is where fixtures live, not the shape of a package.
 
+### What needs a broken fixture
+
+Decided: every rule and every config error needs a fixture in `broken/`; the outcomes of a command (exit 1, 3 and 4) do not, and are tested by ordinary CLI tests that check the exit code and the `--json` output.
+
+The criterion, meant to be applied without a list: does the thing read a project and report a defect in it? If it does, it needs a fixture in `broken/`, because a check that reads a project can go silent without anyone noticing, and a check with no fixture has never been seen to fire. If it is what a command does when it meets a certain state (a false `--if`, a lock that is held), it is a CLI test. Whoever adds a new kind of report can then say on which side it falls without asking.
+
+The line must not dissolve. Some rules need more than files (`imports.absent` needs an environment variable that is unset or empty; `collections.overlap` needs two files that collide, which are only files). So a fixture may carry declared values and nothing else: environment variables, and the name and arguments of the command to run. Never a setup script. A case that needs a script is not a fixture of a project; it belongs to the CLI tests. Otherwise fixtures that carry commands and setup would turn into command tests and the broader option (every outcome needs a fixture) would return through the side door.
+
+Config errors get ids. The design listed them as plain sentences, so a caller that met one had to read the message; ids let it branch on them, as the exit codes do for a rule, and let each one have a fixture. About twenty ids are added to the design, in a table under Config errors, and `--json` carries them in `details[].rule`. This is what the design wanted from the start, not a cost of the test strategy.
+
+Defaults: the only substitution a declared value may use is a placeholder for the fixture's own directory (an import path has to point at a neighbouring fixture); a config id is carried in `details[].rule` alongside rule ids (a single registry) and `file` replaces `doc` when the error is about a file.
+
+For the contract: exit 1 currently covers three unrelated things (not found, bad arguments, I/O). For a tool whose main users are programs, a code that can mean three things says little, and a test that asserts exit 1 proves little. Not decided here.
+
