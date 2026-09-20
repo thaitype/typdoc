@@ -6,7 +6,7 @@ Blocked by: 1, 6
 
 ## Question
 
-Project rules require that `cargo test --workspace` passes offline, that remote schemas are mocked, and that every command has stable `--json` output and exit codes 0 to 4. Prior team experience is that a check which cannot fail is not evidence.
+Project rules require that `cargo test --workspace` passes offline, that remote schemas are mocked, and that every command has stable `--json` output and the exit codes in the design's table. Prior team experience is that a check which cannot fail is not evidence.
 
 Decide: how fixtures are laid out (namespaces under `tests/` or `examples/`), whether `--json` output is pinned with golden files, how remote schemas are mocked given the HTTP client chosen in ticket 6, how frontmatter round-trip (write, then re-read, then diff the body byte for byte) is tested given the approach chosen in ticket 1, and which deliberately broken fixtures prove each validation rule can go red.
 
@@ -21,7 +21,7 @@ Checks already required by other tickets, grouped by the mechanism each one need
 5. **Environment isolation.** The order in which `imports.json` is found (7: five cases); no test reads the real home directory; an unset or empty `${ENV}` in an import path; `imports.absent` at `error` gives exit 2; `TYPDOC_DIR`, `TYPDOC_NAMESPACE` and `--namespace` scope (13).
 6. **Network.** An in-memory `Fetch` for most tests; the real adapter and the shipped binary against a plain-http loopback server; the timeout, the response size limit, the redirect limit and the proxy variables; a vendor copy whose hash differs from its name and a missing copy are config errors (6, 7).
 7. **Shells.** Every documented example goes through sh and bash and reaches typdoc byte for byte identical; an unquoted case must go red; the tests and the document share one list of examples; a shell the document lists but the machine lacks makes the suite red (7).
-8. **Across all of it.** Tests run offline; `--json` is stable for every command; exit codes 0 to 4; macOS is not claimed as supported until a macOS run exists (see macOS below); a fixture copied from a real document into this public repository is reviewed first (project rules, 7, 1).
+8. **Across all of it.** Tests run offline; `--json` is stable for every command; the exit codes in the design's table; macOS is not claimed as supported until a macOS run exists (see macOS below); a fixture copied from a real document into this public repository is reviewed first (project rules, 7, 1).
 
 ## Answer
 
@@ -50,7 +50,7 @@ Not decided here: whether tests must run from a published package, and so whethe
 
 ### What needs a broken fixture
 
-Decided: every rule and every config error needs a fixture in `broken/`; the outcomes of a command (exit 1, 3 and 4) do not, and are tested by ordinary CLI tests that check the exit code and the `--json` output.
+Decided: every rule and every config error needs a fixture in `broken/`; the outcomes of a command (exit 1, 3, 4, 5 and 6) do not, and are tested by ordinary CLI tests that check the exit code and the `--json` output.
 
 The criterion, meant to be applied without a list: does the thing read a project and report a defect in it? If it does, it needs a fixture in `broken/`, because a check that reads a project can go silent without anyone noticing, and a check with no fixture has never been seen to fire. If it is what a command does when it meets a certain state (a false `--if`, a lock that is held), it is a CLI test. Whoever adds a new kind of report can then say on which side it falls without asking.
 
@@ -60,7 +60,7 @@ Config errors get ids. The design listed them as plain sentences, so a caller th
 
 Defaults: the only substitution a declared value may use is a placeholder for the fixture's own directory (an import path has to point at a neighbouring fixture); a config id is carried in `details[].rule` alongside rule ids (a single registry) and `file` replaces `doc` when the error is about a file.
 
-For the contract: exit 1 currently covers three unrelated things (not found, bad arguments, I/O). For a tool whose main users are programs, a code that can mean three things says little, and a test that asserts exit 1 proves little. Not decided here.
+Exit 1 covered three unrelated things (not found, bad arguments, I/O), which says little to a program and made a test that asserted exit 1 prove little. Ticket 14 splits it.
 
 ### `--json` output
 
@@ -136,7 +136,7 @@ Decided: two layers, and nothing in the shipped binary exists for tests. A force
 
 Each property has one observation. A handler is installed in the shipped build (without one, `a.lock` stays behind). Cleanup removes a lock the process holds. A lock the process never took is not removed (`b.lock` stays).
 
-What the scene needs from the design, stated as a requirement and not as a result: no program exists yet, so this scene has not been run and is not a measured fact. It is a requirement placed on the design so that it can be tested this way. Two things follow. First, every command must take its locks through one acquisition path, a single lock type whose guard owns the cleanup. `new` and `set` hold one lock and never wait after taking it, so no state a test can make lets a signal arrive while they hold it; they are covered only because they use the code `mv --renumber` uses, and layer 1 exercises that guard. Second, the fallback is decided now, so that whoever reaches it in the contract does not have to think again, and it comes in two pieces because the scene serves two needs at once: seeing the cleanup happen, and proving that the handler is in the shipped binary. If the contract finds that the scene cannot be made, or that commands take locks in more than one way, a Cargo feature that pauses the process just after it takes a lock brings back the first need only, and it is a build that differs from the shipped one. The second need then has to be read from an exit status that tells a handler from none, and a process that raises the signal again cannot be told from one with no handler (see the probe below). So the interrupted process exits by its own exit with 128 plus the signal number, and project rule 5 changes to "the outcomes of a command use the exit codes 0 to 4; an interrupt exits 128 plus the signal number". The two pieces go back together.
+What the scene needs from the design, stated as a requirement and not as a result: no program exists yet, so this scene has not been run and is not a measured fact. It is a requirement placed on the design so that it can be tested this way. Two things follow. First, every command must take its locks through one acquisition path, a single lock type whose guard owns the cleanup. `new` and `set` hold one lock and never wait after taking it, so no state a test can make lets a signal arrive while they hold it; they are covered only because they use the code `mv --renumber` uses, and layer 1 exercises that guard. Second, the fallback is decided now, so that whoever reaches it in the contract does not have to think again, and it comes in two pieces because the scene serves two needs at once: seeing the cleanup happen, and proving that the handler is in the shipped binary. If the contract finds that the scene cannot be made, or that commands take locks in more than one way, a Cargo feature that pauses the process just after it takes a lock brings back the first need only, and it is a build that differs from the shipped one. The second need then has to be read from an exit status that tells a handler from none, and a process that raises the signal again cannot be told from one with no handler (see the probe below). So the interrupted process exits by its own exit with 128 plus the signal number, and the design's table of exit codes gains a row saying that an interrupt exits 128 plus the signal number. Project rule 5 needs no change, because it points at the design's table (ticket 14). The two pieces go back together.
 
 Rejected: a Cargo feature that pauses the process after it takes a lock. It puts code for tests in the shipped binary, or tests a build that differs from the shipped one, and the scene above reaches the same property without either. Rejected: sending signals at random moments and counting how many rounds prove enough; a proof that depends on a number nobody derived is the mistake this ticket avoids elsewhere, and a signal test that goes red now and then ends up switched off, not investigated. Rejected: reading the exit code to tell a handler from none (see the probe below: a handler that cleans up and raises the signal again looks exactly like no handler); the scene observes the lock file instead.
 
@@ -148,8 +148,8 @@ Decided: on SIGINT or SIGTERM typdoc removes its own locks, restores the default
 
 1. A shell puts 128 plus the signal number into `$?` when a child ends by a signal, so a shell user sees 130 or 143 with nothing added to typdoc.
 2. A caller that uses a process API gets more from a death by signal than from a code: it can tell which signal ended the process and that it was not typdoc's own decision.
-3. Project rule 5 stands. A process ended by a signal has no exit code; the table of 0 to 4 describes the outcomes of a command, not every way a process can end.
-4. Code 1 already covers three unrelated things, and a fourth makes a test that asserts exit 1 prove less.
+3. Project rule 5 stands. A process ended by a signal has no exit code; the table of exit codes describes the outcomes of a command, not every way a process can end.
+4. Code 1 then covered three unrelated things (split later, ticket 14), and a fourth would have made a test that asserts exit 1 prove less.
 
 `docs/design.md` gets one sentence in Exit codes and errors that says this.
 
@@ -274,7 +274,7 @@ State files: `state/<namespace>.json` is written by `new` and, for the destinati
 
 ### Across all commands
 
-Decided: two coverage tests in both directions, the same shape as for `broken/`. Every one of the nine commands in the Commands section has a `--json` golden, and every golden names a command that exists. Both are read from the registry of commands the CLI itself uses, so those two lists cannot drift apart, and the registry is checked against the headings of the Commands section, read from the document as the shell examples are, so a command added to the CLI with no entry in the design is red. Every exit code from 0 to 4 is produced by at least one CLI test that asserts the code and, for a failure, the error object in `--json`; a code with no such test has never been seen to occur. Exit 1 currently covers three unrelated outcomes, so a test that asserts only exit 1 proves little; the contract's decision on it (map) is what would make these tests sharper. The interrupt is outside this table by decision (Exit codes and errors).
+Decided: two coverage tests in both directions, the same shape as for `broken/`. Every one of the nine commands in the Commands section has a `--json` golden, and every golden names a command that exists. Both are read from the registry of commands the CLI itself uses, so those two lists cannot drift apart, and the registry is checked against the headings of the Commands section, read from the document as the shell examples are, so a command added to the CLI with no entry in the design is red. Every exit code in the design's table is produced by at least one CLI test that asserts the code and, for a failure, the error object in `--json`; a code with no such test has never been seen to occur. Ticket 14 split exit 1 by what the caller has to do, so a test that asserts a code now proves more. The interrupt is outside this table by decision (Exit codes and errors).
 
 ### Where each input landed
 
@@ -308,4 +308,4 @@ How it is tested: a fixture in `broken/state.missing` (documents with codes and 
 
 ### Closing
 
-Every group of inputs has an answer above (Where each input landed). What stays with the contract, all on the map: exact `--json` shapes with the order of each array; whether a command that fails midway is all or nothing across two namespaces and whether a temp file may remain; the crate that catches signals, and that every command takes its locks through one path; the shape of the `mv --renumber` argument; how exit 1 is split; the error id of a write rejected by the re-read check; proving `yaml-edit` on anchors and tags; the default filesystem of macOS, case, and `mv` that changes only case; what an interrupted write leaves behind; and tests that run the real HTTP adapter inside the test process. Parked, blocking nothing: a macOS runner and the public-text gate in CI.
+Every group of inputs has an answer above (Where each input landed). What stays with the contract, all on the map: exact `--json` shapes with the order of each array; whether a command that fails midway is all or nothing across two namespaces and whether a temp file may remain; the crate that catches signals, and that every command takes its locks through one path; the shape of the `mv --renumber` argument; the error id of a write rejected by the re-read check; proving `yaml-edit` on anchors and tags; the default filesystem of macOS, case, and `mv` that changes only case; what an interrupted write leaves behind; and tests that run the real HTTP adapter inside the test process. Parked, blocking nothing: a macOS runner and the public-text gate in CI.
