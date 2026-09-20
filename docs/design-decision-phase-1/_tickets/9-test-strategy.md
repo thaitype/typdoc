@@ -306,6 +306,10 @@ A limit, stated as it is: a record can be lost without a trace when every coded 
 
 How it is tested: a fixture in `broken/state.missing` (documents with codes and no state file, and the command `new` as the declared argument), one for an existing file without the entry, and one for `mv --renumber` into a namespace in that state; each asserts exit 2, that the rule id is `state.missing` and that nothing under the tree changed. Cases 1 and 2 above are the pairs of hand-written expectations for `new`: a new collection gets its first number and the entry, a collection with documents and no record gets the refusal. The fix leaves the design's promise in one form: unconditional wording is replaced by a condition the design can keep.
 
+### A name that a command prints is accepted by the next
+
+Decided: a test walks every document of every project in the fixtures (a project with one namespace and one with several, and one with an import) and builds from the identity a command printed (`path`, `namespace`, `key`, `project`) each string that the table under Arguments that name a document in the design gives, in the path form and in the key form where the document has a code. It passes each to `get --json` and asserts that the file it returns is the one it started from. If the rule for assembling a string is wrong, or a printed shape changes one day, this goes red at once: the promise has something that watches it instead of living in the document only. It is built in story 1.
+
 ### Where each part is built
 
 The test strategy applies to all three stories that deliver v1 (see the map): reading in story 1, writing in story 2, remote schemas in story 3. Each story builds the part its commands need, and its contract lists that part under Testing Decisions.
@@ -321,9 +325,9 @@ The test strategy applies to all three stories that deliver v1 (see the map): re
 | Imports | the five cases of finding `imports.json`, tested with a fake `Env` | none |
 | Round trip, the write seam, locks and signals, the write commands, the write-side of the state file | none | story 2 |
 | Remote schemas in tests, the offline tripwire | none | story 3 |
-| Pinned copies of remote schemas | hand-made pinned copies and the config errors about pins: allocation not yet confirmed (below) | fetching them: story 3 |
+| Pinned copies of remote schemas | hand-made pinned copies and the config errors about pins (settled, below) | fetching them: story 3 |
 
-The rows about pinned copies depend on how a read command treats a remote schema it cannot fetch. That is not decided, and the allocation of those rows is confirmed when it is. Every other row stands.
+The rows about pinned copies follow ticket 20: a read command that meets a remote schema with no pin reports `config.schema-unpinned` until story 3 adds fetching. Every row stands.
 
 ### Differences between the design and the binary that are acknowledged
 

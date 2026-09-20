@@ -75,7 +75,7 @@ Also decided:
 2. A variable set to an empty value counts as unset, the same as `XDG_CONFIG_HOME` above.
 3. One rule serves the `imports` in `config.json` and in `imports.json`, used in both places.
 
-Observation: `imports.absent` fires on refs into an absent import, so an import that is unresolved but that nothing refers to fails nothing, even at `error`. That is taken as intended (unused, so harmless); the contract should confirm it.
+Observation: `imports.absent` fires on refs into an absent import, so an import that is unresolved but that nothing refers to fails nothing, even at `error`. That is taken as intended (unused, so harmless); the contract should confirm it. Confirmed: `imports.absent` fires only when a ref names an absent import, and an absent import that nothing refers to is not reported, even at `error`. A misspelt alias in `imports` that nothing names is not caught, but a ref that names the wrong alias is, as `bad-prefix`; that is a boundary that is known and accepted.
 
 ### Quoting in the shell
 
