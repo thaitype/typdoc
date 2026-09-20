@@ -32,4 +32,4 @@ Nothing was run; no parser exists. The grammar was not fed a corpus of real expr
 
 **Amended by [13](13-multiple-namespaces-in-one-typdoc.md):** the scope of a query is the namespaces chosen by the scope order (prefix, `--namespace`, `TYPDOC_NAMESPACE`, working directory) inside one project and its imports; the `namespace` pseudo-field is `default` in a one-namespace project and an alias for documents reached through an import.
 
-**Note from [7](7-platform-and-lock.md):** the advice to wrap an expression in single quotes is now a covered-shells rule (sh, bash, zsh, each only while a test runs it), see Quoting in the shell in the design.
+**Note from [7](7-platform-and-lock.md):** the advice to wrap an expression in single quotes is now a covered-shells rule (sh and bash, each only while a test runs it; zsh is not covered in v1), see Quoting in the shell in the design.
