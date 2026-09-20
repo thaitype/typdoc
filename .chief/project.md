@@ -25,6 +25,7 @@ scripts/check-public-text.sh --self-test   # proves the gate can fail; run whene
 - Rust, edition 2024, stable toolchain
 - Cargo workspace at the repo root, crates under `crates/`
 - clap (derive), serde + serde_json, thiserror (lib) + anyhow (bin), chrono
+- tempfile (dev-dependency of the binary crate): a fresh `HOME` for each spawned process and scratch projects for the cases no fixture holds; it is the smallest crate that makes a temporary folder and removes it when the test ends
 - YAML frontmatter: read with `yaml_serde` into typed `String` fields (types come from the schema); write with `yaml-edit`, exact-pinned, behind a typdoc-owned trait of three operations (set a scalar, append or remove a list item, add a key), and every write is re-read with `yaml_serde` and compared with the intent before the temp file is renamed. A mismatch rejects the write with an error, with no automatic fallback (`yaml-edit` is young; the trait makes a hand-written editor a later swap)
 - Markdown body: `pulldown-cmark` 0.13.4 with `default-features = false`; the frontmatter is cut first and the body slice parsed, with its offset added back so lines count from the top of the file
 - Remote schemas: `ureq` 3.x (blocking, rustls) behind a `Fetch` trait and a typdoc-owned `FetchError`, so `typdoc-core` has no async runtime: no restriction on http or https (the connection is the user's choice), an explicit timeout, a maximum response size, at most ten redirects, and the proxy variables `HTTPS_PROXY` and `HTTP_PROXY` honoured
@@ -40,6 +41,7 @@ scripts/check-public-text.sh --self-test   # proves the gate can fail; run whene
 
 - `crates/typdoc-core/` — lib
 - `crates/typdoc/` — bin (clap)
+- `fixtures/` — projects the tests read
 - `docs/` — design doc
 - `examples/` — sample namespaces (`.typdoc/config.json` + schemas)
 - `.chief/` — planning artifacts

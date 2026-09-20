@@ -1,0 +1,4 @@
+# A process is started by the spawn helper of the CLI tests and nowhere else.
+disallowed-methods = [
+    { path = "std::process::Command::new", reason = "a test starts a process through the spawn helper only" },
+]

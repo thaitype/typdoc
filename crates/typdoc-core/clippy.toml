@@ -1,0 +1,23 @@
+# typdoc-core reads and changes nothing. The environment, the home directory and the
+# spawning of a process are reached only through `deps`, and no file is written.
+disallowed-methods = [
+    { path = "std::env::var", reason = "the environment is reached through Env in deps" },
+    { path = "std::env::var_os", reason = "the environment is reached through Env in deps" },
+    { path = "std::env::home_dir", reason = "the home directory is reached through Env in deps" },
+    { path = "std::process::Command::new", reason = "a process could be spawned to do the writing" },
+    { path = "std::fs::write", reason = "the read core changes no file" },
+    { path = "std::fs::rename", reason = "the read core changes no file" },
+    { path = "std::fs::copy", reason = "the read core changes no file" },
+    { path = "std::fs::remove_file", reason = "the read core changes no file" },
+    { path = "std::fs::remove_dir", reason = "the read core changes no file" },
+    { path = "std::fs::remove_dir_all", reason = "the read core changes no file" },
+    { path = "std::fs::create_dir", reason = "the read core changes no file" },
+    { path = "std::fs::create_dir_all", reason = "the read core changes no file" },
+    { path = "std::fs::hard_link", reason = "the read core changes no file" },
+    { path = "std::fs::set_permissions", reason = "the read core changes no file" },
+    { path = "std::fs::File::create", reason = "the read core changes no file" },
+    { path = "std::fs::File::create_new", reason = "the read core changes no file" },
+    { path = "std::fs::File::set_len", reason = "the read core changes no file" },
+    { path = "std::fs::OpenOptions::open", reason = "a file opened for writing is no call to any other listed function" },
+    { path = "std::os::unix::fs::symlink", reason = "the read core changes no file" },
+]
