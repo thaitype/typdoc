@@ -1,7 +1,7 @@
 # 6: Body parsing, line and column mapping, slugs, and `typdoc toc`
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 1, 3
 
 ## What this delivers
