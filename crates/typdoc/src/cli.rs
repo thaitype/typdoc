@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use clap::error::ErrorKind as ClapKind;
 use clap::{Parser, Subcommand};
 use serde_json::{Map, Value as Json, json};
-use typdoc_core::{Deps, Document, DocumentArg, Error, ErrorKind, Project, Toc, Value};
+use typdoc_core::{Argument, Deps, Document, Error, ErrorKind, Project, Toc, Value, discover_for};
 
 #[derive(Parser)]
 #[command(name = "typdoc", version)]
@@ -96,19 +96,17 @@ fn get(
     document: &std::ffi::OsStr,
     namespace: Option<&str>,
 ) -> Result<Document, Error> {
-    let arg = DocumentArg::parse(document)?;
-    let root = typdoc_core::discover(deps.env)?;
+    let (root, arg) = discover_for(Argument::parse(document)?, deps.env)?;
     let project = Project::load(&root)?;
-    project.scope(None, namespace, deps.env)?;
-    project.get(&arg)
+    let scope = project.scope(arg.namespace_prefix(), namespace, deps.env)?;
+    project.get(&arg, &scope, deps.env)
 }
 
 fn toc(deps: &Deps, document: &std::ffi::OsStr, namespace: Option<&str>) -> Result<Toc, Error> {
-    let arg = DocumentArg::parse(document)?;
-    let root = typdoc_core::discover(deps.env)?;
+    let (root, arg) = discover_for(Argument::parse(document)?, deps.env)?;
     let project = Project::load(&root)?;
-    project.scope(None, namespace, deps.env)?;
-    project.toc(&arg)
+    let scope = project.scope(arg.namespace_prefix(), namespace, deps.env)?;
+    project.toc(&arg, &scope, deps.env)
 }
 
 fn exit_code(kind: ErrorKind) -> u8 {
@@ -120,13 +118,20 @@ fn exit_code(kind: ErrorKind) -> u8 {
     }
 }
 
+/// `{ "error": text, "code": code, "details": [] }`, the error object every failure starts
+/// from; a failure that has more to say adds to it.
+fn error_object(text: &str, code: u8) -> Map<String, Json> {
+    let mut object = Map::new();
+    object.insert("error".to_owned(), json!(text));
+    object.insert("code".to_owned(), json!(code));
+    object.insert("details".to_owned(), json!([]));
+    object
+}
+
 /// The error object on standard error with `--json`, and one line of text without.
 fn failure_text(json: bool, code: u8, text: &str) -> Outcome {
     let stderr = if json {
-        format!(
-            "{}\n",
-            json!({ "error": text, "code": code, "details": [] })
-        )
+        format!("{}\n", Json::Object(error_object(text, code)))
     } else {
         format!("typdoc: {text}\n")
     };
@@ -137,26 +142,31 @@ fn failure_text(json: bool, code: u8, text: &str) -> Outcome {
     }
 }
 
-/// The error object of a failure that ended a command, with the config errors as `details`.
+/// The error object of a failure that ended a command, with the config errors as `details`, or
+/// with `candidates` when a key was ambiguous across namespaces.
 fn failure(json: bool, code: u8, error: &Error) -> Outcome {
-    let Error::ConfigErrors { errors, complete } = error else {
-        return failure_text(json, code, &error.to_string());
-    };
-    let details: Vec<Json> = errors
-        .iter()
-        .map(|e| json!({ "level": "error", "rule": e.id, "message": e.message, "path": e.path }))
-        .collect();
-    let object = json!({
-        "error": error.to_string(),
-        "code": code,
-        "details": details,
-        "complete": complete,
-    });
+    let mut object = error_object(&error.to_string(), code);
+    match error {
+        Error::ConfigErrors { errors, complete } => {
+            let details: Vec<Json> = errors
+                .iter()
+                .map(|e| {
+                    json!({ "level": "error", "rule": e.id, "message": e.message, "path": e.path })
+                })
+                .collect();
+            object.insert("details".to_owned(), json!(details));
+            object.insert("complete".to_owned(), json!(complete));
+        }
+        Error::AmbiguousKey { candidates, .. } => {
+            object.insert("candidates".to_owned(), json!(candidates));
+        }
+        _ => return failure_text(json, code, &error.to_string()),
+    }
     Outcome {
         code,
         stdout: String::new(),
         stderr: if json {
-            format!("{object}\n")
+            format!("{}\n", Json::Object(object))
         } else {
             format!("typdoc: {error}\n")
         },
@@ -180,24 +190,34 @@ fn toc_json(toc: &Toc, depth: Option<u8>) -> Json {
         })
         .collect();
     json!({
-        "document": { "path": toc.path, "namespace": toc.namespace },
+        "document": Json::Object(document_name(&toc.path, &toc.namespace, toc.key.as_deref())),
         "headings": headings,
     })
 }
 
+/// The name of a document: `path` and `namespace` always, `key` only for a coded document.
+fn document_name(path: &str, namespace: &str, key: Option<&str>) -> Map<String, Json> {
+    let mut object = Map::new();
+    object.insert("path".to_owned(), json!(path));
+    object.insert("namespace".to_owned(), json!(namespace));
+    if let Some(key) = key {
+        object.insert("key".to_owned(), json!(key));
+    }
+    object
+}
+
 fn document_json(document: &Document) -> Json {
+    let mut object = document_name(&document.path, &document.namespace, document.key.as_deref());
+    object.insert("code".to_owned(), json!(document.code));
+    object.insert("collection".to_owned(), json!(document.collection));
+    object.insert("schema".to_owned(), json!(document.schema));
     let fields: Map<String, Json> = document
         .fields
         .iter()
         .map(|(name, value)| (name.clone(), value_json(value)))
         .collect();
-    json!({
-        "path": document.path,
-        "namespace": document.namespace,
-        "collection": document.collection,
-        "schema": document.schema,
-        "fields": fields,
-    })
+    object.insert("fields".to_owned(), Json::Object(fields));
+    Json::Object(object)
 }
 
 fn value_json(value: &Value) -> Json {

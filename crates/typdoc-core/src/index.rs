@@ -21,17 +21,28 @@ pub struct Entry {
     /// The position in the slice of namespaces the index was built from.
     pub namespace: usize,
     pub file: PathBuf,
+    /// The key this document carries, for a coded collection only.
+    pub key: Option<String>,
 }
 
-/// Every document of the project by its path from the project folder, as the names are on disk.
+/// Every document of the project by its path from the project folder, as the names are on disk,
+/// and every coded document again by its key within its namespace.
 #[derive(Debug, Default)]
 pub struct Index {
     entries: BTreeMap<String, Entry>,
+    keys: BTreeMap<(usize, String), String>,
 }
 
 impl Index {
     pub fn get(&self, path: &str) -> Option<&Entry> {
         self.entries.get(path)
+    }
+
+    /// The path of the document that carries `key` in the namespace at `namespace`.
+    pub fn key(&self, namespace: usize, key: &str) -> Option<&str> {
+        self.keys
+            .get(&(namespace, key.to_owned()))
+            .map(String::as_str)
     }
 
     /// Walks each namespace folder once for each collection, following only the folders its
@@ -49,7 +60,7 @@ impl Index {
                 walk(&base, "", member.template.steps(), &mut found)?;
                 for (below, file) in found {
                     let path = if space.folder.is_empty() {
-                        below
+                        below.clone()
                     } else {
                         format!("{}/{below}", space.folder)
                     };
@@ -63,12 +74,17 @@ impl Index {
                             ),
                         });
                     }
+                    let key = member.template.key(&below);
+                    if let Some(key) = &key {
+                        index.keys.insert((namespace, key.clone()), path.clone());
+                    }
                     index.entries.insert(
                         path,
                         Entry {
                             collection,
                             namespace,
                             file,
+                            key,
                         },
                     );
                 }

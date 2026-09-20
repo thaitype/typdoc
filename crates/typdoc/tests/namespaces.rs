@@ -420,3 +420,65 @@ fn a_config_error_is_reported_before_the_scope_is_looked_at() {
 
     assert_eq!(ran.code, 2, "{}", ran.stderr);
 }
+
+#[test]
+fn a_key_is_read_from_the_namespace_the_current_directory_is_in() {
+    for (folder, title) in [
+        ("story-1", "Story one, ticket WF-1"),
+        ("story-2", "Story two, ticket WF-1"),
+    ] {
+        let ran = get(&several().join(folder), "WF-1");
+
+        let found = document(&ran);
+        assert_eq!(found["namespace"], json!(folder), "{folder}");
+        assert_eq!(found["key"], json!("WF-1"), "{folder}");
+        assert_eq!(found["code"], json!("WF"), "{folder}");
+        assert_eq!(found["fields"]["title"], json!(title), "{folder}");
+    }
+}
+
+#[test]
+fn a_key_prefixed_by_a_namespace_is_read_from_that_namespace_from_anywhere() {
+    let ran = get(&several(), "story-2:WF-9");
+
+    let found = document(&ran);
+    assert_eq!(found["namespace"], json!("story-2"));
+    assert_eq!(found["path"], json!("story-2/tickets/WF-9.md"));
+}
+
+#[test]
+fn a_key_in_more_than_one_namespace_in_scope_exits_1_with_every_candidate() {
+    let ran = Spawn::args(["get", "WF-1", "--json", "--namespace", "*"])
+        .cwd(several())
+        .run();
+
+    assert_eq!(ran.code, 1, "{}", ran.stderr);
+    let object = ran.stderr_json();
+    let candidates: Vec<String> = object["candidates"]
+        .as_array()
+        .expect("candidates")
+        .iter()
+        .map(|c| c.as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(candidates, ["story-1:WF-1", "story-2:WF-1"]);
+}
+
+#[test]
+fn a_key_that_names_no_document_in_scope_exits_5() {
+    let ran = get(&several().join("story-1"), "WF-404");
+
+    assert_eq!(ran.code, 5, "{}", ran.stderr);
+}
+
+#[test]
+fn a_namespace_prefix_on_a_key_that_is_not_a_namespace_of_the_project_is_bad_arguments() {
+    let ran = get(&several(), "nosuch:WF-1");
+
+    assert_eq!(ran.code, 1, "{}", ran.stderr);
+    assert!(
+        ran.stderr_json()["error"]
+            .as_str()
+            .unwrap()
+            .contains("nosuch")
+    );
+}

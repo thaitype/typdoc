@@ -87,6 +87,22 @@ fn a_document_of_another_namespace_names_its_namespace() {
 }
 
 #[test]
+fn a_coded_document_carries_its_key_and_a_key_argument_reads_the_same_document() {
+    let project = fixture("valid/templates");
+
+    let by_path = toc(&project, &["tickets/WF-1.md", "--json"]);
+    let by_key = toc(&project, &["WF-1", "--json"]);
+
+    for ran in [&by_path, &by_key] {
+        assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+        assert_eq!(
+            ran.stdout_json()["document"],
+            json!({ "path": "tickets/WF-1.md", "namespace": "default", "key": "WF-1" })
+        );
+    }
+}
+
+#[test]
 fn depth_chooses_which_headings_are_listed_and_never_changes_an_end() {
     let project = fixture("valid/body");
 

@@ -29,8 +29,15 @@ pub enum Error {
     #[error("no project found: {dir} has no .typdoc/config.json")]
     NoProjectAt { dir: PathBuf },
 
-    #[error("no document at {path}")]
-    NotFound { path: String },
+    #[error("no document at {path}{}", not_found_hint(*hint, path))]
+    NotFound { path: String, hint: bool },
+
+    /// A key that names a document in more than one namespace in scope.
+    #[error("`{key}` is a key in more than one namespace: {}", candidates.join(", "))]
+    AmbiguousKey {
+        key: String,
+        candidates: Vec<String>,
+    },
 
     /// Every config error that could be determined, and whether that is all of them.
     #[error("{}", summary(errors))]
@@ -75,7 +82,7 @@ impl Error {
 
     pub fn kind(&self) -> ErrorKind {
         match self {
-            Error::BadArgument(_) => ErrorKind::BadArguments,
+            Error::BadArgument(_) | Error::AmbiguousKey { .. } => ErrorKind::BadArguments,
             Error::NoProject { .. } | Error::NoProjectAt { .. } | Error::NotFound { .. } => {
                 ErrorKind::NotFound
             }
@@ -84,6 +91,16 @@ impl Error {
             }
             Error::Unreadable { .. } | Error::Io { .. } => ErrorKind::Io,
         }
+    }
+}
+
+/// The suggestion added to a "not found" message when a same-named file sits in the current
+/// directory: never a substitution, only a pointer at what might have been meant.
+fn not_found_hint(hint: bool, path: &str) -> String {
+    if hint {
+        format!(": `./{path}` exists")
+    } else {
+        String::new()
     }
 }
 

@@ -74,6 +74,18 @@ impl Segment {
         }
         !name.is_empty() && fits(&self.parts, name)
     }
+
+    /// The substring `{key}` captures from `name`, if this segment has that placeholder and
+    /// `name` fits the segment as a whole; the same leading-dot rule as `matches`.
+    fn capture_key(&self, name: &str) -> Option<String> {
+        let dot = name.starts_with('.');
+        let starts_with_dot =
+            matches!(self.parts.first(), Some(Part::Literal(l)) if l.starts_with('.'));
+        if (dot && !starts_with_dot) || name.is_empty() {
+            return None;
+        }
+        fits_capture(&self.parts, name).flatten()
+    }
 }
 
 fn push_literal(parts: &mut Vec<Part>, literal: &mut String) {
@@ -83,28 +95,36 @@ fn push_literal(parts: &mut Vec<Part>, literal: &mut String) {
 }
 
 fn fits(parts: &[Part], name: &str) -> bool {
+    fits_capture(parts, name).is_some()
+}
+
+/// Whether `name` fits `parts` and, if it does, the substring `{key}` captured along the way:
+/// `None` when `parts` holds no `{key}`, `Some` when it does. The same shape as `fits`, so a
+/// change to one rule cannot drift from the other.
+fn fits_capture(parts: &[Part], name: &str) -> Option<Option<String>> {
     let Some((first, rest)) = parts.split_first() else {
-        return name.is_empty();
+        return name.is_empty().then_some(None);
     };
     match first {
-        Part::Literal(text) => name
-            .strip_prefix(text.as_str())
-            .is_some_and(|after| fits(rest, after)),
+        Part::Literal(text) => {
+            let after = name.strip_prefix(text.as_str())?;
+            fits_capture(rest, after)
+        }
         Part::Star => name
             .char_indices()
             .map(|(at, _)| at)
             .chain(std::iter::once(name.len()))
-            .any(|at| fits(rest, &name[at..])),
-        Part::Key(None) => false,
+            .find_map(|at| fits_capture(rest, &name[at..])),
+        Part::Key(None) => None,
         Part::Key(Some(code)) => {
-            let Some(numbers) = name
+            let numbers = name
                 .strip_prefix(code.as_str())
-                .and_then(|after| after.strip_prefix('-'))
-            else {
-                return false;
-            };
+                .and_then(|after| after.strip_prefix('-'))?;
             let digits = numbers.bytes().take_while(u8::is_ascii_digit).count();
-            (1..=digits).rev().any(|used| fits(rest, &numbers[used..]))
+            (1..=digits).rev().find_map(|used| {
+                fits_capture(rest, &numbers[used..])
+                    .map(|inner| inner.or_else(|| Some(format!("{code}-{}", &numbers[..used]))))
+            })
         }
     }
 }
@@ -173,6 +193,19 @@ impl Template {
 
     pub fn steps(&self) -> &[Step] {
         &self.steps
+    }
+
+    /// The key `below` carries, counted from the namespace folder, if this template names one.
+    /// A coded template has exactly one `{key}`, in exactly one step, so the component at that
+    /// step is the only place it can come from; a template without a code never matches here.
+    pub fn key(&self, below: &str) -> Option<String> {
+        below
+            .split('/')
+            .zip(&self.steps)
+            .find_map(|(name, step)| match step {
+                Step::Name(segment) => segment.capture_key(name),
+                Step::Folders => None,
+            })
     }
 }
 
@@ -363,5 +396,30 @@ mod tests {
                 .bind("{key}.md", None)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn a_coded_template_reads_back_the_key_a_matched_path_carries() {
+        assert_eq!(
+            coded("tickets/{key}.md").key("tickets/WF-3.md").as_deref(),
+            Some("WF-3")
+        );
+        assert_eq!(coded("{key}.md").key("WF-30.md").as_deref(), Some("WF-30"));
+        assert_eq!(
+            coded("{key}/index.md").key("WF-3/index.md").as_deref(),
+            Some("WF-3")
+        );
+        assert_eq!(coded("tickets/{key}.md").key("tickets/wf-3.md"), None);
+        assert_eq!(coded("tickets/{key}.md").key("notes/a.md"), None);
+    }
+
+    #[test]
+    fn a_template_with_no_code_names_no_key() {
+        let uncoded = Template::parse("notes/*.md")
+            .unwrap()
+            .bind("notes/*.md", None)
+            .unwrap();
+
+        assert_eq!(uncoded.key("notes/a.md"), None);
     }
 }

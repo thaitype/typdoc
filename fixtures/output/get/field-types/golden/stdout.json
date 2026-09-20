@@ -2,6 +2,7 @@
   "document": {
     "path": "records/typed.md",
     "namespace": "default",
+    "code": null,
     "collection": "records",
     "schema": "record",
     "fields": {

@@ -17,6 +17,10 @@ pub struct Document {
     /// Relative to the project folder.
     pub path: String,
     pub namespace: String,
+    /// Present only when the schema has a code.
+    pub key: Option<String>,
+    /// The schema's code, if it has one.
+    pub code: Option<String>,
     pub collection: String,
     pub schema: String,
     /// In the order of the file.

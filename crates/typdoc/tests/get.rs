@@ -17,6 +17,7 @@ fn get_by_path_prints_the_document() {
             "document": {
                 "path": "note.md",
                 "namespace": "default",
+                "code": null,
                 "collection": "notes",
                 "schema": "note",
                 "fields": { "title": "A minimal note", "tags": ["alpha", "beta"] }
@@ -53,20 +54,152 @@ fn a_path_that_differs_from_the_file_in_case_only_is_not_found() {
 }
 
 #[test]
-fn an_argument_that_is_not_a_path_exits_1() {
-    for argument in [
-        "note",
-        "note.txt",
-        "./note.md",
-        "../minimal/note.md",
-        "/note.md",
-    ] {
+fn a_bare_path_is_read_from_the_project_folder_even_when_the_current_directory_has_a_file_of_the_same_name()
+ {
+    let project = Scratch::project(&NOTES);
+    project.file("note.md", "---\ntitle: the project's own copy\n---\n");
+    project.file("sub/note.md", "not the file this path names");
+
+    let ran = Spawn::args(["get", "note.md", "--json"])
+        .cwd(project.path().join("sub"))
+        .run();
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(
+        ran.stdout_json()["document"]["fields"]["title"],
+        json!("the project's own copy")
+    );
+}
+
+#[test]
+fn a_missing_path_says_the_same_name_exists_relative_to_the_current_directory_when_it_does() {
+    let project = Scratch::project(&NOTES);
+    project.file("sub/only-here.md", "");
+
+    let ran = Spawn::args(["get", "only-here.md", "--json"])
+        .cwd(project.path().join("sub"))
+        .run();
+
+    let object = error_of(&ran, 5);
+    assert!(
+        object["error"].as_str().unwrap().contains("./only-here.md"),
+        "{object}"
+    );
+}
+
+#[test]
+fn get_by_key_in_a_project_with_one_namespace() {
+    let ran = Spawn::args(["get", "WF-1", "--json"])
+        .cwd(fixture("valid/templates"))
+        .run();
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    let document = ran.stdout_json()["document"].clone();
+    assert_eq!(document["path"], json!("tickets/WF-1.md"));
+    assert_eq!(document["key"], json!("WF-1"));
+    assert_eq!(document["code"], json!("WF"));
+}
+
+#[test]
+fn a_key_that_does_not_exist_exits_5() {
+    let ran = Spawn::args(["get", "WF-404", "--json"])
+        .cwd(fixture("valid/templates"))
+        .run();
+
+    error_of(&ran, 5);
+}
+
+#[test]
+fn an_argument_that_is_neither_a_path_nor_a_key_exits_1() {
+    for argument in ["note", "note.txt", "wf-3"] {
         let ran = Spawn::args(["get", argument, "--json"])
             .cwd(fixture("valid/minimal"))
             .run();
 
         error_of(&ran, 1);
     }
+}
+
+#[test]
+fn a_namespace_prefix_on_a_path_that_is_not_a_namespace_of_a_one_namespace_project_exits_1() {
+    let ran = Spawn::args(["get", "story-2:notes/x.md", "--json"])
+        .cwd(fixture("valid/minimal"))
+        .run();
+
+    let object = error_of(&ran, 1);
+    assert!(
+        object["error"].as_str().unwrap().contains("story-2"),
+        "{object}"
+    );
+}
+
+#[test]
+fn an_argument_that_names_an_imported_project_exits_1() {
+    let ran = Spawn::args(["get", "chief::WF-3", "--json"])
+        .cwd(fixture("valid/minimal"))
+        .run();
+
+    let object = error_of(&ran, 1);
+    assert!(
+        object["error"].as_str().unwrap().contains("chief::WF-3"),
+        "{object}"
+    );
+}
+
+#[test]
+fn a_path_relative_to_the_current_directory_is_read_the_same_as_one_relative_to_the_project() {
+    for argument in ["./note.md", "../minimal/note.md"] {
+        let ran = Spawn::args(["get", argument, "--json"])
+            .cwd(fixture("valid/minimal"))
+            .run();
+
+        assert_eq!(ran.code, 0, "{argument}: {}", ran.stderr);
+        assert_eq!(
+            ran.stdout_json()["document"]["path"],
+            json!("note.md"),
+            "{argument}"
+        );
+    }
+}
+
+#[test]
+fn an_absolute_path_names_the_project_by_itself_and_wins_over_typdoc_dir() {
+    let project = Scratch::project(&NOTES);
+    project.file("note.md", "---\ntitle: x\n---\n");
+    let elsewhere = fixture("valid/minimal");
+    let absolute = project.path().join("note.md");
+
+    let ran = Spawn::args([
+        "get",
+        absolute.to_str().expect("a UTF-8 scratch path"),
+        "--json",
+    ])
+    .var("TYPDOC_DIR", elsewhere.to_str().expect("UTF-8"))
+    .cwd(&elsewhere)
+    .run();
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stdout_json()["document"]["path"], json!("note.md"));
+    assert_eq!(ran.stdout_json()["document"]["fields"]["title"], json!("x"));
+}
+
+#[test]
+fn an_on_disk_path_below_a_folder_with_no_project_above_it_is_not_found() {
+    let scratch = tempfile::tempdir().expect("a scratch folder");
+    for ancestor in scratch.path().ancestors() {
+        assert!(
+            !ancestor.join(".typdoc/config.json").is_file(),
+            "the temporary folder is below a project, at {}, so this test cannot run",
+            ancestor.display()
+        );
+    }
+    std::fs::write(scratch.path().join("note.md"), "").expect("a file");
+
+    let ran = Spawn::args(["get", "./note.md", "--json"])
+        .cwd(scratch.path())
+        .run();
+
+    error_of(&ran, 5);
 }
 
 #[test]
