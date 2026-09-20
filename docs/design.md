@@ -705,11 +705,15 @@ Exit codes let an agent branch without parsing text.
 
 | Code | Meaning |
 | --- | --- |
-| 0 | Success, including an empty `list` result |
-| 1 | General error: not found, bad arguments, I/O |
+| 0 | Success, including an empty `list` result and a well-formed query that matches nothing |
+| 1 | Bad arguments: a malformed option or expression (a query that breaks the grammar included), or a key or write that is ambiguous across namespaces |
 | 2 | Validation failed: schema, type, enum, transition or ref |
 | 3 | An `--if` condition was false; nothing written |
 | 4 | Lock not acquired within the timeout |
+| 5 | Not found: the key, path or file the command was asked to act on does not exist |
+| 6 | I/O: a file or directory cannot be read or written |
+
+A new code is added only when the caller has to act differently: not found may lead to creating the document, bad arguments are a defect in the call and are not retried, and an I/O failure is a problem of the environment that may be retried. Finer detail belongs in an id: every error carries in `details[].rule` an id that names its specific cause, and the ids are listed with the shapes of the output. A malformed query expression exits 1; a well-formed query that matches nothing exits 0 with an empty result and is never an error.
 
 Errors go to stderr. With `--json`, stderr carries one object:
 
