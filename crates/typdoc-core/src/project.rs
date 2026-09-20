@@ -12,7 +12,7 @@ use crate::error::Error;
 use crate::frontmatter;
 use crate::index::{Entry as Indexed, Index, Member};
 use crate::lines::Position;
-use crate::links;
+use crate::links::{self, BodyLink, BodyLinks};
 use crate::refs;
 use crate::schema::{self, Auto, FieldType, Resolved};
 use crate::scope::{self, Scope};
@@ -46,6 +46,56 @@ pub struct Toc {
     /// Present only when the schema has a code.
     pub key: Option<String>,
     pub headings: Vec<Heading>,
+}
+
+/// The name of a document at the other end of a reference, once it is known to exist: `path`,
+/// `namespace` and `key` (only for a coded document), the same three parts `get` and `toc` name
+/// a document with. Imports are not read in this story, so `project` (an imported document's
+/// alias) never appears here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefName {
+    pub path: String,
+    pub namespace: String,
+    pub key: Option<String>,
+}
+
+/// What one written ref names, once it is looked up: the document it resolves to, or why it
+/// does not (`refs::Reason` under the design's own ids; `"import-absent"` is ticket 17's and
+/// never produced here).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefOutcome {
+    Resolved(RefName),
+    Unresolved(&'static str),
+}
+
+/// `refs`' two directions: the refs a document holds, or the refs that hold it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefsDirection {
+    Out,
+    In,
+}
+
+/// One entry of a `refs` report: the document at the other end (the target for `Out`, the
+/// document that holds the ref for `In`, always resolved since it was found by reading it),
+/// the field that holds it (`"$body"` for a body link), the text as written, and a position
+/// only a body link carries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefsReference {
+    pub other: RefOutcome,
+    pub field: String,
+    pub written: String,
+    pub position: Option<Position>,
+}
+
+/// The report of a `refs` run: the document asked about (always resolved, since `refs` reads it
+/// the same way `get` and `toc` do), the direction, and its references in the design's order
+/// (the fields in document order, each value as written, then `$body` by position; for `In`,
+/// grouped by the holder's own path, lexicographically, and then the same order within it).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefsReport {
+    pub document: RefName,
+    pub direction: RefsDirection,
+    pub refs: Vec<RefsReference>,
 }
 
 pub struct Project {
@@ -263,6 +313,214 @@ impl Project {
             key: entry.key.clone(),
             headings,
         })
+    }
+
+    /// `refs`: outgoing refs by default, or, with `reverse`, every ref of the whole project
+    /// (imports are not read in this story) that resolves to the document asked about, the
+    /// design's `refby` index. `field` keeps only the refs held in that field, `"$body"` for
+    /// body links, in either direction.
+    ///
+    /// The document asked about is read the same way `get` and `toc` read theirs (`Project::
+    /// resolve`, under `scope`): a broken frontmatter block fails the whole command, matching
+    /// `get`. `reverse` scans every document of the project regardless of `scope`, since the
+    /// design gives `refby` no scope of its own ("scans every namespace of this project and the
+    /// projects it imports"): a document elsewhere in the project whose own frontmatter cannot
+    /// be parsed contributes nothing to that scan, the same way it contributes no `refs.resolve`
+    /// or `body.*` finding to a whole-project `validate` (design: "no other rule is evaluated
+    /// for that file").
+    pub fn refs(
+        &self,
+        arg: &DocumentArg,
+        scope: &Scope,
+        reverse: bool,
+        field: Option<&str>,
+        env: &dyn Env,
+    ) -> Result<RefsReport, Error> {
+        let (path, entry, text) = self.resolve(arg, scope, env)?;
+        let document = self.ref_name_of(&path);
+        let codes = self.project_codes();
+        let bad = |message| Error::Frontmatter {
+            file: entry.file.clone(),
+            message,
+        };
+        let collection = &self.collections[entry.collection];
+        let fields = match frontmatter::block(&text).map_err(bad)? {
+            Some(block) => frontmatter::fields(block, &collection.schema).map_err(bad)?,
+            None => Vec::new(),
+        };
+        let body = links::scan(&text).expect("frontmatter.parse already refused an unclosed block");
+        let own = self.document_out_refs(&path, entry, &fields, &body, &codes);
+
+        if !reverse {
+            let refs = filtered(own, field);
+            return Ok(RefsReport {
+                document,
+                direction: RefsDirection::Out,
+                refs,
+            });
+        }
+
+        // The design orders `in` by the holder's own `path`, lexicographically (`Order`'s rule
+        // for `findings` applied the same way to a reference's holder). `Index::iter` promises
+        // no order of its own ("the caller sorts what it needs sorted"), so this collects and
+        // sorts explicitly rather than leaning on the incidental order a `BTreeMap` happens to
+        // give today.
+        let mut holders: Vec<(&str, &Indexed)> = self.index.iter().collect();
+        holders.sort_by_key(|(other_path, _)| *other_path);
+        let mut refs = Vec::new();
+        for (other_path, other_entry) in holders {
+            let other_collection = &self.collections[other_entry.collection];
+            let other_text =
+                fs::read_to_string(&other_entry.file).map_err(Error::io_at(&other_entry.file))?;
+            let Some((other_fields, other_body)) =
+                parsed_fields_and_body(&other_text, &other_collection.schema)
+            else {
+                continue;
+            };
+            let outgoing =
+                self.document_out_refs(other_path, other_entry, &other_fields, &other_body, &codes);
+            for reference in filtered(outgoing, field) {
+                let RefOutcome::Resolved(target) = &reference.other else {
+                    continue;
+                };
+                if target.path != path {
+                    continue;
+                }
+                refs.push(RefsReference {
+                    other: RefOutcome::Resolved(self.ref_name_of(other_path)),
+                    field: reference.field,
+                    written: reference.written,
+                    position: reference.position,
+                });
+            }
+        }
+        Ok(RefsReport {
+            document,
+            direction: RefsDirection::In,
+            refs,
+        })
+    }
+
+    /// The outgoing references of one document already read, in the design's order for `out`:
+    /// its `ref`/`ref[]` fields in the order they appear, each value in the order it is written,
+    /// then its body links (`$body`) by position. Kept whether or not each one resolves: `refs`
+    /// itself needs the unresolved ones for `out`, and `refs --reverse` needs to call this once
+    /// per document of the project and keep only the entries that resolve to the one asked
+    /// about (the design's own words for `refby`: the same index `refs --reverse` uses).
+    fn document_out_refs(
+        &self,
+        path: &str,
+        entry: &Indexed,
+        fields: &[(String, Value)],
+        body: &BodyLinks,
+        codes: &BTreeSet<String>,
+    ) -> Vec<RefsReference> {
+        let collection = &self.collections[entry.collection];
+        let ctx = refs::Ctx {
+            doc_namespace: entry.namespace,
+            doc_path: path,
+            ref_base: collection.ref_base,
+            namespaces: &self.config.namespaces,
+            codes,
+            index: &self.index,
+            root: &self.root,
+        };
+        let mut refs = Vec::new();
+        for (field_name, value) in fields {
+            let Some(field) = collection.schema.field(field_name) else {
+                continue;
+            };
+            if !matches!(field.kind, FieldType::Ref | FieldType::RefList)
+                || !crate::coerce::fits(&field.kind, value)
+            {
+                continue;
+            }
+            for written in ref_values(value) {
+                let other = match refs::resolve_one(written, &ctx) {
+                    Ok(resolved) => RefOutcome::Resolved(self.ref_name_of(&resolved.path)),
+                    Err(reason) => RefOutcome::Unresolved(reason_id(reason)),
+                };
+                refs.push(RefsReference {
+                    other,
+                    field: field_name.clone(),
+                    written: written.to_owned(),
+                    position: None,
+                });
+            }
+        }
+        let mut links: Vec<&BodyLink> = body.links.iter().collect();
+        links.sort_by_key(|link| (link.line, link.col));
+        for link in links {
+            // `target: None` is `[t]()` or `[t](#anchor)`: no path at all, so nothing outside
+            // this document is named. Ticket 11 reads it as "a self-reference with nothing to
+            // check" for `body.links`/`body.anchors`, and the design's own References paragraph
+            // only ever speaks of "the document at the other end" — there is none here, so it is
+            // not a ref and is left out of `$body` entirely, the same way a URL-scheme link
+            // (`BodyDestination::Skip`) is: both name nothing this project can point `refby` at.
+            let Some(target) = &link.target else {
+                continue;
+            };
+            let other = match refs::classify_body(target, &ctx) {
+                refs::BodyDestination::Skip => continue,
+                refs::BodyDestination::BadPrefix => RefOutcome::Unresolved("bad-prefix"),
+                refs::BodyDestination::Path(joined) => {
+                    match refs::resolve_path(&joined, &self.index, &self.root) {
+                        Ok(resolved) => RefOutcome::Resolved(self.ref_name_of(&resolved.path)),
+                        Err(_) => RefOutcome::Unresolved("not-found"),
+                    }
+                }
+            };
+            refs.push(RefsReference {
+                other,
+                field: "$body".to_owned(),
+                written: link.written.clone(),
+                position: Some(Position {
+                    line: link.line,
+                    col: link.col,
+                }),
+            });
+        }
+        refs
+    }
+
+    /// The name (`path`, `namespace`, `key`) of a document at `path`: looked up in the index
+    /// when it is one, which is the only place a coded document's `key` comes from. A path that
+    /// resolved but is outside every collection (`target: "*"` accepts one, e.g. a README) has
+    /// no entry of its own; its namespace is the one whose folder is the longest prefix of
+    /// `path`, or the namespace with no folder (`default`) when none matches, since namespaces
+    /// never nest (config rule) and every project has exactly one namespace with an empty
+    /// folder.
+    fn ref_name_of(&self, path: &str) -> RefName {
+        if let Some(entry) = self.index.get(path) {
+            return RefName {
+                path: path.to_owned(),
+                namespace: self.config.namespaces[entry.namespace].name.clone(),
+                key: entry.key.clone(),
+            };
+        }
+        let namespace = self
+            .config
+            .namespaces
+            .iter()
+            .filter(|space| {
+                !space.folder.is_empty()
+                    && (path == space.folder || path.starts_with(&format!("{}/", space.folder)))
+            })
+            .max_by_key(|space| space.folder.len())
+            .or_else(|| {
+                self.config
+                    .namespaces
+                    .iter()
+                    .find(|space| space.folder.is_empty())
+            })
+            .expect(
+                "every project has a namespace with an empty folder when none matches by prefix",
+            );
+        RefName {
+            path: path.to_owned(),
+            namespace: namespace.name.clone(),
+            key: None,
+        }
     }
 
     /// The report of `validate`: `Schemas` when `schemas_only`, `Paths` when `args` is not
@@ -1267,6 +1525,28 @@ fn parsed_fields(text: &str, schema: &Resolved) -> Option<Vec<(String, Value)>> 
     frontmatter::fields(block, schema).ok()
 }
 
+/// The fields and body links of a document already read, for `refs --reverse`'s scan of every
+/// other document of the project: `None` exactly when `frontmatter.parse` would fire for it (an
+/// unclosed block, or a block that is not valid YAML), so such a document contributes nothing to
+/// the reverse index, the same as it contributes no finding to `validate` (design: "no other
+/// rule is evaluated for that file"). Unlike `parsed_fields` above (used where a caller already
+/// knows `frontmatter.parse` did not fire, so its own collapsing of "no block" and "broken
+/// block" into one `None` is safe), this tells a file with no block at all — a legitimate,
+/// ref-less document — apart from one that is broken, since only the latter should also skip the
+/// body scan below.
+fn parsed_fields_and_body(
+    text: &str,
+    schema: &Resolved,
+) -> Option<(Vec<(String, Value)>, BodyLinks)> {
+    let block = frontmatter::block(text).ok()?;
+    let fields = match block {
+        None => Vec::new(),
+        Some(block) => frontmatter::fields(block, schema).ok()?,
+    };
+    let body = links::scan(text).expect("frontmatter.parse already refused an unclosed block");
+    Some((fields, body))
+}
+
 /// The written ref or refs a field's already-typed value holds: one for `ref`, each item of the
 /// list for `ref[]`. Called only once `coerce::fits` has shown the value matches the field's
 /// kind, so the other variants of `Value` never reach here.
@@ -1286,6 +1566,24 @@ fn reason_message(written: &str, reason: refs::Reason) -> String {
         refs::Reason::BadPrefix => {
             format!("the ref `{written}` does not resolve: its prefix names no namespace")
         }
+    }
+}
+
+/// `refs::Reason` under the design's own `unresolved` ids (`"import-absent"` is ticket 17's and
+/// never produced by `refs::resolve_one` or `refs::classify_body` in this story).
+fn reason_id(reason: refs::Reason) -> &'static str {
+    match reason {
+        refs::Reason::NotFound => "not-found",
+        refs::Reason::BadPrefix => "bad-prefix",
+    }
+}
+
+/// `refs`'s `--field` filter, kept for `"$body"` on a body link and for a named field on a
+/// frontmatter ref alike: `None` keeps everything.
+fn filtered(refs: Vec<RefsReference>, field: Option<&str>) -> Vec<RefsReference> {
+    match field {
+        Some(field) => refs.into_iter().filter(|r| r.field == field).collect(),
+        None => refs,
     }
 }
 

@@ -19,7 +19,6 @@ pub const UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "new",  // story 2
     "list", // story 1
     "set",  // story 2
-    "refs", // story 1
     "mv",   // story 2
     "pull", // story 3
 ];

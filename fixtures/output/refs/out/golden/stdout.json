@@ -1,0 +1,49 @@
+{
+  "document": {
+    "path": "tickets/WF-1.md",
+    "namespace": "default",
+    "key": "WF-1"
+  },
+  "direction": "out",
+  "refs": [
+    {
+      "unresolved": "bad-prefix",
+      "field": "context",
+      "written": "chief::WF-5"
+    },
+    {
+      "path": "tickets/WF-2.md",
+      "namespace": "default",
+      "key": "WF-2",
+      "field": "blocked_by",
+      "written": "WF-2"
+    },
+    {
+      "unresolved": "not-found",
+      "field": "blocked_by",
+      "written": "WF-99"
+    },
+    {
+      "path": "notes/a.md",
+      "namespace": "default",
+      "field": "$body",
+      "written": "../notes/a.md",
+      "line": 7,
+      "col": 8
+    },
+    {
+      "unresolved": "bad-prefix",
+      "field": "$body",
+      "written": "chief::x.md",
+      "line": 7,
+      "col": 31
+    },
+    {
+      "unresolved": "not-found",
+      "field": "$body",
+      "written": "missing.md",
+      "line": 7,
+      "col": 55
+    }
+  ]
+}

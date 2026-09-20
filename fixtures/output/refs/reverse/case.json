@@ -1,0 +1,4 @@
+{
+  "project": "valid/refs",
+  "command": ["refs", "tickets/WF-2.md", "--reverse", "--json"]
+}

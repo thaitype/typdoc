@@ -32,7 +32,10 @@ pub use lines::{LineMap, Position};
 pub use links::{
     BodyLink, BodyLinks, Definition, DuplicateDefinition, Mention, Suspect, mentions, scan,
 };
-pub use project::{Project, Toc, ValidateReport, discover};
+pub use project::{
+    Project, RefName, RefOutcome, RefsDirection, RefsReference, RefsReport, Toc, ValidateReport,
+    discover,
+};
 pub use schema::{Auto, Field, FieldType, OptBool, Resolved, Schema, Target};
 pub use scope::{Scope, Source};
 pub use validate::{Finding, Severity, ValidateScope};

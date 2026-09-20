@@ -1,0 +1,9 @@
+{
+  "name": "ticket",
+  "code": "WF",
+  "fields": {
+    "title": { "type": "string" },
+    "blocked_by": { "type": "ref[]", "target": "*" },
+    "context": { "type": "ref", "target": "*" }
+  }
+}

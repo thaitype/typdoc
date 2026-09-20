@@ -1,0 +1,32 @@
+{
+  "document": {
+    "path": "tickets/WF-2.md",
+    "namespace": "default",
+    "key": "WF-2"
+  },
+  "direction": "in",
+  "refs": [
+    {
+      "path": "notes/a.md",
+      "namespace": "default",
+      "field": "$body",
+      "written": "../tickets/WF-2.md",
+      "line": 5,
+      "col": 5
+    },
+    {
+      "path": "tickets/WF-1.md",
+      "namespace": "default",
+      "key": "WF-1",
+      "field": "blocked_by",
+      "written": "WF-2"
+    },
+    {
+      "path": "tickets/WF-3.md",
+      "namespace": "default",
+      "key": "WF-3",
+      "field": "context",
+      "written": "WF-2"
+    }
+  ]
+}

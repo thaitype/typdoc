@@ -5,8 +5,9 @@ use clap::error::ErrorKind as ClapKind;
 use clap::{Parser, Subcommand};
 use serde_json::{Map, Value as Json, json};
 use typdoc_core::{
-    Argument, Deps, Document, DocumentArg, Env, Error, ErrorKind, Finding, Project, Severity, Toc,
-    ValidateReport, ValidateScope, Value, discover, discover_for, resolve_on_disk,
+    Argument, Deps, Document, DocumentArg, Env, Error, ErrorKind, Finding, Project, RefOutcome,
+    RefsDirection, RefsReference, RefsReport, Severity, Toc, ValidateReport, ValidateScope, Value,
+    discover, discover_for, resolve_on_disk,
 };
 
 #[derive(Parser)]
@@ -26,6 +27,19 @@ enum Command {
     Get {
         /// The path of the document, from the project folder
         document: OsString,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Outgoing or incoming refs of one document
+    Refs {
+        /// The key or path of the document, from the project folder
+        document: OsString,
+        /// Keep only the refs held in this field, `$body` for body links
+        #[arg(long, value_name = "FIELD")]
+        field: Option<String>,
+        /// Refs that point at the document, scanning every namespace of the project
+        #[arg(long)]
+        reverse: bool,
         #[arg(long)]
         json: bool,
     },
@@ -84,6 +98,26 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
             }
             match get(deps, &document, cli.namespace.as_deref()) {
                 Ok(document) => success(json!({ "document": document_json(&document) })),
+                Err(e) => failure(true, exit_code(e.kind()), &e),
+            }
+        }
+        Command::Refs {
+            document,
+            field,
+            reverse,
+            json,
+        } => {
+            if !json {
+                return failure_text(false, 1, "the output without --json is not built yet");
+            }
+            match refs(
+                deps,
+                &document,
+                reverse,
+                field.as_deref(),
+                cli.namespace.as_deref(),
+            ) {
+                Ok(report) => success(refs_json(&report)),
                 Err(e) => failure(true, exit_code(e.kind()), &e),
             }
         }
@@ -161,6 +195,19 @@ fn toc(deps: &Deps, document: &std::ffi::OsStr, namespace: Option<&str>) -> Resu
     let project = Project::load(&root)?;
     let scope = project.scope(arg.namespace_prefix(), namespace, deps.env)?;
     project.toc(&arg, &scope, deps.env)
+}
+
+fn refs(
+    deps: &Deps,
+    document: &std::ffi::OsStr,
+    reverse: bool,
+    field: Option<&str>,
+    namespace: Option<&str>,
+) -> Result<RefsReport, Error> {
+    let (root, arg) = discover_for(Argument::parse(document)?, deps.env)?;
+    let project = Project::load(&root)?;
+    let scope = project.scope(arg.namespace_prefix(), namespace, deps.env)?;
+    project.refs(&arg, &scope, reverse, field, deps.env)
 }
 
 fn validate(
@@ -363,6 +410,54 @@ fn toc_json(toc: &Toc, depth: Option<u8>) -> Json {
         "document": Json::Object(document_name(&toc.path, &toc.namespace, toc.key.as_deref())),
         "headings": headings,
     })
+}
+
+/// `refs`' report: the document asked about, `direction`, and its references in the order
+/// `Project::refs` already gives them.
+fn refs_json(report: &RefsReport) -> Json {
+    let refs: Vec<Json> = report.refs.iter().map(reference_json).collect();
+    json!({
+        "document": Json::Object(document_name(
+            &report.document.path,
+            &report.document.namespace,
+            report.document.key.as_deref(),
+        )),
+        "direction": direction_name(report.direction),
+        "refs": refs,
+    })
+}
+
+fn direction_name(direction: RefsDirection) -> &'static str {
+    match direction {
+        RefsDirection::Out => "out",
+        RefsDirection::In => "in",
+    }
+}
+
+/// One reference: the name of the document at the other end when it resolved, `unresolved`
+/// otherwise (never both — the ticket's own guarantee), plus `field`, `written` and, for a body
+/// link, `line` and `col`.
+fn reference_json(reference: &RefsReference) -> Json {
+    let mut object = Map::new();
+    match &reference.other {
+        RefOutcome::Resolved(name) => {
+            object.insert("path".to_owned(), json!(name.path));
+            object.insert("namespace".to_owned(), json!(name.namespace));
+            if let Some(key) = &name.key {
+                object.insert("key".to_owned(), json!(key));
+            }
+        }
+        RefOutcome::Unresolved(reason) => {
+            object.insert("unresolved".to_owned(), json!(reason));
+        }
+    }
+    object.insert("field".to_owned(), json!(reference.field));
+    object.insert("written".to_owned(), json!(reference.written));
+    if let Some(position) = reference.position {
+        object.insert("line".to_owned(), json!(position.line));
+        object.insert("col".to_owned(), json!(position.col));
+    }
+    Json::Object(object)
 }
 
 /// The name of a document: `path` and `namespace` always, `key` only for a coded document.
