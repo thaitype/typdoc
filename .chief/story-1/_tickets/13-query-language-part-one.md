@@ -1,7 +1,7 @@
 # 13: The query language, scalar conditions
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 5, 7
 
 ## What this delivers
