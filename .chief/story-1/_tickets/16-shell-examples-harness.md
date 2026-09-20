@@ -1,7 +1,7 @@
 # 16: The harness for the shell examples
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 14
 
 ## What this delivers
