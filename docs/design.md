@@ -461,7 +461,7 @@ For a code, allocates the next number under the namespace's lock: the larger of 
 typdoc get <key|path> [--json]
 ```
 
-Returns frontmatter plus `path`, `key`, `code`, `collection`, `schema` and `namespace`.
+Returns frontmatter plus `path`, `key`, `code`, `collection`, `schema` and `namespace`. With `--json` it prints the document described under JSON output.
 
 ### typdoc list
 
@@ -471,7 +471,7 @@ typdoc list [--collection c[,c]] [--code C[,C]] [--where EXPR ...] [--fields f,.
 typdoc list --collection wayfinder,decisions --where status=open --sort status --sort updated_at:desc
 ```
 
-`--collection` selects by collection name; `--code` is a shorthand that selects the collections whose schema has that code. Expressions are listed under Query. Default output is a table of key or path, `title`, and every field used in `--where`. `--json` returns `{ path, key, code, collection, schema, namespace, fields }` per document with all frontmatter. `--ids` prints one key or path per line. An empty result exits 0.
+`--collection` selects by collection name; `--code` is a shorthand that selects the collections whose schema has that code. Expressions are listed under Query. Default output is a table of key or path, `title`, and every field used in `--where`. `--json` prints the documents described under JSON output, each with all its frontmatter. `--ids` prints one key or path per line. An empty result exits 0.
 
 **Sorting.** `--sort field:dir` may repeat; the first flag sorts first and later flags break ties. The direction is `asc` (default when omitted) or `desc`; anything else is an error. Without `--sort`, results are in key or path order.
 
@@ -698,6 +698,19 @@ One lock per namespace serializes writes, which is enough for number allocation,
 | `git-common` | `$(git rev-parse --git-common-dir)/typdoc/<project-hash>-<namespace>.lock` | Sessions run in separate git worktrees |
 
 `git-common` stops two worktrees writing at the same instant, but each worktree still holds its own copy of the files: two worktrees can allocate the same key, and `validate` catches the duplicate after merge. Each worktree also holds its own copy of `state/<namespace>.json`. Worktrees that work on different namespaces never change the same state file, so their numbering cannot collide. Two worktrees on the same namespace still change the same line and conflict on merge, a louder signal than the duplicate key alone. Truly shared state across worktrees needs the project folder outside the worktrees.
+
+## JSON output
+
+Every command accepts `--json`. On success it prints one JSON object to standard output; on failure it prints the error object described under Exit codes and errors to standard error, and the exit code says which of the two to read. The result is held in a field named for it and is never printed bare, so that facts about the result can sit beside it: a `list` that `--limit` cuts short has to say so, and a bare array has no place to say it. Output may gain fields in later versions, so a consumer must ignore any field it does not know; this holds for the error object as well.
+
+**A document** is the same object wherever it appears, in `get` and in `list` alike. It has `path`, `key` (coded documents only), `code`, `collection`, `schema` and `namespace`, and `fields`, which holds all of the document's frontmatter. The frontmatter stays apart in `fields` because a field that is not in the schema is kept and can have any name, `path` and `key` included.
+
+| Command | Prints |
+| --- | --- |
+| `get` | `{ "document": <document> }` |
+| `list` | `{ "documents": [<document>, ...], "total": n, "truncated": b }` |
+
+`total` is the number of documents that match, counted before `--limit`, and `truncated` is true when `total` is larger than the number listed. Because `total` is always reported, a `list` filters every document even when `--limit` is small.
 
 ## Exit codes and errors
 
