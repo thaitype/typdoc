@@ -156,6 +156,27 @@ That is the question worth asking a folder of tickets: what is open and not wait
 
 `--collection tickets` is doing real work there. Without it the query spans every collection, and `status=open` is an error rather than an empty result, because the `note` schema allows `draft` and `done` and not `open`. A field name or an enum value that no schema in scope knows is a mistake worth hearing about, not a query that quietly matches nothing.
 
+## Starting from notes you already have
+
+The walkthrough above builds a project from nothing. Adopting typdoc on a folder that already exists is the other way round, and `--audit` is the mode for it: it answers "what would I have to fix to use this here", and it ends with 0 whatever it finds, so you can run it on a folder you have not decided about yet.
+
+Take a folder holding five Markdown files, three under `notes/`, a `README.md` and a scratch file under `drafts/`. Give it the smallest config, one collection and one schema, and ask:
+
+```console
+$ typdoc validate --audit
+typdoc audit: 1 collections, 5 files (2 in no collection)
+
+notes  3 files   frontmatter.unknown 1 warn
+
+in no collection: README.md, drafts/scratch.md (2)
+
+no frontmatter: notes/plain.md (1)
+```
+
+Every file is accounted for: three in the `notes` collection, of which one has a field the schema does not name; two in no collection at all; and one of the three that has no frontmatter and so was listed rather than checked. Two and two and one make five, which is the point of the summary — it never reports less work than there is.
+
+From there, adopting is a loop: widen `match` until the files you meant to cover are covered, add fields to the schema until the warnings are ones you care about, and leave the rest uncollected on purpose. When the audit is as clean as you want it, `validate` without `--audit` is the gate to put in a hook or in CI.
+
 ## Where to go next
 
 - `projects.md` — namespaces, imports, match templates, and every field option a schema has.

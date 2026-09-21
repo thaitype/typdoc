@@ -33,6 +33,8 @@ Everything else in the folder is your documents, arranged however you already ar
 
 ## Collections
 
+Write the schema first and the collection second: a collection names its schema by path, so the schema has to exist for it to point at. Namespaces come before either, and only when one folder of documents is not enough.
+
 A collection says which files a schema applies to:
 
 ```json
@@ -95,7 +97,15 @@ An import is another project on this machine, named by an alias:
 
 A ref may then cross into it, written with two colons: `memory::LRN-1`, or `memory::notes/x.md`. A project with several namespaces must be told which one: `chief::story-3:WF-5`.
 
-A path that differs per machine belongs in `imports.json` rather than in the committed config. It is looked for under `TYPDOC_CONFIG_DIR`, then `XDG_CONFIG_HOME`, then the platform's own config folder, and what it holds is added to the project's own imports without overriding them. A path may use `${VAR}`; a variable that is unset or empty leaves the import absent rather than turning `${HOME}/x` into `/x`.
+Two projects may import each other. Each names the other in its own config, and a ref crossing either way resolves; neither inherits the other's imports, because the one-level rule still holds.
+
+A path that differs per machine belongs in `imports.json`, which holds the same shape as the `imports` key and is never committed:
+
+```json
+{ "memory": "/home/me/projects/memory" }
+```
+
+It is looked for under `TYPDOC_CONFIG_DIR`, then `XDG_CONFIG_HOME`, then the platform's own config folder, and what it holds is added to the project's own imports without overriding them. A path may use `${VAR}`; a variable that is unset or empty leaves the import absent rather than turning `${HOME}/x` into `/x`.
 
 An import that is not on this machine is a warning by default, not an error: the point is that no machine-specific path has to be committed. Set `imports.absent` to `error` in CI if a missing import should fail there.
 

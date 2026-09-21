@@ -9,13 +9,15 @@ $ typdoc list --where status=open --where 'ref.all(blocked_by).status=resolved'
 WF-2  Decide the numbering scheme  open  WF-1
 ```
 
+That asks a folder of tickets which of them are open and waiting on nothing unfinished. Every part of it is explained in `docs/getting-started.md`; nothing here is a language you have to learn before the tool is useful.
+
 ## Status
 
 Version 0.1.0. Not released, and not finished: this is the read-only half of the tool.
 
 **What works today**
 
-- `get`, `list`, `refs`, `toc` and `validate`, against a project on this machine and the projects it imports.
+- `get`, `list`, `refs`, `toc` and `validate`. A ref may point into another project on this machine that yours imports, and is followed there, though a few checks stop at that edge; see below.
 - Schemas with types, enums, refs and inheritance; rules over frontmatter, schemas, keys, file names, refs and body links; a query language for `list`, including conditions that follow refs.
 - **Nothing is written.** Every command reads. The tool does not create, edit, move or fetch anything, and the state file it reads is never written back.
 

@@ -55,7 +55,7 @@ What a document points at, or what points at it.
 | `--reverse` | The refs that point at this document instead of the ones it holds |
 | `--field <f>` | Only the refs in this field; `$body` for body links |
 
-Each reference carries either a `path`, and the rest of the document's name, or an `unresolved` reason, never both. The reasons are `not-found`, `bad-prefix` and `import-absent`.
+Each reference carries either the document it resolved to, named by its `path` and `namespace` (and its `key` and `project` where it has them), or an `unresolved` reason. Never both, and never neither. The reasons are `not-found`, `bad-prefix` and `import-absent`.
 
 A reverse lookup scans this project's namespaces. It does not enter an imported project, which the design says it should; that difference is listed in `crates/typdoc/src/registry.rs`.
 
