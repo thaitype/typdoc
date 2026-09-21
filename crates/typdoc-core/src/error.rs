@@ -53,9 +53,6 @@ pub enum Error {
     #[error("{}: {message}", file.display())]
     Frontmatter { file: PathBuf, message: String },
 
-    #[error("{}: {message}", file.display())]
-    Unreadable { file: PathBuf, message: String },
-
     #[error("{}: {source}", file.display())]
     Io {
         file: PathBuf,
@@ -71,15 +68,6 @@ impl Error {
         move |source| Error::Io { file, source }
     }
 
-    /// A symbolic link that a run reaches and does not read.
-    pub fn symbolic_link(file: &std::path::Path) -> Error {
-        Error::Unreadable {
-            file: file.to_owned(),
-            message: "a symbolic link is not read: whether a run follows one is not decided"
-                .to_owned(),
-        }
-    }
-
     pub fn kind(&self) -> ErrorKind {
         match self {
             Error::BadArgument(_) | Error::AmbiguousKey { .. } => ErrorKind::BadArguments,
@@ -89,7 +77,7 @@ impl Error {
             Error::Config { .. } | Error::ConfigErrors { .. } | Error::Frontmatter { .. } => {
                 ErrorKind::Validation
             }
-            Error::Unreadable { .. } | Error::Io { .. } => ErrorKind::Io,
+            Error::Io { .. } => ErrorKind::Io,
         }
     }
 }

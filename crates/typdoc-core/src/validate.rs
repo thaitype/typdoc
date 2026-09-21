@@ -336,16 +336,16 @@ pub(crate) fn stray_file_finding(
     )
 }
 
-/// A finding about a directory entry a `match` reached and the walk could not read
-/// (`files.unreadable`): it was skipped, so it is no document and carries `namespace` but no
-/// `collection` or `key`, the same shape `stray_file_finding` uses. Always on, so its level is
-/// always `error`.
-pub(crate) fn unreadable_finding(path: &str, namespace: &str, message: String) -> Finding {
+/// A finding about a directory entry a `match` or a `namespaces` glob reached and the walk could
+/// not read (`files.unreadable`): it was skipped, so it is no document and carries no
+/// `collection` or `key`, and carries `namespace` when it was found inside one, the same shape
+/// `stray_file_finding` uses. Always on, so its level is always `error`.
+pub(crate) fn unreadable_finding(path: &str, namespace: Option<&str>, message: String) -> Finding {
     build_finding(
         Severity::Error,
         "files.unreadable",
         path,
-        Some(namespace),
+        namespace,
         None,
         None,
         None,

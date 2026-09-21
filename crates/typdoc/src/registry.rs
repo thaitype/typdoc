@@ -45,11 +45,6 @@ pub const KNOWN_GAPS: &[&str] = &[
      only; the design says it also scans the namespaces of every project this one imports, so \
      a ref written in an imported project's own document, pointing back into this project, is \
      missing from the result rather than being in it",
-    // crates/typdoc/tests/namespaces.rs:
-    // `a_namespace_named_after_a_url_scheme_validates_clean_unlike_an_import_alias_of_the_same_name`
-    "[namespace-scheme] a namespace named after a URL scheme (`http`, `https`, `mailto`, \
-     `file`) is not reported; an import alias with the same name is refused under \
-     `schema.valid`, and the design's own sentence covers both",
     // crates/typdoc/tests/imports.rs:
     // `a_body_link_across_an_import_has_its_anchor_left_unchecked`
     "[import-anchor] a body link that crosses an import has its target file's existence \

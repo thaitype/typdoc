@@ -420,19 +420,21 @@ impl Project {
         schema_findings.extend(duplicate_schema_findings(&loaded));
         for alias in config.imports.keys() {
             if schema::reserved_url_scheme(alias) {
-                schema_findings.push(validate::schema_finding(
-                    CONFIG_FILE,
-                    None,
-                    format!(
-                        "the import name `{alias}` is a URL scheme (`http`, `https`, `mailto` and `file` are reserved), and the two would be told apart wrongly"
-                    ),
-                ));
+                schema_findings.push(reserved_alias_finding(CONFIG_FILE, alias));
             }
         }
         let index = Index::build(root, &config.namespaces, &members)?;
         let stray_files = crate::index::stray_files(root, &config.namespaces, &members)?;
         let imports = if follow_imports {
             let machine = crate::imports::read_machine_file(machine_file.as_ref())?;
+            if let Some(file) = &machine_file {
+                for alias in machine.keys().filter(|alias| {
+                    !config.imports.contains_key(*alias) && schema::reserved_url_scheme(alias)
+                }) {
+                    schema_findings
+                        .push(reserved_alias_finding(&file.display().to_string(), alias));
+                }
+            }
             let merged = crate::imports::merge(&config.imports, machine);
             let mut resolved = BTreeMap::new();
             for (alias, raw) in &merged {
@@ -1534,8 +1536,17 @@ impl Project {
                 namespaces.insert(namespace.clone());
                 findings.push(validate::unreadable_finding(
                     path,
-                    namespace,
+                    Some(namespace),
                     why.to_owned(),
+                ));
+            }
+            // An entry of the project folder that a `namespaces` glob reached is in no
+            // namespace, so it carries none and is reported whatever the scope is.
+            for skipped in &self.config.skipped {
+                findings.push(validate::unreadable_finding(
+                    &skipped.path,
+                    None,
+                    skipped.why.to_owned(),
                 ));
             }
             for (path, namespace) in &self.stray_files {
@@ -3376,6 +3387,18 @@ fn resolve_import(root: &Path, raw: &str, env: &dyn Env) -> Result<ImportState, 
     }
     let imported = Project::load_inner(&path, env, false)?;
     Ok(ImportState::Loaded(Box::new(imported)))
+}
+
+/// `schema.valid`'s finding for an import name that is one of the four URL schemes, at the file
+/// that names it.
+fn reserved_alias_finding(file: &str, alias: &str) -> Finding {
+    validate::schema_finding(
+        file,
+        None,
+        format!(
+            "the import name `{alias}` is a URL scheme (`http`, `https`, `mailto` and `file` are reserved), and the two would be told apart wrongly"
+        ),
+    )
 }
 
 /// The template of a collection as it is written, before it is bound to a schema. A template

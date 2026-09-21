@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::config::{Namespace, config_file};
+use crate::config::{NAME_NOT_UTF8, Namespace, SYMBOLIC_LINK, config_file};
 use crate::error::Error;
 use crate::template::{Segment, Step, Template};
 
@@ -364,12 +364,6 @@ struct Found {
     files: BTreeMap<String, PathBuf>,
     unreadable: BTreeMap<String, &'static str>,
 }
-
-const SYMBOLIC_LINK: &str = "a symbolic link is not read: a run does not follow one out of the project, or read one file \
-     twice under two names";
-
-const NAME_NOT_UTF8: &str = "the name is not valid UTF-8, so no path can name it; it is written here \
-                        with a replacement character for each byte that cannot be read";
 
 /// Adds the files below `dir` that the rest of a template matches, by their path below the
 /// namespace folder. What a run reads is decided here: a folder whose name begins with `.` is

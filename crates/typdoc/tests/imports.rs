@@ -642,6 +642,58 @@ fn the_projects_own_imports_entry_wins_over_the_machine_files_for_the_same_alias
     );
 }
 
+fn validate_with_machine_file(project: &Scratch, machine: &str) -> Ran {
+    let config_dir = tempfile::tempdir().unwrap();
+    std::fs::write(config_dir.path().join("imports.json"), machine).unwrap();
+    Spawn::args(["validate", "--json"])
+        .cwd(project.path())
+        .var("TYPDOC_CONFIG_DIR", config_dir.path().to_str().unwrap())
+        .run()
+}
+
+#[test]
+fn an_alias_the_machine_file_supplies_is_refused_when_it_is_a_url_scheme() {
+    let project = Scratch::project(&[]);
+
+    let ran = validate_with_machine_file(&project, r#"{ "mailto": "/nowhere" }"#);
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let findings = ran.stdout_json()["findings"].clone();
+    let findings = findings.as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0]["rule"], json!("schema.valid"));
+    assert!(
+        findings[0]["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("imports.json"),
+        "{findings:?}"
+    );
+    assert!(
+        findings[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("`mailto`"),
+        "{findings:?}"
+    );
+}
+
+#[test]
+fn an_alias_named_by_the_project_and_the_machine_file_is_refused_once_at_the_project() {
+    let project = Scratch::project(&[]);
+    project.file(
+        ".typdoc/config.json",
+        r#"{ "version": 1, "imports": { "file": "/nowhere" } }"#,
+    );
+
+    let ran = validate_with_machine_file(&project, r#"{ "file": "/elsewhere" }"#);
+
+    let findings = ran.stdout_json()["findings"].clone();
+    let findings = findings.as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0]["path"], json!(".typdoc/config.json"));
+}
+
 // ---------------------------------------------------------------------------------------------
 // `config.config-dir`: an invalid `TYPDOC_CONFIG_DIR` is refused loudly, whether or not the
 // project's own `imports` is even set. `fixtures/broken/config.config-dir` covers the relative

@@ -67,7 +67,7 @@ Each project has one `.typdoc/config.json` that sets project-wide options, optio
 | `validation` | no | Rule levels and options that apply project-wide, under `global`. A collection tunes them in its own file. See Validation rules. |
 | `lock` | no | `local` (default) or `git-common`. See Concurrency. |
 
-**Namespaces.** Without `namespaces`, the project is one namespace named `default`, and `match` counts from the folder that holds `.typdoc`. With it, each entry is a name or a glob (`*` only) matched against the folders directly inside that folder, and every match is one namespace, named by its folder, with `match` counting from that folder.
+**Namespaces.** Without `namespaces`, the project is one namespace named `default`, and `match` counts from the folder that holds `.typdoc`. With it, each entry is a name or a glob (`*` only) matched against the folders directly inside that folder, and every match is one namespace, named by its folder, with `match` counting from that folder. A glob that reaches a folder that is a symbolic link skips it, and the run reports it under `files.unreadable`, the same as a `match` that reaches a link. An entry that names a symbolic link in plain text is a config error (`config.namespaces-entry`) that says to name the folder it points to. A link is a second name for a folder that is already there, so following it would count one set of documents twice under two paths, which breaks the accounting and the rule that a path names one document; a folder whose name begins with `.` is a folder of its own that no other name reaches, which is why it is entered when it is named and a link is not.
 
 - An entry is one path segment. `/` and `**` are config errors, because a namespace name has to show where it ends in a path reference such as `chief::story-3/_tickets/WF-5.md`. Anything deeper is grouped by placing `.typdoc` deeper.
 - A name uses only ASCII letters, digits, `-` and `_`. `*` never matches a folder starting with `.`. A matched folder with any other name is a config error that names the folder; it is never skipped.
@@ -343,7 +343,7 @@ Refs come from two places, frontmatter fields and body links, and both resolve t
 | `chief::story-3:WF-5` | Key in namespace `story-3` of the imported project `chief` | `chief` is an alias in `imports` |
 | anything else | Relative path | Resolved from the document (`refBase: file`) or the namespace folder (`refBase: namespace`) |
 
-`name:` reaches a sibling namespace and `name::` an import, and the two never fall back to each other: a name that does not exist on the side the syntax names is an error, never a relative path. A path that really contains a colon is written with a leading `./`. A ref into a project with several namespaces must name one (`chief::story-3:WF-5`); `chief::WF-5` is an error there, since only a one-namespace project has a `default`. A name may be both a sibling and an import; the `names.shadowed` rule warns. Sibling names and import aliases may not collide with URL schemes (`http`, `https`, `mailto`, `file`); `validate` enforces this.
+`name:` reaches a sibling namespace and `name::` an import, and the two never fall back to each other: a name that does not exist on the side the syntax names is an error, never a relative path. A path that really contains a colon is written with a leading `./`. A ref into a project with several namespaces must name one (`chief::story-3:WF-5`); `chief::WF-5` is an error there, since only a one-namespace project has a `default`. A name may be both a sibling and an import; the `names.shadowed` rule warns. Sibling names and import aliases may not collide with URL schemes (`http`, `https`, `mailto`, `file`); `validate` enforces this, as `config.namespace-name` for a namespace and as `schema.valid` for an import alias.
 
 **Body links.** Standard Markdown links count, in every form the parser reads as a link: inline `[text](path)` and `[text](path#heading)`, images `![alt](path)`, and reference-style `[text][ref]`, `[ref][]` and `[ref]` with a definition `[ref]: path`. Autolinks (`<https://…>`) are URL-scheme links and are skipped. Paths are relative to the document, percent-decoded, and may be written `<my file.md>`. Links starting with a URL scheme (`https:`, `mailto:` and so on) that is not a namespace name or an import alias are always skipped; no configuration is needed. A prefixed link is written `name:path` or `name::path`; after the prefix comes a path, never a key. Links inside fenced code blocks and inline code are not links. Relative paths that should not be checked (images, generated files) go in the `ignore` option of the `body.links` rule. Plain-text mentions are never refs; the `body.mentions` rule can check that they exist (see Validation rules). Body links are exposed to queries as the virtual ref field `$body`.
 
@@ -634,7 +634,7 @@ Correctness rules are always on; quality rules are configured project-wide under
 | `keys.unique` | No two files share a key |
 | `collections.overlap` | No file is matched by two collections |
 | `state.missing` | A collection with coded documents in a namespace has a `last` recorded there (see State) |
-| `files.unreadable` | A directory entry a `match` reaches that is a symbolic link, or whose name is not valid UTF-8; it is skipped and the run continues |
+| `files.unreadable` | A directory entry a `match` reaches, or a folder a `namespaces` glob reaches, that is a symbolic link, or whose name is not valid UTF-8; it is skipped and the run continues. A `namespaces` glob leaves a file that is a symbolic link alone, as it leaves any file, since only a folder can be a namespace |
 
 **Configurable**
 
@@ -683,8 +683,8 @@ What a config error does is decided by one question: does it make checking impos
 | `config.coded-schema-shared` | two collections name the same coded schema |
 | `config.state-uncoded` | a state entry names a collection whose schema has no code |
 | `config.state-orphan` | a file in `.typdoc/state/` matches no current namespace (the message names the file and says to delete or rename it) |
-| `config.namespaces-entry` | a `namespaces` entry contains `/` or `**`, or names a folder that does not exist |
-| `config.namespace-name` | a matched folder's name uses anything but ASCII letters, digits, `-` and `_`, or is `default` |
+| `config.namespaces-entry` | a `namespaces` entry contains `/` or `**`, names a folder that does not exist, or names a symbolic link |
+| `config.namespace-name` | a matched folder's name uses anything but ASCII letters, digits, `-` and `_`, or is `default`, `http`, `https`, `mailto` or `file` |
 | `config.namespace-nested` | a matched folder holds its own `.typdoc` |
 | `config.schema-url` | a schema URL uses a scheme other than `http://` or `https://` |
 | `config.schema-unpinned` | a remote schema has no pin and cannot be fetched |

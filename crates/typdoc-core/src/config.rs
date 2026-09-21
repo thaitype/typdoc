@@ -32,6 +32,20 @@ pub struct Namespace {
     pub folder: String,
 }
 
+/// A directory entry a run reached and does not read, by its path from the project folder, and
+/// why: it becomes a `files.unreadable` finding.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct Skipped {
+    pub path: String,
+    pub why: &'static str,
+}
+
+pub(crate) const SYMBOLIC_LINK: &str = "a symbolic link is not read: a run does not follow one out of the project, or read one file \
+     twice under two names";
+
+pub(crate) const NAME_NOT_UTF8: &str = "the name is not valid UTF-8, so no path can name it; it is written here \
+                        with a replacement character for each byte that cannot be read";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
     Off,
@@ -74,6 +88,9 @@ pub struct Collection {
 #[derive(Debug)]
 pub struct Config {
     pub namespaces: Vec<Namespace>,
+    /// The entries of the project folder that a `namespaces` glob reached and skipped, sorted by
+    /// path.
+    pub(crate) skipped: Vec<Skipped>,
     /// `validation.global`.
     pub validation: Rules,
     /// Sorted by name.
@@ -162,10 +179,14 @@ impl Config {
                 ),
             }
         }
-        let namespaces = namespaces::resolve(root, entries.as_deref(), report)?;
+        let namespaces::Resolved {
+            namespaces,
+            skipped,
+        } = namespaces::resolve(root, entries.as_deref(), report)?;
         let collections = read_collections(root, report)?;
         Ok(Config {
             namespaces,
+            skipped,
             validation,
             collections,
             imports,

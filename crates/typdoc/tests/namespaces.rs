@@ -6,7 +6,6 @@ mod common;
 
 use common::{NOTES, Ran, Scratch, Spawn, fixture};
 use serde_json::{Value, json};
-use typdoc::registry;
 
 fn get(project: &std::path::Path, path: &str) -> Ran {
     Spawn::args(["get", path, "--json"]).cwd(project).run()
@@ -308,14 +307,224 @@ fn the_errors_of_namespaces_and_of_collections_are_reported_together() {
     );
 }
 
+/// A schema whose one field, `title`, is what the documents of `clean` write, so a report of
+/// such a project has nothing to say about anything but what the test is about.
+const TITLED_NOTE: [(&str, &str); 2] = [
+    (
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "*.md", "schema": "note.json" }"#,
+    ),
+    (
+        "note.json",
+        r#"{ "name": "note", "fields": { "title": { "type": "string" } } }"#,
+    ),
+];
+
+/// `project`, with a schema that the documents satisfy.
+fn clean(namespaces: &str, folders: &[&str]) -> Scratch {
+    let project = Scratch::project(&TITLED_NOTE);
+    project.file(".typdoc/config.json", &config(namespaces));
+    for folder in folders {
+        project.file(&format!("{folder}/a.md"), "---\ntitle: x\n---\n");
+    }
+    project
+}
+
+/// Two namespaces and `current`, a link to the second.
+fn project_with_a_link(namespaces: &str) -> Scratch {
+    let project = clean(namespaces, &["story-1", "story-2"]);
+    project.symlink("current", "story-2");
+    project
+}
+
+fn json_of(project: &Scratch, args: &[&str]) -> Ran {
+    Spawn::args(args.iter().copied().chain(["--json"]))
+        .cwd(project.path())
+        .run()
+}
+
+fn paths_listed(ran: &Ran) -> Vec<String> {
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    ran.stdout_json()["documents"]
+        .as_array()
+        .expect("documents")
+        .iter()
+        .map(|d| d["path"].as_str().expect("path").to_owned())
+        .collect()
+}
+
 #[test]
-fn a_symbolic_link_that_an_entry_matches_is_refused_and_not_followed() {
-    let project = project(r#""*""#, &["one"]);
-    project.symlink("linked", "one");
+fn a_glob_that_reaches_a_link_skips_it_and_reports_it_and_the_other_namespaces_are_answered() {
+    for glob in [r#""*""#, r#"["story-1", "story-2", "cur*"]"#, r#"["*r*"]"#] {
+        let project = project_with_a_link(glob);
 
-    let ran = get(project.path(), "one/a.md");
+        let listed = json_of(&project, &["list"]);
+        let checked = json_of(&project, &["validate"]);
 
-    assert_eq!(ran.code, 6, "{}", ran.stderr);
+        assert_eq!(
+            paths_listed(&listed),
+            ["story-1/a.md", "story-2/a.md"],
+            "{glob}"
+        );
+        assert_eq!(checked.code, 2, "{glob}: {}", checked.stderr);
+        let report = checked.stdout_json();
+        assert_eq!(
+            report["findings"],
+            json!([{
+                "path": "current",
+                "rule": "files.unreadable",
+                "level": "error",
+                "message": "a symbolic link is not read: a run does not follow one out of the project, or read one file twice under two names",
+            }]),
+            "{glob}"
+        );
+        assert_eq!(
+            report["summary"]["checked"]["documents"],
+            json!(2),
+            "{glob}"
+        );
+        assert_eq!(
+            report["summary"]["checked"]["namespaces"],
+            json!(["story-1", "story-2"]),
+            "{glob}"
+        );
+    }
+}
+
+#[test]
+fn a_link_a_glob_reaches_gives_a_document_no_second_path_and_leaves_the_commands_working() {
+    let project = project_with_a_link(r#""*""#);
+
+    let read = json_of(&project, &["get", "story-2/a.md"]);
+    let through = json_of(&project, &["get", "current/a.md"]);
+    let checked = json_of(&project, &["validate", "current/a.md"]);
+    let table = json_of(&project, &["toc", "current/a.md"]);
+    let refs = json_of(&project, &["refs", "story-2/a.md"]);
+
+    assert_eq!(document(&read)["namespace"], json!("story-2"));
+    assert_eq!(through.code, 5, "{}", through.stderr);
+    assert_eq!(checked.code, 5, "{}", checked.stderr);
+    assert_eq!(table.code, 5, "{}", table.stderr);
+    assert_eq!(refs.code, 0, "{}", refs.stderr);
+}
+
+#[test]
+fn a_link_a_glob_reaches_is_no_document_set_of_its_own_in_the_audit() {
+    let project = project_with_a_link(r#""*""#);
+
+    let ran = json_of(&project, &["validate", "--audit"]);
+
+    let report = ran.stdout_json();
+    assert_eq!(report["summary"]["checked"]["documents"], json!(2));
+    assert_eq!(report["audit"]["uncollected"], json!([]));
+    assert_eq!(report["audit"]["collections"][0]["documents"], json!(2));
+}
+
+#[test]
+fn a_finding_about_a_skipped_link_is_reported_whichever_namespace_is_asked_for() {
+    let project = project_with_a_link(r#""*""#);
+
+    let ran = json_of(&project, &["validate", "--namespace", "story-1"]);
+
+    let findings = ran.stdout_json()["findings"].clone();
+    assert_eq!(
+        findings.as_array().expect("findings").len(),
+        1,
+        "{findings}"
+    );
+    assert_eq!(findings[0]["path"], json!("current"));
+}
+
+#[test]
+fn a_link_to_a_file_or_a_link_to_nothing_that_a_glob_reaches_is_left_alone_like_a_regular_file() {
+    let project = clean(r#""*""#, &["story-1", "story-2"]);
+    project.file("README.md", "read me\n");
+    project.symlink("CLAUDE.md", "README.md");
+    project.symlink("gone", "nowhere");
+
+    let listed = json_of(&project, &["list"]);
+    let checked = json_of(&project, &["validate"]);
+
+    assert_eq!(paths_listed(&listed), ["story-1/a.md", "story-2/a.md"]);
+    assert_eq!(checked.code, 0, "{}", checked.stderr);
+    let report = checked.stdout_json();
+    assert_eq!(report["findings"], json!([]));
+    assert_eq!(report["summary"]["checked"]["documents"], json!(2));
+}
+
+#[test]
+fn a_link_whose_name_begins_with_a_dot_is_reached_by_no_glob_and_reported_by_none() {
+    let project = clean(r#""*""#, &["one"]);
+    project.symlink(".current", "one");
+
+    let ran = json_of(&project, &["validate"]);
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout_json()["findings"], json!([]));
+}
+
+#[test]
+fn a_link_that_an_entry_names_in_plain_text_is_config_namespaces_entry_and_says_what_to_name() {
+    for name in ["current", ".current"] {
+        let project = project(r#"["story-1", "story-2"]"#, &["story-1", "story-2"]);
+        project.symlink(name, "story-2");
+        project.file(
+            ".typdoc/config.json",
+            &config(&format!(r#"["story-1", "story-2", "{name}"]"#)),
+        );
+
+        let ran = get(project.path(), "story-1/a.md");
+
+        assert_eq!(
+            rules(&ran),
+            [(
+                "config.namespaces-entry".to_owned(),
+                ".typdoc/config.json".to_owned()
+            )],
+            "{name}"
+        );
+        let said = messages(&ran);
+        assert!(said.contains(&format!("`{name}`")), "{said}");
+        assert!(said.contains("symbolic link"), "{said}");
+        assert!(
+            said.contains("name the folder the link points to"),
+            "{said}"
+        );
+        assert!(!said.contains("not decided"), "{said}");
+    }
+}
+
+#[test]
+fn a_link_named_in_plain_text_is_an_error_where_the_same_link_under_a_glob_is_a_finding() {
+    let named = project_with_a_link(r#"["story-1", "story-2", "current"]"#);
+    let globbed = project_with_a_link(r#"["story-1", "story-2", "curr*"]"#);
+
+    let named = json_of(&named, &["list"]);
+    let globbed = json_of(&globbed, &["list"]);
+
+    assert_eq!(named.code, 2, "{}", named.stderr);
+    assert_eq!(globbed.code, 0, "{}", globbed.stderr);
+}
+
+#[test]
+fn a_folder_whose_name_is_not_valid_utf8_that_a_glob_reaches_is_skipped_and_reported() {
+    let project = clean(r#""*""#, &["one"]);
+    project.file_named_by_bytes(b"\xff/a.md", "---\ntitle: x\n---\n");
+
+    let read = get(project.path(), "one/a.md");
+    let checked = json_of(&project, &["validate"]);
+
+    assert_eq!(document(&read)["namespace"], json!("one"));
+    let report = checked.stdout_json();
+    assert_eq!(report["findings"].as_array().expect("findings").len(), 1);
+    assert_eq!(report["findings"][0]["rule"], json!("files.unreadable"));
+    assert!(
+        report["findings"][0]["message"]
+            .as_str()
+            .expect("message")
+            .contains("not valid UTF-8")
+    );
+    assert_eq!(report["summary"]["checked"]["documents"], json!(1));
 }
 
 #[test]
@@ -503,59 +712,72 @@ fn a_namespace_prefix_on_a_key_that_is_not_a_namespace_of_the_project_is_bad_arg
 }
 
 // -------------------------------------------------------------------------------------------
-// A gap the design's own sentence leaves open (`registry::KNOWN_GAPS`): "Sibling names and
-// import aliases may not collide with URL schemes... `validate` enforces this" names both, but
-// the rule table (and the code) names only import aliases, so only an alias is enforced. Pinned
-// here so that closing the gap — a namespace named for a scheme starting to be reported —
-// turns this test red rather than going unnoticed.
+// A namespace named after a URL scheme.
 // -------------------------------------------------------------------------------------------
 
-/// A schema whose one field, `title`, is what `project()`'s documents write, so a report of
-/// this project has nothing to say about anything but the namespace name itself.
-const TITLED_NOTE: [(&str, &str); 2] = [
-    (
-        ".typdoc/collections/notes.json",
-        r#"{ "match": "*.md", "schema": "note.json" }"#,
-    ),
-    (
-        "note.json",
-        r#"{ "name": "note", "fields": { "title": { "type": "string" } } }"#,
-    ),
-];
+/// A namespace named `scheme`, reached by a plain-text entry and by a glob, is the one
+/// config error `config.namespace-name`, and its message names the folder and says why.
+fn a_scheme_named_folder_is_refused(scheme: &str) {
+    for entry in [format!(r#""{scheme}""#), r#""*""#.to_owned()] {
+        let project = project(&entry, &["one", scheme]);
+
+        let ran = get(project.path(), "one/a.md");
+
+        assert_eq!(
+            rules(&ran),
+            [(
+                "config.namespace-name".to_owned(),
+                ".typdoc/config.json".to_owned()
+            )],
+            "{entry}"
+        );
+        let said = messages(&ran);
+        assert!(said.contains(&format!("`{scheme}`")), "{said}");
+        assert!(said.contains("URL scheme"), "{said}");
+        assert!(!said.contains("ASCII"), "{said}");
+    }
+}
 
 #[test]
-fn a_namespace_named_after_a_url_scheme_validates_clean_unlike_an_import_alias_of_the_same_name() {
-    assert!(
-        registry::KNOWN_GAPS
-            .iter()
-            .any(|gap| gap.starts_with("[namespace-scheme]")),
-        "this test pins a gap that `registry::KNOWN_GAPS` no longer lists"
-    );
+fn a_namespace_named_http_is_config_namespace_name() {
+    a_scheme_named_folder_is_refused("http");
+}
 
-    // The namespace `http` (a name that is also one of the design's four reserved URL schemes):
-    // a project whose only complaint could be that name validates with no finding at all.
-    let project = Scratch::project(&TITLED_NOTE);
-    project.file(".typdoc/config.json", &config(r#""http""#));
-    project.file("http/a.md", "---\ntitle: x\n---\n");
+#[test]
+fn a_namespace_named_https_is_config_namespace_name() {
+    a_scheme_named_folder_is_refused("https");
+}
 
-    let ran = Spawn::args(["validate", "--json"])
-        .cwd(project.path())
-        .run();
+#[test]
+fn a_namespace_named_mailto_is_config_namespace_name() {
+    a_scheme_named_folder_is_refused("mailto");
+}
 
-    assert_eq!(ran.code, 0, "{}", ran.stderr);
-    assert_eq!(ran.stdout_json()["findings"], json!([]));
+#[test]
+fn a_namespace_named_file_is_config_namespace_name() {
+    a_scheme_named_folder_is_refused("file");
+}
 
-    // The same name as an import alias, by contrast, is refused today (`schema.valid`) — the
-    // asymmetry this gap is about, shown from both sides in one test.
+#[test]
+fn a_name_that_only_looks_like_a_scheme_is_a_namespace() {
+    for name in ["httpx", "Http", "HTTPS", "ftp", "files"] {
+        let project = project(&format!(r#""{name}""#), &[name]);
+
+        let ran = get(project.path(), &format!("{name}/a.md"));
+
+        assert_eq!(document(&ran)["namespace"], json!(name));
+    }
+}
+
+#[test]
+fn an_import_alias_named_after_a_url_scheme_is_still_refused_under_schema_valid() {
     let project = Scratch::project(&NOTES);
     project.file(
         ".typdoc/config.json",
         r#"{ "version": 1, "imports": { "http": "./nowhere" } }"#,
     );
 
-    let ran = Spawn::args(["validate", "--json"])
-        .cwd(project.path())
-        .run();
+    let ran = json_of(&project, &["validate"]);
 
     let findings = ran.stdout_json()["findings"].clone();
     let findings = findings.as_array().unwrap();
