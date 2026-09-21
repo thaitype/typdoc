@@ -2,7 +2,7 @@
 
 Type: wayfinder:grilling
 Status: open
-Blocked by: 8
+Blocked by: None (can start immediately)
 
 ## Question
 

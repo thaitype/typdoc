@@ -325,7 +325,22 @@ A coded document's file name is its key and nothing else, so it never changes wh
 
 - The key is not stored in frontmatter; the filename is the single source of truth.
 - `title` is an ordinary frontmatter field, not the H1. The body has no required structure.
-- Writes never move an existing key and never reformat the body. A key that is added goes at the end of the frontmatter block. Existing YAML style (quotes, flow or block lists, comments) is kept as a best effort, which is not a promise.
+- Writes never move an existing key and never reformat the body. A key that is added goes at the end of the frontmatter block.
+- **A write rewrites the whole frontmatter block, not the line it changed.** No value changes when it does: every value is carried across as the text it was written with, and quoted where YAML would otherwise read it as something else. `1e3`, `1.10`, `0755`, an integer longer than 64 bits, `no`, `~`, a date, an empty string, and text holding a newline, a tab or a leading space all come back exactly as they were. What the block was written *with*, rather than what it says, is kept as a best effort and is not a promise. These are lost on any write, including one that changes a single field:
+
+| Written in the file | After any write |
+| --- | --- |
+| Comments, anywhere in the block | Gone |
+| Blank lines between fields | Gone |
+| `tags: [a, b]` | A block list, one item per line. An empty list is written `[]` |
+| `title: 'Ship it'`, `status: "no"` | Unquoted, unless the text needs quotes to survive |
+| `id:   WF-3` | One space after the colon |
+| `&anchor` with `*alias` | The value written out in full at every place that used it |
+| `!!str`, `!Ref`, any other tag | Gone; the value stays |
+
+  The last two change what the file means, not only how it looks. An alias is one value used in several places; after a write it is several values that no longer follow each other, and nothing afterwards reports it. A tag may be what another tool in the user's chain reads. A document that depends on either should be edited by hand, not by typdoc.
+
+- A write is checked before it lands: the new block is read back with the same reader that read the original, and if any value differs from what the command meant to write, the write is refused and the file on disk is not replaced. This guards the values, which are promised; it does not guard the layout, which is not.
 - Frontmatter fields not in the schema are kept on write and reported by `validate`.
 
 ## Refs

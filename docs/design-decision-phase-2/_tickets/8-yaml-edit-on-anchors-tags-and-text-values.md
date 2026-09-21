@@ -1,7 +1,7 @@
 # 8: `yaml-edit` on anchors, tags, and the values story 1 keeps as text
 
 Type: wayfinder:prototype
-Status: open
+Status: resolved
 Blocked by: None (can start immediately)
 
 ## Question
@@ -138,4 +138,13 @@ read path accepts today.
 
 ## Answer
 
-<filled in on resolve>
+The question this ticket asked — which of these cases the guard turns into a rejected write — no
+longer has a subject. [Decision 20](20-the-frontmatter-writer.md) writes frontmatter with
+`yaml_serde`, from the text the read path already keeps, and does not add `yaml-edit`. There is
+no editor doing surgery on a line, so there is no case where a document's own shape makes a
+`set` impossible.
+
+The findings above are kept and are not wasted: they are the evidence decision 20 was made from.
+Two of them in particular carried it — that a tag and a quote style are dropped on the edited
+line without the guard noticing, which was the reason the crate had been chosen; and that a
+block scalar is not merely fused but swallows the following field whole.

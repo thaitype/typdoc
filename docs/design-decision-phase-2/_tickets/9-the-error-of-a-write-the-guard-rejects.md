@@ -2,9 +2,23 @@
 
 Type: wayfinder:grilling
 Status: open
-Blocked by: 8
+Blocked by: None (can start immediately)
 
 ## Question
+
+**Narrowed by [decision 20](20-the-frontmatter-writer.md).** The guard was load-bearing because
+the writing crate was young and a document's own shape could defeat it, so a rejection was an
+ordinary outcome of an ordinary document and the user had to be told what to do about it. The
+writer is now the reader's own crate, writing text it already holds, and sixty-five round-trip
+cases came back exactly. A rejection now means typdoc assembled a block that does not say what
+it meant: a defect in typdoc, not a state of the user's file, and nothing the user can act on
+beyond reporting it.
+
+What is still to decide is the exit code and the id for that, and it is a smaller question than
+the one below, which is kept for its reasoning. The sub-question about `new` and the state
+file's own guard stands unchanged.
+
+## The question as it was first asked
 
 Every write goes through a mandatory guard: after editing, the result is re-read with the reader and compared with the intended change before the temp file is renamed into place; if it does not match, the write is rejected and there is no automatic fallback. The guard is load-bearing, because the writing crate is young.
 
