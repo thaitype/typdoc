@@ -10,7 +10,6 @@ use crate::rules::{ALWAYS_ON, CONFIGURABLE};
 
 pub const TYPDOC_DIR: &str = ".typdoc";
 pub(crate) const CONFIG_FILE: &str = ".typdoc/config.json";
-const LEGACY_FILE: &str = ".typdoc.json";
 const COLLECTIONS_DIR: &str = ".typdoc/collections";
 
 /// A name made of ASCII letters, digits, `-` and `_`, as collections and namespaces are.
@@ -94,12 +93,10 @@ pub struct Config {
 /// impossible?", is answered here only once, for the whole type, and not error by error: an
 /// error added through `add`, not `stop`, has already been read as one that leaves the rest of
 /// the config readable (parsing continues past it), which is the design's condition for a
-/// finding in `validate`'s report rather than a stopped command — `config.legacy-file` is a
-/// plain example, since a stray `.typdoc.json` beside the folder says nothing about whether
-/// `.typdoc/config.json` itself can be read. None of the errors this crate adds answers that
-/// question on its own yet, `config.legacy-file` included: `finish` stops the command for all
-/// of them alike. Letting one answer it on its own, so it could reach `validate` as a finding
-/// instead, is a change to this type and is not made here.
+/// finding in `validate`'s report rather than a stopped command. None of the errors this crate
+/// adds answers that question on its own yet: `finish` stops the command for all of them alike.
+/// Letting one answer it on its own, so it could reach `validate` as a finding instead, is a
+/// change to this type and is not made here.
 #[derive(Default)]
 pub(crate) struct Report {
     errors: Vec<ConfigError>,
@@ -147,13 +144,6 @@ impl Config {
     /// determined is reported together, and `Err` is a config that cannot be interpreted any
     /// further, with the list ended there.
     pub(crate) fn load(root: &Path, report: &mut Report) -> Result<Config, Error> {
-        if root.join(LEGACY_FILE).symlink_metadata().is_ok() {
-            report.add(
-                "config.legacy-file",
-                LEGACY_FILE,
-                format!("{LEGACY_FILE} is not read: move it to {CONFIG_FILE}"),
-            );
-        }
         let top = read_config_json(root, report)?;
         let mut validation = Rules::new();
         let mut entries = None;

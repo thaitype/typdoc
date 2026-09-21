@@ -33,7 +33,6 @@ pub const RULES: &[&str] = &[
     "config.parse",
     "config.version",
     "config.unknown-key",
-    "config.legacy-file",
     "config.collection-parse",
     "config.collection-name",
     "config.collection-schema",

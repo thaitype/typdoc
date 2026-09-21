@@ -1,3 +1,4 @@
+#[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
 
 use common::{NOTES, Scratch, Spawn, fixture};

@@ -153,23 +153,58 @@ fn a_key_in_a_collection_file_that_is_not_in_the_format_is_config_unknown_key() 
     }
 }
 
-#[test]
-fn a_legacy_config_beside_the_folder_is_config_legacy_file_and_says_where_to_move_it() {
-    let project = Scratch::project(&NOTES);
-    project.file(".typdoc.json", r#"{ "version": 1 }"#);
-
-    let object = config_error(&get_a(&project));
-
-    assert_eq!(
-        details(&object),
-        [pair("config.legacy-file", ".typdoc.json")]
-    );
-    assert!(message_of(&object, 0).contains(".typdoc/config.json"));
-    assert_eq!(object["complete"], json!(true));
+/// A project of two notes, each with a title, and nothing else in it.
+fn two_notes() -> Scratch {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "*.md", "schema": "note.json" }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": { "title": { "type": "string", "required": true } } }"#,
+        ),
+    ]);
+    project.file("a.md", "---\ntitle: First\n---\n\n# First\n");
+    project.file("b.md", "---\ntitle: Second\n---\n\n# Second\n");
+    project
 }
 
 #[test]
-fn a_legacy_config_is_reported_together_with_a_config_that_cannot_be_parsed() {
+fn a_stray_typdoc_json_beside_the_folder_changes_nothing_for_validate_and_list() {
+    for stray in [r#"{ "version": 1 }"#, "{}", "{ not json", ""] {
+        let project = two_notes();
+        project.file(".typdoc.json", stray);
+
+        let validated = Spawn::args(["validate", "--json"])
+            .cwd(project.path())
+            .run();
+        let listed = Spawn::args(["list", "--json"]).cwd(project.path()).run();
+
+        assert_eq!(validated.code, 0, "{stray:?}, stderr: {}", validated.stderr);
+        assert_eq!(validated.stderr, "", "{stray:?}");
+        let report = validated.stdout_json();
+        assert_eq!(report["summary"]["checked"]["documents"], json!(2));
+        assert_eq!(
+            report["summary"]["findings"],
+            json!({ "error": 0, "warn": 0, "info": 0 })
+        );
+        assert_eq!(report["findings"], json!([]), "{stray:?}");
+        assert_eq!(listed.code, 0, "{stray:?}, stderr: {}", listed.stderr);
+        let out = listed.stdout_json();
+        assert_eq!(out["total"], json!(2), "{stray:?}");
+        let paths: Vec<&str> = out["documents"]
+            .as_array()
+            .expect("documents")
+            .iter()
+            .map(|d| d["path"].as_str().expect("path"))
+            .collect();
+        assert_eq!(paths, ["a.md", "b.md"], "{stray:?}");
+    }
+}
+
+#[test]
+fn a_stray_typdoc_json_is_not_reported_with_a_config_that_cannot_be_parsed() {
     let project = with_config("{");
     project.file(".typdoc.json", "{}");
 
@@ -177,12 +212,56 @@ fn a_legacy_config_is_reported_together_with_a_config_that_cannot_be_parsed() {
 
     assert_eq!(
         details(&object),
-        [
-            pair("config.legacy-file", ".typdoc.json"),
-            pair("config.parse", ".typdoc/config.json"),
-        ]
+        [pair("config.parse", ".typdoc/config.json")]
     );
     assert_eq!(object["complete"], json!(false));
+}
+
+/// The error of a run that found no project: exit 5, the file it looked for named in the message.
+fn no_project_error(ran: &Ran) -> String {
+    assert_eq!(ran.code, 5, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stdout, "", "a failure prints nothing on stdout");
+    let object = ran.stderr_json();
+    assert_eq!(object["code"], json!(5));
+    assert!(object.get("complete").is_none(), "{object}");
+    let message = object["error"].as_str().expect("an error message");
+    assert!(message.starts_with("no project found"), "{message}");
+    assert!(message.contains(".typdoc/config.json"), "{message}");
+    message.to_owned()
+}
+
+#[test]
+fn an_empty_folder_is_no_project_and_the_message_names_the_config_file() {
+    let empty = Scratch::empty();
+
+    let message = no_project_error(&get_a(&empty));
+
+    assert!(message.contains("or above it"), "{message}");
+}
+
+#[test]
+fn a_folder_holding_only_a_typdoc_json_is_no_project_and_the_message_names_the_config_file() {
+    let only = Scratch::empty();
+    only.file(".typdoc.json", r#"{ "version": 1 }"#);
+
+    let ran = get_a(&only);
+
+    let message = no_project_error(&ran);
+    assert!(!message.contains(".typdoc.json"), "{message}");
+}
+
+#[test]
+fn typdoc_dir_naming_a_folder_without_a_config_is_no_project_and_names_the_config_file() {
+    let project = two_notes();
+    project.file("elsewhere/readme.md", "# Nothing here\n");
+
+    let ran = Spawn::args(["get", "a.md", "--json"])
+        .var("TYPDOC_DIR", "elsewhere")
+        .cwd(project.path())
+        .run();
+
+    let message = no_project_error(&ran);
+    assert!(message.contains("elsewhere"), "{message}");
 }
 
 #[test]
@@ -459,7 +538,6 @@ fn every_error_that_can_be_determined_is_reported_in_one_object_in_the_order_of_
     let project = with_config(
         r#"{ "version": 1, "name": "x", "validation": { "global": { "keys.unique": {} } } }"#,
     );
-    project.file(".typdoc.json", "{}");
     project.file(".typdoc/collections/b.json", "{");
     project.file(
         ".typdoc/collections/a.json",
@@ -475,7 +553,6 @@ fn every_error_that_can_be_determined_is_reported_in_one_object_in_the_order_of_
     assert_eq!(
         details(&object),
         [
-            pair("config.legacy-file", ".typdoc.json"),
             pair("config.unknown-key", ".typdoc/collections/a.json"),
             pair("config.collection-parse", ".typdoc/collections/b.json"),
             pair(
@@ -561,7 +638,6 @@ fn a_config_error_in_a_fixture_names_the_file_it_is_about() {
         ("config.parse", ".typdoc/config.json"),
         ("config.version", ".typdoc/config.json"),
         ("config.unknown-key", ".typdoc/config.json"),
-        ("config.legacy-file", ".typdoc.json"),
         ("config.collection-parse", ".typdoc/collections/notes.json"),
         (
             "config.collection-name",

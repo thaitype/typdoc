@@ -112,6 +112,13 @@ impl Scratch {
         scratch
     }
 
+    /// A folder with nothing in it, for the cases where there is no project at all.
+    pub fn empty() -> Scratch {
+        Scratch {
+            dir: tempfile::tempdir().expect("a scratch folder"),
+        }
+    }
+
     pub fn file(&self, path: &str, text: &str) {
         let file = self.dir.path().join(path);
         std::fs::create_dir_all(file.parent().expect("a parent")).expect("a folder");

@@ -169,7 +169,7 @@ A key that exists in more than one namespace in scope, and a write that could la
 
 A pinned copy lives at `vendor/<section>/<sha256>`, with no extension: `vendor/schemas/9f2c…` for the entry above. The path is never stored; it follows from the section name and the hash, so a second kind of pin needs no change to the rule. A copy counts as edited by hand when the hash of its contents differs from its file name. That lets a file in `vendor/` check itself without opening `lock.json`, and leaves one value where two could disagree. Files here are written like every other file (temp file, then rename), so a command that reads `lock.json` or a copy while `pull` writes it sees the old file or the new one whole. v1 never deletes anything in `vendor/`: it only grows, on purpose. Clearing copies nothing refers to is a separate job, and a large `vendor/` is not a bug to fix. A pinned copy that is missing is a config error that says to run `typdoc pull`, which fetches again and compares with the pinned SHA-256: equal restores the copy; different is reported as a changed URL, an update of the pin, as `pull` always reports.
 
-There is one config location. A legacy `.typdoc.json` beside the folder is a config error that says to move it to `.typdoc/config.json`, rather than being read silently.
+There is one config location, `.typdoc/config.json`. The error for a folder with no project names that file as the one looked for, so a person who looked for the config under any other name is told where it is, whatever the name was; no other name is checked for.
 
 **Machine-specific imports.** When an imported project's location differs per machine, put it in an environment variable or in a machine file, `imports.json`, which is merged under the project's own `imports`, so no machine-specific path is committed. The file is found in this order, stopping at the first step that applies:
 
@@ -674,7 +674,6 @@ What a config error does is decided by one question: does it make checking impos
 | `config.parse` | `config.json` cannot be parsed |
 | `config.version` | `version` is missing or unknown |
 | `config.unknown-key` | `config.json` or a collection file has an unknown key (`name` in `config.json` and `last` in a collection file included) |
-| `config.legacy-file` | a legacy `.typdoc.json` sits beside the folder |
 | `config.collection-parse` | a collection file cannot be parsed |
 | `config.collection-name` | a collection file's name uses anything but ASCII letters, digits, `-` and `_` |
 | `config.collection-schema` | a collection names a schema that does not exist |

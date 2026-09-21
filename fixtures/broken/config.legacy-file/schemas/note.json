@@ -1,6 +1,0 @@
-{
-  "name": "note",
-  "fields": {
-    "title": { "type": "string" }
-  }
-}
