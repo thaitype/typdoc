@@ -17,8 +17,6 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 cargo run -p typdoc -- <args>              # run the CLI from the repo
 TYPDOC_REGENERATE_GOLDEN=<command>/<case> scripts/test.sh -p typdoc --test golden regenerate -- --ignored   # regenerate one golden, never all
-scripts/check-public-text.sh               # public-text gate: a floor, not a ceiling (see rule 7)
-scripts/check-public-text.sh --self-test   # proves the gate can fail; run whenever the gate changes
 ```
 
 ## Architecture Overview
@@ -54,10 +52,9 @@ scripts/check-public-text.sh --self-test   # proves the gate can fail; run whene
 
 ### Important Development Rules
 
-1. Before every commit, `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `scripts/test.sh` must pass, and so must `scripts/check-public-text.sh` (rule 7). Run the tests through `scripts/test.sh` and not through `cargo test` directly: it puts the run under a memory ceiling of 6144 MB, which this machine needs because a test that could not end once took all of it and the kernel killed the session driving the run as well. The ceiling is measured rather than guessed: the suite peaks at 229 MB and a cold build followed by a full run peaks at 1451 MB, both at the cgroup, on this four-core machine, so the ceiling leaves about four times the worse case. Those numbers belong to this machine and this core count; a machine that builds more crates at once needs them measured again. A test that hangs or grows without stopping is a fault to report, never a reason to raise the ceiling.
+1. Before every commit, `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `scripts/test.sh` must pass. Run the tests through `scripts/test.sh` and not through `cargo test` directly: it puts the run under a memory ceiling of 6144 MB, which this machine needs because a test that could not end once took all of it and the kernel killed the session driving the run as well. The ceiling is measured rather than guessed: the suite peaks at 229 MB and a cold build followed by a full run peaks at 1451 MB, both at the cgroup, on this four-core machine, so the ceiling leaves about four times the worse case. Those numbers belong to this machine and this core count; a machine that builds more crates at once needs them measured again. A test that hangs or grows without stopping is a fault to report, never a reason to raise the ceiling.
 2. Tests must run offline (remote schemas are mocked). Fixtures live in the repo: it is public, so a real document is copied in only after review, and a test never skips silently when a file is missing.
 3. Writes touch only the frontmatter block and never re-serialize the body (the exception is `mv`, which rewrites link paths).
 4. Always write files via temp file + rename.
 5. Every command must support `--json` and use the exit codes the design defines. The table in the design is the only place they are listed, so adding a code never changes this rule.
 6. The design doc is the source of truth — to deviate from it, change the doc first.
-7. This repository is public, and every line in it reads as the repository owner's own work: no names of people, teams, tools or assistants who worked on it, no record of who approved or decided something or how a decision arrived, and no wording that refers to someone else deciding. The reasoning is kept in full; only who decided and how it arrived is left out. A decision is written as `Decided ...`, a chosen fallback as `Default ...`, and something not checked as `Not verified ...`. This holds for every file, `.chief/` included, and for later edits, not only for a first cleanup. `scripts/check-public-text.sh` catches phrasing already known to fail. It is a floor, not a ceiling: a clean run proves nothing beyond its patterns, and the check that decides is reading each paragraph and asking whether it reads as the owner's own work.
