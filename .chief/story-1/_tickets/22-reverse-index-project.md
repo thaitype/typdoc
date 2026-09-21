@@ -1,7 +1,7 @@
 # 22: A reverse lookup counts a ref that left the project
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: None (can start immediately)
 
 ## What this delivers

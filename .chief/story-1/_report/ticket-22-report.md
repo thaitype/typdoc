@@ -26,7 +26,7 @@ The output shapes did not change.
 - **Namespace is part of the comparison, and no input can tell that it is.** Within one project a
   path belongs to one namespace, and a document of an imported project already differs in
   `project`, so leaving the namespace out of the comparison changed no result in the whole suite
-  (run: 687 passed with the clause removed). It is kept because the key of the index is written as
+  (run: 688 passed, 0 failed with the clause removed). It is kept because the key of the index is written as
   project, namespace and path, and it is not covered by a test that can turn red for it.
 
 ## Notes
@@ -44,8 +44,8 @@ The output shapes did not change.
   `refby.any(see)` (`.path=notes/pointer.md`) through the same pair; the suite is 688 passed, 0
   failed, 1 ignored.
 - Mutations, each restored afterwards: path-only comparison in `refs` alone turned the two
-  `refs --reverse` fault cases and the ninth test red; path-only in `refby.*` alone turned the two `list` fault
-  cases red; a comparison that ignored the project turned all four fault cases red; a comparison
+  `refs --reverse` fault cases red; path-only in `refby.*` alone turned the two `list` fault
+  cases and the ninth test red; a comparison that ignored the project turned all four fault cases red; a comparison
   that was always false turned the four controls red.
 - Readers of the index checked: `Project::refs` (reverse branch, text and `--json`, with and
   without `--field`), `Project::incoming_refs` and `evaluate_ref_condition` (every `refby.*`
@@ -58,3 +58,8 @@ The output shapes did not change.
 - Guard: a call to `std::fs::write` planted inside `RefName::is_same_document` turned
   `cargo clippy --workspace --all-targets -- -D warnings` red with `use of a disallowed method
   std::fs::write`, and was removed.
+- `refby.all(f).EXPR` has no test of its own; it goes through the same comparison as `any`. Run by
+  hand on a two-project scratch shape with `refby.all(see).path=notes/other.md`: with the ref
+  inside this project `notes/target.md` is not listed (its one incoming ref fails the
+  condition); with the ref into the import it is listed, since nothing here points at it and
+  `all` holds for an empty set.
