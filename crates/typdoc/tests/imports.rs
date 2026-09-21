@@ -945,3 +945,177 @@ fn a_body_link_across_an_import_has_its_anchor_left_unchecked() {
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     assert_eq!(ran.stdout_json()["findings"], json!([]));
 }
+
+// ---------------------------------------------------------------------------------------------
+// The reverse index tells a document of this project from a document of an imported project
+// that has the same namespace and path. `refs --reverse` and `refby.*` in `list` read it.
+//
+// Two projects, `a` importing `b`, each with `notes/target.md`. `a/notes/pointer.md` holds the
+// ref under test. In the fault shape the ref is `b::notes/target.md`: it resolves, into `b`, and
+// nothing in `a` points at `a/notes/target.md`. In the control it is `target.md`, which resolves
+// from the folder of `pointer.md` to `a/notes/target.md`, so that document is pointed at. Only
+// the project differs between the two, and a ref that resolves the same way in both would make
+// the pair pass under any implementation that ignores the project.
+// ---------------------------------------------------------------------------------------------
+
+/// The pair of projects: `a` (returned first, with `pointer_text` as `notes/pointer.md`) imports
+/// `b` under the alias `b`. Both hold `notes/target.md`, and both have the same collection and
+/// the same schema, with a ref field `see` that may point anywhere.
+fn importer_and_imported(pointer_text: &str) -> (Scratch, Scratch) {
+    let make = |imports: &str| {
+        let project = Scratch::project(&[]);
+        project.file(
+            ".typdoc/config.json",
+            &json!({ "version": 1, "imports": { "b": imports } }).to_string(),
+        );
+        project.file(
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "notes/*.md", "schema": "note.json" }"#,
+        );
+        project.file(
+            "note.json",
+            r#"{ "name": "note", "fields": { "see": { "type": "ref", "target": "*" } } }"#,
+        );
+        project.file("notes/target.md", "---\n---\n");
+        project
+    };
+    let imported = make("unused");
+    let importer = make(imported.path().to_str().unwrap());
+    importer.file("notes/pointer.md", pointer_text);
+    (importer, imported)
+}
+
+/// What `refs notes/target.md --reverse --json` reports as `refs`, run in `a`.
+fn reverse_refs_of_target(a: &Scratch, extra: &[&str]) -> Value {
+    let mut args = vec!["refs", "notes/target.md", "--reverse", "--json"];
+    args.extend_from_slice(extra);
+    let ran = run(&args, a.path());
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let out = ran.stdout_json();
+    assert_eq!(out["direction"], json!("in"));
+    assert_eq!(out["document"]["path"], json!("notes/target.md"));
+    out["refs"].clone()
+}
+
+/// The paths `list --where <condition> --ids` prints, run in `a`.
+fn listed_by(a: &Scratch, condition: &str) -> Vec<String> {
+    let ran = run(&["list", "--where", condition, "--ids"], a.path());
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    ran.stdout.lines().map(str::to_owned).collect()
+}
+
+/// The premise of the fault shape: the ref of `pointer.md` resolves, into `b`.
+fn assert_pointer_resolves_into_b(a: &Scratch, field: &str) {
+    let ran = run(&["refs", "notes/pointer.md", "--json"], a.path());
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let refs = ran.stdout_json()["refs"].clone();
+    assert_eq!(refs.as_array().map(Vec::len), Some(1), "{refs}");
+    assert_eq!(refs[0]["field"], json!(field));
+    assert_eq!(refs[0]["path"], json!("notes/target.md"));
+    assert_eq!(refs[0]["project"], json!("b"));
+    assert!(refs[0].get("unresolved").is_none(), "{refs}");
+}
+
+#[test]
+fn a_ref_into_an_import_is_not_a_reverse_ref_of_the_same_path_here() {
+    let (a, _b) = importer_and_imported("---\nsee: b::notes/target.md\n---\n");
+    assert_pointer_resolves_into_b(&a, "see");
+
+    assert_eq!(reverse_refs_of_target(&a, &[]), json!([]));
+    assert_eq!(reverse_refs_of_target(&a, &["--field", "see"]), json!([]));
+}
+
+#[test]
+fn a_ref_inside_this_project_is_a_reverse_ref_when_an_import_has_the_same_path() {
+    let (a, _b) = importer_and_imported("---\nsee: target.md\n---\n");
+
+    assert_eq!(
+        reverse_refs_of_target(&a, &[]),
+        json!([{
+            "path": "notes/pointer.md",
+            "namespace": "default",
+            "field": "see",
+            "written": "target.md"
+        }])
+    );
+}
+
+#[test]
+fn a_body_link_into_an_import_is_not_a_reverse_ref_of_the_same_path_here() {
+    let (a, _b) = importer_and_imported("---\n---\n[the target](b::notes/target.md)\n");
+    assert_pointer_resolves_into_b(&a, "$body");
+
+    assert_eq!(reverse_refs_of_target(&a, &[]), json!([]));
+    assert_eq!(reverse_refs_of_target(&a, &["--field", "$body"]), json!([]));
+}
+
+#[test]
+fn a_body_link_inside_this_project_is_a_reverse_ref_when_an_import_has_the_same_path() {
+    let (a, _b) = importer_and_imported("---\n---\n[the target](target.md)\n");
+
+    assert_eq!(
+        reverse_refs_of_target(&a, &[]),
+        json!([{
+            "path": "notes/pointer.md",
+            "namespace": "default",
+            "field": "$body",
+            "written": "target.md",
+            "line": 3,
+            "col": 1
+        }])
+    );
+}
+
+#[test]
+fn a_ref_into_an_import_does_not_satisfy_refby_of_the_same_path_here() {
+    let (a, _b) = importer_and_imported("---\nsee: b::notes/target.md\n---\n");
+    assert_pointer_resolves_into_b(&a, "see");
+
+    assert_eq!(listed_by(&a, "refby.any(see)"), Vec::<String>::new());
+    // Nothing is cited, so `none` holds for both documents of `a`.
+    assert_eq!(
+        listed_by(&a, "refby.none(see)"),
+        vec!["notes/pointer.md", "notes/target.md"]
+    );
+}
+
+#[test]
+fn a_ref_inside_this_project_satisfies_refby_when_an_import_has_the_same_path() {
+    let (a, _b) = importer_and_imported("---\nsee: target.md\n---\n");
+
+    assert_eq!(listed_by(&a, "refby.any(see)"), vec!["notes/target.md"]);
+    assert_eq!(listed_by(&a, "refby.none(see)"), vec!["notes/pointer.md"]);
+}
+
+#[test]
+fn a_body_link_into_an_import_does_not_satisfy_refby_body_of_the_same_path_here() {
+    let (a, _b) = importer_and_imported("---\n---\n[the target](b::notes/target.md)\n");
+    assert_pointer_resolves_into_b(&a, "$body");
+
+    assert_eq!(listed_by(&a, "refby.any($body)"), Vec::<String>::new());
+}
+
+#[test]
+fn a_body_link_inside_this_project_satisfies_refby_body_when_an_import_has_the_same_path() {
+    let (a, _b) = importer_and_imported("---\n---\n[the target](target.md)\n");
+
+    assert_eq!(listed_by(&a, "refby.any($body)"), vec!["notes/target.md"]);
+}
+
+#[test]
+fn a_condition_after_refby_reads_only_refs_that_stayed_in_this_project() {
+    let (a, _b) = importer_and_imported("---\nsee: b::notes/target.md\n---\n");
+    assert_pointer_resolves_into_b(&a, "see");
+
+    assert_eq!(
+        listed_by(&a, "refby.any(see).path=notes/pointer.md"),
+        Vec::<String>::new()
+    );
+
+    let (a, _b) = importer_and_imported("---\nsee: target.md\n---\n");
+
+    assert_eq!(
+        listed_by(&a, "refby.any(see).path=notes/pointer.md"),
+        vec!["notes/target.md"]
+    );
+}

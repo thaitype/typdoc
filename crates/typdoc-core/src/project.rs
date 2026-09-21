@@ -69,6 +69,17 @@ pub struct RefName {
     pub project: Option<String>,
 }
 
+impl RefName {
+    /// Whether both names are the same document: the same project (none for this one), the same
+    /// namespace and the same path. The path alone is not enough, since an imported project has
+    /// documents at paths this one also has, and the reverse index is keyed by all three.
+    fn is_same_document(&self, other: &RefName) -> bool {
+        self.project == other.project
+            && self.namespace == other.namespace
+            && self.path == other.path
+    }
+}
+
 /// What one written ref names, once it is looked up: the document it resolves to, or why it
 /// does not (`refs::Reason` under the design's own ids, `"import-absent"` included).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,12 +129,12 @@ struct IncomingRef {
 }
 
 /// What `evaluate_ref_condition` needs about the candidate `me` and the project, bundled so the
-/// method itself takes one context argument instead of one per piece: `me`'s own path, index
+/// method itself takes one context argument instead of one per piece: `me`'s own name, index
 /// entry, parsed fields and body links (read once per candidate by `Project::list`'s own loop),
 /// the project's coded schemas (for classifying a bare-key ref), and the precomputed reverse
 /// index `refby.*` reads, when at least one `refby.*` condition needs it.
 struct RefEvalCtx<'a> {
-    me_path: &'a str,
+    me: &'a RefName,
     me_entry: &'a Indexed,
     me_fields: &'a [(String, Value)],
     me_body: &'a BodyLinks,
@@ -660,8 +671,14 @@ impl Project {
             } else {
                 BodyLinks::default()
             };
+            let me = RefName {
+                path: path.to_owned(),
+                namespace: namespace.clone(),
+                key: entry.key.clone(),
+                project: None,
+            };
             let ref_ctx = RefEvalCtx {
-                me_path: path,
+                me: &me,
                 me_entry: entry,
                 me_fields: &fields,
                 me_body: &body,
@@ -961,7 +978,7 @@ impl Project {
             Dir::Ref => {
                 let refs: Vec<RefsReference> = self
                     .document_out_refs(
-                        ctx.me_path,
+                        &ctx.me.path,
                         ctx.me_entry,
                         ctx.me_fields,
                         ctx.me_body,
@@ -975,7 +992,7 @@ impl Project {
                     if let RefOutcome::Unresolved(reason_id) = &r.other {
                         warnings.push(format!(
                             "{}: the ref `{}` in `{}` does not resolve ({reason_id})",
-                            ctx.me_path, r.written, r.field
+                            ctx.me.path, r.written, r.field
                         ));
                     }
                     results.push(match &condition.inner {
@@ -1002,7 +1019,7 @@ impl Project {
                     let RefOutcome::Resolved(target) = &item.reference.other else {
                         continue;
                     };
-                    if target.path != ctx.me_path {
+                    if !target.is_same_document(ctx.me) {
                         continue;
                     }
                     results.push(match &condition.inner {
@@ -1156,7 +1173,9 @@ impl Project {
     /// from the importer's side), which needs this project's own reverse scan to widen into the
     /// import too — not built this ticket, and delegating only to the import's own reverse scan
     /// would silently under-report rather than say so. `field` keeps only the refs held in that
-    /// field, `"$body"` for body links, in either direction.
+    /// field, `"$body"` for body links, in either direction. A ref counts as pointing at the
+    /// document only when it resolved to the same project, namespace and path: one that resolved
+    /// into an imported project does not, whatever path it lands on there.
     ///
     /// The document asked about is read the same way `get` and `toc` read theirs (`Project::
     /// resolve`, under `scope`): a broken frontmatter block fails the whole command, matching
@@ -1234,7 +1253,7 @@ impl Project {
                 let RefOutcome::Resolved(target) = &reference.other else {
                     continue;
                 };
-                if target.path != path {
+                if !target.is_same_document(&document) {
                     continue;
                 }
                 refs.push(RefsReference {
