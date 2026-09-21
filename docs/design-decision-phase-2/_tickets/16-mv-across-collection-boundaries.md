@@ -1,7 +1,7 @@
 # 16: What does `mv` do when the destination belongs to a different collection, or to none?
 
 Type: wayfinder:grilling
-Status: open
+Status: resolved
 Blocked by: None (can start immediately)
 
 ## Question
@@ -24,4 +24,60 @@ Decide:
 
 ## Answer
 
-<filled in on resolve>
+**1. Two moves are refused, and the reason is structure, not policy.**
+
+- A coded document cannot move out of its own collection's folder.
+- A document without a code cannot move into a coded collection.
+
+A coded collection's `match` takes `{key}` exactly once and allows no globs, so the file's name is
+fixed entirely by the template; a document with no code has no key to put in it, and a coded
+document taken out of the folder has a key that nothing resolves any more. That last one is the
+sharp end: every ref written as a key would point at nothing, so the move would break references
+that are in use. `mv --renumber` is the path that exists for moving a coded document.
+
+**2. A move into another collection whose schema the document does not satisfy is carried out and
+reported, not refused.**
+
+Refusing sounds safer and is not, because it leaves the user with no order of steps that works:
+
+1. To move, the fields would first have to suit the destination's schema.
+2. Changing them makes the document invalid under the schema it still has.
+3. `set` validates before it writes, so it refuses that change.
+4. The only way left is to edit the file outside typdoc.
+
+A rule that makes someone leave the tool to do ordinary work is the wrong rule. The precedent is
+already in the design: `pull` changes the schemas, reports what the change breaks, and does not roll
+back.
+
+**3. The exit code of that move is 0, not 2.** This is the part most worth keeping.
+
+Exit 2 means validation failed, and everywhere the design states it, it comes with nothing having
+been written — `set` validates before writing, `pull --check` writes nothing at all. If `mv`
+returned 2 after moving the file, one code would carry two meanings inside one tool, and a caller
+reading 2 could no longer tell whether the world had changed. That is the entire reason exit codes
+exist, and spending it here would cost more than the case is worth.
+
+Deciding whether a document satisfies its schema is `validate`'s work, not `mv`'s. The result of the
+check travels in `mv`'s `--json` payload, so an agent can branch on it, and CI catches it by running
+`validate`, which exists for exactly this. The field that carries it is part of
+[decision 17](17-the-json-shapes-of-new-set-and-mv.md).
+
+**4. Moving out of every collection is allowed, and the command says so in its own words.** The
+document will not appear in `list`, and its refs are no longer checked.
+
+It is allowed because it is a legitimate thing to want. It is announced because it is the only one
+of these cases where nothing afterwards reports anything: a document in no collection produces no
+findings, so silence here means the user never finds out. Note that this case reaches only documents
+without a code, since a coded document moving out of its folder is refused under 1.
+
+## Noted while checking this: an adjacent silence in `pull`
+
+The argument in 3 rests on exit 2 never following a write. That holds for everything the design
+states. It also turned up a gap next door: plain `pull` writes `vendor/` and `lock.json`, then
+validates every document against the new schemas and reports what the change breaks without rolling
+back — and the design never says what it exits with. `pull --check` has an exit code stated;
+plain `pull` after a breaking change does not.
+
+`pull` is story 3 and out of this map's scope, so nothing is decided about it here. It is recorded
+because the decision above is the precedent it will meet: a command that wrote successfully and then
+found something wrong reports in its payload and does not spend exit 2 on it.

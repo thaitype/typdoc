@@ -13,6 +13,11 @@ Decide each shape against those rules:
 - **`new`.** The natural result is the document it created, in the same document shape `get` prints. Decide whether it is the whole document — which repeats every default and `auto` value the command filled in, and is genuinely what the caller could not know — or only the name plus the key. The text form prints the bare key, and the two forms should be answering the same question.
 - **`set`.** Decide whether the result is the document after the write, and whether it says which fields changed. "Which fields changed" is a fact about the command, not about the document, which the rules argue against — but a caller that sent five fields and had `auto: update` touched as well cannot work it out from the result alone, which argues for it. Decide, and record the reasoning either way. Also decide what `--if` failing prints: it exits 3 with nothing written, and nothing written is a result, not an error, yet exit 3 is not success.
 - **`mv`.** It has more to say than the others: the document under its new name, what it could not rewrite and why (unreachable projects, mentions, body links with the rule off), and — depending on ticket 1 — whether it finished. Decide the field that carries the unrewritten refs, and whether each entry is a reference in the shape `refs` already uses, since that shape exists and carries `written` and a position.
+- **The schema check after a move.** [Decision 16](16-mv-across-collection-boundaries.md) settled
+  that a `mv` landing on a schema the document does not satisfy is carried out, exits 0, and reports
+  what the schema rejects in the payload. So `mv`'s shape needs a field for that result, and it is
+  the field a caller branches on instead of reading the exit code. Decide whether it holds findings
+  in the shape `validate` already uses, which would let one consumer read both.
 - **Order.** Every array in the output declares its order. Say the order of each array these three introduce.
 - **The lists in the test suite.** `unimplemented_commands` and `unproduced_exit_codes` hold the commands with no golden and the exit codes no test produces. The write half of both empties in this story; exit code 3 in particular is produced only by a write. Confirm that the shapes decided here are the ones the goldens pin.
 
