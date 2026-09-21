@@ -12,6 +12,7 @@ pub const ALWAYS_ON: &[&str] = &[
     "keys.unique",
     "collections.overlap",
     "state.missing",
+    "files.unreadable",
 ];
 
 /// The configurable rules, each with the options it accepts besides `level`.
@@ -75,4 +76,5 @@ pub const RULES: &[&str] = &[
 /// when it enters `RULES`, and it is empty when v1 is finished.
 pub const UNIMPLEMENTED_RULES: &[&str] = &[
     "frontmatter.transitions", // story 2
+    "files.unreadable",        // the walk reports what it skips; not built yet
 ];
