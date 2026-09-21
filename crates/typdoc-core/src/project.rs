@@ -767,6 +767,15 @@ impl Project {
             return Ok(result);
         }
         for (alias, namespaces) in &scope.imports {
+            #[expect(
+                clippy::unreachable,
+                reason = "`scope.imports` is filled only by `scope::select`, reached through \
+                          `Project::scope`, which lists the keys of `self.imports` and gives an \
+                          alias no namespaces when its state is `Absent`; `select` returns an error \
+                          for an alias outside that list and for one with no namespaces, so an alias \
+                          in a `Scope` this project's `scope` returned is a `Loaded` entry of \
+                          `self.imports`. A `Scope` built by hand with another alias would reach it"
+            )]
             let Some(ImportState::Loaded(imported)) = self.imports.get(alias) else {
                 unreachable!(
                     "scope::select only ever names an alias this project has loaded: {alias}"
@@ -809,6 +818,15 @@ impl Project {
     /// (`doc.project`): used only by `list_all`'s combined sort, which cannot reuse `Project::
     /// list`'s own `self.collections[index]` lookup once documents from more than one project are
     /// mixed together.
+    #[expect(
+        clippy::panic,
+        reason = "the only caller is the sort in `list_all`, on documents that `Project::list` \
+                  built with `collection: collection.name.clone()` from an entry of the \
+                  `collections` of the project it ran on: `self` when `doc.project` is `None`, and \
+                  otherwise the import `doc.project` names, which `list_all` reached through the \
+                  alias check of its own loop over `scope.imports`; `schema_of_collection` looks \
+                  that name up in the `collections` of that same project"
+    )]
     fn schema_for(&self, doc: &Document) -> &Resolved {
         let project = match &doc.project {
             None => self,
@@ -918,6 +936,11 @@ impl Project {
         if matches!(dir, Dir::RefBy) {
             return declaring.to_vec();
         }
+        #[expect(
+            clippy::unreachable,
+            reason = "`RefField` has two variants, `Named` and `Body`, and the first `if` of this \
+                      function returns when `field` is `Body`"
+        )]
         let RefField::Named(name) = field else {
             unreachable!("RefField::Body already returned above")
         };
@@ -1028,6 +1051,14 @@ impl Project {
                 Ok(combine_quant(condition.quant, results.into_iter()))
             }
             Dir::RefBy => {
+                #[expect(
+                    clippy::expect_used,
+                    reason = "`evaluate_ref_condition` has one caller, `Project::list`, which builds \
+                              the one `RefEvalCtx` and sets `incoming` to `Some` whenever a \
+                              `Condition::Ref` with `dir == Dir::RefBy` is among `filter.wheres`; \
+                              the `condition` it passes is one of those `filter.wheres`, and this \
+                              arm runs only for `Dir::RefBy`"
+                )]
                 let incoming = ctx
                     .incoming
                     .expect("Project::list precomputes this whenever a refby condition is present");
@@ -1421,6 +1452,14 @@ impl Project {
     /// leaves the resolved path unread further for this case): that would mean reading the
     /// imported project's headings under its own rules, which is not built this ticket.
     fn resolve_import_outcome(&self, alias: &str, path: &str) -> RefOutcome {
+        #[expect(
+            clippy::unreachable,
+            reason = "both callers, `document_out_refs` and `check_body_destination` (reached only \
+                      from `check_body`), get `alias` from a `BodyDestination::Import` that \
+                      `refs::classify_body` builds only in its `Some(ImportState::Loaded(_))` arm \
+                      of `ctx.imports.get(alias)`, and each builds that `ctx` with `imports: \
+                      &self.imports`, the map read here"
+        )]
         let Some(ImportState::Loaded(imported)) = self.imports.get(alias) else {
             unreachable!(
                 "classify_body builds BodyDestination::Import only for a loaded import: {alias}"
@@ -2708,6 +2747,15 @@ impl Project {
                 self.resolve_key(namespace.as_deref(), key, scope)?
             }
         };
+        #[expect(
+            clippy::expect_used,
+            reason = "the `Path` arm above returns `NotFound` unless `self.index.get(path)` is \
+                      `Some`, and the `Key` arm's path comes from `resolve_key`, which reads it \
+                      from `self.index.key(..)`; `Index::build` binds a key to a path in the same \
+                      step that inserts the path's entry, and when it removes an overlapping path's \
+                      entry it removes the path from its key group too; `Index` has no other \
+                      mutator, so a path in a key group has an entry"
+        )]
         let entry = self
             .index
             .get(&path)
@@ -2735,6 +2783,11 @@ impl Project {
                 path: printed_key(prefix, key),
                 hint: false,
             }),
+            #[expect(
+                clippy::expect_used,
+                reason = "this arm of `match found.len()` runs only when `found.len()` is 1, so \
+                          `found.into_iter().next()` is `Some`"
+            )]
             1 => Ok(found.into_iter().next().expect("checked above").1),
             _ => Err(Error::AmbiguousKey {
                 key: key.to_owned(),
