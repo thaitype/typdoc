@@ -1,7 +1,7 @@
 # 21: Acceptance runs on copies of `chief` and `typmem`
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 19, 20 and the decision on which files a run reads
 
 ## What this delivers
