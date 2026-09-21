@@ -39,6 +39,13 @@ collection: whether each is a config error with an id, a finding, or something `
 message of its own. Those are error-id and exit-code questions and are being decided together with
 the rest of that family, not here.
 
+**Where this ticket meets decision 15.** A number issued twice cannot show up as a duplicate key,
+because a coded collection's `match` takes `{key}` once and allows no globs, so the key fixes the
+path within a namespace. It shows up as a write whose destination already exists, which
+[decision 15](15-a-write-whose-destination-already-exists.md) refuses with exit 7 and guards with
+`O_EXCL` under the lock. The two tickets are one hazard seen from the state file and from the file
+being written.
+
 **Also still open in this ticket:** whether both state files are written in `mv --renumber`, and
 whether anything ever removes an entry for a collection that no longer exists. The order of the
 destination's write is no longer open: [decision 1](1-a-mv-that-fails-partway.md) settled that the

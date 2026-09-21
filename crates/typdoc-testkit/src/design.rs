@@ -348,7 +348,7 @@ Text.
                 "new", "get", "list", "set", "toc", "refs", "mv", "pull", "validate"
             ])
         );
-        assert_eq!(exit_codes(&design).unwrap(), set(&[0u8, 1, 2, 3, 4, 5, 6]));
+        assert_eq!(exit_codes(&design).unwrap(), set(&[0u8, 1, 2, 3, 4, 5, 6, 7]));
         assert!(
             always_on_rule_ids(&design)
                 .unwrap()
