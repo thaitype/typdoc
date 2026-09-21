@@ -50,8 +50,10 @@ it — the refs already rewritten name a path that is not there yet — so nobod
 as a second fault.
 
 **3. What `mv` knows it cannot rewrite does not make the run a failure.** Plain-text mentions, body
-links while `body.links` is `off`, and an imported project that cannot be reached: the run
-finishes, exits 0, and reports each one in detail.
+links while `body.links` is `off`, and refs held by any other project: the run finishes, exits 0,
+and reports each one in detail. ([Decision 2](2-locks-when-mv-writes-into-an-imported-project.md)
+later widened the third of these: `mv` writes in no other project at all, so it is not only the
+projects it cannot reach, and the report has to name the project each unrewritten ref is in.)
 
 What `mv` promises is the refs typdoc tracks. Plain text was never one of them. An import that is
 absent on this machine is ordinary by design, so failing on it would make `mv` fail routinely for

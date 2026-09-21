@@ -32,15 +32,16 @@ Why that and not the other two:
 - What is being taken is the lock file, so ordering by the lock file is a total order by
   construction. Two lock files that are not the same file have different paths, so two of them can
   never compare equal and no tie-break is needed.
-- A namespace's name cannot order them: two projects can have namespaces with the same name, and
-  once an imported project is in the set (decision 2) the names collide with nothing to separate
-  them.
+- A namespace's name cannot order them: names are not unique across projects, so a name is not an
+  identity to sort on. ([Decision 2](2-locks-when-mv-writes-into-an-imported-project.md) later
+  settled that no command writes outside its own project, so in v1 the set of locks always comes
+  from one project; the rule does not rely on that, and is a total order either way.)
 - A document's path cannot order them either: the namespace `default` has no folder of its own, so
   its documents' paths carry no namespace at all and there is nothing to sort.
 - One rule covers both lock modes without a second rule for `git-common`, because in both modes
   every lock file has a unique absolute path.
-- It covers a namespace that belongs to an imported project without anyone having to decide whose
-  project sorts first. That question does not arise.
+- It needs no rule about which project sorts first, whatever set of lock files it is given. That
+  question does not arise, and after decision 2 the case does not arise either.
 
 **The project lock is still taken before any namespace lock**, as the design already said; this
 decision changes nothing there.
