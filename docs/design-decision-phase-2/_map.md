@@ -33,6 +33,7 @@ Story 2's fog is clear when every decision the write path needs is made and writ
 
 <!-- tickets that decide nothing, so they are not on the frontier -->
 
+- [How to resolve a merge conflict in a state file](_tickets/19-state-file-merge-conflicts.md): written as guidance in `docs/projects.md`, not as a rule in the code — take the higher `last`, never a side, and never revert the file. The damage from taking the lower side is invisible until a key whose document has gone is handed out a second time, and then nothing reports it. Open, nothing to decide.
 - [A `Concept and Mental model` section in the README](_tickets/18-readme-concept-and-mental-model.md): separate namespace from collection, with a two-by-two example project, real `list` output showing `WF-1` twice, a two-axis table, and one closing sentence. Open, nothing to decide, does not hold the map up.
 
 ## Not yet specified
