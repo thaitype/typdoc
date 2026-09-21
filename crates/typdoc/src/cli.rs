@@ -678,20 +678,25 @@ fn validate_json(report: &ValidateReport) -> Json {
 }
 
 /// The `audit` object of `--json`'s report (design, JSON output, "Audit"): `collections`, one
-/// `{ "name", "documents" }` per collection with at least one document in scope, sorted by name
-/// (already sorted by `AuditReport::collections`); `uncollected`, `no_frontmatter` and
-/// `overlapping`, each the sorted `path` of every file the design names.
+/// `{ "name", "documents" }` per collection of the project, sorted by name (already sorted by
+/// `AuditReport::collections`); `uncollected` and `no_frontmatter`, the sorted `path` of every file
+/// the design names; and `overlapping`, one `{ "path", "collections" }` per file, sorted by path.
 fn audit_json(audit: &AuditReport) -> Json {
     let collections: Vec<Json> = audit
         .collections
         .iter()
         .map(|collection| json!({ "name": collection.name, "documents": collection.documents }))
         .collect();
+    let overlapping: Vec<Json> = audit
+        .overlapping
+        .iter()
+        .map(|overlap| json!({ "path": overlap.path, "collections": overlap.collections }))
+        .collect();
     json!({
         "collections": collections,
         "uncollected": audit.uncollected,
         "no_frontmatter": audit.no_frontmatter,
-        "overlapping": audit.overlapping,
+        "overlapping": overlapping,
     })
 }
 
@@ -718,10 +723,11 @@ fn severity_name(level: Severity) -> &'static str {
 /// list is not empty. `overlapping` is not part of the design's worked example (contract item 8
 /// is what gives it its own list), so this function lists it the same way it already lists
 /// `no_frontmatter` beyond that example: one line, only when the list holds something, so the
-/// text's own total agrees with `summary.overlapping` in the JSON. The design's own worked
-/// example is not spaced by an algorithm this reads out consistently (`precedents`/`learnings`,
-/// the same length short of their suffix, are padded two different amounts there), so the padding
-/// here is this function's own, simple and deterministic: the name column is as wide as the
+/// text's own total agrees with `summary.overlapping` in the JSON; each path is followed by the
+/// names of the collections that match it. The design's own worked example is not spaced by an
+/// algorithm this reads out consistently (`precedents`/`learnings`, the same length short of
+/// their suffix, are padded two different amounts there), so the padding here is this function's
+/// own, simple and deterministic: the name column is as wide as the
 /// longest collection name, plus two spaces, and every group is separated by " · " as the example
 /// shows. Design line 577 also promises "then details" after the summary for audit's text form,
 /// the per-finding lines plain `validate` prints one of per line; no command's plain-text output
@@ -776,9 +782,14 @@ fn audit_text(report: &ValidateReport) -> String {
     }
     if !audit.overlapping.is_empty() {
         out.push('\n');
+        let overlapping: Vec<String> = audit
+            .overlapping
+            .iter()
+            .map(|overlap| format!("{} ({})", overlap.path, overlap.collections.join(", ")))
+            .collect();
         out.push_str(&format!(
             "matched by more than one collection: {} ({})\n",
-            audit.overlapping.join(", "),
+            overlapping.join(", "),
             audit.overlapping.len()
         ));
     }

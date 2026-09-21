@@ -405,11 +405,12 @@ fn the_text_form_of_audit_accounts_for_an_overlapping_file() {
         .run();
 
     assert_eq!(ran.code, 0, "{}", ran.stderr);
-    let expected = "typdoc audit: 1 collections, 2 files (0 in no collection)\n\
+    let expected = "typdoc audit: 2 collections, 2 files (0 in no collection)\n\
         \n\
         one  1 files   frontmatter.unknown 1 warn\n\
+        two  0 files   clean\n\
         \n\
-        matched by more than one collection: a.md (1)\n";
+        matched by more than one collection: a.md (one, two) (1)\n";
     assert_eq!(ran.stdout, expected);
 }
 
@@ -777,7 +778,10 @@ fn audit_counts_an_overlapping_file_beside_unreported_not_inside_it() {
     assert_eq!(object["summary"]["overlapping"], json!(1));
     assert_eq!(object["audit"]["uncollected"], json!([]));
     assert_eq!(object["audit"]["no_frontmatter"], json!([]));
-    assert_eq!(object["audit"]["overlapping"], json!(["a.md"]));
+    assert_eq!(
+        object["audit"]["overlapping"],
+        json!([{ "path": "a.md", "collections": ["one", "two"] }])
+    );
     let findings = object["findings"].as_array().unwrap();
     assert!(
         findings
@@ -785,6 +789,258 @@ fn audit_counts_an_overlapping_file_beside_unreported_not_inside_it() {
             .any(|f| f["rule"] == json!("collections.overlap") && f["path"] == json!("a.md")),
         "an overlapping file is still reported under collections.overlap in audit mode: \
          {findings:?}"
+    );
+}
+
+/// A project whose collections all share one empty schema, from `(collection name, match)`
+/// pairs, so a test states only which collection matches what.
+fn project_of_collections(collections: &[(&str, &str)]) -> Scratch {
+    let mut files: Vec<(String, String)> = collections
+        .iter()
+        .map(|(name, matches)| {
+            (
+                format!(".typdoc/collections/{name}.json"),
+                format!(r#"{{ "match": "{matches}", "schema": "note.json" }}"#),
+            )
+        })
+        .collect();
+    files.push((
+        "note.json".to_owned(),
+        r#"{ "name": "note", "fields": {} }"#.to_owned(),
+    ));
+    let borrowed: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    Scratch::project(&borrowed)
+}
+
+fn audit_object(project: &Scratch, extra: &[&str]) -> Value {
+    let mut args = vec!["validate", "--audit", "--json"];
+    args.extend_from_slice(extra);
+    let ran = Spawn::args(args).cwd(project.path()).run();
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    ran.stdout_json()
+}
+
+/// The shape of the design's Audit paragraph: `a.md` is matched by `notes` and by `skills`, and
+/// `b.md` by `notes` alone. `skills` is a collection of the project whose every file is also
+/// matched by another, so it holds 0 and is still listed; a listing built only from the
+/// collections that hold a document would leave it out. `overlapping` names both collections.
+#[test]
+fn audit_lists_a_collection_whose_every_file_is_matched_twice_with_0_and_names_the_overlap() {
+    let project = project_of_collections(&[("notes", "*.md"), ("skills", "a.md")]);
+    project.file("a.md", "");
+    project.file("b.md", "");
+
+    let object = audit_object(&project, &[]);
+
+    assert_eq!(
+        object["audit"]["collections"],
+        json!([
+            { "name": "notes", "documents": 1 },
+            { "name": "skills", "documents": 0 },
+        ])
+    );
+    assert_eq!(
+        object["audit"]["overlapping"],
+        json!([{ "path": "a.md", "collections": ["notes", "skills"] }])
+    );
+}
+
+/// A collection whose `match` reaches no file at all is a collection of the project as much as
+/// one that reaches several, and it is listed with 0. It is named to sort before and after the
+/// collection that holds the one document, so the order by name is read from both sides.
+#[test]
+fn audit_lists_a_collection_that_matches_nothing_with_0() {
+    let project = project_of_collections(&[
+        ("aaa", "nothing-here/*.md"),
+        ("mmm", "*.md"),
+        ("zzz", "also-nothing/*.md"),
+    ]);
+    project.file("a.md", "");
+
+    let object = audit_object(&project, &[]);
+
+    assert_eq!(
+        object["audit"]["collections"],
+        json!([
+            { "name": "aaa", "documents": 0 },
+            { "name": "mmm", "documents": 1 },
+            { "name": "zzz", "documents": 0 },
+        ])
+    );
+    assert_eq!(object["audit"]["overlapping"], json!([]));
+}
+
+/// A file matched by three collections names all three, sorted by name, and a second overlapping
+/// file matched by two names its two: the list is sorted by `path`, and every entry carries its
+/// own collections, so an entry that carried only the first two, or the collections of another
+/// file, would differ from what is written here. `solo.md` belongs to `solo` alone and is in its
+/// number; the two files that overlap are in the number of none of the collections.
+#[test]
+fn audit_names_every_collection_of_an_overlap_sorted_by_name_and_the_list_by_path() {
+    let project = project_of_collections(&[
+        ("zeta", "*.md"),
+        ("mid", "*.md"),
+        ("alpha", "a.md"),
+        ("solo", "solo.md"),
+    ]);
+    project.file("a.md", "");
+    project.file("b.md", "");
+
+    let object = audit_object(&project, &[]);
+
+    assert_eq!(
+        object["audit"]["overlapping"],
+        json!([
+            { "path": "a.md", "collections": ["alpha", "mid", "zeta"] },
+            { "path": "b.md", "collections": ["mid", "zeta"] },
+        ])
+    );
+    assert_eq!(
+        object["audit"]["collections"],
+        json!([
+            { "name": "alpha", "documents": 0 },
+            { "name": "mid", "documents": 0 },
+            { "name": "solo", "documents": 0 },
+            { "name": "zeta", "documents": 0 },
+        ])
+    );
+    assert_eq!(object["summary"]["overlapping"], json!(2));
+}
+
+/// A file matched twice is in the number of no collection, and the summary numbers count each
+/// kind of file once. `a.md` is matched by `notes` and `skills`; `b.md` (with
+/// frontmatter) and `n.md` (with none) belong to `notes` alone; `deep/u.md` belongs to none. A
+/// collection's number counts what it holds whether or not the document was checked, so `notes`
+/// is 2 (`b.md`, `n.md`); counting `a.md` in each collection would give 3 and 1.
+/// `checked.documents` is 1, since `n.md` was not evaluated and `a.md` has no one schema.
+#[test]
+fn a_file_matched_twice_is_in_the_number_of_no_collection_and_the_summary_numbers_hold() {
+    let project = project_of_collections(&[("notes", "*.md"), ("skills", "a.md")]);
+    project.file("a.md", "---\ntitle: x\n---\n");
+    project.file("b.md", "---\ntitle: y\n---\n");
+    project.file("n.md", "no frontmatter here\n");
+    project.file("deep/u.md", "");
+
+    let object = audit_object(&project, &[]);
+
+    assert_eq!(
+        object["audit"]["collections"],
+        json!([
+            { "name": "notes", "documents": 2 },
+            { "name": "skills", "documents": 0 },
+        ])
+    );
+    assert_eq!(object["summary"]["checked"]["documents"], json!(1));
+    assert_eq!(
+        object["summary"]["unreported"],
+        json!({ "uncollected": 1, "no_frontmatter": 1 })
+    );
+    assert_eq!(object["summary"]["overlapping"], json!(1));
+    assert_eq!(object["audit"]["uncollected"], json!(["deep/u.md"]));
+    assert_eq!(object["audit"]["no_frontmatter"], json!(["n.md"]));
+}
+
+/// The text form lists every collection too, `skills` with 0 files and nothing found in it, and
+/// names the collections of each overlap after its path, in the order of the paths.
+#[test]
+fn the_text_form_of_audit_lists_every_collection_and_names_the_collections_of_each_overlap() {
+    let project = project_of_collections(&[("notes", "*.md"), ("skills", "a.md")]);
+    project.file("a.md", "");
+    project.file("b.md", "---\n---\n");
+
+    let ran = Spawn::args(["validate", "--audit"])
+        .cwd(project.path())
+        .run();
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let expected = "typdoc audit: 2 collections, 2 files (0 in no collection)\n\
+        \n\
+        notes   1 files   clean\n\
+        skills  0 files   clean\n\
+        \n\
+        matched by more than one collection: a.md (notes, skills) (1)\n";
+    assert_eq!(ran.stdout, expected);
+}
+
+/// The text form names the collections of each overlap, sorted by name, and lists the overlaps
+/// in the order of their paths: `a.md` is matched by three collections and `b.md` by two.
+#[test]
+fn the_text_form_of_audit_names_every_collection_of_each_of_several_overlaps() {
+    let project = project_of_collections(&[
+        ("zeta", "*.md"),
+        ("mid", "*.md"),
+        ("alpha", "a.md"),
+        ("solo", "solo.md"),
+    ]);
+    project.file("a.md", "");
+    project.file("b.md", "");
+
+    let ran = Spawn::args(["validate", "--audit"])
+        .cwd(project.path())
+        .run();
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let expected = "typdoc audit: 4 collections, 2 files (0 in no collection)\n\
+        \n\
+        alpha  0 files   clean\n\
+        mid    0 files   clean\n\
+        solo   0 files   clean\n\
+        zeta   0 files   clean\n\
+        \n\
+        matched by more than one collection: a.md (alpha, mid, zeta), b.md (mid, zeta) (2)\n";
+    assert_eq!(ran.stdout, expected);
+}
+
+/// A collection is one file in `.typdoc/collections/`, and its number covers its documents in
+/// every namespace the audit reports. `notes` matches in both namespaces (1 + 1); `only-two`
+/// reaches a file in `two` alone; `only-one` reaches none. Narrowed to `one`, every collection
+/// is still listed, and the numbers count the namespace that was read.
+#[test]
+fn a_collections_number_covers_every_namespace_the_audit_reports() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/config.json",
+            r#"{ "version": 1, "namespaces": ["one", "two"] }"#,
+        ),
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "notes/*.md", "schema": "note.json" }"#,
+        ),
+        (
+            ".typdoc/collections/only-two.json",
+            r#"{ "match": "extra/*.md", "schema": "note.json" }"#,
+        ),
+        (
+            ".typdoc/collections/only-one.json",
+            r#"{ "match": "gone/*.md", "schema": "note.json" }"#,
+        ),
+        ("note.json", r#"{ "name": "note", "fields": {} }"#),
+    ]);
+    project.file("one/notes/a.md", "");
+    project.file("two/notes/b.md", "");
+    project.file("two/extra/c.md", "");
+
+    let both = audit_object(&project, &[]);
+    assert_eq!(
+        both["audit"]["collections"],
+        json!([
+            { "name": "notes", "documents": 2 },
+            { "name": "only-one", "documents": 0 },
+            { "name": "only-two", "documents": 1 },
+        ])
+    );
+
+    let narrowed = audit_object(&project, &["--namespace", "one"]);
+    assert_eq!(
+        narrowed["audit"]["collections"],
+        json!([
+            { "name": "notes", "documents": 1 },
+            { "name": "only-one", "documents": 0 },
+            { "name": "only-two", "documents": 0 },
+        ])
     );
 }
 
@@ -1766,6 +2022,35 @@ fn the_accounting_invariant_holds_on_every_fixture_project() {
                 "{group}/{name}: independently counted {independent} .md files, typdoc \
                  reports checked={checked} uncollected={uncollected} \
                  no_frontmatter={no_frontmatter} overlapping={overlapping}: {object}"
+            );
+            // The list behind `summary.overlapping`: one `{ "path", "collections" }` for each
+            // file, every path a file that is on disk, each naming at least the two collections
+            // that make it an overlap.
+            let listed = object["audit"]["overlapping"].as_array().unwrap();
+            assert_eq!(listed.len(), overlapping, "{group}/{name}: {object}");
+            for entry in listed {
+                let path = entry["path"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{group}/{name}: {entry}"));
+                assert!(project.join(path).is_file(), "{group}/{name}: {path}");
+                let names = entry["collections"]
+                    .as_array()
+                    .unwrap_or_else(|| panic!("{group}/{name}: {entry}"));
+                assert!(names.len() >= 2, "{group}/{name}: {entry}");
+            }
+            // A collection's number holds a document that was checked and one that had no
+            // frontmatter, and never a file matched twice, so together the collections hold
+            // exactly the files that belong to one collection.
+            let held: u64 = object["audit"]["collections"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|collection| collection["documents"].as_u64().unwrap())
+                .sum();
+            assert_eq!(
+                held as usize,
+                checked + no_frontmatter,
+                "{group}/{name}: {object}"
             );
         }
     }

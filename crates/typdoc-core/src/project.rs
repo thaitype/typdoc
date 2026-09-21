@@ -278,14 +278,23 @@ pub struct ValidateReport {
 }
 
 /// The number of documents one collection holds, for `audit.collections` (design: "one
-/// `{ "name", "documents" }` for each collection with the number of documents it holds"). A
-/// document it holds and a document it was checked against a schema for are not the same count:
-/// this includes a document with no frontmatter too, since the collection still matched it, only
-/// evaluated nothing about it.
+/// `{ "name", "documents" }` for each collection of the project"). A document it holds and a
+/// document it was checked against a schema for are not the same count: this includes a document
+/// with no frontmatter too, since the collection still matched it, only evaluated nothing about
+/// it. A file matched by more than one collection is held by none of them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditCollection {
     pub name: String,
     pub documents: usize,
+}
+
+/// One file matched by more than one collection and the names of the collections that match it,
+/// for `audit.overlapping`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditOverlap {
+    pub path: String,
+    /// Sorted by name.
+    pub collections: Vec<String>,
 }
 
 /// `--audit`'s own report, alongside `findings` (design: "`collections`... `uncollected`...
@@ -300,7 +309,8 @@ pub struct AuditCollection {
 /// than to none... so it is only in `overlapping`").
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AuditReport {
-    /// Sorted by name.
+    /// Every collection of the project, sorted by name, one that holds no document in scope
+    /// included with 0.
     pub collections: Vec<AuditCollection>,
     /// The path of every file that belongs to no collection, sorted, each once.
     pub uncollected: Vec<String>,
@@ -309,13 +319,12 @@ pub struct AuditReport {
     /// empty block, which is frontmatter") or one whose block fails to parse (that has a
     /// `frontmatter.parse` finding instead, and is counted as checked, not unreported).
     pub no_frontmatter: Vec<String>,
-    /// The path of every file matched by more than one collection, sorted, each once (design:
-    /// "`overlapping`, the `path` of every file matched by more than one collection"). Such a
-    /// file is checked against no schema, since there is no one schema to check it with, and is
-    /// reported instead under `collections.overlap`; it is counted here, and in
-    /// `summary.overlapping`, so the summary's own account of the run is complete without it
-    /// (contract item 8).
-    pub overlapping: Vec<String>,
+    /// Every file matched by more than one collection, sorted by `path`, each once, with the
+    /// names of the collections that match it. Such a file is checked against no schema, since
+    /// there is no one schema to check it with, and is reported instead under
+    /// `collections.overlap`; it is counted here, and in `summary.overlapping`, so the summary's
+    /// own account of the run is complete without it (contract item 8).
+    pub overlapping: Vec<AuditOverlap>,
 }
 
 impl Project {
@@ -1495,7 +1504,7 @@ impl Project {
             // `collections.overlap` already reports below the same as a plain run does, and it is
             // counted instead in `audit.overlapping` (contract item 8, design: "counted as
             // `overlapping`, beside `unreported` and not inside it").
-            let mut overlapping: Vec<String> = Vec::new();
+            let mut overlapping: Vec<AuditOverlap> = Vec::new();
             for (path, namespace_idx, collections) in self.index.overlaps() {
                 let namespace = &self.config.namespaces[namespace_idx].name;
                 if !scope.contains(namespace) {
@@ -1503,7 +1512,10 @@ impl Project {
                 }
                 namespaces.insert(namespace.clone());
                 if audit {
-                    overlapping.push(path.to_owned());
+                    overlapping.push(AuditOverlap {
+                        path: path.to_owned(),
+                        collections: collections.to_vec(),
+                    });
                 }
                 findings.push(validate::overlap_finding(
                     path,
@@ -1637,30 +1649,32 @@ impl Project {
         })
     }
 
-    /// `--audit`'s own report: `collections` (every collection that holds at least one document
-    /// in scope, from `documents_by_collection` the caller's own document walk already counted,
-    /// sorted by name), `uncollected` (the `path` of every `.md` file in scope that matches no
-    /// collection at all), found by an independent walk of every namespace folder in scope
-    /// (`index::all_markdown_files`), never by consulting a collection's own `match` template —
-    /// that is exactly the question a stray file's absence from every collection answers — and
-    /// `overlapping` (the `path` of every file the caller's own scan of `self.index.overlaps()`
-    /// already found matched by more than one collection, sorted here). A path already in
-    /// `self.index` (checked, or listed in `no_frontmatter` by the caller) or already in
-    /// `self.index.overlap` (the same overlap the caller already collected into `overlapping`,
-    /// checked here directly rather than by searching that `Vec`) is not uncollected.
+    /// `--audit`'s own report: `collections` (every collection of the project, with the count
+    /// `documents_by_collection` holds for it in scope, or 0, sorted by name), `uncollected` (the
+    /// `path` of every `.md` file in scope that matches no collection at all), found by an
+    /// independent walk of every namespace folder in scope (`index::all_markdown_files`), never by
+    /// consulting a collection's own `match` template — that is exactly the question a stray
+    /// file's absence from every collection answers — and `overlapping` (every file the caller's
+    /// own scan of `self.index.overlaps()` already found matched by more than one collection,
+    /// sorted here). A path already in `self.index` (checked, or listed in `no_frontmatter` by
+    /// the caller) or already in `self.index.overlap` (the same overlap the caller already
+    /// collected into `overlapping`, checked here directly rather than by searching that `Vec`)
+    /// is not uncollected.
     fn audit_report(
         &self,
         scope: &Scope,
         namespaces: &mut BTreeSet<String>,
         documents_by_collection: BTreeMap<usize, usize>,
         mut no_frontmatter: Vec<String>,
-        mut overlapping: Vec<String>,
+        mut overlapping: Vec<AuditOverlap>,
     ) -> Result<AuditReport, Error> {
-        let mut collections: Vec<AuditCollection> = documents_by_collection
-            .into_iter()
-            .map(|(collection, documents)| AuditCollection {
-                name: self.collections[collection].name.clone(),
-                documents,
+        let mut collections: Vec<AuditCollection> = self
+            .collections
+            .iter()
+            .enumerate()
+            .map(|(at, collection)| AuditCollection {
+                name: collection.name.clone(),
+                documents: documents_by_collection.get(&at).copied().unwrap_or(0),
             })
             .collect();
         collections.sort_by(|a, b| a.name.cmp(&b.name));
@@ -1683,7 +1697,10 @@ impl Project {
         }
         uncollected.sort();
         no_frontmatter.sort();
-        overlapping.sort();
+        for overlap in &mut overlapping {
+            overlap.collections.sort();
+        }
+        overlapping.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(AuditReport {
             collections,
             uncollected,
