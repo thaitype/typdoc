@@ -33,6 +33,7 @@ Kept here rather than tidied away; none is a missing command.
 - `[import-anchor]`: a body link across an import has its file checked and its anchor not.
 - `config.legacy-file` stops every command, though the design's own question, whether checking
   is still possible, says it should be a finding that stops nothing (ticket 8).
+  Decided since: the rule is removed, since nothing in that format exists; ticket 25 holds it.
 - `audit.collections` omits a collection that holds no document and does not count an
   overlapping file for any collection (ticket 21).
   Decided since this report was written: a file matched twice stays an error, with no rule that
