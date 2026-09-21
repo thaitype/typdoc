@@ -30,6 +30,7 @@ Kept here rather than tidied away; none is a missing command.
   from inside it. When it is closed, the reverse direction will need to print a `project`.
 - `[namespace-scheme]`: a namespace named after a URL scheme is not reported, while an import
   alias of that name is refused.
+  Decided since: it is reported as `config.namespace-name`; ticket 26 holds it.
 - `[import-anchor]`: a body link across an import has its file checked and its anchor not.
 - `config.legacy-file` stops every command, though the design's own question, whether checking
   is still possible, says it should be a finding that stops nothing (ticket 8).
@@ -43,6 +44,8 @@ Kept here rather than tidied away; none is a missing command.
   it moved.
 - A `namespaces` entry that matches a symbolic link still stops the run with exit 6, while a
   `match` skips it and reports `files.unreadable` (ticket 23).
+  Decided since: a glob skips and reports it, and an entry naming a link is a config error;
+  ticket 26 holds it.
 - `files.unreadable` is reported by the whole-project scan of `validate` only: `validate <path>`
   in a folder that holds a link says nothing about it (ticket 23).
 
