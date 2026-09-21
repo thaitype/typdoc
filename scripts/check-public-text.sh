@@ -36,16 +36,44 @@ GENERIC=(
   'on the same terms'
 )
 
+# Files where the owner's own name is the correct thing to find, so the name
+# patterns are not applied to them. The rule exists to stop a line revealing
+# that somebody else wrote or approved the text; a copyright line does the
+# opposite and says whose work it is, which is what every line here is meant
+# to read as. Paths are as this script is given them, relative to the repository
+# root. Keep this list short and specific: it is a list, and not a pattern,
+# because each entry should be a deliberate decision. The generic patterns
+# below still apply to these files, and the name patterns still apply
+# everywhere else — weakening a pattern, or dropping a name from the terms
+# file, would hide that name where it does not belong.
+NAME_OK_FILES=(
+  LICENSE
+)
+
+name_ok() { # name_ok FILE ; true when an owner's name belongs in this file
+  local candidate=$1 allowed
+  for allowed in "${NAME_OK_FILES[@]}"; do
+    [ "$candidate" = "$allowed" ] && return 0
+  done
+  return 1
+}
+
 run_scan() { # run_scan FILE... ; prints hits, returns 1 if any
-  local hits=0 pat
+  local hits=0 pat file
+  local -a name_files=()
   for pat in "${GENERIC[@]}"; do
     grep -InE -i -- "$pat" "$@" && hits=1
   done
+  for file in "$@"; do
+    name_ok "$file" || name_files+=("$file")
+  done
   if [ -n "${PUBLIC_TEXT_TERMS_FILE:-}" ] && [ -r "$PUBLIC_TEXT_TERMS_FILE" ]; then
-    while IFS= read -r pat; do
-      [ -z "$pat" ] && continue
-      grep -InE -i -- "$pat" "$@" && hits=1
-    done < "$PUBLIC_TEXT_TERMS_FILE"
+    if [ ${#name_files[@]} -gt 0 ]; then
+      while IFS= read -r pat; do
+        [ -z "$pat" ] && continue
+        grep -InE -i -- "$pat" "${name_files[@]}" && hits=1
+      done < "$PUBLIC_TEXT_TERMS_FILE"
+    fi
   else
     echo "NOTE: PUBLIC_TEXT_TERMS_FILE is not set or not readable; names are NOT checked." >&2
   fi
@@ -66,6 +94,17 @@ if [ "${1:-}" = "--self-test" ]; then
     && { echo "self-test FAILED: planted phrase was not flagged"; fail=1; }
   PUBLIC_TEXT_TERMS_FILE=$tmp/terms run_scan "$tmp/planted-name.md" >/dev/null 2>&1 \
     && { echo "self-test FAILED: planted name was not flagged"; fail=1; }
+  printf 'Copyright (c) 2026 zzqxfake\n' > "$tmp/name-ok.md"
+  ( NAME_OK_FILES=("$tmp/name-ok.md")
+    PUBLIC_TEXT_TERMS_FILE=$tmp/terms run_scan "$tmp/name-ok.md" >/dev/null 2>&1 ) \
+    || { echo "self-test FAILED: a name was flagged in a file where a name belongs"; fail=1; }
+  ( NAME_OK_FILES=("$tmp/name-ok.md")
+    PUBLIC_TEXT_TERMS_FILE=$tmp/terms run_scan "$tmp/planted-name.md" >/dev/null 2>&1 ) \
+    && { echo "self-test FAILED: the exception let a name through in an ordinary file"; fail=1; }
+  ( NAME_OK_FILES=("$tmp/name-ok.md")
+    printf 'Confirmed by the human.\n' > "$tmp/name-ok-but-provenance.md"
+    NAME_OK_FILES=("$tmp/name-ok-but-provenance.md") run_scan "$tmp/name-ok-but-provenance.md" >/dev/null 2>&1 ) \
+    && { echo "self-test FAILED: a file exempt from the name patterns escaped the generic ones too"; fail=1; }
   [ $fail -eq 0 ] && echo "self-test ok: the gate flags planted text and passes clean text"
   exit $fail
 fi
