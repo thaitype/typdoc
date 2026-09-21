@@ -1,7 +1,7 @@
 # 14: How `<project-hash>` is computed for `git-common` locks
 
 Type: wayfinder:grilling
-Status: open
+Status: resolved
 Blocked by: None (can start immediately)
 
 ## Question
@@ -21,4 +21,38 @@ Decide:
 
 ## Answer
 
-<filled in on resolve>
+**Decided: hash the project folder's path relative to the root of the worktree.** Bring the path to
+one form first — separators `/`, no trailing separator — then SHA-256 it and keep the first 16
+hexadecimal characters.
+
+Why that path and not another:
+
+- The absolute path is exactly what differs between two worktrees, which is the case the mode
+  exists for, so it cannot be what identifies the project.
+- The path relative to the worktree root is the same in every worktree of the repository, which is
+  the property the mode needs.
+- A worktree that keeps the project at a different relative path is a different project under this
+  rule and takes a different lock. That is the intended reading and is written into the design as
+  such, rather than left for a reader to work out from the formula.
+
+**Collisions.** Sixteen hexadecimal characters are 64 bits, so two projects in one repository can
+hash the same. What follows is that they share a lock and wait for each other; nothing is corrupted
+and nothing is lost. Recorded as a known consequence, not guarded against.
+
+**Stability.** The hash is stable across versions of typdoc. If it ever changes, a new binary is
+blind to a lock an old binary is holding, so a change is a breaking change and is treated as one.
+
+**`git rev-parse --git-common-dir` may answer with a relative path.** It is canonicalized before a
+lock path is built from it.
+
+Two notes for the build, neither of them a decision: `sha2` is already a dependency of
+`typdoc-core`, used for schema pins, so this needs no new one; and the worktree root comes from
+`git rev-parse --show-toplevel`, which the design does not name yet because it names no git command
+but `--git-common-dir`.
+
+Still open, and not part of this decision: what happens when `lock` is `git-common` and the project
+is not in a git repository at all, and what happens when the `typdoc/` directory inside the common
+directory cannot be created. Both are error-shape questions and belong with decision 9's family.
+
+**Written into `docs/design.md`:** three paragraphs after the lock mode table define
+`<project-hash>`, state the collision consequence, and promise stability.

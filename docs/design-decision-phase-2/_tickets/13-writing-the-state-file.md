@@ -17,4 +17,31 @@ The design says the number is replaced "in place", then the result is re-parsed 
 
 ## Answer
 
-<filled in on resolve>
+**Partly decided. The file's format is settled; the rest of this ticket is not.**
+
+**Decided: the form of the file typdoc writes.** JSON, keys in alphabetical order, two spaces of
+indentation, `\n` line endings, and a final newline.
+
+The reason is what the file is for. It is committed, so people read it as a diff and git merges it.
+A form that does not move means a conflict says that two people disagree about a number, which is
+the signal the design wants, rather than saying that the formatting shifted under them.
+
+**Where that applies, and where it does not.** This is the form typdoc writes when it creates the
+file or adds an entry to one. Updating an entry that is already there still replaces only the
+number, in place, as the design says, and leaves the rest of the file exactly as it was found — a
+file somebody formatted by hand is not reformatted by a `new`. The two rules do not conflict; the
+boundary between them is written into the design so that nobody later reads the format rule as a
+licence to rewrite the whole file.
+
+**Not decided here, moved to the family of decision 9.** What happens when the file parses but
+`last` is a string, negative, a float, or lower than the highest existing document in the
+collection: whether each is a config error with an id, a finding, or something `new` refuses with a
+message of its own. Those are error-id and exit-code questions and are being decided together with
+the rest of that family, not here.
+
+**Also still open in this ticket:** both state files in `mv --renumber` and the order of those
+writes against the file move and the ref rewrites, and whether anything ever removes an entry for a
+collection that no longer exists. Neither is answered yet.
+
+**Written into `docs/design.md`:** the State paragraph now gives the form of a file typdoc creates
+and says plainly that updating an existing entry leaves the rest of the file untouched.
