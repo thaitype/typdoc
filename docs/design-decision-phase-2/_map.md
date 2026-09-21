@@ -28,6 +28,12 @@ Story 2's fog is clear when every decision the write path needs is made and writ
 - [Writing the state file](_tickets/13-writing-the-state-file.md) (format only, the rest is open): a file typdoc creates holds JSON with keys in alphabetical order, two spaces of indentation, `\n` endings and a final newline, because the file is committed and a conflict should mean a real disagreement; updating an existing entry still replaces only the number in place and reformats nothing. What a malformed `last` does is with decision 9's family; stale entries and whether both state files are written are still open, and decision 1 settled the order of the destination's write.
 - [Signal-handling crates](_tickets/5-signal-handling-crates.md): facts gathered, choice still open. `signal-hook` 0.4.4 is the only candidate that covers re-raising the signal (`low_level::emulate_default_handler`), moving the cleanup off the handler (`Signals`) and running without a runtime, in one dependency; `nix` 0.31.3 is the runner-up and `ctrlc` is ruled out by the re-raise requirement. Registering before the lock is created is possible with all of them, so that gap is closed by the order of the calls, not by the crate. Ticket 6 makes the choice.
 
+## Work on the paper, not on the map
+
+<!-- tickets that decide nothing, so they are not on the frontier -->
+
+- [A `Concept and Mental model` section in the README](_tickets/18-readme-concept-and-mental-model.md): separate namespace from collection, with a two-by-two example project, real `list` output showing `WF-1` twice, a two-axis table, and one closing sentence. Open, nothing to decide, does not hold the map up.
+
 ## Not yet specified
 
 - The text (non-`--json`) output of `new`, `set` and `mv`. The design shows `new` printing the bare key on stdout and says nothing about the other two.
