@@ -428,6 +428,12 @@ fn parse_value(value: &str, op: Op) -> Result<Vec<Item>, QueryError> {
         match c {
             '\\' => match chars.next() {
                 Some(escaped @ (',' | '*' | '\\')) => {
+                    #[expect(
+                        clippy::expect_used,
+                        reason = "`segments` starts as `vec![String::new()]` and the loop changes it only with \
+                                  `push` and by `mem::replace` with another `vec![String::new()]`, so it is \
+                                  never empty"
+                    )]
                     segments
                         .last_mut()
                         .expect("at least one segment")
@@ -447,6 +453,12 @@ fn parse_value(value: &str, op: Op) -> Result<Vec<Item>, QueryError> {
                 let finished = std::mem::replace(&mut segments, vec![String::new()]);
                 items.push(finish_item(finished)?);
             }
+            #[expect(
+                clippy::expect_used,
+                reason = "`segments` starts as `vec![String::new()]` and the loop changes it only with \
+                          `push` and by `mem::replace` with another `vec![String::new()]`, so it is \
+                          never empty"
+            )]
             other => segments
                 .last_mut()
                 .expect("at least one segment")
@@ -464,6 +476,11 @@ fn parse_value(value: &str, op: Op) -> Result<Vec<Item>, QueryError> {
 
 fn finish_item(segments: Vec<String>) -> Result<Item, QueryError> {
     if segments.len() == 1 {
+        #[expect(
+            clippy::expect_used,
+            reason = "the `if` above runs this only when `segments.len()` is 1, so \
+                      `segments.into_iter().next()` is `Some`"
+        )]
         let text = segments.into_iter().next().expect("one segment");
         if text.is_empty() {
             return Err(syntax(
@@ -561,6 +578,13 @@ pub fn evaluate(
     let value = field_value(&condition.field, doc);
 
     if condition.op.is_ordering() {
+        #[expect(
+            clippy::expect_used,
+            reason = "in this crate `PlainCondition` is built only in `parse_plain_from`, from the list \
+                      `parse_value` returns, and `parse_value` ends with an unconditional \
+                      `items.push(finish_item(segments)?)` before it returns `Ok`, so the list \
+                      holds at least one item"
+        )]
         let item = condition
             .items
             .first()
@@ -577,6 +601,12 @@ pub fn evaluate(
     Ok(match condition.op {
         Op::Eq => matched,
         Op::Ne => !matched,
+        #[expect(
+            clippy::unreachable,
+            reason = "`Op` has `Eq`, `Ne`, `Lt`, `Le`, `Gt` and `Ge`, and `Op::is_ordering` is true \
+                      for the last four; the `if` above returns for those, so only `Eq` and `Ne` \
+                      reach this `match`"
+        )]
         _ => unreachable!("ordering operators are handled above"),
     })
 }
@@ -754,6 +784,13 @@ fn ordering_matches(
                     kind: "number".to_owned(),
                 });
             };
+            #[expect(
+                clippy::unreachable,
+                reason = "`coerce` with `FieldType::Number` and a `Value::Text` takes its \
+                          `(FieldType::Number, Value::Text(text))` arm, which returns \
+                          `text.parse().ok().map(Value::Number)`, so the `Some` it gave is a \
+                          `Value::Number`"
+            )]
             let Value::Number(want) = want else {
                 unreachable!("coerce of a number field gives a number")
             };
@@ -773,6 +810,13 @@ fn ordering_matches(
                     kind: "date".to_owned(),
                 });
             };
+            #[expect(
+                clippy::expect_used,
+                reason = "`have` is the text of a `Value::Date`, which no code in this crate builds but `coerce`, after \
+                          `coerce::date` accepted that text; `parse_date` runs `coerce` with \
+                          `FieldType::Date` on the same text and then the same \
+                          `NaiveDate::parse_from_str` that `coerce::date` ran"
+            )]
             let have = parse_date(have).expect("a stored date already fits its type");
             have.partial_cmp(&want)
         }
@@ -781,9 +825,23 @@ fn ordering_matches(
                 return Ok(false);
             };
             if let Some(want) = parse_datetime(text) {
+                #[expect(
+                    clippy::expect_used,
+                    reason = "`have` is the text of a `Value::Datetime`, which no code in this crate builds but `coerce`, \
+                              after `coerce::datetime` accepted that text; `parse_datetime` runs \
+                              `coerce` with `FieldType::Datetime` on the same text and then the same \
+                              `DateTime::parse_from_rfc3339` that `coerce::datetime` ran"
+                )]
                 let have = parse_datetime(have).expect("a stored datetime already fits its type");
                 have.partial_cmp(&want)
             } else if let Some(want) = parse_date(text) {
+                #[expect(
+                    clippy::expect_used,
+                    reason = "`have` is the text of a `Value::Datetime`, which no code in this crate builds but `coerce`, \
+                              after `coerce::datetime` checked that its byte 10 is `T` and that \
+                              `date(&text[..10])` holds; `parse_date(&have[..10])` runs `coerce` on \
+                              those same ten bytes and then the same `NaiveDate::parse_from_str`"
+                )]
                 let have = parse_date(&have[..10]).expect("a stored datetime starts with a date");
                 have.partial_cmp(&want)
             } else {
@@ -794,6 +852,11 @@ fn ordering_matches(
                 });
             }
         }
+        #[expect(
+            clippy::unreachable,
+            reason = "the `matches!` at the top of `ordering_matches` returns `OrderingNotAllowed` \
+                      for every `kind` except `Number`, `Date` and `Datetime`, the three arms above"
+        )]
         _ => unreachable!("checked above"),
     };
     Ok(compare(op, ordering))
@@ -808,6 +871,12 @@ fn compare(op: Op, ordering: Option<CmpOrdering>) -> bool {
         Op::Le => ordering.is_le(),
         Op::Gt => ordering.is_gt(),
         Op::Ge => ordering.is_ge(),
+        #[expect(
+            clippy::unreachable,
+            reason = "`compare` is called only at the end of `ordering_matches`, which `evaluate` \
+                      calls only when `condition.op.is_ordering()`, and that is false for `Eq` and \
+                      `Ne`"
+        )]
         Op::Eq | Op::Ne => unreachable!("equality does not reach ordering_matches"),
     }
 }
