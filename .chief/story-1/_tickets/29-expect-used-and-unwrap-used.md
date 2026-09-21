@@ -1,7 +1,7 @@
 # 29: Turn on `clippy::expect_used` and `clippy::unwrap_used` for non-test code of `typdoc-core`
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 27, 28
 
 ## What this delivers
