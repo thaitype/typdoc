@@ -38,7 +38,8 @@ Kept here rather than tidied away; none is a missing command.
   Decided since this report was written: a file matched twice stays an error, with no rule that
   chooses between the two collections, which is recorded in the design as intended; the audit
   will list every collection, one with 0 documents included, and name the collections of each
-  overlap. Ticket 24 holds the change.
+  overlap. Ticket 24 holds the change and is resolved: the audit now does both, and no number in
+  it moved.
 - A `namespaces` entry that matches a symbolic link still stops the run with exit 6, while a
   `match` skips it and reports `files.unreadable` (ticket 23).
 - `files.unreadable` is reported by the whole-project scan of `validate` only: `validate <path>`

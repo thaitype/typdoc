@@ -1,7 +1,7 @@
 # 24: The audit shows every collection and names the collections of each overlap
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: None (can start immediately)
 
 ## What this delivers

@@ -81,3 +81,19 @@ Suite: 695 passed, 0 failed, 1 ignored (688 before, plus seven new tests). `carg
   an overlap and of the list by path, and removing the sort of collections by name. Each is redundant
   with an order the load and the index already give, as said under Decision, so no test reaches a branch
   where it matters.
+
+## Checked again after the build, by running
+- `scripts/test.sh`: 695 passed, 0 failed, 1 ignored. `cargo fmt --check`, clippy with `-D warnings`
+  and the public-text gate clean.
+- The acceptance runs of ticket 21, repeated with this binary on the same three copies: the
+  `summary`, the `findings` and the lists `uncollected` and `no_frontmatter` are identical to the
+  earlier output, every collection that was listed keeps its number, and the sum of the
+  collections' numbers equals `checked.documents` plus `unreported.no_frontmatter` in each. What
+  is new is `every-skill` and `skills` in `typmem`, both with 0, and the two collection names on
+  each of its three overlapping files. The totals still equal the independent count (53, 60, 21).
+- The shape of the ticket, run by hand, gives `notes` 1, `skills` 0 and `a.md` with
+  `["notes", "skills"]`. Listing only collections that hold a document, put back by hand, turned
+  eight tests red; restored.
+- `docs/commands.md` describes what the audit lists in two items and does not mention the
+  collections or the overlaps; it is not false and is left as it is.
+
