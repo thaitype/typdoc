@@ -27,7 +27,7 @@ pub(crate) struct Cli {
 enum Command {
     /// Read one document's frontmatter
     Get {
-        /// The path of the document, from the project folder
+        /// The key or path of the document, from the project folder
         document: OsString,
         #[arg(long)]
         json: bool,
@@ -74,7 +74,7 @@ enum Command {
     },
     /// List the headings of a document's body with their line ranges
     Toc {
-        /// The path of the document, from the project folder
+        /// The key or path of the document, from the project folder
         document: OsString,
         /// List only the headings down to this level, 1 to 6
         #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(1..))]
