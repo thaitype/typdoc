@@ -1,7 +1,7 @@
 # 20: Checks across all commands
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 6, 12, 14, 17, 19
 
 ## What this delivers
