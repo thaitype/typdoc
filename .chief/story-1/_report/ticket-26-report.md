@@ -182,3 +182,18 @@ every cargo command under the memory ceiling.
 - The ban on writes was shown red: `std::fs::write` planted inside `name_problem` in
   `namespaces.rs` gives `use of a disallowed method std::fs::write` with the note `the read core
   changes no file`; removed, and no file was written.
+
+## Checked again after the build, by running
+- `scripts/test.sh`: 713 passed, 0 failed, 1 ignored. `cargo fmt --check`, clippy with
+  `-D warnings` and the public-text gate clean.
+- The scenario of the ticket, on the final binary: `namespaces: "*"`, `story-1`, `story-2` and
+  `ln -s story-2 current` gives both documents once each and one `files.unreadable` finding at
+  `current`, exit 2 (it stopped with exit 6 before), and the audit's files read equal a count
+  made without typdoc (2 and 2).
+- A regular `README.md` with `CLAUDE.md -> README.md` beside it, under `namespaces: "*"`, gives no
+  finding. An entry that names `current` in plain text is refused with the advice to name the folder;
+  each of `http`, `https`, `mailto` and `file` as a folder name is refused as `config.namespace-name`.
+- The check that a link points at a folder, made `true` by hand, turned the test for a link to a
+  file red; restored.
+- The `refs` panic was reproduced on a project of my own, exit 101 at the line the report names.
+

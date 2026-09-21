@@ -30,7 +30,8 @@ Kept here rather than tidied away; none is a missing command.
   from inside it. When it is closed, the reverse direction will need to print a `project`.
 - `[namespace-scheme]`: a namespace named after a URL scheme is not reported, while an import
   alias of that name is refused.
-  Decided since: it is reported as `config.namespace-name`; ticket 26 holds it.
+  Decided since: it is reported as `config.namespace-name`. Ticket 26 is resolved and builds it,
+  and its sweep also closed the same gap for an alias written in the machine file `imports.json`.
 - `[import-anchor]`: a body link across an import has its file checked and its anchor not.
 - `config.legacy-file` stops every command, though the design's own question, whether checking
   is still possible, says it should be a finding that stops nothing (ticket 8).
@@ -44,8 +45,8 @@ Kept here rather than tidied away; none is a missing command.
   it moved.
 - A `namespaces` entry that matches a symbolic link still stops the run with exit 6, while a
   `match` skips it and reports `files.unreadable` (ticket 23).
-  Decided since: a glob skips and reports it, and an entry naming a link is a config error;
-  ticket 26 holds it.
+  Decided since: a glob skips and reports a link to a folder, and an entry naming a link is a
+  config error. Ticket 26 is resolved and builds it; the accounting held on every fixture project.
 - `files.unreadable` is reported by the whole-project scan of `validate` only: `validate <path>`
   in a folder that holds a link says nothing about it (ticket 23).
 
@@ -58,3 +59,14 @@ the others named there).
 ## Not done, on purpose
 `new`, `set`, `mv`, `pull`, locks, and `frontmatter.transitions` are in later stories. Nothing in
 this story fetches, so a remote schema with no pin is `config.schema-unpinned`.
+
+## Found after this report was first written, not decided
+- `typdoc refs <document>` panics (exit 101, `ref_name_in`) when a ref names a file that exists and
+  is in no namespace folder, for instance `up: ../README.md` in a project whose namespaces all have
+  folders. What name such a document has in a `refs` answer is not in the design. The reproduction
+  is in ticket 26's report.
+- A ref whose path passes through a symbolic link resolves as a file outside every collection, under a
+  second path for a document that is already there; the design does not say whether it is
+  `not-found` (ticket 26's report).
+- The `schema.valid` finding for a reserved import alias written in the machine file carries that
+  file's absolute path, which no other finding does (ticket 26's report).

@@ -1,7 +1,7 @@
 # 26: A `namespaces` entry and a symbolic link; a namespace named after a URL scheme
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: None (can start immediately)
 
 ## What this delivers
