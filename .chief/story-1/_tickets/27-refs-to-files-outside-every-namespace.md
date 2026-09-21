@@ -1,7 +1,7 @@
 # 27: A ref to a file outside every namespace folder stops the process
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: None (can start immediately)
 
 ## What this delivers

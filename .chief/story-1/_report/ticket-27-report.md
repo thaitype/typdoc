@@ -81,3 +81,9 @@ Decided where the design is silent, with the doubt that remains:
   prefix match without its `/`, an import named with this project's namespaces, and the original
   `expect`. Each is failed by a test added here, except the two unreachable shapes named under
   Decision (`document_name` and `sort_value` given `None`).
+
+## Checked again after the build, by running
+- `scripts/test.sh`: 729 passed, 0 failed, 1 ignored; `cargo fmt --check` and clippy with `-D warnings` clean.
+- The two projects that stopped with exit 101 before, run on the final binary: a project with two namespaces and a root `README.md` (`refs` for a frontmatter ref and for a body link, `list` with `ref.any`, `ref.all`, `refby.any` and `ref.any($body)`), and a single-namespace project that imports a multi-namespace one and points at its root file (`refs`, `list --where 'ref.any(up)'`). All exit 0 with nothing on stderr, and the printed reference has `path` and no `namespace`.
+- The design paragraph "Naming a document" now says `namespace` is absent for such a file.
+
