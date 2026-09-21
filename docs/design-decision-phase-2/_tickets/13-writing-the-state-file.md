@@ -39,9 +39,10 @@ collection: whether each is a config error with an id, a finding, or something `
 message of its own. Those are error-id and exit-code questions and are being decided together with
 the rest of that family, not here.
 
-**Also still open in this ticket:** both state files in `mv --renumber` and the order of those
-writes against the file move and the ref rewrites, and whether anything ever removes an entry for a
-collection that no longer exists. Neither is answered yet.
+**Also still open in this ticket:** whether both state files are written in `mv --renumber`, and
+whether anything ever removes an entry for a collection that no longer exists. The order of the
+destination's write is no longer open: [decision 1](1-a-mv-that-fails-partway.md) settled that the
+destination namespace's `last` is written before the document appears under its new key.
 
 **Written into `docs/design.md`:** the State paragraph now gives the form of a file typdoc creates
 and says plainly that updating an existing entry leaves the rest of the file untouched.

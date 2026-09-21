@@ -1,7 +1,7 @@
 # 1: What does a `mv` that fails partway leave behind?
 
 Type: wayfinder:grilling
-Status: open
+Status: resolved
 Blocked by: None (can start immediately)
 
 ## Question
@@ -21,4 +21,76 @@ Decide what `mv` promises here:
 
 ## Answer
 
-<filled in on resolve>
+**1. `mv` does not promise to be all or nothing, because it cannot be.** A file system gives
+atomicity one rename at a time, and `mv` writes many files. A promise it cannot keep is not
+written.
+
+The mechanism is: prepare a temp file for every file that will change, all of them, and then do
+the renames in one run at the end. That moves the exposure from the whole of the work down to the
+run of renames.
+
+**The window that remains is the run of renames, and the design says so plainly.** It is not
+closed, and it is not described as closed. A failure or an interrupt inside it leaves some files
+renamed and the rest not.
+
+**2. The document itself moves last, always.** The reason is recovery, not a smaller mess.
+
+- Move the document first and stop: the same command cannot be run again, because the source it
+  names is gone. The user is left to work out a different command from a half-finished state.
+- Move it last and stop: the document is still where it was, so the same command run again
+  finishes the job. The refs already rewritten name the new path, so the command does not find
+  them when it looks for refs to the old path and leaves them as they are; the rest are rewritten.
+
+So the command is its own way back, and no journal is needed for it.
+
+**The obligation that comes with it: the failure message says the same command can be run again.**
+Not only that it failed. A recovery path that the user has to deduce is not a recovery path. The
+design also records that the project is inconsistent until the re-run, and that `validate` reports
+it — the refs already rewritten name a path that is not there yet — so nobody reads those findings
+as a second fault.
+
+**3. What `mv` knows it cannot rewrite does not make the run a failure.** Plain-text mentions, body
+links while `body.links` is `off`, and an imported project that cannot be reached: the run
+finishes, exits 0, and reports each one in detail.
+
+What `mv` promises is the refs typdoc tracks. Plain text was never one of them. An import that is
+absent on this machine is ordinary by design, so failing on it would make `mv` fail routinely for
+anyone who does not have that project checked out — which is most people, most of the time.
+
+A project that needs certainty here already has the mechanism, and the design already writes it:
+set `imports.absent` to `error`, and a run that cannot see an import is an error before `mv` is
+reached. Pointing at what exists is better than adding a second way to say the same thing.
+
+**4. `mv --renumber` carries the same promise, plus one ordering rule.** The destination
+namespace's `last` is written before the document appears under its new key.
+
+That does not contradict the rule that the document moves last: that rule orders the document
+against the refs, and this one orders the document against the state file. They sit beside each
+other.
+
+**Skipped numbers are ordinary, and the design now says so.** A number recorded and then not used
+is skipped. A collection that runs `WF-3` and then `WF-5` is not missing a document. Without that
+sentence a user goes looking for a document that never existed. The alternative — letting a
+document exist under a number the state file has not recorded — is exactly what issues that number
+a second time.
+
+## Noted while working through this: where a double-issued number actually surfaces
+
+A coded collection cannot have a glob in its `match`: the design's placeholder table allows `{key}`
+in a coded template "exactly once, no globs". So a coded document's path is determined by its key,
+and within one namespace two documents cannot hold the same key, because they would be the same
+path.
+
+The danger of issuing a number twice therefore does not appear as a duplicate key. It appears as a
+command about to create a file that is already there, which is [decision 15](15-a-write-whose-destination-already-exists.md).
+That is the place to guard it, and the guard `new` should use — creating with `O_EXCL` so the file
+system refuses rather than typdoc checking first — is on that ticket.
+
+One boundary is worth keeping straight, because the repository holds a fixture that looks like a
+counter-example. `keys.unique` is a real rule with a real fixture, and the fixture reaches it with
+two collections, `alpha/{key}.md` and `beta/{key}.md`, whose schemas share a code. That fixture
+trips `schema.valid` as well, because two schemas with the same code is itself a schema error. So a
+duplicate key is reachable only where the configuration is already broken and already reported; in
+a valid configuration, within one namespace, it is structurally impossible. Across namespaces the
+same key can exist legitimately, which is why a coded document cannot move between them except by
+`--renumber`.
