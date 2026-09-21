@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -5,8 +6,8 @@ use clap::error::ErrorKind as ClapKind;
 use clap::{Parser, Subcommand};
 use serde_json::{Map, Value as Json, json};
 use typdoc_core::{
-    Argument, Condition, Deps, Document, DocumentArg, Env, Error, ErrorKind, FieldRef, Finding,
-    ListFilter, ListResult, Project, RefField, RefOutcome, RefsDirection, RefsReference,
+    Argument, AuditReport, Condition, Deps, Document, DocumentArg, Env, Error, ErrorKind, FieldRef,
+    Finding, ListFilter, ListResult, Project, RefField, RefOutcome, RefsDirection, RefsReference,
     RefsReport, Scope, Severity, SortKey, Source, Toc, ValidateReport, ValidateScope, Value,
     discover, discover_for, parse_field, parse_query, resolve_on_disk,
 };
@@ -198,31 +199,47 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
             audit,
             json,
         } => {
-            if !json {
-                return failure_text(false, 1, "the output without --json is not built yet");
-            }
             if (schemas || audit) && !documents.is_empty() {
                 let flag = if schemas { "--schemas" } else { "--audit" };
                 return failure_text(
-                    true,
+                    json,
                     1,
                     &format!(
                         "{flag} describes the whole project and cannot be combined with arguments"
                     ),
                 );
             }
-            // `--audit` answers a different question from plain `validate` (design, "Audit
-            // mode": `summary.audit`, `summary.unreported`, the `audit` object, rules at `off`
-            // shown as `info`, exit 0 unless the config itself is invalid), and none of that is
-            // built yet (ticket 19). Refusing it here is the same choice already made for
-            // `--json`'s absence and for a `project::` prefix: a flag or form the binary does
-            // not answer yet is refused plainly, not run as something else with no word said.
-            if audit {
-                return failure_text(true, 1, "--audit is not built yet");
+            // `--schemas` and `--audit` each describe the whole project in their own,
+            // incompatible way (design: `--schemas` "checks schemas only"; `--audit` "runs the
+            // same checks" with a different report). Nothing in the design says what the two
+            // together would mean, and without this check `Project::validate`'s `schemas_only`
+            // branch runs first and silently answers `--schemas` alone, dropping `--audit`'s
+            // report with no word said — the same silent-drop this file already refuses for
+            // `--json`'s absence and for `--audit` combined with arguments.
+            if schemas && audit {
+                return failure_text(
+                    json,
+                    1,
+                    "--schemas and --audit cannot be combined: each describes the whole project in its own way",
+                );
             }
-            match validate(deps, &documents, schemas, strict, cli.namespace.as_deref()) {
-                Ok(report) => validate_outcome(&report),
-                Err(e) => failure(true, exit_code(e.kind()), &e),
+            // Every other command, and plain `validate`, still refuse the output without
+            // `--json` as not built yet. `--audit` is the one exception: the design gives it its
+            // own text form (Audit mode, the worked "typdoc audit: ..." example), so it is built
+            // here rather than refused alongside the rest.
+            if !json && !audit {
+                return failure_text(false, 1, "the output without --json is not built yet");
+            }
+            match validate(
+                deps,
+                &documents,
+                schemas,
+                strict,
+                audit,
+                cli.namespace.as_deref(),
+            ) {
+                Ok(report) => validate_outcome(&report, json),
+                Err(e) => failure(json, exit_code(e.kind()), &e),
             }
         }
     }
@@ -551,6 +568,7 @@ fn validate(
     documents: &[OsString],
     schemas: bool,
     strict: bool,
+    audit: bool,
     namespace: Option<&str>,
 ) -> Result<ValidateReport, Error> {
     let (root, args) = validate_args(deps.env, documents)?;
@@ -558,9 +576,11 @@ fn validate(
     // comment on why), before `project.validate` below ever runs: nothing reaches it as a
     // finding yet. This `?` is where a config error that answered the design's question on its
     // own, "does it make checking impossible?", with no, would instead let the project load and
-    // reach `validate`'s report.
+    // reach `validate`'s report. This is also `--audit`'s own "unless the config itself is
+    // invalid" exception (design, Audit mode): a config error still ends here with its own exit
+    // code, before `project.validate` ever produces a report for `audit` to make exit 0.
     let project = Project::load(&root, deps.env)?;
-    project.validate(&args, schemas, strict, namespace, deps.env)
+    project.validate(&args, schemas, strict, audit, namespace, deps.env)
 }
 
 /// The project every argument is read against, found from the first argument as `get` finds
@@ -582,16 +602,28 @@ fn validate_args(env: &dyn Env, raw: &[OsString]) -> Result<(PathBuf, Vec<Docume
 }
 
 /// `validate`'s own outcome: the report on standard output whether or not it is favourable
-/// (design, JSON output), with exit 2 when a finding is an error and 0 otherwise.
-fn validate_outcome(report: &ValidateReport) -> Outcome {
-    let code = if report.findings.iter().any(|f| f.level == Severity::Error) {
+/// (design, JSON output), with exit 2 when a finding is an error and 0 otherwise — except under
+/// `--audit`, whose exit code is 0 unless the config itself is invalid (design, Audit mode), and
+/// a config error never reaches this far: it ends the run before a report exists (`validate`'s
+/// own comment on its `?`). `json` chooses between the two output shapes the CLI's own match arm
+/// already decided are the only two reachable here: `--json`, or `--audit` alone, which is the
+/// one command whose text form this ticket builds.
+fn validate_outcome(report: &ValidateReport, json: bool) -> Outcome {
+    let code = if report.audit.is_some() {
+        0
+    } else if report.findings.iter().any(|f| f.level == Severity::Error) {
         2
     } else {
         0
     };
+    let stdout = if json {
+        format!("{}\n", validate_json(report))
+    } else {
+        audit_text(report)
+    };
     Outcome {
         code,
-        stdout: format!("{}\n", validate_json(report)),
+        stdout,
         stderr: String::new(),
     }
 }
@@ -603,23 +635,57 @@ fn validate_json(report: &ValidateReport) -> Json {
     if let Some(paths) = &report.paths {
         checked.insert("paths".to_owned(), json!(paths));
     }
-    let (error, warn) = report
-        .findings
-        .iter()
-        .fold((0u32, 0u32), |(error, warn), finding| match finding.level {
-            Severity::Error => (error + 1, warn),
-            Severity::Warn => (error, warn + 1),
-        });
+    let (error, warn, info) = report.findings.iter().fold(
+        (0u32, 0u32, 0u32),
+        |(error, warn, info), finding| match finding.level {
+            Severity::Error => (error + 1, warn, info),
+            Severity::Warn => (error, warn + 1, info),
+            Severity::Info => (error, warn, info + 1),
+        },
+    );
     let mut summary = Map::new();
     summary.insert("scope".to_owned(), json!(scope_name(report.scope)));
     summary.insert("strict".to_owned(), json!(report.strict));
     summary.insert("checked".to_owned(), Json::Object(checked));
     summary.insert(
         "findings".to_owned(),
-        json!({ "error": error, "warn": warn, "info": 0 }),
+        json!({ "error": error, "warn": warn, "info": info }),
     );
+    if let Some(audit) = &report.audit {
+        summary.insert("audit".to_owned(), json!(true));
+        summary.insert(
+            "unreported".to_owned(),
+            json!({
+                "uncollected": audit.uncollected.len(),
+                "no_frontmatter": audit.no_frontmatter.len(),
+            }),
+        );
+    }
     let findings: Vec<Json> = report.findings.iter().map(finding_json).collect();
-    json!({ "summary": Json::Object(summary), "findings": findings })
+    let mut object = Map::new();
+    object.insert("summary".to_owned(), Json::Object(summary));
+    object.insert("findings".to_owned(), json!(findings));
+    if let Some(audit) = &report.audit {
+        object.insert("audit".to_owned(), audit_json(audit));
+    }
+    Json::Object(object)
+}
+
+/// The `audit` object of `--json`'s report (design, JSON output, "Audit"): `collections`, one
+/// `{ "name", "documents" }` per collection with at least one document in scope, sorted by name
+/// (already sorted by `AuditReport::collections`); `uncollected` and `no_frontmatter`, each the
+/// sorted `path` of every file the design names.
+fn audit_json(audit: &AuditReport) -> Json {
+    let collections: Vec<Json> = audit
+        .collections
+        .iter()
+        .map(|collection| json!({ "name": collection.name, "documents": collection.documents }))
+        .collect();
+    json!({
+        "collections": collections,
+        "uncollected": audit.uncollected,
+        "no_frontmatter": audit.no_frontmatter,
+    })
 }
 
 fn scope_name(scope: ValidateScope) -> &'static str {
@@ -634,7 +700,100 @@ fn severity_name(level: Severity) -> &'static str {
     match level {
         Severity::Error => "error",
         Severity::Warn => "warn",
+        Severity::Info => "info",
     }
+}
+
+/// The text form of `--audit` (design, Audit mode, the worked `typdoc audit: ...` example): a
+/// header, one line per collection (its document count and, grouped by rule, the count and level
+/// of its findings, or `clean` when it has none), and a line naming every file in no collection
+/// and every file with no frontmatter, when either list is not empty. The design's own worked
+/// example is not spaced by an algorithm this reads out consistently (`precedents`/`learnings`,
+/// the same length short of their suffix, are padded two different amounts there), so the padding
+/// here is this function's own, simple and deterministic: the name column is as wide as the
+/// longest collection name, plus two spaces, and every group is separated by " · " as the example
+/// shows. Design line 577 also promises "then details" after the summary for audit's text form,
+/// the per-finding lines plain `validate` prints one of per line; no command's plain-text output
+/// is built yet (every one of them still refuses the output without `--json`, this ticket's own
+/// `--audit` exception aside), so there is no such renderer yet to append here, and this stays a
+/// summary only, carried forward for whichever ticket gives `validate` its own text form.
+fn audit_text(report: &ValidateReport) -> String {
+    let Some(audit) = &report.audit else {
+        return String::new();
+    };
+    let total = report.documents + audit.uncollected.len() + audit.no_frontmatter.len();
+    let mut out = format!(
+        "typdoc audit: {} collections, {total} files ({} in no collection)\n\n",
+        audit.collections.len(),
+        audit.uncollected.len()
+    );
+    let name_width = audit
+        .collections
+        .iter()
+        .map(|collection| collection.name.chars().count())
+        .max()
+        .unwrap_or(0);
+    for collection in &audit.collections {
+        let body = collection_summary(&collection.name, &report.findings);
+        out.push_str(&format!(
+            "{:<name_width$}  {} files   {body}\n",
+            collection.name, collection.documents
+        ));
+    }
+    if !audit.uncollected.is_empty() {
+        out.push('\n');
+        out.push_str(&format!(
+            "in no collection: {} ({})\n",
+            audit.uncollected.join(", "),
+            audit.uncollected.len()
+        ));
+    }
+    if !audit.no_frontmatter.is_empty() {
+        out.push('\n');
+        out.push_str(&format!(
+            "no frontmatter: {} ({})\n",
+            audit.no_frontmatter.join(", "),
+            audit.no_frontmatter.len()
+        ));
+    }
+    out
+}
+
+/// One collection's part of the audit summary line: every rule that found something in it,
+/// grouped (a rule's findings in one collection always share one level, since `--audit` computes
+/// one effective level per rule per collection), as `{rule} {count} {level}`, joined by " · ".
+/// The design does not say how the groups are ordered, and its own worked example is not
+/// alphabetical (`frontmatter.types, body.links, body.mentions`); what it is consistent with is
+/// the order `findings` is already guaranteed to carry (by `path`, then position, then `rule`):
+/// a rule's group appears where its first finding does in that order, which is what `findings`
+/// is passed in here already sorted by (`report.findings`, ordered by `validate::order`). `clean`
+/// when the collection has no finding.
+fn collection_summary(collection: &str, findings: &[Finding]) -> String {
+    let mut order: Vec<&str> = Vec::new();
+    let mut groups: BTreeMap<&str, (Severity, u32)> = BTreeMap::new();
+    for finding in findings {
+        if finding.collection.as_deref() != Some(collection) {
+            continue;
+        }
+        if !groups.contains_key(finding.rule) {
+            order.push(finding.rule);
+        }
+        groups
+            .entry(finding.rule)
+            .and_modify(|(_, count)| *count += 1)
+            .or_insert((finding.level, 1));
+    }
+    if order.is_empty() {
+        return "clean".to_owned();
+    }
+    order
+        .into_iter()
+        .map(|rule| {
+            let (level, count) = groups[rule];
+            format!("{rule} {count} {}", severity_name(level))
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 fn finding_json(finding: &Finding) -> Json {

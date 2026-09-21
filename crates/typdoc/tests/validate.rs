@@ -138,24 +138,256 @@ fn schemas_or_audit_together_with_arguments_is_bad_arguments() {
     }
 }
 
-/// Audit mode's own report (`summary.audit`, `summary.unreported`, the `audit` object, rules
-/// at `off` shown as `info`) is not built yet (ticket 19); `--audit` alone is refused rather
-/// than silently answering a different question than the one it names, the same choice already
-/// made for `--json`'s absence and for a `project::` prefix.
+/// `--schemas` and `--audit` each describe the whole project in their own, incompatible way.
+/// Without this refusal, `Project::validate`'s `schemas_only` branch runs first and silently
+/// answers `--schemas` alone, dropping `--audit`'s report (and its own exit-code rule) with no
+/// word said — the one silent way through this command the bad-arguments check above does not
+/// otherwise catch, since neither flag is combined with an argument here.
 #[test]
-fn audit_alone_is_not_built_yet() {
+fn schemas_and_audit_together_is_bad_arguments_even_with_no_document_arguments() {
     let project = fixture("valid/several-namespaces");
 
-    let ran = validate(&["--audit"], &project);
+    let ran = validate(&["--schemas", "--audit"], &project);
 
     assert_eq!(ran.code, 1, "{}", ran.stdout);
     assert_eq!(ran.stdout, "");
     let object = ran.stderr_json();
     assert_eq!(object["code"], json!(1));
     assert!(
-        object["error"].as_str().unwrap().contains("--audit"),
+        object["error"].as_str().unwrap().contains("--schemas")
+            && object["error"].as_str().unwrap().contains("--audit"),
         "{object}"
     );
+}
+
+/// `--audit` on a clean project builds a real report: `summary.audit` and `summary.unreported`
+/// alongside the ordinary summary, and the `audit` object beside `findings` (design, JSON
+/// output: "with `--audit` also `"audit": {...}`"). This is the claim ticket 8 refused outright
+/// ("`--audit` is not built yet"); this ticket replaces the refusal, it does not extend it.
+#[test]
+fn audit_alone_builds_a_report_with_summary_audit_and_unreported() {
+    let project = fixture("valid/several-namespaces");
+
+    let ran = validate(&["--audit"], &project);
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    assert_eq!(object["summary"]["audit"], json!(true));
+    assert!(object["summary"]["unreported"].is_object(), "{object}");
+    assert!(object["audit"]["collections"].is_array(), "{object}");
+    assert!(object["audit"]["uncollected"].is_array(), "{object}");
+    assert!(object["audit"]["no_frontmatter"].is_array(), "{object}");
+}
+
+/// One collection (`notes/*.md`), a document with an unknown field under a project that turns
+/// `frontmatter.unknown` `off`, a document with no frontmatter at all, and an uncollected file at
+/// the project root: the one project every audit-specific test below reads.
+const AUDIT_PROJECT: [(&str, &str); 2] = [
+    (
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "notes/*.md", "schema": "note.json",
+            "validation": { "frontmatter.unknown": { "level": "off" } } }"#,
+    ),
+    (
+        "note.json",
+        r#"{ "name": "note", "fields": { "title": { "type": "string", "required": true } } }"#,
+    ),
+];
+
+fn audit_project() -> Scratch {
+    let project = Scratch::project(&AUDIT_PROJECT);
+    project.file("notes/a.md", "---\nextra: x\n---\n");
+    project.file("notes/b.md", "no frontmatter here\n");
+    project.file("README.md", "");
+    project
+}
+
+/// Design, Audit mode: "Rules set to `off`... Reported as `info`". `frontmatter.unknown` is
+/// turned `off` by the collection, so plain `validate` never reports `extra`; `--audit` still
+/// checks it and reports it at `info`. `frontmatter.types` (always on, `notes/a.md` is missing
+/// its required `title`) still reports at `error`, and the exit code is 0 regardless, per the
+/// design's "0, unless the config itself is invalid".
+#[test]
+fn audit_reports_an_off_rule_as_info_and_still_exits_0_despite_an_error_finding() {
+    let project = audit_project();
+
+    let ran = validate(&["--audit"], project.path());
+
+    assert_eq!(
+        ran.code, 0,
+        "an error-level finding still exits 0 under --audit: {}",
+        ran.stderr
+    );
+    let object = ran.stdout_json();
+    let findings = object["findings"].as_array().unwrap();
+    let unknown = findings
+        .iter()
+        .find(|f| f["rule"] == json!("frontmatter.unknown"))
+        .unwrap_or_else(|| panic!("no frontmatter.unknown finding: {findings:?}"));
+    assert_eq!(unknown["level"], json!("info"), "{unknown}");
+    let types = findings
+        .iter()
+        .find(|f| f["rule"] == json!("frontmatter.types"))
+        .unwrap_or_else(|| panic!("no frontmatter.types finding: {findings:?}"));
+    assert_eq!(types["level"], json!("error"), "{types}");
+    assert_eq!(
+        object["summary"]["findings"],
+        json!({ "error": 1, "warn": 0, "info": 1 })
+    );
+}
+
+/// `--strict` and `--audit` combine: a rule left at its default `warn` still rises to `error`
+/// under `--strict` (the ordinary behaviour, unaffected by `--audit`), while the same rule turned
+/// `off` by a collection stays `info` regardless of `--strict` — `off` has no `warn` for
+/// `--strict` to raise (`effective_level`'s own reasoning).
+#[test]
+fn strict_still_raises_warn_to_error_under_audit_while_an_off_rule_stays_info() {
+    let project = audit_project();
+    project.file(
+        ".typdoc/collections/plain.json",
+        r#"{ "match": "plain/*.md", "schema": "plain.json" }"#,
+    );
+    project.file("plain.json", r#"{ "name": "plain", "fields": {} }"#);
+    project.file("plain/c.md", "---\nextra: y\n---\n");
+
+    let ran = validate(&["--audit", "--strict"], project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    assert_eq!(object["summary"]["strict"], json!(true));
+    let findings = object["findings"].as_array().unwrap();
+    let raised = findings
+        .iter()
+        .find(|f| f["path"] == json!("plain/c.md") && f["rule"] == json!("frontmatter.unknown"))
+        .unwrap_or_else(|| panic!("no finding for plain/c.md: {findings:?}"));
+    assert_eq!(
+        raised["level"],
+        json!("error"),
+        "--strict still raises warn to error under --audit: {raised}"
+    );
+    let off_stayed = findings
+        .iter()
+        .find(|f| f["path"] == json!("notes/a.md") && f["rule"] == json!("frontmatter.unknown"))
+        .unwrap_or_else(|| panic!("no finding for notes/a.md: {findings:?}"));
+    assert_eq!(
+        off_stayed["level"],
+        json!("info"),
+        "off has no warn for --strict to raise: {off_stayed}"
+    );
+}
+
+/// `README.md` matches no collection (`uncollected`); `notes/b.md` matches `notes` but has no
+/// frontmatter block at all (`no_frontmatter`). Neither is evaluated: neither produces a finding,
+/// and `checked.documents` counts only `notes/a.md`.
+#[test]
+fn audit_lists_uncollected_and_no_frontmatter_and_evaluates_neither() {
+    let project = audit_project();
+
+    let ran = validate(&["--audit"], project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    assert_eq!(object["audit"]["uncollected"], json!(["README.md"]));
+    assert_eq!(object["audit"]["no_frontmatter"], json!(["notes/b.md"]));
+    assert_eq!(
+        object["summary"]["unreported"],
+        json!({ "uncollected": 1, "no_frontmatter": 1 })
+    );
+    assert_eq!(object["summary"]["checked"]["documents"], json!(1));
+    let findings = object["findings"].as_array().unwrap();
+    assert!(
+        findings.iter().all(|f| f["path"] != json!("notes/b.md")),
+        "{findings:?}"
+    );
+    assert!(
+        findings.iter().all(|f| f["path"] != json!("README.md")),
+        "{findings:?}"
+    );
+}
+
+/// Design: "one `{ "name", "documents" }` for each collection with the number of documents it
+/// holds". `notes` holds two documents, `a.md` (checked) and `b.md` (no frontmatter, held but
+/// not evaluated) — a count `findings` alone could not give, since a clean or unevaluated
+/// document produces none.
+#[test]
+fn audit_counts_a_no_frontmatter_document_as_one_the_collection_holds() {
+    let project = audit_project();
+
+    let ran = validate(&["--audit"], project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    assert_eq!(
+        object["audit"]["collections"],
+        json!([{ "name": "notes", "documents": 2 }])
+    );
+}
+
+/// Design: "The two modes treat a file with no frontmatter differently, and this is a
+/// difference of mechanism, not of presentation." Plain `validate` evaluates `notes/b.md`
+/// against its schema like any document (its missing `title` is a finding); `--audit` lists it
+/// in `no_frontmatter` and evaluates nothing about it. `uncollected` and `no_frontmatter` never
+/// share a path: `README.md` (no collection at all) is never in `no_frontmatter`, and
+/// `notes/b.md` (held by `notes`) is never in `uncollected`.
+#[test]
+fn validate_and_audit_treat_a_file_with_no_frontmatter_differently_and_the_lists_never_overlap() {
+    let project = audit_project();
+
+    let plain = validate(&[], project.path());
+    let audit = validate(&["--audit"], project.path());
+
+    assert_eq!(plain.code, 2, "{}", plain.stderr);
+    let plain_findings = plain.stdout_json()["findings"].clone();
+    let plain_findings = plain_findings.as_array().unwrap();
+    assert!(
+        plain_findings
+            .iter()
+            .any(|f| f["path"] == json!("notes/b.md") && f["rule"] == json!("frontmatter.types")),
+        "plain validate evaluates a file with no frontmatter like any document: {plain_findings:?}"
+    );
+
+    assert_eq!(audit.code, 0, "{}", audit.stderr);
+    let object = audit.stdout_json();
+    let uncollected: Vec<&str> = object["audit"]["uncollected"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    let no_frontmatter: Vec<&str> = object["audit"]["no_frontmatter"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(no_frontmatter.contains(&"notes/b.md"), "{no_frontmatter:?}");
+    assert!(uncollected.contains(&"README.md"), "{uncollected:?}");
+    assert!(!uncollected.contains(&"notes/b.md"), "{uncollected:?}");
+    assert!(!no_frontmatter.contains(&"README.md"), "{no_frontmatter:?}");
+}
+
+/// The text form of `--audit` (design, Audit mode, the worked `typdoc audit: ...` example): a
+/// header naming the number of collections, the independently accounted total, and the number
+/// in no collection; one line per collection with its own document count and, grouped by rule,
+/// the count and level of what it found, or `clean`; and a line naming every uncollected file and
+/// every file with no frontmatter, each with its own count.
+#[test]
+fn the_text_form_of_audit_prints_the_summary_and_the_two_lists() {
+    let project = audit_project();
+
+    let ran = Spawn::args(["validate", "--audit"])
+        .cwd(project.path())
+        .run();
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let expected = "typdoc audit: 1 collections, 3 files (1 in no collection)\n\
+        \n\
+        notes  2 files   frontmatter.types 1 error \u{b7} frontmatter.unknown 1 info\n\
+        \n\
+        in no collection: README.md (1)\n\
+        \n\
+        no frontmatter: notes/b.md (1)\n";
+    assert_eq!(ran.stdout, expected);
 }
 
 #[test]
@@ -1130,4 +1362,148 @@ fn names_shadowed_is_reported_under_schemas_only_too() {
     let findings = findings.as_array().unwrap();
     assert_eq!(findings.len(), 1, "{findings:?}");
     assert_eq!(findings[0]["rule"], json!("names.shadowed"));
+}
+
+// Ticket 19: `validate --audit`. Contract item 8, the accounting invariant.
+
+/// Every `.md` file below `dir`, walked here rather than through `typdoc_core::index`, so the
+/// count owes nothing to typdoc's own idea of which files it reads (an entry whose name starts
+/// with `.` is never entered or counted, and a folder holding its own `.typdoc/config.json` is a
+/// separate project and is not entered — the same two rules `index::all_markdown_files` follows,
+/// reached here by an independent read of the folder instead).
+fn count_markdown_files(dir: &std::path::Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut count = 0;
+    for entry in entries {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.') {
+            continue;
+        }
+        let path = entry.path();
+        let file_type = entry.file_type().unwrap();
+        if file_type.is_dir() {
+            if path.join(".typdoc/config.json").is_file() {
+                continue;
+            }
+            count += count_markdown_files(&path);
+        } else if file_type.is_file() && name.ends_with(".md") {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// The `.md` files of every namespace named in `namespaces`: `default`'s folder is the project
+/// root itself, and any other namespace's folder is its own name directly below the project root
+/// (design, Namespaces: "each matching child folder is one, named by its folder" — the same
+/// fact `--audit`'s own report already relies on to answer `checked.namespaces` by name; only the
+/// folder each name maps to is read here, never how the name was matched).
+fn independent_document_count(project: &std::path::Path, namespaces: &[&str]) -> usize {
+    namespaces
+        .iter()
+        .map(|name| {
+            let folder = if *name == "default" {
+                project.to_path_buf()
+            } else {
+                project.join(name)
+            };
+            count_markdown_files(&folder)
+        })
+        .sum()
+}
+
+/// The accounting invariant (contract item 8): in `--audit --json`, `summary.checked.documents`
+/// plus `summary.unreported.uncollected` plus `summary.unreported.no_frontmatter` equals the
+/// number of `.md` files the run reads, counted independently of typdoc (`count_markdown_files`,
+/// a plain walk of the folder, never `typdoc_core::index`). Checked on every project fixture that
+/// loads: a `broken/config.*` fixture never reaches a report at all (ticket 8: every gathered
+/// config error today turns the whole load into a failure), so it is asserted to fail rather than
+/// skipped.
+///
+/// One fixture does not hold the plain three-way sum: `broken/collections.overlap` has a file
+/// matched by two collections, which ticket 9 already takes out of the index entirely. Such a
+/// file is not `checked` (there is no one schema to have checked it against), not `uncollected`
+/// (it belongs to collections, plural, just not to one in particular — the opposite problem from
+/// belonging to none), and not `no_frontmatter` (that list is drawn from the same index the file
+/// is missing from). It is instead an ordinary `collections.overlap` finding, in `--audit`
+/// exactly as in a plain run. That is a real gap in the three-way sum the contract states, not a
+/// fixture to special-case away: the assertion below names it by counting `collections.overlap`
+/// findings and adding them back, so the one fixture that has any is pinned by the same formula
+/// as every other fixture, which has none.
+#[test]
+fn the_accounting_invariant_holds_on_every_fixture_project() {
+    let root = fixture("");
+    let mut checked_any = false;
+    for group in ["valid", "broken"] {
+        let dir = root.join(group);
+        let mut names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        for name in names {
+            let project = dir.join(&name);
+            if !project.join(".typdoc/config.json").is_file() {
+                continue;
+            }
+            checked_any = true;
+            // A `broken/` fixture may need an environment variable set on purpose to trip its
+            // own rule (`fixture.json`'s `env`, `config.config-dir`'s `TYPDOC_CONFIG_DIR` the
+            // one case among these that needs it); a `valid/` fixture has no `fixture.json` and
+            // needs none. `spec.command` is not read: this test always runs its own `--audit`.
+            let mut spawn = Spawn::args(["validate", "--audit", "--json"]).cwd(&project);
+            if group == "broken" {
+                let spec = typdoc_testkit::spec::FixtureSpec::load(&project, &name)
+                    .unwrap_or_else(|e| panic!("{group}/{name}: {e}"));
+                for (var, value) in &spec.env {
+                    spawn = spawn.var(var, value);
+                }
+            }
+            let ran = spawn.run();
+            if name.starts_with("config.") {
+                assert_ne!(
+                    ran.code, 0,
+                    "{group}/{name}: a config error fixture is expected to fail to load: {}",
+                    ran.stdout
+                );
+                assert_eq!(ran.stdout, "", "{group}/{name}");
+                continue;
+            }
+            assert_eq!(ran.code, 0, "{group}/{name}: {}", ran.stderr);
+            let object = ran.stdout_json();
+            let namespaces: Vec<&str> = object["summary"]["checked"]["namespaces"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{group}/{name}: {object}"))
+                .iter()
+                .map(|v| v.as_str().unwrap())
+                .collect();
+            let independent = independent_document_count(&project, &namespaces);
+            let checked = object["summary"]["checked"]["documents"].as_u64().unwrap() as usize;
+            let uncollected = object["summary"]["unreported"]["uncollected"]
+                .as_u64()
+                .unwrap_or_else(|| panic!("{group}/{name}: {object}"))
+                as usize;
+            let no_frontmatter = object["summary"]["unreported"]["no_frontmatter"]
+                .as_u64()
+                .unwrap() as usize;
+            let overlaps = object["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|f| f["rule"] == json!("collections.overlap"))
+                .count();
+            assert_eq!(
+                independent,
+                checked + uncollected + no_frontmatter + overlaps,
+                "{group}/{name}: independently counted {independent} .md files, typdoc \
+                 reports checked={checked} uncollected={uncollected} \
+                 no_frontmatter={no_frontmatter} collections.overlap={overlaps}: {object}"
+            );
+        }
+    }
+    assert!(checked_any, "no fixture project was found to check");
 }

@@ -228,6 +228,65 @@ pub(crate) fn stray_files(
     Ok(found)
 }
 
+/// Every `.md` file below a namespace folder, by its path from the project folder and the
+/// namespace it belongs to: for `validate --audit`'s `uncollected` list, which asks which files
+/// no collection covers, and so cannot be built from what a collection's own `match` template
+/// already names — it has to be an independent walk of the folder itself. It follows the same
+/// rules the per-collection `walk` below already does, so "which files a run reads" reads one way
+/// everywhere in this crate: a folder or a file whose name starts with `.` is never entered or
+/// listed, a symbolic link stops the run wherever one is reached (`Error::symbolic_link`), and a
+/// folder that holds its own `.typdoc/config.json` is a separate project and is never entered.
+pub(crate) fn all_markdown_files(
+    root: &Path,
+    namespaces: &[Namespace],
+) -> Result<Vec<(String, usize)>, Error> {
+    let mut found = Vec::new();
+    for (namespace_idx, space) in namespaces.iter().enumerate() {
+        let base = root.join(&space.folder);
+        walk_every_file(&base, "", &space.folder, namespace_idx, &mut found)?;
+    }
+    Ok(found)
+}
+
+fn walk_every_file(
+    dir: &Path,
+    prefix: &str,
+    namespace_folder: &str,
+    namespace_idx: usize,
+    found: &mut Vec<(String, usize)>,
+) -> Result<(), Error> {
+    for entry in list(dir)?
+        .into_iter()
+        .filter(|entry| !entry.name.starts_with('.'))
+    {
+        if entry.symlink {
+            return Err(Error::symbolic_link(&entry.path));
+        }
+        if entry.folder {
+            if config_file(&entry.path).is_file() {
+                continue;
+            }
+            let next_prefix = below(prefix, &entry)?;
+            walk_every_file(
+                &entry.path,
+                &next_prefix,
+                namespace_folder,
+                namespace_idx,
+                found,
+            )?;
+        } else if entry.file && entry.name.ends_with(".md") {
+            let below = below(prefix, &entry)?;
+            let path = if namespace_folder.is_empty() {
+                below
+            } else {
+                format!("{namespace_folder}/{below}")
+            };
+            found.push((path, namespace_idx));
+        }
+    }
+    Ok(())
+}
+
 /// An entry of a folder, as `read_dir` gives it.
 struct Listed {
     name: String,

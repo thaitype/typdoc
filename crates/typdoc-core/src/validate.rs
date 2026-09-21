@@ -20,10 +20,14 @@ pub enum ValidateScope {
 }
 
 /// The level a finding is reported at. `frontmatter.parse` and `frontmatter.types` are always
-/// `Error`; `frontmatter.unknown` is whatever the merge and `--strict` give it, and a rule
-/// merged to `off` produces no finding at all, so `Off` never appears here.
+/// `Error`; a configurable rule is whatever the merge and `--strict` give it. A rule merged to
+/// `off` produces no finding at all in plain `validate`, so `Off` never appears here for a plain
+/// run; under `--audit` a rule merged to `off` is reported as `Info` instead of being skipped
+/// (design, Audit mode: "Rules set to `off`... Reported as `info`"), which is the only way `Info`
+/// is ever produced.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
+    Info,
     Warn,
     Error,
 }
@@ -70,12 +74,19 @@ pub fn order(findings: &mut [Finding]) {
 /// whose block is empty, both reach the field checks with no fields, since neither fails to
 /// parse: the block that is absent is never handed to the reader, and the block that is empty
 /// parses to nothing.
+///
+/// A file with no block at all is never handed to this function under `--audit` (the caller
+/// lists it in `no_frontmatter` and evaluates nothing about it instead, design: "`--audit` does
+/// not evaluate it"); `audit` is still threaded through to `frontmatter.unknown`'s level so a
+/// project that turns it `off` still sees it as `info` here, the same as every other configurable
+/// rule.
 pub fn check_document(
     text: &str,
     schema: &Resolved,
     global: &Rules,
     collection: &Rules,
     strict: bool,
+    audit: bool,
     name: &DocName,
 ) -> Vec<Finding> {
     let block = match frontmatter::block(text) {
@@ -123,6 +134,7 @@ pub fn check_document(
         global,
         collection,
         strict,
+        audit,
     );
     for (field_name, value) in &fields {
         match schema.field(field_name) {
@@ -173,13 +185,18 @@ pub fn check_document(
 
 /// The level `rule` is reported at once the defaults, `validation.global` and the collection's
 /// own `validation` are merged, with `strict` raising a remaining `warn` to `error`. `None` is
-/// `off`: the rule produces no finding.
+/// `off`: the rule produces no finding, unless `audit` is set, in which case an `off` rule is
+/// still checked and reported at `Info` instead of being skipped (design, Audit mode: "Rules set
+/// to `off`... Reported as `info`"). `strict` never touches an `off` rule: raising `warn` to
+/// `error` and reporting `off` as `info` are two different questions, and a rule that is `off`
+/// has no `warn` for `strict` to raise.
 pub(crate) fn effective_level(
     default: Level,
     rule: &str,
     global: &Rules,
     collection: &Rules,
     strict: bool,
+    audit: bool,
 ) -> Option<Severity> {
     let mut level = default;
     if let Some(set) = global.get(rule).and_then(|setting| setting.level) {
@@ -189,6 +206,7 @@ pub(crate) fn effective_level(
         level = set;
     }
     match level {
+        Level::Off if audit => Some(Severity::Info),
         Level::Off => None,
         Level::Warn if strict => Some(Severity::Error),
         Level::Warn => Some(Severity::Warn),
@@ -450,7 +468,15 @@ mod tests {
         let text = "---\ntitle: never closed\n";
         let schema = schema(&[("title", "string", true)]);
 
-        let findings = check_document(text, &schema, &no_rules(), &no_rules(), false, &name());
+        let findings = check_document(
+            text,
+            &schema,
+            &no_rules(),
+            &no_rules(),
+            false,
+            false,
+            &name(),
+        );
 
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert_eq!(findings[0].rule, "frontmatter.parse");
@@ -463,7 +489,15 @@ mod tests {
         let text = "---\ntitle: [oops\n---\n";
         let schema = schema(&[("title", "string", false)]);
 
-        let findings = check_document(text, &schema, &no_rules(), &no_rules(), false, &name());
+        let findings = check_document(
+            text,
+            &schema,
+            &no_rules(),
+            &no_rules(),
+            false,
+            false,
+            &name(),
+        );
 
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert_eq!(findings[0].rule, "frontmatter.parse");
@@ -478,7 +512,15 @@ mod tests {
         let text = "---\ntitle: a\ntitle: b\n---\n";
         let schema = schema(&[("title", "string", false)]);
 
-        let findings = check_document(text, &schema, &no_rules(), &no_rules(), false, &name());
+        let findings = check_document(
+            text,
+            &schema,
+            &no_rules(),
+            &no_rules(),
+            false,
+            false,
+            &name(),
+        );
 
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert_eq!(findings[0].rule, "frontmatter.parse");
@@ -494,7 +536,15 @@ mod tests {
         let text = "---\ntitle: x\n--- # hi\nfoo: 1\n---\n\nBody.\n";
         let schema = schema(&[("title", "string", false)]);
 
-        let findings = check_document(text, &schema, &no_rules(), &no_rules(), false, &name());
+        let findings = check_document(
+            text,
+            &schema,
+            &no_rules(),
+            &no_rules(),
+            false,
+            false,
+            &name(),
+        );
 
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert_eq!(findings[0].rule, "frontmatter.parse");
@@ -511,6 +561,7 @@ mod tests {
             &no_rules(),
             &no_rules(),
             false,
+            false,
             &name(),
         );
         let none = check_document(
@@ -518,6 +569,7 @@ mod tests {
             &schema,
             &no_rules(),
             &no_rules(),
+            false,
             false,
             &name(),
         );
@@ -534,7 +586,15 @@ mod tests {
         let schema = schema(&[("title", "string", true)]);
         let text = "---\nother: x\n---\n";
 
-        let findings = check_document(text, &schema, &no_rules(), &no_rules(), false, &name());
+        let findings = check_document(
+            text,
+            &schema,
+            &no_rules(),
+            &no_rules(),
+            false,
+            false,
+            &name(),
+        );
 
         let types: Vec<&Finding> = findings
             .iter()
@@ -550,7 +610,15 @@ mod tests {
         let schema = schema(&[("count", "number", false)]);
         let text = "---\ncount: abc\n---\n";
 
-        let findings = check_document(text, &schema, &no_rules(), &no_rules(), false, &name());
+        let findings = check_document(
+            text,
+            &schema,
+            &no_rules(),
+            &no_rules(),
+            false,
+            false,
+            &name(),
+        );
 
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert_eq!(findings[0].rule, "frontmatter.types");
@@ -563,7 +631,15 @@ mod tests {
         let schema = schema(&[]);
         let text = "---\nextra: x\n---\n";
 
-        let findings = check_document(text, &schema, &no_rules(), &no_rules(), false, &name());
+        let findings = check_document(
+            text,
+            &schema,
+            &no_rules(),
+            &no_rules(),
+            false,
+            false,
+            &name(),
+        );
 
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert_eq!(findings[0].rule, "frontmatter.unknown");
@@ -584,9 +660,40 @@ mod tests {
             },
         );
 
-        let findings = check_document(text, &schema, &no_rules(), &collection, false, &name());
+        let findings = check_document(
+            text,
+            &schema,
+            &no_rules(),
+            &collection,
+            false,
+            false,
+            &name(),
+        );
 
         assert_eq!(findings, Vec::new());
+    }
+
+    /// Design, Audit mode: "Rules set to `off`... Reported as `info`". The same `off` setting
+    /// that produces nothing above produces one `info` finding once `audit` is set, and `strict`
+    /// has nothing to raise it from, since `off` carries no `warn`.
+    #[test]
+    fn frontmatter_unknown_off_is_info_under_audit() {
+        let schema = schema(&[]);
+        let text = "---\nextra: x\n---\n";
+        let mut collection = Rules::new();
+        collection.insert(
+            "frontmatter.unknown".to_owned(),
+            RuleSetting {
+                level: Some(Level::Off),
+                options: serde_json::Map::new(),
+            },
+        );
+
+        let findings = check_document(text, &schema, &no_rules(), &collection, true, true, &name());
+
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].rule, "frontmatter.unknown");
+        assert_eq!(findings[0].level, Severity::Info);
     }
 
     #[test]
@@ -594,7 +701,15 @@ mod tests {
         let schema = schema(&[]);
         let text = "---\nextra: x\n---\n";
 
-        let findings = check_document(text, &schema, &no_rules(), &no_rules(), true, &name());
+        let findings = check_document(
+            text,
+            &schema,
+            &no_rules(),
+            &no_rules(),
+            true,
+            false,
+            &name(),
+        );
 
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert_eq!(findings[0].level, Severity::Error);
@@ -621,7 +736,7 @@ mod tests {
             },
         );
 
-        let findings = check_document(text, &schema, &global, &collection, false, &name());
+        let findings = check_document(text, &schema, &global, &collection, false, false, &name());
 
         assert_eq!(findings[0].level, Severity::Warn);
     }
@@ -640,7 +755,15 @@ mod tests {
         }]);
         let text = "---\nkind: z\n---\n";
 
-        let findings = check_document(text, &schema, &no_rules(), &no_rules(), false, &name());
+        let findings = check_document(
+            text,
+            &schema,
+            &no_rules(),
+            &no_rules(),
+            false,
+            false,
+            &name(),
+        );
 
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert_eq!(findings[0].rule, "frontmatter.types");

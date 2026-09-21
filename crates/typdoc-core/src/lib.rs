@@ -37,8 +37,8 @@ pub use links::{
     BodyLink, BodyLinks, Definition, DuplicateDefinition, Mention, Suspect, mentions, scan,
 };
 pub use project::{
-    ListFilter, ListResult, Project, RefName, RefOutcome, RefsDirection, RefsReference, RefsReport,
-    SortKey, Toc, ValidateReport, discover,
+    AuditCollection, AuditReport, ListFilter, ListResult, Project, RefName, RefOutcome,
+    RefsDirection, RefsReference, RefsReport, SortKey, Toc, ValidateReport, discover,
 };
 pub use query::{
     Condition, Dir, FieldRef, Item, Op, PlainCondition, Quant, QueryError, RefCondition, RefField,

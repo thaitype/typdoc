@@ -221,6 +221,7 @@ struct BodyDocContext<'a> {
     moved: &'a BTreeMap<String, String>,
     collection: &'a Rules,
     strict: bool,
+    audit: bool,
     links_level: Option<Severity>,
     anchors_level: Option<Severity>,
 }
@@ -248,12 +249,49 @@ pub struct ValidateReport {
     pub strict: bool,
     /// Sorted, each once.
     pub namespaces: Vec<String>,
-    /// 0 for `Schemas`.
+    /// 0 for `Schemas`. For `--audit`, the number of documents actually evaluated: a file with
+    /// no frontmatter is not one of them (design: "`--audit` does not evaluate it"), and neither
+    /// is a file matched by more than one collection (there is no one schema to evaluate it
+    /// against, the same reasoning a plain run already gives `checked.documents`).
     pub documents: usize,
     /// Only for `Paths`: sorted, each once, matching the `path` of every finding.
     pub paths: Option<Vec<String>>,
     /// In the order the design guarantees.
     pub findings: Vec<Finding>,
+    /// Only for `--audit` (design: "With `--audit` the report also has `audit`").
+    pub audit: Option<AuditReport>,
+}
+
+/// The number of documents one collection holds, for `audit.collections` (design: "one
+/// `{ "name", "documents" }` for each collection with the number of documents it holds"). A
+/// document it holds and a document it was checked against a schema for are not the same count:
+/// this includes a document with no frontmatter too, since the collection still matched it, only
+/// evaluated nothing about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditCollection {
+    pub name: String,
+    pub documents: usize,
+}
+
+/// `--audit`'s own report, alongside `findings` (design: "`collections`... `uncollected`...
+/// `no_frontmatter`"). `uncollected` and `no_frontmatter` never overlap: a file that belongs to no
+/// collection has no schema to say whether it has frontmatter typdoc would recognise, so it is
+/// only ever in `uncollected` (design: "a file in no collection has no schema to say what its
+/// frontmatter should hold, so it is only in `uncollected`"). A file matched by more than one
+/// collection is in neither: it belongs to collections, plural, just not to one in particular,
+/// which is a different problem from belonging to none, and it is reported instead as an ordinary
+/// `collections.overlap` finding, in audit mode exactly as in a plain run.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AuditReport {
+    /// Sorted by name.
+    pub collections: Vec<AuditCollection>,
+    /// The path of every file that belongs to no collection, sorted, each once.
+    pub uncollected: Vec<String>,
+    /// The path of every file that belongs to a collection and has no frontmatter block at all,
+    /// sorted, each once. Never a file whose block is empty (that is frontmatter, design: "An
+    /// empty block, which is frontmatter") or one whose block fails to parse (that has a
+    /// `frontmatter.parse` finding instead, and is counted as checked, not unreported).
+    pub no_frontmatter: Vec<String>,
 }
 
 impl Project {
@@ -1346,13 +1384,16 @@ impl Project {
 
     /// The report of `validate`: `Schemas` when `schemas_only`, `Paths` when `args` is not
     /// empty, and `All` (every document in scope) otherwise. Combining `schemas_only` with
-    /// arguments is a caller error and is refused before this runs (design: "combining either
-    /// with arguments is bad arguments"), so it is not checked again here.
+    /// arguments, or `audit` with either, is a caller error and is refused before this runs
+    /// (design: "combining either with arguments is bad arguments"), so neither is checked again
+    /// here: `audit` only ever reaches this function true alongside `schemas_only: false` and an
+    /// empty `args`, so only the `All` branch below ever reads it.
     pub fn validate(
         &self,
         args: &[DocumentArg],
         schemas_only: bool,
         strict: bool,
+        audit: bool,
         flag: Option<&str>,
         env: &dyn Env,
     ) -> Result<ValidateReport, Error> {
@@ -1360,7 +1401,7 @@ impl Project {
             let scope = self.scope(None, flag, env)?;
             reject_import_scope(&scope)?;
             let mut findings = self.schema_findings.clone();
-            findings.extend(self.shadowed_names_findings(strict));
+            findings.extend(self.shadowed_names_findings(strict, false));
             validate::order(&mut findings);
             return Ok(ValidateReport {
                 scope: ValidateScope::Schemas,
@@ -1369,6 +1410,7 @@ impl Project {
                 documents: 0,
                 paths: None,
                 findings,
+                audit: None,
             });
         }
         if args.is_empty() {
@@ -1376,7 +1418,7 @@ impl Project {
             reject_import_scope(&scope)?;
             let (ref_project, acyclic) = self.ref_project()?;
             let mut findings = self.schema_findings.clone();
-            findings.extend(self.shadowed_names_findings(strict));
+            findings.extend(self.shadowed_names_findings(strict, audit));
             findings.extend(acyclic);
             let mut namespaces = BTreeSet::new();
             let mut documents = 0usize;
@@ -1385,23 +1427,41 @@ impl Project {
             // has a document in the namespace (design, State: "A collection with no coded
             // documents in the namespace and no record is new, and nothing is reported").
             let mut present: BTreeSet<(usize, usize)> = BTreeSet::new();
+            // `--audit` only: the number of documents each collection holds (checked or not,
+            // contract item 8's own reasoning for a file with no frontmatter: it was matched, it
+            // was simply not evaluated) and the path of every one of them with no frontmatter
+            // block at all, left unevaluated (design: "`--audit` does not evaluate it").
+            let mut documents_by_collection: BTreeMap<usize, usize> = BTreeMap::new();
+            let mut no_frontmatter: Vec<String> = Vec::new();
             for (path, entry) in self.index.iter() {
                 let namespace = &self.config.namespaces[entry.namespace].name;
                 if !scope.contains(namespace) {
                     continue;
                 }
                 namespaces.insert(namespace.clone());
-                documents += 1;
                 present.insert((entry.namespace, entry.collection));
                 let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
-                findings.extend(self.check_entry(path, entry, &text, strict, &ref_project));
+                if audit {
+                    *documents_by_collection.entry(entry.collection).or_insert(0) += 1;
+                    if matches!(frontmatter::block(&text), Ok(None)) {
+                        no_frontmatter.push(path.to_owned());
+                        continue;
+                    }
+                }
+                documents += 1;
+                findings.extend(self.check_entry(path, entry, &text, strict, audit, &ref_project));
             }
             findings.extend(self.state_missing_findings(&present, &scope));
             // An overlapping path has no one collection to check its frontmatter against, so it
             // was never checked (contract item 8's reasoning for a document whose block cannot
             // be parsed does not reach this far: that document at least had a schema to check
             // it with). `documents` stays a count of documents whose frontmatter was looked at;
-            // the namespace is still added, since the scope did cover it.
+            // the namespace is still added, since the scope did cover it. Under `--audit` such a
+            // path is in none of `documents`, `audit.uncollected` or `audit.no_frontmatter`
+            // either: it does belong to a collection, just not to one in particular, which
+            // `collections.overlap` already reports below the same as a plain run does, and
+            // `AuditReport`'s own doc records this as the edge the accounting invariant does not
+            // reach.
             for (path, namespace_idx, collections) in self.index.overlaps() {
                 let namespace = &self.config.namespaces[namespace_idx].name;
                 if !scope.contains(namespace) {
@@ -1424,6 +1484,7 @@ impl Project {
                     &self.config.validation,
                     &Rules::new(),
                     strict,
+                    audit,
                 ) {
                     findings.push(validate::stray_file_finding(
                         level,
@@ -1433,6 +1494,16 @@ impl Project {
                     ));
                 }
             }
+            let audit_report = if audit {
+                Some(self.audit_report(
+                    &scope,
+                    &mut namespaces,
+                    documents_by_collection,
+                    no_frontmatter,
+                )?)
+            } else {
+                None
+            };
             validate::order(&mut findings);
             return Ok(ValidateReport {
                 scope: ValidateScope::All,
@@ -1441,6 +1512,7 @@ impl Project {
                 documents,
                 paths: None,
                 findings,
+                audit: audit_report,
             });
         }
         let (ref_project, acyclic) = self.ref_project()?;
@@ -1487,7 +1559,7 @@ impl Project {
             if paths.insert(path.clone()) {
                 let namespace = &self.config.namespaces[entry.namespace].name;
                 namespaces.insert(namespace.clone());
-                findings.extend(self.check_entry(&path, entry, &text, strict, &ref_project));
+                findings.extend(self.check_entry(&path, entry, &text, strict, false, &ref_project));
             }
         }
         // `refs.acyclic` is always on and its cycles are project-wide, but only a cycle that
@@ -1508,6 +1580,58 @@ impl Project {
             documents: paths.len(),
             paths: Some(paths.into_iter().collect()),
             findings,
+            audit: None,
+        })
+    }
+
+    /// `--audit`'s own report: `collections` (every collection that holds at least one document
+    /// in scope, from `documents_by_collection` the caller's own document walk already counted,
+    /// sorted by name) and `uncollected` (the `path` of every `.md` file in scope that matches no
+    /// collection at all), found by an independent walk of every namespace folder in scope
+    /// (`index::all_markdown_files`), never by consulting a collection's own `match` template —
+    /// that is exactly the question a stray file's absence from every collection answers. A path
+    /// already in `self.index` (checked, or listed in `no_frontmatter` by the caller) or in
+    /// `self.index.overlaps()` (matched by more than one collection, reported as
+    /// `collections.overlap` instead, `AuditReport`'s own doc explains why it is in neither list)
+    /// is not uncollected.
+    fn audit_report(
+        &self,
+        scope: &Scope,
+        namespaces: &mut BTreeSet<String>,
+        documents_by_collection: BTreeMap<usize, usize>,
+        mut no_frontmatter: Vec<String>,
+    ) -> Result<AuditReport, Error> {
+        let mut collections: Vec<AuditCollection> = documents_by_collection
+            .into_iter()
+            .map(|(collection, documents)| AuditCollection {
+                name: self.collections[collection].name.clone(),
+                documents,
+            })
+            .collect();
+        collections.sort_by(|a, b| a.name.cmp(&b.name));
+        let mut uncollected = Vec::new();
+        for (path, namespace_idx) in
+            crate::index::all_markdown_files(&self.root, &self.config.namespaces)?
+        {
+            let namespace = &self.config.namespaces[namespace_idx].name;
+            if !scope.contains(namespace) {
+                continue;
+            }
+            if self.index.get(&path).is_some() || self.index.overlap(&path).is_some() {
+                continue;
+            }
+            // A namespace whose only file in scope is this uncollected one never reaches the
+            // per-document loop above, and `checked.namespaces` ("the namespaces covered", design)
+            // must still name it: audit covered it, which is exactly how the file was found.
+            namespaces.insert(namespace.clone());
+            uncollected.push(path);
+        }
+        uncollected.sort();
+        no_frontmatter.sort();
+        Ok(AuditReport {
+            collections,
+            uncollected,
+            no_frontmatter,
         })
     }
 
@@ -1526,6 +1650,7 @@ impl Project {
         entry: &Indexed,
         text: &str,
         strict: bool,
+        audit: bool,
         ref_project: &RefProject,
     ) -> Vec<Finding> {
         let collection = &self.collections[entry.collection];
@@ -1542,6 +1667,7 @@ impl Project {
             &self.config.validation,
             &collection.validation,
             strict,
+            audit,
             &name,
         );
         if let Some(key) = &entry.key
@@ -1565,8 +1691,8 @@ impl Project {
             ));
         }
         if !findings.iter().any(|f| f.rule == "frontmatter.parse") {
-            findings.extend(self.check_refs(path, entry, text, &name, strict, ref_project));
-            findings.extend(self.check_body(path, entry, text, &name, strict, ref_project));
+            findings.extend(self.check_refs(path, entry, text, &name, strict, audit, ref_project));
+            findings.extend(self.check_body(path, entry, text, &name, strict, audit, ref_project));
         }
         findings
     }
@@ -1575,6 +1701,13 @@ impl Project {
     /// `ref[]` field of one document already known to parse. A value that does not fit its
     /// field's type is skipped: `frontmatter.types` already reported it, and a value that is not
     /// text or a list of text names nothing a ref form could read.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "each part is context this document's own check already holds (its path, its
+    index entry, its text, its name, strict, audit, the whole-project ref context); bundling them
+    would hide which one changes at the call site, the same reasoning this file already gives a
+    comparable list"
+    )]
     fn check_refs(
         &self,
         path: &str,
@@ -1582,6 +1715,7 @@ impl Project {
         text: &str,
         name: &DocName,
         strict: bool,
+        audit: bool,
         ref_project: &RefProject,
     ) -> Vec<Finding> {
         let collection = &self.collections[entry.collection];
@@ -1619,6 +1753,7 @@ impl Project {
                         &ref_project.moved,
                         &collection.validation,
                         strict,
+                        audit,
                     )),
                     Ok(resolved) => {
                         // `schema_info_of` reads this project's own collections when the ref
@@ -1648,6 +1783,7 @@ impl Project {
                                 &self.config.validation,
                                 &collection.validation,
                                 strict,
+                                audit,
                             )
                         {
                             findings.push(validate::finding(
@@ -1673,6 +1809,11 @@ impl Project {
     /// mention `links::mentions` finds, looked up by key. Nothing here is computed when all three
     /// rules are `off`, since a document with a large body would otherwise be scanned for no
     /// reason.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "each part is context this document's own check already holds, the same list
+    `check_refs` beside it already gives a reason for"
+    )]
     fn check_body(
         &self,
         path: &str,
@@ -1680,6 +1821,7 @@ impl Project {
         text: &str,
         name: &DocName,
         strict: bool,
+        audit: bool,
         ref_project: &RefProject,
     ) -> Vec<Finding> {
         let collection = &self.collections[entry.collection];
@@ -1689,6 +1831,7 @@ impl Project {
             &self.config.validation,
             &collection.validation,
             strict,
+            audit,
         );
         let anchors_level = validate::effective_level(
             Level::Error,
@@ -1696,6 +1839,7 @@ impl Project {
             &self.config.validation,
             &collection.validation,
             strict,
+            audit,
         );
         let mentions_level = validate::effective_level(
             Level::Off,
@@ -1703,6 +1847,7 @@ impl Project {
             &self.config.validation,
             &collection.validation,
             strict,
+            audit,
         );
         if links_level.is_none() && anchors_level.is_none() && mentions_level.is_none() {
             return Vec::new();
@@ -1739,6 +1884,7 @@ impl Project {
             moved: &ref_project.moved,
             collection: &collection.validation,
             strict,
+            audit,
             links_level,
             anchors_level,
         };
@@ -1849,6 +1995,7 @@ impl Project {
                     &ref_project.moved,
                     &collection.validation,
                     strict,
+                    audit,
                 ) {
                     Some(Some(finding)) => findings.push(finding),
                     Some(None) => {}
@@ -1906,6 +2053,7 @@ impl Project {
             doc.moved,
             doc.collection,
             doc.strict,
+            doc.audit,
         ) {
             Some(Some(finding)) => findings.push(finding),
             Some(None) => {}
@@ -1931,7 +2079,9 @@ impl Project {
                     None
                 }
                 refs::BodyDestination::ImportAbsent(absence) => {
-                    if let Some(level) = self.imports_absent_level(doc.collection, doc.strict) {
+                    if let Some(level) =
+                        self.imports_absent_level(doc.collection, doc.strict, doc.audit)
+                    {
                         findings.push(validate::finding_at(
                             name,
                             level,
@@ -2045,9 +2195,11 @@ impl Project {
 
     /// The `refs.moved` outcome for a body destination or a mention that did not otherwise
     /// resolve: `None` when `lookup` matches no recorded move, so the caller reports its own
-    /// ordinary missing finding; `Some(None)` when it does but `refs.moved` is configured `off`,
-    /// so nothing at all is reported (a rule set to `off` produces no finding, not a fallback to
-    /// a different one); `Some(Some(finding))` otherwise. The frontmatter equivalent,
+    /// ordinary missing finding; `Some(None)` when it does but `refs.moved` is configured `off`
+    /// and `audit` is not set, so nothing at all is reported (a rule set to `off` produces no
+    /// finding outside `--audit`, not a fallback to a different one; under `--audit` the same
+    /// `off` setting reaches `Some(Some(finding))` at `Info` instead, `effective_level`'s own
+    /// doing); `Some(Some(finding))` otherwise. The frontmatter equivalent,
     /// `unresolved_ref_finding`, folds this together with the `refs.resolve` fallback it also
     /// owns; a body destination's and a mention's fallback messages differ from each other and
     /// from a frontmatter ref's, so this stays the one shared part and each caller builds its own
@@ -2073,6 +2225,7 @@ impl Project {
         moved: &BTreeMap<String, String>,
         collection: &Rules,
         strict: bool,
+        audit: bool,
     ) -> Option<Option<Finding>> {
         let new_id = moved.get(lookup)?;
         Some(
@@ -2082,6 +2235,7 @@ impl Project {
                 &self.config.validation,
                 collection,
                 strict,
+                audit,
             )
             .map(|level| {
                 validate::finding_at(
@@ -2116,6 +2270,7 @@ impl Project {
         moved: &BTreeMap<String, String>,
         collection: &Rules,
         strict: bool,
+        audit: bool,
     ) -> Option<Finding> {
         if let Some(new_id) = moved.get(written) {
             let level = validate::effective_level(
@@ -2124,6 +2279,7 @@ impl Project {
                 &self.config.validation,
                 collection,
                 strict,
+                audit,
             )?;
             return Some(validate::finding(
                 name,
@@ -2134,18 +2290,20 @@ impl Project {
             ));
         }
         if let refs::Reason::ImportAbsent(absence) = &reason {
-            return self.imports_absent_level(collection, strict).map(|level| {
-                validate::finding(
-                    name,
-                    level,
-                    "imports.absent",
-                    Some(field_name),
-                    format!(
-                        "the ref `{written}` does not resolve: {}",
-                        absence.message()
-                    ),
-                )
-            });
+            return self
+                .imports_absent_level(collection, strict, audit)
+                .map(|level| {
+                    validate::finding(
+                        name,
+                        level,
+                        "imports.absent",
+                        Some(field_name),
+                        format!(
+                            "the ref `{written}` does not resolve: {}",
+                            absence.message()
+                        ),
+                    )
+                });
         }
         Some(validate::finding(
             name,
@@ -2157,17 +2315,24 @@ impl Project {
     }
 
     /// The level `imports.absent` is reported at, once `validation.global`, `collection`'s own
-    /// `validation` and `strict` are merged (default `warn`): `None` means the rule is `off`, so
-    /// a ref into an absent import is reported under neither it nor `refs.resolve` — a rule set
-    /// to `off` produces no finding, not a fallback to a different one, the same reading
-    /// `moved_outcome` already gives `refs.moved`.
-    fn imports_absent_level(&self, collection: &Rules, strict: bool) -> Option<Severity> {
+    /// `validation` and `strict` are merged (default `warn`): `None` means the rule is `off` and
+    /// `audit` is not set, so a ref into an absent import is reported under neither it nor
+    /// `refs.resolve` — a rule set to `off` produces no finding outside `--audit`, not a fallback
+    /// to a different one, the same reading `moved_outcome` already gives `refs.moved`; under
+    /// `--audit` the same `off` setting reports it at `Info` instead.
+    fn imports_absent_level(
+        &self,
+        collection: &Rules,
+        strict: bool,
+        audit: bool,
+    ) -> Option<Severity> {
         validate::effective_level(
             Level::Warn,
             "imports.absent",
             &self.config.validation,
             collection,
             strict,
+            audit,
         )
     }
 
@@ -2242,13 +2407,14 @@ impl Project {
     /// reach different documents. A fact about the config, not about a document, so it needs no
     /// document read and is the same in every scope that reports it (`All` and `Schemas`, the
     /// same two `schema_findings` reaches, never `Paths`: see `check_entry`'s callers).
-    fn shadowed_names_findings(&self, strict: bool) -> Vec<Finding> {
+    fn shadowed_names_findings(&self, strict: bool, audit: bool) -> Vec<Finding> {
         let Some(level) = validate::effective_level(
             Level::Warn,
             "names.shadowed",
             &self.config.validation,
             &Rules::new(),
             strict,
+            audit,
         ) else {
             return Vec::new();
         };
