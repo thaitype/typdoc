@@ -71,3 +71,14 @@ of `Config::load` fails clippy with `use of a disallowed method 'std::fs::write'
   `.typdoc/config.json`.
 - `.chief/story-1/_tickets/4-config-and-namespaces.md` and the reports of tickets 4 and 8 and the
   story's closing report still describe the rule as it was; they are dated records and stay.
+
+## Checked again after the build, by running
+- `scripts/test.sh`: 698 passed, 0 failed, 1 ignored. `cargo fmt --check`, clippy with
+  `-D warnings` and the public-text gate clean.
+- The two cases the ticket names, run by hand on the built binary: a project with a readable
+  `.typdoc/config.json` and a stray `.typdoc.json` now answers `validate` and `list` with exit 0
+  (both stopped with exit 2 before); a folder with only `.typdoc.json` answers "no project
+  found" with exit 5 and names `.typdoc/config.json`, as an empty folder does.
+- A check for `.typdoc.json` put back into `Config::load` turned both stray-file tests red;
+  restored.
+

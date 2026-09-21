@@ -1,7 +1,7 @@
 # 25: Remove the rule `config.legacy-file`
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: None (can start immediately)
 
 ## What this delivers
