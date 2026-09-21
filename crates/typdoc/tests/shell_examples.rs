@@ -261,8 +261,12 @@ fn templates() -> Vec<(&'static str, &'static str)> {
             "<key|path> is a placeholder",
         ),
         (
-            "typdoc mv <from> <to> [--renumber]",
+            "typdoc mv <from> <to>",
             "<from> and <to> are placeholders",
+        ),
+        (
+            "typdoc mv <from> --renumber <namespace>",
+            "<from> and <namespace> are placeholders",
         ),
         (
             "typdoc pull [<url> ...] [--check]",

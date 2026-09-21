@@ -1,7 +1,7 @@
 # 11: The argument shape of `mv --renumber`
 
 Type: wayfinder:grilling
-Status: open
+Status: resolved
 Blocked by: None (can start immediately)
 
 ## Question
@@ -22,4 +22,72 @@ Decide the shape, and check it against the rules that already exist:
 
 ## Answer
 
-<filled in on resolve>
+**1. The shape is `typdoc mv FROM --renumber NAMESPACE`.** The destination is the value of the flag,
+not a second positional argument.
+
+It has to be that, because story 1 already wrote and tested the rule for an argument that names a
+document: after any prefix, something ending in `.md` is a path, something of the form of a key is a
+key, and anything else is bad arguments. A bare namespace name is none of the three. Making it work
+as a positional would mean cutting an exception into a rule that holds everywhere else in the tool,
+and that rule is load-bearing precisely because it has no exceptions.
+
+The shape also tells the truth about the command. `mv` takes a destination; this does not. It takes a
+namespace and works the destination out for itself, because the new key is one nobody may choose.
+
+**Two side effects, stated rather than discovered later:**
+
+- `mv` reads two positional arguments in its ordinary form and one with `--renumber`.
+- `--renumber` stops being a bare flag and becomes a flag that must be given a value. `--renumber`
+  with nothing after it is bad arguments, and the message says a namespace is required rather than
+  leaving someone to guess what is missing.
+
+**2. A destination that is the namespace the document is already in is refused.** Nothing is
+written.
+
+The reason is worth keeping in full, because "refuse" can look like pedantry until the alternative is
+written out. Carrying it out would do this: `WF-2` becomes `WF-3`, while the document sits exactly
+where it was. The key `WF-2` is then dead for good, because `last` has risen past it and never comes
+back down. Everything outside this project that cites `WF-2` — a commit message, an issue, a chat
+message, another repository — now cites nothing. And `validate` reports none of it and exits 0,
+because there is no broken ref inside the project to find: the document is fine, it simply answers to
+a different name than the world outside believes.
+
+So refusing is not the tool being strict. It is the only behaviour that does not quietly retire a
+name that is in use, in exchange for nothing at all: no move happened.
+
+The call is the defect here, so it falls under the existing rule for bad arguments, exit 1. The id
+the error carries goes with decision 9's family along with the rest of the ids.
+
+**3. It prints the new key, bare, on standard output.** As `typdoc new` prints the key it allocated,
+so a shell can put it straight into a variable. One command, one line, nothing to parse.
+
+**4. Renumbering into another project is not possible, and the design says so out loud.** Not
+silence.
+
+The reason it has to be said: reading across projects is written `project::namespace:key`, so the
+shape for naming another project's namespace already exists in the design, and a reader who knows it
+will reasonably guess that `--renumber` accepts it. It does not, and this agrees with
+[decision 2](2-locks-when-mv-writes-into-an-imported-project.md), which settled that no command
+writes into another project at all.
+
+**5. The source's `last` does not go down, even when the document that moved out held the highest
+number.** The design now says what `last` is: the highest number ever issued in that namespace, not
+the highest that exists.
+
+The two differ whenever a document is deleted or renumbered away, and that difference is ordinary
+and is left alone. Reconciling them looks like tidying and is the bug: lower `last` to match what is
+on disk, and the next `typdoc new` issues that number again. A ref written `story-1:WF-9` before the
+move then resolves to a different document — and nothing reports it, because the ref is well formed
+and so is the document. It is the one failure in this area that produces no finding at all, which is
+why the gap is the thing being protected rather than the thing being fixed.
+
+## Written into `docs/design.md`
+
+The synopsis now shows both forms and the key `--renumber` prints; the `--renumber` paragraph carries
+the argument shape and its reason, the same-namespace refusal with the account above, the bare-flag
+error, the cross-project refusal, and the printed key; and the State paragraph says what `last` is,
+that the gap is ordinary, and what lowering it would cause.
+
+The shell-examples harness in `crates/typdoc/tests/shell_examples.rs` declares every example in the
+design that holds a placeholder. Changing the synopsis from one line to two turned it red until both
+new forms were declared there, which is the harness doing its job.
