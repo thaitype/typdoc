@@ -430,9 +430,9 @@ fn parse_value(value: &str, op: Op) -> Result<Vec<Item>, QueryError> {
                 Some(escaped @ (',' | '*' | '\\')) => {
                     #[expect(
                         clippy::expect_used,
-                        reason = "`segments` starts as `vec![String::new()]` and the loop changes it only with \
-                                  `push` and by `mem::replace` with another `vec![String::new()]`, so it is \
-                                  never empty"
+                        reason = "`segments` starts as `vec![String::new()]` and the loop changes it only \
+                  with `push` and by `mem::replace` with another `vec![String::new()]`, \
+                  so it holds at least one element"
                     )]
                     segments
                         .last_mut()
@@ -455,9 +455,9 @@ fn parse_value(value: &str, op: Op) -> Result<Vec<Item>, QueryError> {
             }
             #[expect(
                 clippy::expect_used,
-                reason = "`segments` starts as `vec![String::new()]` and the loop changes it only with \
-                          `push` and by `mem::replace` with another `vec![String::new()]`, so it is \
-                          never empty"
+                reason = "`segments` starts as `vec![String::new()]` and the loop changes it only \
+                  with `push` and by `mem::replace` with another `vec![String::new()]`, \
+                  so it holds at least one element"
             )]
             other => segments
                 .last_mut()
