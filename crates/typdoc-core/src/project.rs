@@ -679,6 +679,13 @@ impl Project {
                 project: None,
                 fields: fields.clone(),
             };
+            #[expect(
+                clippy::expect_used,
+                reason = "`links::scan` returns an error only when `frontmatter::split` does on the \
+                          same text, and `frontmatter::block` is `split` with the body offset dropped; \
+                          `parsed_fields` above returned `Some` for `text`, which needs `block(&text)` \
+                          to be `Ok`, and a `None` there is a `continue`"
+            )]
             let body = if needs_own_body {
                 links::scan(&text).expect("frontmatter.parse already refused an unclosed block")
             } else {
@@ -1231,6 +1238,13 @@ impl Project {
             Some(block) => frontmatter::fields(block, &collection.schema).map_err(bad)?,
             None => Vec::new(),
         };
+        #[expect(
+            clippy::expect_used,
+            reason = "`links::scan` returns an error only when `frontmatter::split` does on the same \
+                      text, and `frontmatter::block` is `split` with the body offset dropped; \
+                      `frontmatter::block(&text).map_err(bad)?` above already returned the error for \
+                      this `text`"
+        )]
         let body = links::scan(&text).expect("frontmatter.parse already refused an unclosed block");
         let own = self.document_out_refs(&path, entry, &fields, &body, &codes);
 
@@ -1935,6 +1949,14 @@ impl Project {
             return Vec::new();
         }
 
+        #[expect(
+            clippy::expect_used,
+            reason = "`links::scan` returns an error only when `frontmatter::split` does on the same \
+                      text, and `frontmatter::block` is `split` with the body offset dropped; \
+                      `check_entry` is the only caller of `check_body` and calls it only when \
+                      `validate::check_document` gave no `frontmatter.parse` finding for this `text`, \
+                      a finding it returns at a fixed `Severity::Error` whenever `block(text)` fails"
+        )]
         let scanned =
             links::scan(text).expect("frontmatter.parse already refused an unclosed block");
         let ctx = refs::Ctx {
@@ -2057,6 +2079,12 @@ impl Project {
             );
             let inline_code = bool_option(&options, "inlineCode", true);
             let fenced_code = bool_option(&options, "fencedCode", false);
+            #[expect(
+                clippy::expect_used,
+                reason = "`links::mentions` returns an error only when `frontmatter::split` does on \
+                          the same text; `links::scan(text)` earlier in `check_body` ran `split` on \
+                          this `text` and returned `Ok`, or this line is not reached"
+            )]
             let mentions = links::mentions(text, inline_code, fenced_code)
                 .expect("frontmatter.parse already refused an unclosed block");
             for mention in mentions {
@@ -2987,6 +3015,12 @@ fn parsed_fields_and_body(
         None => Vec::new(),
         Some(block) => frontmatter::fields(block, schema).ok()?,
     };
+    #[expect(
+        clippy::expect_used,
+        reason = "`links::scan` returns an error only when `frontmatter::split` does on the same \
+                  text, and `frontmatter::block` is `split` with the body offset dropped; \
+                  `frontmatter::block(text).ok()?` above returns before this line when it is an `Err`"
+    )]
     let body = links::scan(text).expect("frontmatter.parse already refused an unclosed block");
     Some((fields, body))
 }
