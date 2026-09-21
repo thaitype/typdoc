@@ -60,18 +60,20 @@ pub struct Toc {
 /// The name of a document at the other end of a reference, once it is known to exist: `path`,
 /// `namespace` and `key` (only for a coded document), the same three parts `get` and `toc` name
 /// a document with, plus `project` when the document belongs to an imported project (the alias
-/// it was imported under; `None` for a document of this project).
+/// it was imported under; `None` for a document of this project). `namespace` is `None` for a
+/// file outside every namespace folder, which is named by its path alone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefName {
     pub path: String,
-    pub namespace: String,
+    pub namespace: Option<String>,
     pub key: Option<String>,
     pub project: Option<String>,
 }
 
 impl RefName {
     /// Whether both names are the same document: the same project (none for this one), the same
-    /// namespace and the same path. The path alone is not enough, since an imported project has
+    /// namespace (none for a file outside every namespace folder, which equals only another such
+    /// file) and the same path. The path alone is not enough, since an imported project has
     /// documents at paths this one also has, and the reverse index is keyed by all three.
     fn is_same_document(&self, other: &RefName) -> bool {
         self.project == other.project
@@ -572,7 +574,7 @@ impl Project {
         };
         Ok(Document {
             path,
-            namespace: self.config.namespaces[entry.namespace].name.clone(),
+            namespace: Some(self.config.namespaces[entry.namespace].name.clone()),
             key: entry.key.clone(),
             code: collection.schema.code.clone(),
             collection: collection.name.clone(),
@@ -669,7 +671,7 @@ impl Project {
             };
             let doc = Document {
                 path: path.to_owned(),
-                namespace: namespace.clone(),
+                namespace: Some(namespace.clone()),
                 key: entry.key.clone(),
                 code: collection.schema.code.clone(),
                 collection: collection.name.clone(),
@@ -684,7 +686,7 @@ impl Project {
             };
             let me = RefName {
                 path: path.to_owned(),
-                namespace: namespace.clone(),
+                namespace: Some(namespace.clone()),
                 key: entry.key.clone(),
                 project: None,
             };
@@ -1105,7 +1107,7 @@ impl Project {
         };
         let doc = Document {
             path: path.to_owned(),
-            namespace: self.config.namespaces[entry.namespace].name.clone(),
+            namespace: Some(self.config.namespaces[entry.namespace].name.clone()),
             key: entry.key.clone(),
             code: collection.schema.code.clone(),
             collection: collection.name.clone(),
@@ -1133,7 +1135,7 @@ impl Project {
             };
             let holder = Document {
                 path: path.to_owned(),
-                namespace: self.config.namespaces[entry.namespace].name.clone(),
+                namespace: Some(self.config.namespaces[entry.namespace].name.clone()),
                 key: entry.key.clone(),
                 code: collection.schema.code.clone(),
                 collection: collection.name.clone(),
@@ -1369,13 +1371,8 @@ impl Project {
         refs
     }
 
-    /// The name (`path`, `namespace`, `key`) of a document at `path`: looked up in the index
-    /// when it is one, which is the only place a coded document's `key` comes from. A path that
-    /// resolved but is outside every collection (`target: "*"` accepts one, e.g. a README) has
-    /// no entry of its own; its namespace is the one whose folder is the longest prefix of
-    /// `path`, or the namespace with no folder (`default`) when none matches, since namespaces
-    /// never nest (config rule) and every project has exactly one namespace with an empty
-    /// folder.
+    /// The name of a document at `path` in this project, read as `ref_name_in` reads it: a file
+    /// outside every namespace folder has no namespace and is named by its path alone.
     fn ref_name_of(&self, path: &str) -> RefName {
         ref_name_in(&self.config.namespaces, &self.index, None, path)
     }
@@ -2856,7 +2853,10 @@ fn cmp_key_number(a: Option<u64>, b: Option<u64>) -> Ordering {
 fn sort_value(field: &FieldRef, schema: &Resolved, doc: &Document) -> SortValue {
     match field {
         FieldRef::Path => SortValue::Text(doc.path.clone()),
-        FieldRef::Namespace => SortValue::Text(doc.namespace.clone()),
+        FieldRef::Namespace => doc
+            .namespace
+            .clone()
+            .map_or(SortValue::Missing, SortValue::Text),
         FieldRef::Collection => SortValue::Text(doc.collection.clone()),
         FieldRef::Schema => SortValue::Text(doc.schema.clone()),
         FieldRef::Code => doc.code.clone().map_or(SortValue::Missing, SortValue::Text),
@@ -3219,11 +3219,13 @@ fn imported_scope(imported: &Project, arg: &DocumentArg) -> Result<Scope, Error>
 /// place a coded document's `key` comes from. A path that resolved but is outside every
 /// collection (`target: "*"` accepts one, e.g. a README) has no entry of its own; its namespace
 /// is the one whose folder is the longest prefix of `path`, or the namespace with no folder
-/// (`default`) when none matches, since namespaces never nest (config rule) and every project has
-/// exactly one namespace with an empty folder. `project` is the alias `path` was reached through,
-/// `None` for a document of the project doing the reaching; shared between `Project::ref_name_of`
-/// (`project: None`, this project) and the import-resolving code in `refs.rs` (`project: Some
-/// (alias)`), so the two read a document's name the same way whichever side of an import it is.
+/// (`default`) when none matches, since namespaces never nest (config rule). When neither exists
+/// (a project with `namespaces` set, and a file outside every namespace folder) the file belongs
+/// to no namespace and is named by its path alone: `namespace` is `None`. `project` is the alias
+/// `path` was reached through, `None` for a document of the project doing the reaching; shared
+/// between `Project::ref_name_of` (`project: None`, this project) and the import-resolving code
+/// in `refs.rs` (`project: Some(alias)`), so the two read a document's name the same way
+/// whichever side of an import it is.
 fn ref_name_in(
     namespaces: &[crate::config::Namespace],
     index: &Index,
@@ -3234,7 +3236,7 @@ fn ref_name_in(
     if let Some(entry) = index.get(path) {
         return RefName {
             path: path.to_owned(),
-            namespace: namespaces[entry.namespace].name.clone(),
+            namespace: Some(namespaces[entry.namespace].name.clone()),
             key: entry.key.clone(),
             project,
         };
@@ -3246,11 +3248,10 @@ fn ref_name_in(
                 && (path == space.folder || path.starts_with(&format!("{}/", space.folder)))
         })
         .max_by_key(|space| space.folder.len())
-        .or_else(|| namespaces.iter().find(|space| space.folder.is_empty()))
-        .expect("every project has a namespace with an empty folder when none matches by prefix");
+        .or_else(|| namespaces.iter().find(|space| space.folder.is_empty()));
     RefName {
         path: path.to_owned(),
-        namespace: namespace.name.clone(),
+        namespace: namespace.map(|space| space.name.clone()),
         key: None,
         project,
     }
@@ -3454,4 +3455,89 @@ fn duplicate_schema_findings(loaded: &[Loaded]) -> Vec<Finding> {
         }
     }
     findings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Namespace;
+
+    fn space(name: &str, folder: &str) -> Namespace {
+        Namespace {
+            name: name.to_owned(),
+            folder: folder.to_owned(),
+        }
+    }
+
+    fn name_of(namespaces: &[Namespace], path: &str) -> RefName {
+        ref_name_in(namespaces, &Index::default(), None, path)
+    }
+
+    #[test]
+    fn a_file_under_a_namespace_folder_is_named_in_that_namespace() {
+        let spaces = [space("one", "story-1"), space("two", "story-2")];
+
+        assert_eq!(
+            name_of(&spaces, "story-2/deep/x.md").namespace.as_deref(),
+            Some("two")
+        );
+        assert_eq!(
+            name_of(&spaces, "story-1").namespace.as_deref(),
+            Some("one")
+        );
+    }
+
+    #[test]
+    fn a_file_outside_every_namespace_folder_has_no_namespace() {
+        let spaces = [space("one", "story-1"), space("two", "story-2")];
+
+        assert_eq!(name_of(&spaces, "README.md").namespace, None);
+        // A folder whose name only starts like a namespace folder is not inside it.
+        assert_eq!(name_of(&spaces, "story-10/x.md").namespace, None);
+    }
+
+    #[test]
+    fn with_a_namespace_of_no_folder_every_file_outside_a_collection_is_in_it() {
+        let spaces = [space("default", "")];
+
+        assert_eq!(
+            name_of(&spaces, "docs/README.md").namespace.as_deref(),
+            Some("default")
+        );
+    }
+
+    #[test]
+    fn a_document_with_no_namespace_holds_no_value_for_the_namespace_pseudo_field() {
+        let doc = |namespace: Option<&str>| Document {
+            path: "README.md".to_owned(),
+            namespace: namespace.map(str::to_owned),
+            key: None,
+            code: None,
+            collection: String::new(),
+            schema: String::new(),
+            project: None,
+            fields: Vec::new(),
+        };
+
+        assert_eq!(query::field_value(&FieldRef::Namespace, &doc(None)), None);
+        assert_eq!(
+            query::field_value(&FieldRef::Namespace, &doc(Some("one"))),
+            Some(Value::Text("one".to_owned()))
+        );
+    }
+
+    #[test]
+    fn a_name_with_no_namespace_is_the_same_document_only_as_the_same_path_with_none() {
+        let name = |namespace: Option<&str>, path: &str| RefName {
+            path: path.to_owned(),
+            namespace: namespace.map(str::to_owned),
+            key: None,
+            project: None,
+        };
+
+        assert!(name(None, "README.md").is_same_document(&name(None, "README.md")));
+        assert!(!name(None, "README.md").is_same_document(&name(None, "OTHER.md")));
+        assert!(!name(None, "README.md").is_same_document(&name(Some("one"), "README.md")));
+        assert!(name(Some("one"), "a.md").is_same_document(&name(Some("one"), "a.md")));
+    }
 }

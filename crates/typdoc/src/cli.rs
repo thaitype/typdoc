@@ -528,7 +528,7 @@ fn cell_value(doc: &Document, field: &str) -> String {
         "code" => doc.code.clone().unwrap_or_default(),
         "collection" => doc.collection.clone(),
         "schema" => doc.schema.clone(),
-        "namespace" => doc.namespace.clone(),
+        "namespace" => doc.namespace.clone().unwrap_or_default(),
         other => doc
             .fields
             .iter()
@@ -941,7 +941,7 @@ fn toc_json(toc: &Toc, depth: Option<u8>) -> Json {
     json!({
         "document": Json::Object(document_name(
             &toc.path,
-            &toc.namespace,
+            Some(&toc.namespace),
             toc.key.as_deref(),
             toc.project.as_deref(),
         )),
@@ -956,7 +956,7 @@ fn refs_json(report: &RefsReport) -> Json {
     json!({
         "document": Json::Object(document_name(
             &report.document.path,
-            &report.document.namespace,
+            report.document.namespace.as_deref(),
             report.document.key.as_deref(),
             report.document.project.as_deref(),
         )),
@@ -980,7 +980,9 @@ fn reference_json(reference: &RefsReference) -> Json {
     match &reference.other {
         RefOutcome::Resolved(name) => {
             object.insert("path".to_owned(), json!(name.path));
-            object.insert("namespace".to_owned(), json!(name.namespace));
+            if let Some(namespace) = &name.namespace {
+                object.insert("namespace".to_owned(), json!(namespace));
+            }
             if let Some(key) = &name.key {
                 object.insert("key".to_owned(), json!(key));
             }
@@ -1001,18 +1003,20 @@ fn reference_json(reference: &RefsReference) -> Json {
     Json::Object(object)
 }
 
-/// The name of a document: `path` and `namespace` always, `key` only for a coded document,
-/// `project` only for a document of an imported project (design: "`project`... is absent for a
-/// document of this project").
+/// The name of a document: `path` always, `namespace` unless the file is outside every
+/// namespace folder, `key` only for a coded document, `project` only for a document of an
+/// imported project (design: "`project`... is absent for a document of this project").
 fn document_name(
     path: &str,
-    namespace: &str,
+    namespace: Option<&str>,
     key: Option<&str>,
     project: Option<&str>,
 ) -> Map<String, Json> {
     let mut object = Map::new();
     object.insert("path".to_owned(), json!(path));
-    object.insert("namespace".to_owned(), json!(namespace));
+    if let Some(namespace) = namespace {
+        object.insert("namespace".to_owned(), json!(namespace));
+    }
     if let Some(key) = key {
         object.insert("key".to_owned(), json!(key));
     }
@@ -1025,7 +1029,7 @@ fn document_name(
 fn document_json(document: &Document) -> Json {
     let mut object = document_name(
         &document.path,
-        &document.namespace,
+        document.namespace.as_deref(),
         document.key.as_deref(),
         document.project.as_deref(),
     );

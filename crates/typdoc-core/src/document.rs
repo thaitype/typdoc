@@ -17,7 +17,8 @@ pub struct Document {
     /// Relative to the project the document belongs to (its own project folder when `project` is
     /// `None`, the imported project's when it is `Some`).
     pub path: String,
-    pub namespace: String,
+    /// `None` for a file outside every namespace folder, which a `ref.*` condition can reach.
+    pub namespace: Option<String>,
     /// Present only when the schema has a code.
     pub key: Option<String>,
     /// The schema's code, if it has one.

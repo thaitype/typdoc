@@ -75,7 +75,7 @@ Each project has one `.typdoc/config.json` that sets project-wide options, optio
 - An entry without a glob must exist. A matched folder that holds its own `.typdoc` is a config error: namespaces do not nest.
 - Collections, schemas and rule levels are shared by every namespace of a project. A code may be used in every namespace; each namespace numbers its own keys, and a key is unique within its namespace, not across them.
 - A ref or mention with no prefix means the namespace of the document that holds it, whatever the working directory. Prefixes are described under Refs.
-- Files outside every namespace folder belong to no namespace; a relative path can still point at them.
+- Files outside every namespace folder belong to no namespace; a relative path can still point at them. A ref or a body link that reaches such a file resolves like any other: the file exists, so the answer is never `not-found`, and the command goes on. The file is named by its path alone: `refs` and a `ref.*` or `refby.*` condition treat it as a document with no namespace, and `--json` leaves the `namespace` field out, the way it leaves out `key` for a document that has none.
 - Any other key in `config.json`, `name` included, is an unknown key and a config error.
 
 **Collection files.** Each collection is one file, `.typdoc/collections/<name>.json`. The file name without `.json` is the collection's name: ASCII letters, digits, `-` and `_`, so it is unique by construction. The file maps files to a schema. It is configuration only: numbering state lives in `.typdoc/state/`.

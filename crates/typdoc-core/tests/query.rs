@@ -63,7 +63,7 @@ fn number(n: i64) -> Value {
 fn doc(fields: &[(&str, Value)]) -> Document {
     Document {
         path: "doc.md".to_owned(),
-        namespace: "default".to_owned(),
+        namespace: Some("default".to_owned()),
         key: None,
         code: None,
         collection: "docs".to_owned(),

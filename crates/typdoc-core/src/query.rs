@@ -533,7 +533,7 @@ pub(crate) fn field_value(field: &FieldRef, doc: &Document) -> Option<Value> {
         FieldRef::Code => doc.code.clone().map(Value::Text),
         FieldRef::Collection => Some(Value::Text(doc.collection.clone())),
         FieldRef::Schema => Some(Value::Text(doc.schema.clone())),
-        FieldRef::Namespace => Some(Value::Text(doc.namespace.clone())),
+        FieldRef::Namespace => doc.namespace.clone().map(Value::Text),
         FieldRef::Named(name) => doc
             .fields
             .iter()
