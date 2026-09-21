@@ -1,7 +1,7 @@
 # 28: Integers past 64 bits and tagged values fail `frontmatter.parse`
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: None (can start immediately)
 
 ## What this delivers

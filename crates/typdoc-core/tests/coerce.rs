@@ -192,3 +192,27 @@ fn a_type_the_format_does_not_name_leaves_a_value_as_written() {
     assert_eq!(coerced(&kind, "3"), Some(text("3")));
     assert_eq!(coerce(&kind, &items), Some(items));
 }
+
+#[test]
+fn a_number_written_past_64_bits_is_a_float_and_keeps_no_text() {
+    // Nothing holds 123456789012345678901 exactly, so the value is a float to the precision a
+    // float has (the last digit or two are the reader's), not the text.
+    for (written, nearest) in [
+        ("123456789012345678901", 1.2345678901234568e20),
+        ("-9223372036854775809", -9.223372036854776e18),
+    ] {
+        let Some(Value::Number(read)) = coerced(&FieldType::Number, written) else {
+            panic!("{written} is a number");
+        };
+        assert!(read.is_f64(), "{written}");
+        assert!(
+            (read.as_f64().unwrap() / nearest - 1.0).abs() < 1e-15,
+            "{written}"
+        );
+    }
+    // Up to `u64::MAX` it is an integer, exactly.
+    assert_eq!(
+        coerced(&FieldType::Number, "18446744073709551615"),
+        Some(Value::Number(serde_json::Number::from(u64::MAX)))
+    );
+}
