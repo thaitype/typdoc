@@ -1,7 +1,7 @@
 # 19: `typdoc validate --audit`
 
 Type: implementation
-Status: open
+Status: claimed
 Blocked by: 9, 10, 11, 18
 
 ## What this delivers
