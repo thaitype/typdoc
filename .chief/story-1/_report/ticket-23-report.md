@@ -60,14 +60,22 @@ typdoc. It is checked on every fixture project, two of which changed:
 
 - `valid/templates` reads one file more than before, `notes/.e.md`, which `notes/**/*.md` now
   matches. `notes/.hidden/d.md` is still unread: `**` is a wildcard.
-- `broken/files.unreadable` is new; its two symbolic links are counted by neither side.
+- `broken/files.unreadable` is new; its symbolic link to a file is counted by neither side.
 
 ## Fixtures, and how each was made
 
 - `fixtures/broken/files.unreadable/` is committed, with a link to a file (`link.md`, which
-  `*.md` matches) and a link to a folder (`linked`, which `**` would enter). Both survive
-  `git add` as mode 120000 and come back as links in a fresh checkout, which was checked by
-  writing the index out to an empty folder. Its expected set is exactly `["files.unreadable"]`.
+  `*.md` matches). It survives `git add` as mode 120000 and comes back as a link in a fresh
+  checkout, which was checked by writing the index out to an empty folder. Its expected set is
+  exactly `["files.unreadable"]`.
+- A link to a folder is **not** committed. A folder link under `fixtures/` made the public-text
+  gate's `grep` print `Is a directory` on every run, and a gate whose output is noisy stops being
+  read. Changing what the gate scans was the wrong way to make room for a fixture, so the case is
+  built in a temporary folder inside the tests, which is how the file-name cases are built too:
+  `a_symbolic_link_a_match_reaches_is_files_unreadable_and_every_other_file_is_still_checked` in
+  `validate.rs`, and the matching tests in `templates.rs` and `namespaces.rs`. With the fixture's
+  folder link gone, the first of these was shown red by making `enter` stop skipping a folder
+  link, then restored.
 - A name that is not valid UTF-8 is **not** committed. A `\xff` byte in a file name is storable
   but is a poor thing to hand to every checkout of a public repository, so those three cases are
   built in a temporary folder inside the tests instead: a file name and a folder name at
@@ -91,7 +99,8 @@ typdoc. It is checked on every fixture project, two of which changed:
   design's row for `files.unreadable` names an entry a `match` reaches, and a `namespaces` entry
   is not a `match`; refusing is not following, so the sentence about not following a link keeps
   its effect. Doubt: the two walks now answer this one question differently, and a later ticket
-  may want them the same.
+  may want them the same. **Open, and not fixed here:** it is an inconsistency between two
+  entries of the same design, it is left as built, and it does not hold this ticket back.
 - **A symbolic link under `**` that points at a folder whose name begins with a dot is skipped
   with no finding**, because a wildcard reaches no such folder at all, so there is nothing for it
   to have reached.
@@ -131,7 +140,7 @@ and a `namespaces` entry that matches a link produces it as well.
   form in `cli.rs`; every golden case (none runs against a fixture holding a dot name or a link);
   and every fixture project through the invariant sweep.
 - Run: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
-  `scripts/test.sh` (678 passed, 0 failed, 1 ignored, from 667) and the public-text gate, all
+  `scripts/test.sh` (679 passed, 0 failed, 1 ignored, from 667) and the public-text gate, all
   green, every cargo command under the memory ceiling.
 - Each new test was shown able to fail by changing the code it pins and watching it go red, then
   restoring: the file-name dot rule put back, the folder rule's plain-text test removed, the
@@ -143,12 +152,11 @@ and a `namespaces` entry that matches a link produces it as well.
   `index.rs`, red with `use of a disallowed method std::fs::write`; and, separately,
   `std::process::Command::new` inside a new test in `crates/typdoc/tests/validate.rs`, red with
   `use of a disallowed method std::process::Command::new`. Both were removed.
-- `scripts/check-public-text.sh` drops a symbolic link from its repository-wide sweep. Without
-  that, the new fixture's link to a folder made `grep` print `Is a directory` on every run, which
-  is how a gate's output starts being ignored. A link carries no text of its own and what it
-  points at is scanned where that file is itself tracked, so nothing escapes; paths given to the
-  script as arguments are untouched. Its `--self-test` is green, and planting a known-bad phrase
-  in `fixtures/broken/files.unreadable/real/b.md`, behind the link, still turned the gate red.
+- `scripts/check-public-text.sh` is unchanged by this ticket, byte for byte as it was at
+  `c883410`. An earlier commit of this ticket changed its sweep to drop symbolic links; that
+  change is taken back, and the folder link that needed it is no longer a committed fixture (see
+  Fixtures). Run on the tree as it was with the link committed, the old script printed the noise
+  and still exited 0.
 - Raised by the review and acted on: the audit walk's folder test was a two-armed search whose
   second arm could never fire, so it is a plain membership test, in the walk and in the test's
   own count alike; recording a skipped entry is one function that `take` and `enter` both call,
@@ -164,10 +172,20 @@ and a `namespaces` entry that matches a link produces it as well.
   was counted nowhere while the per-collection walk read its siblings. The rule is now by name
   rather than by position, in the crate and in the test's own count, and a test pins it: putting
   the old rule back turns that test red.
-- Two changes in the diff the ticket does not name, and why they belong to it. The `namespaces`
+- One change in the diff the ticket does not name, and why it belongs to it. The `namespaces`
   entries had to move to the folder rule: this ticket takes the leading-dot test out of
   `Segment::matches`, so without the move an entry of `*` would have started matching `.git`,
   the opposite of what the design says; it also settles `.*`, a glob that begins with a dot,
-  which used to reach a dot folder and now does not. And the public-text gate's sweep drops
-  symbolic links, for the reason above; what that loses is the text behind a link whose target
-  is not tracked, which was never part of this repository to begin with.
+  which used to reach a dot folder and now does not.
+
+## Checked again after the build, by running
+
+- `scripts/test.sh`: 679 passed, 0 failed, 1 ignored. `cargo fmt --check` and
+  `cargo clippy --workspace --all-targets -- -D warnings` clean.
+- The five behaviours, in a project written for the check rather than the fixtures: `**` does not
+  enter `.hid/`, a collection that writes `.hid/*.md` does; `*` takes `notes/.dotfile.md`; a link to
+  a file, a link to a folder and a file name that is not valid UTF-8 are each a `files.unreadable`
+  finding while the other files are still answered; `.gitignore` names a file that is still read.
+  `get` on the linked file exits 5. The accounting invariant held on both runs (4 and 5 files
+  read, 4 and 5 counted).
+- `validate` with an unreadable entry exits 2, since the finding is an error.
