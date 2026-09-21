@@ -18,6 +18,8 @@ Story 2's fog is clear when every decision the write path needs is made and writ
 
 <!-- index: one line per resolved ticket, enough to judge relevance, zoom the link for detail -->
 
+- [Signal-handling crates](_tickets/5-signal-handling-crates.md): facts gathered, choice still open. `signal-hook` 0.4.4 is the only candidate that covers re-raising the signal (`low_level::emulate_default_handler`), moving the cleanup off the handler (`Signals`) and running without a runtime, in one dependency; `nix` 0.31.3 is the runner-up and `ctrlc` is ruled out by the re-raise requirement. Registering before the lock is created is possible with all of them, so that gap is closed by the order of the calls, not by the crate. Ticket 6 makes the choice.
+
 ## Not yet specified
 
 - The text (non-`--json`) output of `new`, `set` and `mv`. The design shows `new` printing the bare key on stdout and says nothing about the other two.
