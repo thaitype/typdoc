@@ -101,7 +101,7 @@ impl Case {
             }
             Err(e) => problems.push(format!(
                 "{e} (write the assertions, then regenerate this one golden: {REGENERATE_VAR}={} \
-                 cargo test -p typdoc --test golden regenerate -- --ignored)",
+                 scripts/test.sh -p typdoc --test golden regenerate -- --ignored)",
                 self.id
             )),
         }

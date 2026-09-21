@@ -98,7 +98,7 @@ fn a_read_command_prints_the_same_bytes_on_every_run() {
 /// Regenerates the one golden that `TYPDOC_REGENERATE_GOLDEN` names, `<command>/<case>`.
 /// It is not part of a plain run of the suite, so it shows as ignored, not as passed.
 #[test]
-#[ignore = "regenerates one golden: TYPDOC_REGENERATE_GOLDEN=<command>/<case> cargo test -p typdoc --test golden regenerate -- --ignored"]
+#[ignore = "regenerates one golden: TYPDOC_REGENERATE_GOLDEN=<command>/<case> scripts/test.sh -p typdoc --test golden regenerate -- --ignored"]
 fn regenerate() {
     let id = std::env::var(REGENERATE_VAR)
         .unwrap_or_else(|_| panic!("{REGENERATE_VAR} names the one golden to regenerate"));

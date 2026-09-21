@@ -10,11 +10,13 @@ Design source of truth: `docs/design.md` (original: `typdoc — Generic Markdown
 
 ```bash
 cargo build --workspace
-cargo test --workspace                     # must pass offline
+scripts/test.sh                            # the test suite, under a memory ceiling; must pass offline
+scripts/test.sh <args>                     # the same, with arguments passed to cargo test
+scripts/test.sh --self-test                # proves the ceiling stops a runaway; run whenever the script changes
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 cargo run -p typdoc -- <args>              # run the CLI from the repo
-TYPDOC_REGENERATE_GOLDEN=<command>/<case> cargo test -p typdoc --test golden regenerate -- --ignored   # regenerate one golden, never all
+TYPDOC_REGENERATE_GOLDEN=<command>/<case> scripts/test.sh -p typdoc --test golden regenerate -- --ignored   # regenerate one golden, never all
 scripts/check-public-text.sh               # public-text gate: a floor, not a ceiling (see rule 7)
 scripts/check-public-text.sh --self-test   # proves the gate can fail; run whenever the gate changes
 ```
@@ -52,7 +54,7 @@ scripts/check-public-text.sh --self-test   # proves the gate can fail; run whene
 
 ### Important Development Rules
 
-1. Before every commit, `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` must pass, and so must `scripts/check-public-text.sh` (rule 7).
+1. Before every commit, `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `scripts/test.sh` must pass, and so must `scripts/check-public-text.sh` (rule 7). Run the tests through `scripts/test.sh` and not through `cargo test` directly: it puts the run under a memory ceiling of 6144 MB, which this machine needs because a test that could not end once took all of it and the kernel killed the session driving the run as well. The ceiling is measured rather than guessed: the suite peaks at 229 MB and a cold build followed by a full run peaks at 1451 MB, both at the cgroup, on this four-core machine, so the ceiling leaves about four times the worse case. Those numbers belong to this machine and this core count; a machine that builds more crates at once needs them measured again. A test that hangs or grows without stopping is a fault to report, never a reason to raise the ceiling.
 2. Tests must run offline (remote schemas are mocked). Fixtures live in the repo: it is public, so a real document is copied in only after review, and a test never skips silently when a file is missing.
 3. Writes touch only the frontmatter block and never re-serialize the body (the exception is `mv`, which rewrites link paths).
 4. Always write files via temp file + rename.
