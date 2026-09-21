@@ -85,3 +85,14 @@ fixed by its key and, within one namespace, two documents cannot hold the same k
 twice therefore never appears as a duplicate key. It appears here, as a command about to create a
 file that is already there — which is why the check in case two above is not optional, and why the
 guard belongs in the file system rather than in a comparison typdoc remembers to make.
+
+**Open, raised by [decision 7](7-the-write-seam-and-the-clock.md).** The move that must not
+replace an existing file is a hard link followed by removing the source, because `link` is the
+only call in the standard library that takes a name atomically or fails, while `rename` replaces
+in silence. Between those two steps both names exist and are the same file. A re-run then meets a
+destination that is already there, which [decision 1](1-a-mv-that-fails-partway.md) wants to
+finish the work and this decision wants to refuse at exit 7. They can be told apart: a file and a link to it are the same file, and the system says so, by the identity
+check that already runs before a lock is removed. The rule that follows is that a destination
+which is the same file as the source means the move already happened, so the command removes the
+source and reports success, while a destination that is a different file is the refusal. Not yet
+decided, and both decision 1's re-run story and this decision's rule change if it is taken.

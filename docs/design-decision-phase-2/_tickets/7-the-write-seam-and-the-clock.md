@@ -1,7 +1,7 @@
 # 7: The write seam in `deps`, and `Clock`
 
 Type: wayfinder:grilling
-Status: open
+Status: resolved
 Blocked by: 4
 
 ## Question
@@ -18,4 +18,180 @@ Decide:
 
 ## Answer
 
-<filled in on resolve>
+**Decided: the seam is the file operations, `Deps` gains `fs` and `clock`, and reads stay outside
+it except the three a write itself needs.**
+
+### The seam is the file operations, not the document operations
+
+`Deps` gains one member beside `env`: the operations a write is built from, not `write this
+document`.
+
+The reason is [decision 4](4-what-an-interrupted-write-leaves-behind.md). What it settled is
+policy, not mechanism: a temp file takes a reserved name shape carrying the pid and a random
+part; the walker skips that shape by rule before `match` is consulted; a leftover is a finding at
+`warn` and joins the audit's account of things not read; a command holding a lock may remove
+leftovers in that lock's scope and never by age; the mode of an existing file is carried to the
+temp file before the rename. Every one of those is a rule about *when* and *what*, and every one
+of them is worth a test.
+
+Put the seam at the document level and all of it sits underneath, in the implementation. The fake
+that the tests run against would have to reimplement the rules, so each of those tests would be
+checking the fake. Put the seam at the file operations and the rules sit above it, in
+`typdoc-core`, in the code that ships; the fake only has to pretend to be a filesystem, which is a
+thing with no rules of typdoc's in it.
+
+The second reason is that there is more than one writer. A document, the state file, a lock file
+and the several renames of an `mv` all want the same atomic-write rule. At the document level it
+would be written once per kind of thing written. At the file level it is written once.
+
+**What this costs, and what pays it back.** Every caller can see the temp file, which a
+document-level seam would have hidden, and a test at the seam reads like a filesystem rather than
+like the domain. The answer is not to raise the seam but to put one function above it —
+`write_atomically`, holding decision 4's rules end to end — and have every command call that. The
+temp file then appears in two places, the seam and that function, and in none of the commands.
+
+**The operations.** Create a file that must not already exist; write bytes to an open handle;
+rename, replacing what is there; link a name to an existing file, failing if the name is taken;
+remove a file; create a directory and its parents; read a file's mode and set it; ask whether two
+paths are the same file; and flush a file to storage. Their exact signatures belong to the build.
+Two of them are on the list for reasons worth saying: `create_dir_all` because
+[decision 3](3-one-order-for-taking-locks.md) needs the lock's directory to exist before the
+first lock is taken, and the flush because
+[decision 4](4-what-an-interrupted-write-leaves-behind.md) left durability without `fsync`
+undecided — having it in the seam means that decision can be made either way later without the
+trait changing.
+
+### The rename that must not replace, which decision 15 left open
+
+[Decision 15](15-a-write-whose-destination-already-exists.md) refused a write whose destination
+exists, made the check under the lock, and had `new` create with `O_EXCL` so the file system
+enforces it rather than a check that can go stale. It recorded one gap: `O_EXCL` does not reach
+`mv` or `--renumber`, which put a document in place with a rename, and a plain rename replaces
+silently.
+
+**The operation that fills the gap is a hard link, followed by removing the source.** `link` fails
+when the destination name is taken, and it is the only call in the standard library that creates a
+name atomically without replacing.
+
+Measured 2026-09-21 on this machine, with `std::fs`:
+
+```
+hard_link onto an existing path: Err kind=AlreadyExists raw=Some(17)
+b still holds: "must not be lost"
+hard_link onto a free path: OK, c = "temp"
+after removing the temp, c = "temp"
+
+rename onto an existing path: the old contents are gone, with no error
+```
+
+So a move that must not replace is `hard_link(from, to)` then `remove_file(from)`, and a write
+that is replacing an existing document on purpose stays a plain `rename`. `std::fs::hard_link` is
+already on `typdoc-core`'s banned list and moves behind the seam with the rest.
+
+**Two limits, recorded rather than guarded against.** A hard link cannot cross a filesystem, which
+costs nothing here because the temp file is made in the destination's own directory. A filesystem
+with no hard links at all — some network mounts, FAT — fails the operation. That failure is a
+refusal with nothing written, which is the right way for it to fail, and it is not silently turned
+into a replacing rename.
+
+**One consequence, which is not this ticket's to settle.** Between the link and the removal both
+names exist, and they are the same file. A re-run then meets a destination that is already there,
+which [decision 1](1-a-mv-that-fails-partway.md) wants to finish the work and
+[decision 15](15-a-write-whose-destination-already-exists.md) wants to refuse at exit 7. The two
+can be told apart, because a file and a link to it are the same file and the system says so —
+the same identity check that already runs before a lock is removed, and the one
+[decision 12](12-a-mv-that-changes-only-case.md) is about. The rule that follows is that a
+destination which is the same file as the source means the move already happened and the command
+finishes it, while a destination that is a different file is the exit 7 refusal. That rule amends
+both decisions and is raised there rather than decided here.
+
+### What is banned outside the seam
+
+`typdoc-core`'s `clippy.toml` already bans the writing half of `std::fs` — `write`, `rename`,
+`copy`, `remove_file`, `remove_dir`, `remove_dir_all`, `create_dir`, `create_dir_all`,
+`hard_link`, `set_permissions`, `File::create`, `File::create_new`, `File::set_len`,
+`OpenOptions::open`, `symlink` — each with the reason "the read core changes no file". The list
+is already the right list. What changes is the reason, which becomes that a write goes through
+the seam, and it stops being true that the core changes no file.
+
+The ban keeps covering test code, as the environment's does, because a test that reaches around
+the seam is exactly the test that stops proving anything about the code that ships.
+
+**What the lint does not catch, said plainly.** It names functions. It cannot see bytes written
+through `io::Write` to a handle that is already open. It holds anyway, because the only way to
+get a writable handle is through one of the banned constructors, so the handle cannot exist
+without a banned call having been made first. If a later change gives the core a writable handle
+by some other route, this lint will not be what catches it.
+
+The real implementation lives in `typdoc`, beside `Env`'s, and the fake lives in
+`typdoc-testkit`.
+
+### What the tests use: both, against one table
+
+A fake in memory and a real temporary directory, with the same scenarios run against both.
+
+**The fake exists for the failures a real filesystem will not produce on demand:** no space left,
+a permission refused, a rename across devices, a link refused because the name is taken, and a
+run stopped between any two operations — which is the failure decisions 1 and 4 are about and the
+one no real directory will stage. The fake can be told to fail the third call, or the call after
+the temp file is written and before it is renamed, and a test can then look at what is on disk.
+
+**The real directory exists because a fake proves nothing about the implementation.** The same
+scenario table runs against a real temporary directory for every case a real filesystem can be
+made to reach, so the fake is held to what the real one does rather than to what it was written
+to do. A case the real filesystem cannot reach is marked in the table as fake-only, and the table
+is the record of which those are.
+
+**What neither covers, recorded as not covered:** a power cut, and a `SIGKILL` between the write
+and the rename at the level of the system call. Decision 4 already says v1 does not promise the
+absence of a leftover for exactly this reason. Signals that can be caught are tested as story 1's
+decision 9 settled, by holding a lock in a shipped binary with no test code in it, and that is a
+different mechanism from this seam and stays where it is.
+
+### `Clock`
+
+**The clock gives an instant together with the offset to write it in; the formatting is
+typdoc's.** `auto: create` and `auto: update` are `datetime` fields, and the design's `datetime`
+is ISO 8601 with an offset, `2026-09-19T14:30:00+07:00`. If the clock returned the finished
+string, typdoc's formatting would have no test: the test would be checking a value it had handed
+in. Returning the instant and the offset keeps the formatting in typdoc where a golden file can
+hold it to its word, and keeps the offset injectable, so a test's output does not change with the
+machine it runs on.
+
+**Resolution is one second**, which is what the design's own `datetime` shows and what its format
+can carry; a finer instant would be written away and would not read back as itself.
+
+**In tests the clock is fixed**, so a golden file can contain a time. The build picks the value;
+it should be one that is obviously not now.
+
+**Which offset the shipped clock reports — the machine's or UTC — is not decided here.** The seam
+does not force it either way, which is the property wanted at this stage. It is user-visible: the
+same document edited by two people in different places would carry different offsets, which
+changes no comparison, since `datetime` compares as instants, but does change what a diff looks
+like. Recorded as open.
+
+### Reads: the seam covers writes, and the three reads a write makes
+
+Story 1 reads the filesystem directly, in `index`, `namespaces`, `config`, `schema`, `state` and
+`project`. That stays. Routing it through a seam would be a large change to finished, tested code
+that no decision in this story needs.
+
+The asymmetry is deliberate and this is the reason: a read that goes wrong gives a wrong answer,
+and the next run gives the right one; a write that goes wrong damages a file the user owns, and
+there is no next run that undoes it. They deserve different amounts of ceremony.
+
+**The exception is the reads a write makes to decide what to do**, and there are three: whether
+the destination exists, what an existing file's mode is, and whether two paths are the same file.
+All three are on the seam. They are there because the write path's own rules depend on them —
+decision 15's refusal, decision 4's mode carry-across, and the re-run rule above — and a fake
+that could not answer them could not be used to test any of those rules.
+
+**The cost, stated:** a read failure in the project-wide reading still cannot be provoked in a
+test. That is unchanged from story 1, and no decision in story 2 rests on it.
+
+### Written into `docs/design.md`
+
+Nothing. Every part of this decision is internal: which trait the program writes through, what the
+lint forbids, and what the tests use. The one user-visible consequence — what happens when a `mv`
+is re-run after it was stopped between the link and the removal — belongs to decisions 1 and 15
+and is raised there.
