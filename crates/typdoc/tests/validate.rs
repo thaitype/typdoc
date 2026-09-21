@@ -174,9 +174,11 @@ fn audit_alone_builds_a_report_with_summary_audit_and_unreported() {
     let object = ran.stdout_json();
     assert_eq!(object["summary"]["audit"], json!(true));
     assert!(object["summary"]["unreported"].is_object(), "{object}");
+    assert!(object["summary"]["overlapping"].is_u64(), "{object}");
     assert!(object["audit"]["collections"].is_array(), "{object}");
     assert!(object["audit"]["uncollected"].is_array(), "{object}");
     assert!(object["audit"]["no_frontmatter"].is_array(), "{object}");
+    assert!(object["audit"]["overlapping"].is_array(), "{object}");
 }
 
 /// One collection (`notes/*.md`), a document with an unknown field under a project that turns
@@ -387,6 +389,27 @@ fn the_text_form_of_audit_prints_the_summary_and_the_two_lists() {
         in no collection: README.md (1)\n\
         \n\
         no frontmatter: notes/b.md (1)\n";
+    assert_eq!(ran.stdout, expected);
+}
+
+/// The text form accounts for an overlapping file the same way the JSON does (Ticket 19,
+/// contract item 8): `total` in the header includes it, and it gets its own line, parallel to
+/// `in no collection` and `no frontmatter`, so a reader of the text sees the same total a reader
+/// of `summary.overlapping` plus `summary.checked.documents` plus `summary.unreported` does.
+#[test]
+fn the_text_form_of_audit_accounts_for_an_overlapping_file() {
+    let project = overlap_and_a_clean_sibling();
+
+    let ran = Spawn::args(["validate", "--audit"])
+        .cwd(project.path())
+        .run();
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let expected = "typdoc audit: 1 collections, 2 files (0 in no collection)\n\
+        \n\
+        one  1 files   frontmatter.unknown 1 warn\n\
+        \n\
+        matched by more than one collection: a.md (1)\n";
     assert_eq!(ran.stdout, expected);
 }
 
@@ -728,6 +751,41 @@ fn validate_on_the_whole_project_does_not_count_an_overlapping_document_as_check
     assert!(rules.contains(&"collections.overlap"), "{findings:?}");
     assert!(rules.contains(&"frontmatter.unknown"), "{findings:?}");
     assert_eq!(object["summary"]["checked"]["documents"], json!(1));
+}
+
+/// Ticket 19 (contract item 8, the `overlapping` decision): under `--audit` the overlapping
+/// `a.md` is counted in `summary.overlapping` and listed in `audit.overlapping`, beside
+/// `summary.unreported` and not inside it (design, the paragraph beginning "The summary of
+/// `validate`": "counted as `overlapping`, beside `unreported` and not inside it"). It is not in
+/// `audit.uncollected` (it belongs to collections, plural, not to none) or `audit.no_frontmatter`
+/// (its frontmatter is never read), and `checked.documents` stays 1, only `b.md`.
+#[test]
+fn audit_counts_an_overlapping_file_beside_unreported_not_inside_it() {
+    let project = overlap_and_a_clean_sibling();
+
+    let ran = Spawn::args(["validate", "--audit", "--json"])
+        .cwd(project.path())
+        .run();
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    assert_eq!(object["summary"]["checked"]["documents"], json!(1));
+    assert_eq!(
+        object["summary"]["unreported"],
+        json!({ "uncollected": 0, "no_frontmatter": 0 })
+    );
+    assert_eq!(object["summary"]["overlapping"], json!(1));
+    assert_eq!(object["audit"]["uncollected"], json!([]));
+    assert_eq!(object["audit"]["no_frontmatter"], json!([]));
+    assert_eq!(object["audit"]["overlapping"], json!(["a.md"]));
+    let findings = object["findings"].as_array().unwrap();
+    assert!(
+        findings
+            .iter()
+            .any(|f| f["rule"] == json!("collections.overlap") && f["path"] == json!("a.md")),
+        "an overlapping file is still reported under collections.overlap in audit mode: \
+         {findings:?}"
+    );
 }
 
 /// Unlike an overlap, a duplicate key is not ambiguous about which collection or key is
@@ -1417,23 +1475,24 @@ fn independent_document_count(project: &std::path::Path, namespaces: &[&str]) ->
 }
 
 /// The accounting invariant (contract item 8): in `--audit --json`, `summary.checked.documents`
-/// plus `summary.unreported.uncollected` plus `summary.unreported.no_frontmatter` equals the
-/// number of `.md` files the run reads, counted independently of typdoc (`count_markdown_files`,
-/// a plain walk of the folder, never `typdoc_core::index`). Checked on every project fixture that
-/// loads: a `broken/config.*` fixture never reaches a report at all (ticket 8: every gathered
-/// config error today turns the whole load into a failure), so it is asserted to fail rather than
-/// skipped.
+/// plus every count of what was not checked — `summary.unreported.uncollected`,
+/// `summary.unreported.no_frontmatter` and `summary.overlapping` — equals the number of `.md`
+/// files the run reads, counted independently of typdoc (`count_markdown_files`, a plain walk of
+/// the folder, never `typdoc_core::index`). Checked on every project fixture that loads: a
+/// `broken/config.*` fixture never reaches a report at all (ticket 8: every gathered config error
+/// today turns the whole load into a failure), so it is asserted to fail rather than skipped.
 ///
-/// One fixture does not hold the plain three-way sum: `broken/collections.overlap` has a file
-/// matched by two collections, which ticket 9 already takes out of the index entirely. Such a
-/// file is not `checked` (there is no one schema to have checked it against), not `uncollected`
-/// (it belongs to collections, plural, just not to one in particular — the opposite problem from
-/// belonging to none), and not `no_frontmatter` (that list is drawn from the same index the file
-/// is missing from). It is instead an ordinary `collections.overlap` finding, in `--audit`
-/// exactly as in a plain run. That is a real gap in the three-way sum the contract states, not a
-/// fixture to special-case away: the assertion below names it by counting `collections.overlap`
-/// findings and adding them back, so the one fixture that has any is pinned by the same formula
-/// as every other fixture, which has none.
+/// `summary.overlapping` is read from the tool's own output, not counted here from `findings`: a
+/// test that counted `collections.overlap` findings itself would check that overlap produces a
+/// finding, which a different test already does, and not that the tool reports the count in the
+/// summary, which is what contract item 8 actually asks for. `broken/collections.overlap` is the
+/// fixture that gives this term a nonzero value: it has one file matched by two collections, and
+/// that file is not `checked` (there is no one schema to have checked it against), not
+/// `uncollected` (it belongs to collections, plural, just not to one in particular — the opposite
+/// problem from belonging to none) and not `no_frontmatter` (that list is drawn from the same
+/// index the file is missing from). It is reported as an ordinary `collections.overlap` finding,
+/// in `--audit` exactly as in a plain run, and it is `summary.overlapping`'s job to say so where a
+/// reader of the summary sees it.
 #[test]
 fn the_accounting_invariant_holds_on_every_fixture_project() {
     let root = fixture("");
@@ -1490,18 +1549,16 @@ fn the_accounting_invariant_holds_on_every_fixture_project() {
             let no_frontmatter = object["summary"]["unreported"]["no_frontmatter"]
                 .as_u64()
                 .unwrap() as usize;
-            let overlaps = object["findings"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter(|f| f["rule"] == json!("collections.overlap"))
-                .count();
+            let overlapping = object["summary"]["overlapping"]
+                .as_u64()
+                .unwrap_or_else(|| panic!("{group}/{name}: {object}"))
+                as usize;
             assert_eq!(
                 independent,
-                checked + uncollected + no_frontmatter + overlaps,
+                checked + uncollected + no_frontmatter + overlapping,
                 "{group}/{name}: independently counted {independent} .md files, typdoc \
                  reports checked={checked} uncollected={uncollected} \
-                 no_frontmatter={no_frontmatter} collections.overlap={overlaps}: {object}"
+                 no_frontmatter={no_frontmatter} overlapping={overlapping}: {object}"
             );
         }
     }

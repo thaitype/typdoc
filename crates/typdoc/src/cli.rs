@@ -660,6 +660,12 @@ fn validate_json(report: &ValidateReport) -> Json {
                 "no_frontmatter": audit.no_frontmatter.len(),
             }),
         );
+        // Beside `unreported`, not inside it (design, the paragraph beginning "The summary of
+        // `validate`"): an overlapping file is reported under `collections.overlap`, so it is
+        // not outside `findings`, which is what `unreported` means. Contract item 8's own
+        // accounting equation reads `summary.overlapping` directly, so this is the number a
+        // caller who only reads the summary needs to reconcile the run.
+        summary.insert("overlapping".to_owned(), json!(audit.overlapping.len()));
     }
     let findings: Vec<Json> = report.findings.iter().map(finding_json).collect();
     let mut object = Map::new();
@@ -673,8 +679,8 @@ fn validate_json(report: &ValidateReport) -> Json {
 
 /// The `audit` object of `--json`'s report (design, JSON output, "Audit"): `collections`, one
 /// `{ "name", "documents" }` per collection with at least one document in scope, sorted by name
-/// (already sorted by `AuditReport::collections`); `uncollected` and `no_frontmatter`, each the
-/// sorted `path` of every file the design names.
+/// (already sorted by `AuditReport::collections`); `uncollected`, `no_frontmatter` and
+/// `overlapping`, each the sorted `path` of every file the design names.
 fn audit_json(audit: &AuditReport) -> Json {
     let collections: Vec<Json> = audit
         .collections
@@ -685,6 +691,7 @@ fn audit_json(audit: &AuditReport) -> Json {
         "collections": collections,
         "uncollected": audit.uncollected,
         "no_frontmatter": audit.no_frontmatter,
+        "overlapping": audit.overlapping,
     })
 }
 
@@ -706,8 +713,12 @@ fn severity_name(level: Severity) -> &'static str {
 
 /// The text form of `--audit` (design, Audit mode, the worked `typdoc audit: ...` example): a
 /// header, one line per collection (its document count and, grouped by rule, the count and level
-/// of its findings, or `clean` when it has none), and a line naming every file in no collection
-/// and every file with no frontmatter, when either list is not empty. The design's own worked
+/// of its findings, or `clean` when it has none), and a line naming every file in no collection,
+/// every file with no frontmatter and every file matched by more than one collection, when the
+/// list is not empty. `overlapping` is not part of the design's worked example (contract item 8
+/// is what gives it its own list), so this function lists it the same way it already lists
+/// `no_frontmatter` beyond that example: one line, only when the list holds something, so the
+/// text's own total agrees with `summary.overlapping` in the JSON. The design's own worked
 /// example is not spaced by an algorithm this reads out consistently (`precedents`/`learnings`,
 /// the same length short of their suffix, are padded two different amounts there), so the padding
 /// here is this function's own, simple and deterministic: the name column is as wide as the
@@ -721,7 +732,14 @@ fn audit_text(report: &ValidateReport) -> String {
     let Some(audit) = &report.audit else {
         return String::new();
     };
-    let total = report.documents + audit.uncollected.len() + audit.no_frontmatter.len();
+    // Contract item 8's equation, in text form: `checked.documents` plus every count of what was
+    // not checked, `uncollected`, `no_frontmatter` and `overlapping`, is the number of files the
+    // run read. Leaving `overlapping` out of `total` would make a reader of the text see fewer
+    // files than a reader of the JSON's `summary` does.
+    let total = report.documents
+        + audit.uncollected.len()
+        + audit.no_frontmatter.len()
+        + audit.overlapping.len();
     let mut out = format!(
         "typdoc audit: {} collections, {total} files ({} in no collection)\n\n",
         audit.collections.len(),
@@ -754,6 +772,14 @@ fn audit_text(report: &ValidateReport) -> String {
             "no frontmatter: {} ({})\n",
             audit.no_frontmatter.join(", "),
             audit.no_frontmatter.len()
+        ));
+    }
+    if !audit.overlapping.is_empty() {
+        out.push('\n');
+        out.push_str(&format!(
+            "matched by more than one collection: {} ({})\n",
+            audit.overlapping.join(", "),
+            audit.overlapping.len()
         ));
     }
     out
