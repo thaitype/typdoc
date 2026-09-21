@@ -6,6 +6,11 @@ The checks that run across the commands rather than inside one: the registry aga
 ## Outcome
 done
 
+## Resolved out of order, on purpose
+This ticket is blocked by the one before it, and that one is still open. It was built and resolved anyway, which was decided outside this ticket and is not a judgement made inside it. It is written here so that nobody reading the order later takes the rule about blocking edges to be one that is kept sometimes and not others: it was set aside once, knowingly, and the reason was that the open question in the ticket before it is about a number in one report's summary, not about anything this ticket checks.
+
+The reach of that open question was measured rather than assumed: no golden file holds the shape of an audit's summary, and the only place that shape is asserted is the tests of `validate` and one line of usage in the harness for the design's shell examples. So if the answer changes that shape, what has to be redone is those, and not the cross-command checks in this ticket.
+
 ## Decision
 Nothing the design or the contract asks for turned out to be impossible. The design does not say the following, so each is a reading that a later ticket may change, with the doubt that remains.
 
