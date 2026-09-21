@@ -363,7 +363,16 @@ fn blank(text: &mut String, span: Range<usize>) {
             *b = b' ';
         }
     }
-    *text = String::from_utf8(bytes).expect("only ascii space was written over full characters");
+    #[expect(
+        clippy::expect_used,
+        reason = "both callers pass a span that `pulldown_cmark` reported for a parse of this text or \
+                  of `body`, which it equals byte for byte outside the spans already blanked, so both \
+                  ends lie on character boundaries; the loop above replaces every byte in the span \
+                  that is not a line ending with an ASCII space, so no character is cut in part"
+    )]
+    let blanked =
+        String::from_utf8(bytes).expect("only ascii space was written over full characters");
+    *text = blanked;
 }
 
 /// Text outside `excluded` that looks like `[t](inner)`, `![t](inner)` or `[label]: inner` but

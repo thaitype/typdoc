@@ -179,6 +179,12 @@ pub fn discover_for(arg: Argument, env: &dyn Env) -> Result<(PathBuf, DocumentAr
                 .find(|candidate| config_file(candidate).is_file())
                 .map(Path::to_owned)
                 .ok_or_else(|| Error::NoProject { from: dir.clone() })?;
+            #[expect(
+                clippy::expect_used,
+                reason = "`root` is one of `dir.ancestors()`, and `dir` is the parent of `absolute` (or \
+                          `absolute` itself when it has none), so `root` is a leading run of the \
+                          components of `absolute`, which is what `strip_prefix` asks for"
+            )]
             let relative = absolute
                 .strip_prefix(&root)
                 .expect("root came from walking up the file's own folder, so it is a prefix");
