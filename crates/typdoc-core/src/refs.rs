@@ -344,6 +344,14 @@ fn namespace_named(namespaces: &[Namespace], name: &str) -> Option<usize> {
 
 /// The part of a key before its dash: `WF` in `WF-3`. Only called once `looks_like_key` has
 /// already shown a dash is there.
+#[expect(
+    clippy::expect_used,
+    reason = "each of the three calls first checks that the text has the key shape, which needs a \
+              dash: `resolve_into_project` and `classify` in this file test `looks_like_key(..)` on the \
+              same string in the `if` that holds the call, and `Project::mention_missing` passes the \
+              part after the last `:` of a `Mention.written`, which `links::mention_shape` accepts \
+              only when `looks_like_key_shape` holds for that same part"
+)]
 pub(crate) fn code_of(key: &str) -> &str {
     key.split_once('-')
         .map(|(code, _)| code)
@@ -354,6 +362,13 @@ pub(crate) fn code_of(key: &str) -> &str {
 /// sibling-prefixed one.
 fn resolve_key(namespace: usize, key: &str, index: &Index) -> Outcome {
     let path = index.key(namespace, key).ok_or(Reason::NotFound)?;
+    #[expect(
+        clippy::expect_used,
+        reason = "`path` comes from `index.key(..)` on the same `index`; `Index::build` binds a key \
+                  to a path in the same step that inserts the path's entry, removes both together \
+                  for a path more than one collection matches, and `Index` has no other mutator, so \
+                  a path in a key group has an entry"
+    )]
     let entry = index
         .get(path)
         .expect("a key in the key index always has a matching entry");
