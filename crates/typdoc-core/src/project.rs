@@ -177,6 +177,10 @@ pub struct Project {
     /// file directly in a coded collection's folder that fits no collection there. It is
     /// configurable, so its level is decided when `validate` runs, not here.
     stray_files: Vec<(String, String)>,
+    /// Every collection's `match`, as the index read it. `--audit`'s own walk of the folders
+    /// needs them to know which folder whose name begins with `.` a `match` names as plain
+    /// text, and so which one a run reads at all.
+    members: Vec<Member>,
     /// Every alias of `config.imports` (the project's own, merged with the machine file's),
     /// resolved once at load: absent on this machine, or the imported project itself, loaded
     /// with its own imports left unread (design: "imports of imports are ignored" — one level
@@ -429,6 +433,7 @@ impl Project {
             collections: loaded,
             schema_findings,
             stray_files,
+            members,
             imports,
             state: state_by_namespace,
         })
@@ -1487,6 +1492,21 @@ impl Project {
                     overlap_message(collections),
                 ));
             }
+            // `files.unreadable`: an entry a `match` reached and the walk could not read. It is
+            // no document, so it is in none of the counts above; the run answered about every
+            // file beside it, which is why it is a finding and not a failure.
+            for (path, namespace_idx, why) in self.index.unreadable() {
+                let namespace = &self.config.namespaces[namespace_idx].name;
+                if !scope.contains(namespace) {
+                    continue;
+                }
+                namespaces.insert(namespace.clone());
+                findings.push(validate::unreadable_finding(
+                    path,
+                    namespace,
+                    why.to_owned(),
+                ));
+            }
             for (path, namespace) in &self.stray_files {
                 if !scope.contains(namespace) {
                     continue;
@@ -1627,7 +1647,7 @@ impl Project {
         collections.sort_by(|a, b| a.name.cmp(&b.name));
         let mut uncollected = Vec::new();
         for (path, namespace_idx) in
-            crate::index::all_markdown_files(&self.root, &self.config.namespaces)?
+            crate::index::all_markdown_files(&self.root, &self.config.namespaces, &self.members)?
         {
             let namespace = &self.config.namespaces[namespace_idx].name;
             if !scope.contains(namespace) {

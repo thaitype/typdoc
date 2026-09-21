@@ -378,8 +378,10 @@ fn a_file_matched_by_two_collections_is_refused_by_get() {
     error_of(&ran, 2);
 }
 
+/// The link is skipped rather than followed, so the name it goes by is in no collection and
+/// `get` has no document to answer with (`validate` reports it under `files.unreadable`).
 #[test]
-fn a_symbolic_link_that_a_collection_matches_is_refused_and_not_followed() {
+fn a_symbolic_link_that_a_collection_matches_is_skipped_and_not_followed() {
     let project = Scratch::project(&NOTES);
     project.file("real.txt", "---\ntitle: x\n---\n");
     project.symlink("link.md", "real.txt");
@@ -388,7 +390,7 @@ fn a_symbolic_link_that_a_collection_matches_is_refused_and_not_followed() {
         .cwd(project.path())
         .run();
 
-    error_of(&ran, 6);
+    error_of(&ran, 5);
 }
 
 #[test]
@@ -433,8 +435,9 @@ fn a_file_below_the_project_folder_is_not_in_a_collection_that_matches_names_the
     error_of(&ran, 5);
 }
 
+/// One name that cannot be read denies no answer about the file beside it.
 #[test]
-fn a_name_that_is_not_utf8_and_that_a_collection_matches_is_refused() {
+fn a_name_that_is_not_utf8_and_that_a_collection_matches_is_skipped() {
     let project = Scratch::project(&NOTES);
     project.file("a.md", "---\ntitle: x\n---\n");
     project.file_named_by_bytes(b"\xff.md", "");
@@ -443,7 +446,7 @@ fn a_name_that_is_not_utf8_and_that_a_collection_matches_is_refused() {
         .cwd(project.path())
         .run();
 
-    error_of(&ran, 6);
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
 }
 
 #[test]

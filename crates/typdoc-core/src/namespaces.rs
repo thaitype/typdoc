@@ -87,7 +87,8 @@ fn folders(root: &Path) -> Result<Vec<Folder>, Error> {
 }
 
 /// The folders one entry names, by name. An entry that is not one segment, or a name that
-/// names no folder, is reported.
+/// names no folder, is reported. A folder whose name begins with `.` is reached by an entry of
+/// plain text and by no wildcard, the same answer a collection's `match` gives.
 fn entry_folders(
     entry: &str,
     listing: &[Folder],
@@ -112,7 +113,7 @@ fn entry_folders(
         Err(e) => return refuse(report, &format!("cannot be read: {e}")),
     };
     let mut found = Vec::new();
-    for candidate in listing.iter().filter(|c| segment.matches(&c.name)) {
+    for candidate in listing.iter().filter(|c| segment.matches_folder(&c.name)) {
         if candidate.symlink {
             return Err(Error::symbolic_link(&candidate.path));
         }

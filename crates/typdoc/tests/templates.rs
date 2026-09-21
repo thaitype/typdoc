@@ -45,6 +45,7 @@ fn the_fixture_holds_what_each_template_matches_and_nothing_else() {
     for (path, collection) in [
         ("README.md", "top"),
         ("notes/a.md", "notes"),
+        ("notes/.e.md", "notes"),
         ("notes/deep/b.md", "notes"),
         ("notes/deep/er/c.md", "notes"),
         ("tickets/WF-1.md", "tickets"),
@@ -58,7 +59,6 @@ fn the_fixture_holds_what_each_template_matches_and_nothing_else() {
     }
     for path in [
         "notes/.hidden/d.md",
-        "notes/.e.md",
         "tickets/README.md",
         "tickets/wf-2.md",
         "tickets/WF-3a.md",
@@ -149,31 +149,54 @@ fn a_double_star_at_the_end_is_every_file_below_the_folder() {
 }
 
 #[test]
-fn a_wildcard_never_matches_a_name_that_starts_with_a_dot() {
-    let project = with_match(
-        "**/*.md",
-        &[
-            ".hidden.md",
-            ".folder/a.md",
-            "a/.b/c.md",
-            "a/.d.md",
-            "a/e.md",
-        ],
-    );
+fn a_glob_does_not_enter_a_folder_whose_name_begins_with_a_dot() {
+    let project = with_match("**/*.md", &[".folder/a.md", "a/.b/c.md", "a/e.md"]);
 
     assert!(found(&project, "a/e.md"));
-    for path in [".hidden.md", ".folder/a.md", "a/.b/c.md", "a/.d.md"] {
+    for path in [".folder/a.md", "a/.b/c.md"] {
         assert!(!found(&project, path), "{path}");
     }
 }
 
+/// The leading-dot rule is about folders, not file names: a file is named by the template that
+/// reaches it rather than found by walking into it.
 #[test]
-fn a_name_written_with_a_dot_in_the_template_is_matched() {
+fn a_star_matches_a_leading_dot_in_a_file_name() {
+    let project = with_match("**/*.md", &[".hidden.md", "a/.d.md", "a/e.md"]);
+
+    for path in [".hidden.md", "a/.d.md", "a/e.md"] {
+        assert!(found(&project, path), "{path}");
+    }
+}
+
+#[test]
+fn a_literal_segment_enters_a_folder_whose_name_begins_with_a_dot() {
     let project = with_match(".docs/*.md", &[".docs/a.md", ".docs/.b.md", "docs/a.md"]);
 
     assert!(found(&project, ".docs/a.md"));
-    assert!(!found(&project, ".docs/.b.md"));
+    assert!(found(&project, ".docs/.b.md"));
     assert!(!found(&project, "docs/a.md"));
+}
+
+/// The pair that tells the two halves of the rule apart: one folder, reached by a segment that
+/// holds a `*` and by one that is plain text.
+#[test]
+fn a_folder_segment_with_a_star_does_not_enter_a_dot_folder_a_literal_one_enters() {
+    let glob = with_match(".*/x.md", &[".a/x.md"]);
+    let literal = with_match(".a/x.md", &[".a/x.md"]);
+
+    assert!(!found(&glob, ".a/x.md"));
+    assert!(found(&literal, ".a/x.md"));
+}
+
+/// `.gitignore` is not read: what a version control system hides is a different question from
+/// what a project declares.
+#[test]
+fn a_gitignore_does_not_keep_a_file_out_of_a_collection() {
+    let project = with_match("*.md", &["a.md"]);
+    project.file(".gitignore", "a.md\n*.md\n");
+
+    assert!(found(&project, "a.md"));
 }
 
 #[test]
@@ -202,14 +225,15 @@ fn a_folder_with_a_typdoc_folder_and_no_config_is_not_a_project() {
     assert!(found(&project, "inner/c.md"));
 }
 
+/// A symbolic link to a folder is not followed, so a run cannot leave the project or read one
+/// file twice under two names; the file behind the link keeps its own name and its own answer.
 #[test]
-fn a_symbolic_link_to_a_folder_that_a_double_star_would_enter_is_refused() {
+fn a_symbolic_link_to_a_folder_that_a_double_star_would_enter_is_not_followed() {
     let project = with_match("**/*.md", &["real/a.md"]);
     project.symlink("linked", "real");
 
-    let ran = get(project.path(), "real/a.md");
-
-    assert_eq!(ran.code, 6, "{}", ran.stderr);
+    assert!(found(&project, "real/a.md"));
+    assert!(!found(&project, "linked/a.md"));
 }
 
 #[test]
@@ -221,21 +245,20 @@ fn a_symbolic_link_to_a_file_that_the_template_does_not_match_is_left_alone() {
 }
 
 #[test]
-fn a_symbolic_link_to_a_file_that_the_template_matches_is_refused() {
-    let project = with_match("**/*.md", &["real.txt"]);
+fn a_symbolic_link_to_a_file_that_the_template_matches_is_skipped() {
+    let project = with_match("**/*.md", &["a.md", "real.txt"]);
     project.symlink("link.md", "real.txt");
 
-    assert_eq!(get(project.path(), "link.md").code, 6);
+    assert!(found(&project, "a.md"));
+    assert!(!found(&project, "link.md"));
 }
 
 #[test]
-fn a_folder_whose_name_is_not_utf8_under_a_double_star_is_refused() {
+fn a_folder_whose_name_is_not_utf8_under_a_double_star_is_skipped() {
     let project = with_match("**/*.md", &["a.md"]);
     project.file_named_by_bytes(b"\xff/b.md", "");
 
-    let ran = get(project.path(), "a.md");
-
-    assert_eq!(ran.code, 6, "{}", ran.stderr);
+    assert!(found(&project, "a.md"));
 }
 
 /// The design never settles a `collections.overlap` by precedence, so `get` has no collection to

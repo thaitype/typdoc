@@ -1,5 +1,5 @@
-use std::collections::BTreeMap;
 use std::collections::btree_map::Entry as MapEntry;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -39,6 +39,11 @@ pub struct Index {
     /// is no one collection to answer `get` or `toc` with, and `collections.overlap`'s finding
     /// is built from this map instead of from an entry.
     overlaps: BTreeMap<String, (usize, Vec<String>)>,
+    /// Every directory entry a `match` reached and the walk could not read: its path from the
+    /// project folder, its namespace and why. `files.unreadable`'s finding is built from this,
+    /// and the entry itself is in none of the maps above, since nothing was read from it. The
+    /// same entry is reached once per collection whose template covers it and is recorded once.
+    unreadable: BTreeMap<String, (usize, &'static str)>,
 }
 
 impl Index {
@@ -90,6 +95,14 @@ impl Index {
             .map(|(path, (namespace, names))| (path.as_str(), *namespace, names.as_slice()))
     }
 
+    /// Every entry a `match` reached and the walk could not read, by path, with its namespace
+    /// and the reason, for `files.unreadable`'s findings.
+    pub fn unreadable(&self) -> impl Iterator<Item = (&str, usize, &str)> {
+        self.unreadable
+            .iter()
+            .map(|(path, (namespace, why))| (path.as_str(), *namespace, *why))
+    }
+
     /// Walks each namespace folder once for each collection, following only the folders its
     /// template names. A file matched by more than one collection is never settled by
     /// precedence, as the design asks: it is recorded in `overlaps` and, once every collection
@@ -104,14 +117,20 @@ impl Index {
         for (namespace, space) in namespaces.iter().enumerate() {
             let base = root.join(&space.folder);
             for (collection, member) in members.iter().enumerate() {
-                let mut found = BTreeMap::new();
+                let mut found = Found::default();
                 walk(&base, "", member.template.steps(), &mut found)?;
-                for (below, file) in found {
-                    let path = if space.folder.is_empty() {
-                        below.clone()
+                let at = |below: &str| {
+                    if space.folder.is_empty() {
+                        below.to_owned()
                     } else {
                         format!("{}/{below}", space.folder)
-                    };
+                    }
+                };
+                for (below, why) in found.unreadable {
+                    index.unreadable.insert(at(&below), (namespace, why));
+                }
+                for (below, file) in found.files {
+                    let path = at(&below);
                     match index.entries.entry(path.clone()) {
                         MapEntry::Occupied(existing) => {
                             let ns = existing.get().namespace;
@@ -208,7 +227,9 @@ pub(crate) fn stray_files(
                 let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
                     continue;
                 };
-                if name.starts_with('.') || segments.iter().any(|segment| segment.matches(&name)) {
+                // A file name that begins with `.` is not passed over: the leading-dot rule is
+                // about the folders a walk enters, and a `*` in a template matches such a name.
+                if segments.iter().any(|segment| segment.matches(&name)) {
                     continue;
                 }
                 let below = if prefix.is_empty() {
@@ -228,60 +249,81 @@ pub(crate) fn stray_files(
     Ok(found)
 }
 
-/// Every `.md` file below a namespace folder, by its path from the project folder and the
-/// namespace it belongs to: for `validate --audit`'s `uncollected` list, which asks which files
-/// no collection covers, and so cannot be built from what a collection's own `match` template
-/// already names — it has to be an independent walk of the folder itself. It follows the same
-/// rules the per-collection `walk` below already does, so "which files a run reads" reads one way
-/// everywhere in this crate: a folder or a file whose name starts with `.` is never entered or
-/// listed, a symbolic link stops the run wherever one is reached (`Error::symbolic_link`), and a
-/// folder that holds its own `.typdoc/config.json` is a separate project and is never entered.
+/// Every `.md` file below a namespace folder that a run reads, by its path from the project
+/// folder and the namespace it belongs to: for `validate --audit`'s `uncollected` list, which
+/// asks which files no collection covers, and so cannot be built from what a collection's own
+/// `match` template already names — it has to be an independent walk of the folder itself. It
+/// answers "which files a run reads" the same way the per-collection `walk` below does, so the
+/// two read one way everywhere in this crate: a folder whose name begins with `.` is entered
+/// only where a `match` writes that name out as plain text (`literal_folder_names`, gathered
+/// from `members` here), a file whose name begins with `.` is listed like any other, a symbolic
+/// link is neither
+/// followed nor listed, a name that is not valid UTF-8 is skipped, and a folder that holds its
+/// own `.typdoc/config.json` is a separate project and is never entered. A symbolic link and a
+/// name that is not UTF-8 are skipped silently here and reported only where a `match` reaches
+/// them (`files.unreadable`, whose row in the design's table is about an entry a `match`
+/// reaches), so this walk adds no finding of its own.
 pub(crate) fn all_markdown_files(
     root: &Path,
     namespaces: &[Namespace],
+    members: &[Member],
 ) -> Result<Vec<(String, usize)>, Error> {
+    let named: BTreeSet<&str> = members
+        .iter()
+        .flat_map(|member| member.template.literal_folder_names())
+        .collect();
     let mut found = Vec::new();
-    for (namespace_idx, space) in namespaces.iter().enumerate() {
+    for (index, space) in namespaces.iter().enumerate() {
         let base = root.join(&space.folder);
-        walk_every_file(&base, "", &space.folder, namespace_idx, &mut found)?;
+        let namespace = Walked {
+            folder: &space.folder,
+            index,
+            named: &named,
+        };
+        walk_every_file(&base, "", &namespace, &mut found)?;
     }
     Ok(found)
+}
+
+/// The namespace `walk_every_file` is walking: what stays the same all the way down the
+/// recursion, so that only the folder and its path below the namespace change from call to call.
+struct Walked<'a> {
+    /// The namespace folder, as a path from the project folder; empty for `default`.
+    folder: &'a str,
+    /// The position of the namespace in the slice the walk was given.
+    index: usize,
+    /// The name of every folder a `match` writes out as plain text. A folder whose name begins
+    /// with `.` is entered exactly when its name is one of these: this walk stands at no
+    /// position in any template, so it asks by name, which also keeps it from missing a folder
+    /// a template names after a wildcard (`**/.agents/*.md`).
+    named: &'a BTreeSet<&'a str>,
 }
 
 fn walk_every_file(
     dir: &Path,
     prefix: &str,
-    namespace_folder: &str,
-    namespace_idx: usize,
+    namespace: &Walked,
     found: &mut Vec<(String, usize)>,
 ) -> Result<(), Error> {
-    for entry in list(dir)?
-        .into_iter()
-        .filter(|entry| !entry.name.starts_with('.'))
-    {
-        if entry.symlink {
-            return Err(Error::symbolic_link(&entry.path));
+    for entry in list(dir)? {
+        if entry.symlink || !entry.utf8 {
+            continue;
         }
+        let here = below(prefix, &entry);
         if entry.folder {
-            if config_file(&entry.path).is_file() {
+            if (entry.name.starts_with('.') && !namespace.named.contains(entry.name.as_str()))
+                || config_file(&entry.path).is_file()
+            {
                 continue;
             }
-            let next_prefix = below(prefix, &entry)?;
-            walk_every_file(
-                &entry.path,
-                &next_prefix,
-                namespace_folder,
-                namespace_idx,
-                found,
-            )?;
+            walk_every_file(&entry.path, &here, namespace, found)?;
         } else if entry.file && entry.name.ends_with(".md") {
-            let below = below(prefix, &entry)?;
-            let path = if namespace_folder.is_empty() {
-                below
+            let path = if namespace.folder.is_empty() {
+                here
             } else {
-                format!("{namespace_folder}/{below}")
+                format!("{}/{here}", namespace.folder)
             };
-            found.push((path, namespace_idx));
+            found.push((path, namespace.index));
         }
     }
     Ok(())
@@ -315,26 +357,39 @@ fn list(dir: &Path) -> Result<Vec<Listed>, Error> {
     Ok(listed)
 }
 
+/// What one walk of one template gathers: the files its last step matched, by their path below
+/// the namespace folder, and the entries it reached and could not read, by the same path.
+#[derive(Default)]
+struct Found {
+    files: BTreeMap<String, PathBuf>,
+    unreadable: BTreeMap<String, &'static str>,
+}
+
+const SYMBOLIC_LINK: &str = "a symbolic link is not read: a run does not follow one out of the project, or read one file \
+     twice under two names";
+
+const NAME_NOT_UTF8: &str = "the name is not valid UTF-8, so no path can name it; it is written here \
+                        with a replacement character for each byte that cannot be read";
+
 /// Adds the files below `dir` that the rest of a template matches, by their path below the
-/// namespace folder. What a run reads is decided here: a wildcard never matches a name that
-/// starts with `.`, a folder that holds its own project is not entered, and a symbolic link
-/// that a template reaches or a name that is not UTF-8 stops the run rather than being skipped.
-fn walk(
-    dir: &Path,
-    prefix: &str,
-    steps: &[Step],
-    found: &mut BTreeMap<String, PathBuf>,
-) -> Result<(), Error> {
+/// namespace folder. What a run reads is decided here: a folder whose name begins with `.` is
+/// entered by a plain-text segment and by no wildcard, a `*` in the last step matches a leading
+/// dot in a file name, a folder that holds its own project is not entered, and an entry the
+/// template reaches that is a symbolic link or whose name is not valid UTF-8 is skipped and
+/// recorded for `files.unreadable` rather than stopping the run.
+fn walk(dir: &Path, prefix: &str, steps: &[Step], found: &mut Found) -> Result<(), Error> {
     let Some((step, rest)) = steps.split_first() else {
         return Ok(());
     };
     let listed = list(dir)?;
     match step {
         Step::Name(segment) => {
-            for entry in listed.iter().filter(|entry| segment.matches(&entry.name)) {
+            for entry in &listed {
                 if rest.is_empty() {
-                    take(entry, prefix, found)?;
-                } else {
+                    if segment.matches(&entry.name) {
+                        take(entry, prefix, found);
+                    }
+                } else if segment.matches_folder(&entry.name) {
                     enter(entry, prefix, rest, found)?;
                 }
             }
@@ -343,11 +398,14 @@ fn walk(
             if !rest.is_empty() {
                 walk(dir, prefix, rest, found)?;
             }
-            for entry in listed.iter().filter(|entry| !entry.name.starts_with('.')) {
+            for entry in &listed {
                 if entry.folder || is_link_to_folder(entry) {
-                    enter(entry, prefix, steps, found)?;
+                    // `**` is a wildcard, so it enters no folder whose name begins with `.`.
+                    if !entry.name.starts_with('.') {
+                        enter(entry, prefix, steps, found)?;
+                    }
                 } else if rest.is_empty() {
-                    take(entry, prefix, found)?;
+                    take(entry, prefix, found);
                 }
             }
         }
@@ -359,43 +417,47 @@ fn is_link_to_folder(entry: &Listed) -> bool {
     entry.symlink && fs::metadata(&entry.path).is_ok_and(|meta| meta.is_dir())
 }
 
-fn below(prefix: &str, entry: &Listed) -> Result<String, Error> {
-    if !entry.utf8 {
-        return Err(Error::Unreadable {
-            file: entry.path.clone(),
-            message: "the name is not valid UTF-8, so no path can name it".to_owned(),
-        });
-    }
-    Ok(if prefix.is_empty() {
+/// The path of `entry` below the namespace folder. A name that is not valid UTF-8 is written
+/// with replacement characters, which is what `Listed::name` already holds: such a path only
+/// ever names an entry in a `files.unreadable` finding, and nothing is opened by it.
+fn below(prefix: &str, entry: &Listed) -> String {
+    if prefix.is_empty() {
         entry.name.clone()
     } else {
         format!("{prefix}/{}", entry.name)
-    })
+    }
+}
+
+/// Records an entry the template reached and the walk is not reading, with the reason.
+fn skip(entry: &Listed, prefix: &str, why: &'static str, found: &mut Found) {
+    found.unreadable.insert(below(prefix, entry), why);
 }
 
 /// A file that the last step of a template matched. A folder is not a document.
-fn take(entry: &Listed, prefix: &str, found: &mut BTreeMap<String, PathBuf>) -> Result<(), Error> {
+fn take(entry: &Listed, prefix: &str, found: &mut Found) {
     if entry.symlink {
-        return Err(Error::symbolic_link(&entry.path));
+        skip(entry, prefix, SYMBOLIC_LINK, found);
+    } else if !entry.utf8 {
+        skip(entry, prefix, NAME_NOT_UTF8, found);
+    } else if entry.file {
+        found.files.insert(below(prefix, entry), entry.path.clone());
     }
-    if entry.file {
-        found.insert(below(prefix, entry)?, entry.path.clone());
-    }
-    Ok(())
 }
 
-/// A folder that a step before the last matched.
-fn enter(
-    entry: &Listed,
-    prefix: &str,
-    rest: &[Step],
-    found: &mut BTreeMap<String, PathBuf>,
-) -> Result<(), Error> {
+/// A folder that a step before the last matched. It asks the two reasons in a different order
+/// from `take`, and the check between them is why: a matched entry that is not a folder at all
+/// is left alone rather than reported, since nothing would have been read from it either way.
+fn enter(entry: &Listed, prefix: &str, rest: &[Step], found: &mut Found) -> Result<(), Error> {
     if entry.symlink {
-        return Err(Error::symbolic_link(&entry.path));
+        skip(entry, prefix, SYMBOLIC_LINK, found);
+        return Ok(());
     }
     if !entry.folder || config_file(&entry.path).is_file() {
         return Ok(());
     }
-    walk(&entry.path, &below(prefix, entry)?, rest, found)
+    if !entry.utf8 {
+        skip(entry, prefix, NAME_NOT_UTF8, found);
+        return Ok(());
+    }
+    walk(&entry.path, &below(prefix, entry), rest, found)
 }

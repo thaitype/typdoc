@@ -63,25 +63,27 @@ impl Segment {
         Ok(Segment { parts })
     }
 
-    /// Whether `name` fits. A name that starts with `.` is matched only by a segment that
-    /// starts with a `.` of its own, so no wildcard reaches a hidden file or folder.
+    /// Whether `name` fits, as the name of a file: a leading `.` is nothing special here,
+    /// because a file is named by the template that reaches it rather than found by walking
+    /// into it. A folder is asked about with `matches_folder` instead.
     pub fn matches(&self, name: &str) -> bool {
-        let dot = name.starts_with('.');
-        let starts_with_dot =
-            matches!(self.parts.first(), Some(Part::Literal(l)) if l.starts_with('.'));
-        if dot && !starts_with_dot {
-            return false;
-        }
         !name.is_empty() && fits(&self.parts, name)
     }
 
+    /// Whether `name` fits, as the name of a folder to enter. A folder whose name begins with
+    /// `.` is entered only by a segment that is plain text: naming a folder is saying it is
+    /// wanted, while a segment holding a wildcard is saying "whatever is here".
+    pub fn matches_folder(&self, name: &str) -> bool {
+        if name.starts_with('.') && self.literal().is_none() {
+            return false;
+        }
+        self.matches(name)
+    }
+
     /// The substring `{key}` captures from `name`, if this segment has that placeholder and
-    /// `name` fits the segment as a whole; the same leading-dot rule as `matches`.
+    /// `name` fits the segment as a whole. The same shape as `matches`.
     fn capture_key(&self, name: &str) -> Option<String> {
-        let dot = name.starts_with('.');
-        let starts_with_dot =
-            matches!(self.parts.first(), Some(Part::Literal(l)) if l.starts_with('.'));
-        if (dot && !starts_with_dot) || name.is_empty() {
+        if name.is_empty() {
             return None;
         }
         fits_capture(&self.parts, name).flatten()
@@ -229,6 +231,28 @@ impl Template {
             .collect()
     }
 
+    /// The name of every folder this template writes out as plain text, from every step but the
+    /// last, which names a file. A step that is `**`, or a segment with a wildcard in it, names
+    /// no folder and is passed over, while the plain-text steps after it still count: `.agents`
+    /// in `**/.agents/*.md` is a folder the project has written out, wherever it sits.
+    ///
+    /// It is what decides whether a walk that is not itself a template, such as the audit's own,
+    /// enters a folder whose name begins with `.`. That walk has no template position to be at,
+    /// so it asks by name: a name the project wrote out is a folder the project said it wants,
+    /// which is the whole reason a plain-text segment reaches a folder a wildcard does not.
+    pub fn literal_folder_names(&self) -> Vec<&str> {
+        let Some((_, folders)) = self.steps.split_last() else {
+            return Vec::new();
+        };
+        folders
+            .iter()
+            .filter_map(|step| match step {
+                Step::Name(segment) => segment.literal(),
+                Step::Folders => None,
+            })
+            .collect()
+    }
+
     /// The last step's segment, for testing whether a file name fits it.
     pub fn last_segment(&self) -> Option<&Segment> {
         match self.steps.last()? {
@@ -300,13 +324,23 @@ mod tests {
     }
 
     #[test]
-    fn a_name_that_starts_with_a_dot_is_matched_only_by_a_segment_that_starts_with_one() {
-        assert!(!segment("*.md").matches(".md"));
-        assert!(!segment("*.md").matches(".hidden.md"));
-        assert!(!segment("*").matches(".git"));
+    fn a_file_name_that_starts_with_a_dot_is_matched_like_any_other() {
+        assert!(segment("*.md").matches(".md"));
+        assert!(segment("*.md").matches(".hidden.md"));
+        assert!(segment("*").matches(".git"));
         assert!(segment(".hidden.md").matches(".hidden.md"));
-        assert!(segment(".*").matches(".git"));
         assert!(segment("*.md").matches("a.md"));
+        assert!(!segment("*.md").matches(".hidden.txt"));
+    }
+
+    #[test]
+    fn a_folder_whose_name_starts_with_a_dot_is_entered_only_by_a_segment_of_plain_text() {
+        assert!(!segment("*").matches_folder(".git"));
+        assert!(!segment(".*").matches_folder(".git"));
+        assert!(!segment(".g*t").matches_folder(".git"));
+        assert!(segment(".git").matches_folder(".git"));
+        assert!(segment("*").matches_folder("git"));
+        assert!(!segment("*").matches_folder(""));
     }
 
     #[test]
@@ -463,6 +497,25 @@ mod tests {
         );
         assert_eq!(coded("{key}.md").literal_folder(), Some(vec![]));
         assert_eq!(coded("a/b/{key}.md").literal_folder(), Some(vec!["a", "b"]));
+    }
+
+    #[test]
+    fn the_plain_text_folder_names_are_every_step_but_the_last_that_holds_no_wildcard() {
+        for (text, names) in [
+            (".agents/notes/*.md", vec![".agents", "notes"]),
+            (".agents/**/*.md", vec![".agents"]),
+            ("**/.agents/*.md", vec![".agents"]),
+            ("*/.agents/a.md", vec![".agents"]),
+            ("a*/b/c.md", vec!["b"]),
+            (".agents.md", vec![]),
+            ("**/*.md", vec![]),
+        ] {
+            assert_eq!(
+                Template::parse(text).unwrap().literal_folder_names(),
+                names,
+                "{text}"
+            );
+        }
     }
 
     #[test]

@@ -114,6 +114,14 @@ if [ $# -gt 0 ]; then
   files=("$@")
 else
   mapfile -t files < <(git ls-files --cached --others --exclude-standard | grep -v '^scripts/check-public-text.sh$')
+  # A symbolic link carries no text of its own. What it points at is scanned where
+  # that file is itself tracked, so a link is dropped from the sweep rather than
+  # followed: following one either scans the same text twice or, for a link to a
+  # folder, hands grep something that is not text at all. Paths given as arguments
+  # are left exactly as they are given.
+  mapfile -t files < <(for candidate in "${files[@]}"; do
+    [ -L "$candidate" ] || printf '%s\n' "$candidate"
+  done)
 fi
 run_scan "${files[@]}"
 status=$?

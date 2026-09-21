@@ -169,6 +169,24 @@ fn a_star_never_matches_a_folder_that_starts_with_a_dot_and_no_file_is_a_namespa
     assert_eq!(get(project.path(), ".git/a.md").code, 5);
 }
 
+/// A collection and a namespace answer "which folders does this reach" the same way: an entry
+/// that holds a `*` never reaches a folder whose name begins with a dot, and an entry that is
+/// plain text reaches the same folder, even when what it names cannot be a namespace.
+#[test]
+fn an_entry_with_a_star_reaches_no_dot_folder_though_a_literal_entry_reaches_the_same_one() {
+    let glob = project(r#"["one", ".*"]"#, &["one", ".hidden"]);
+    let literal = project(r#"["one", ".hidden"]"#, &["one", ".hidden"]);
+
+    assert_eq!(
+        document(&get(glob.path(), "one/a.md"))["namespace"],
+        json!("one")
+    );
+    assert_eq!(
+        rules(&get(literal.path(), "one/a.md"))[0].0,
+        "config.namespace-name"
+    );
+}
+
 #[test]
 fn an_entry_of_more_than_one_segment_or_that_names_no_folder_is_config_namespaces_entry() {
     for entry in [

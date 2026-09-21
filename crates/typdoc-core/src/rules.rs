@@ -69,6 +69,7 @@ pub const RULES: &[&str] = &[
     "body.anchors",
     "body.mentions",
     "imports.absent",
+    "files.unreadable",
 ];
 
 /// Ids the design names and the binary does not report yet. Each is a difference between
@@ -76,5 +77,4 @@ pub const RULES: &[&str] = &[
 /// when it enters `RULES`, and it is empty when v1 is finished.
 pub const UNIMPLEMENTED_RULES: &[&str] = &[
     "frontmatter.transitions", // story 2
-    "files.unreadable",        // the walk reports what it skips; not built yet
 ];

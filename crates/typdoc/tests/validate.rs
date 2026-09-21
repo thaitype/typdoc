@@ -1422,14 +1422,217 @@ fn names_shadowed_is_reported_under_schemas_only_too() {
     assert_eq!(findings[0]["rule"], json!("names.shadowed"));
 }
 
+// Ticket 23: `files.unreadable`, and a project whose documents live under a folder whose name
+// begins with a dot (design, Which files a run reads).
+
+/// A project whose one collection reaches every `.md` file below it, for the entries a walk
+/// meets and cannot read.
+const EVERY_MARKDOWN: [(&str, &str); 2] = [
+    (
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "**/*.md", "schema": "note.json" }"#,
+    ),
+    ("note.json", r#"{ "name": "note", "fields": {} }"#),
+];
+
+#[test]
+fn a_symbolic_link_a_match_reaches_is_files_unreadable_and_every_other_file_is_still_checked() {
+    let project = Scratch::project(&EVERY_MARKDOWN);
+    project.file("a.md", "---\n---\n");
+    project.file("real/b.md", "---\n---\n");
+    project.symlink("link.md", "a.md");
+    project.symlink("linked", "real");
+
+    let ran = validate(&[], project.path());
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    let findings = object["findings"].as_array().unwrap().clone();
+    assert_eq!(findings.len(), 2, "{object}");
+    for (finding, path) in findings.iter().zip(["link.md", "linked"]) {
+        assert_eq!(finding["rule"], json!("files.unreadable"), "{object}");
+        assert_eq!(finding["level"], json!("error"), "{object}");
+        assert_eq!(finding["path"], json!(path), "{object}");
+        assert_eq!(finding["namespace"], json!("default"), "{object}");
+        assert_eq!(finding["collection"], Value::Null, "{object}");
+        assert_eq!(finding["key"], Value::Null, "{object}");
+    }
+    assert_eq!(
+        object["summary"]["checked"]["documents"],
+        json!(2),
+        "{object}"
+    );
+}
+
+/// A file name that is not valid UTF-8: the last step of the template reaches it, so it is
+/// skipped where a name it could match would have been taken.
+#[test]
+fn a_file_name_that_is_not_valid_utf8_is_files_unreadable_and_the_rest_is_still_checked() {
+    let project = Scratch::project(&EVERY_MARKDOWN);
+    project.file("a.md", "---\n---\n");
+    project.file_named_by_bytes(b"\xff.md", "---\n---\n");
+
+    let ran = validate(&[], project.path());
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    let findings = object["findings"].as_array().unwrap().clone();
+    assert_eq!(findings.len(), 1, "{object}");
+    assert_eq!(findings[0]["rule"], json!("files.unreadable"), "{object}");
+    assert_eq!(findings[0]["path"], json!("\u{fffd}.md"), "{object}");
+    assert_eq!(
+        object["summary"]["checked"]["documents"],
+        json!(1),
+        "{object}"
+    );
+}
+
+/// A folder name that is not valid UTF-8 goes through the step that enters a folder, not the
+/// step that takes a file, so it is its own case.
+#[test]
+fn a_folder_name_that_is_not_valid_utf8_is_files_unreadable_and_the_rest_is_still_checked() {
+    let project = Scratch::project(&EVERY_MARKDOWN);
+    project.file("a.md", "---\n---\n");
+    project.file_named_by_bytes(b"\xff/b.md", "---\n---\n");
+
+    let ran = validate(&[], project.path());
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    let findings = object["findings"].as_array().unwrap().clone();
+    assert_eq!(findings.len(), 1, "{object}");
+    assert_eq!(findings[0]["rule"], json!("files.unreadable"), "{object}");
+    assert_eq!(findings[0]["path"], json!("\u{fffd}"), "{object}");
+    assert_eq!(
+        object["summary"]["checked"]["documents"],
+        json!(1),
+        "{object}"
+    );
+}
+
+/// A project that keeps its documents under a folder whose name begins with a dot: naming the
+/// folder in `match` is what makes the run read it, and the audit then answers about every file
+/// the run reaches there, the one no collection covers included. The list holds a file whose own
+/// name begins with a dot as well, since the leading-dot rule is about folders.
+#[test]
+fn an_audit_of_a_project_under_a_dot_folder_lists_what_no_collection_covers_there() {
+    let ran = validate(&["--audit"], &fixture("valid/dot-folder"));
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    assert_eq!(
+        object["audit"]["uncollected"],
+        json!([".agents/.private.md", ".agents/other.md"]),
+        "{object}"
+    );
+    assert_eq!(
+        object["summary"]["checked"]["documents"],
+        json!(1),
+        "{object}"
+    );
+}
+
+/// A folder written out as plain text after a wildcard is written out all the same, so the run
+/// reads it and the audit answers about the files beside the ones a collection covers there.
+#[test]
+fn a_dot_folder_a_match_names_after_a_wildcard_is_read_like_one_it_names_first() {
+    let project = Scratch::project(&[]);
+    project.file(
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "**/.agents/*.md", "schema": "note.json" }"#,
+    );
+    project.file("note.json", r#"{ "name": "note", "fields": {} }"#);
+    project.file(".agents/a.md", "---\n---\n");
+    project.file(".agents/sub/x.md", "---\n---\n");
+
+    let ran = validate(&["--audit"], project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    assert_eq!(
+        object["summary"]["checked"]["documents"],
+        json!(1),
+        "{object}"
+    );
+    assert_eq!(
+        object["audit"]["uncollected"],
+        json!([".agents/sub/x.md"]),
+        "{object}"
+    );
+}
+
+/// A file whose name begins with a dot, directly in a coded collection's folder, fits no `match`
+/// there like any other file that does not, and is a stray.
+#[test]
+fn a_dotted_file_name_in_a_coded_collections_folder_is_a_stray() {
+    let project = Scratch::project(&[]);
+    project.file(
+        ".typdoc/collections/tickets.json",
+        r#"{ "match": "tickets/{key}.md", "schema": "ticket.json" }"#,
+    );
+    project.file(
+        "ticket.json",
+        r#"{ "name": "ticket", "code": "WF", "fields": {} }"#,
+    );
+    project.file(
+        ".typdoc/state/default.json",
+        r#"{ "tickets": { "last": 1 } }"#,
+    );
+    project.file("tickets/WF-1.md", "---\n---\n");
+    project.file("tickets/.notes.md", "---\n---\n");
+
+    let ran = validate(&[], project.path());
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    let findings = object["findings"].as_array().unwrap().clone();
+    assert_eq!(findings.len(), 1, "{object}");
+    assert_eq!(findings[0]["rule"], json!("filename.pattern"), "{object}");
+    assert_eq!(findings[0]["path"], json!("tickets/.notes.md"), "{object}");
+}
+
 // Ticket 19: `validate --audit`. Contract item 8, the accounting invariant.
 
-/// Every `.md` file below `dir`, walked here rather than through `typdoc_core::index`, so the
-/// count owes nothing to typdoc's own idea of which files it reads (an entry whose name starts
-/// with `.` is never entered or counted, and a folder holding its own `.typdoc/config.json` is a
-/// separate project and is not entered — the same two rules `index::all_markdown_files` follows,
-/// reached here by an independent read of the folder instead).
-fn count_markdown_files(dir: &std::path::Path) -> usize {
+/// The name of every folder a project's `match` templates write out as plain text, read here
+/// from the collection files as JSON and never through typdoc: a folder whose name begins with
+/// `.` is read by a run only where a `match` names it this way (design, Which files a run
+/// reads). Every step but the last is looked at, since the last names a file, and a step holding
+/// a wildcard names no folder and is passed over while the plain-text steps after it still
+/// count.
+fn folders_a_match_names(project: &std::path::Path) -> std::collections::BTreeSet<String> {
+    let mut named = std::collections::BTreeSet::new();
+    let Ok(entries) = std::fs::read_dir(project.join(".typdoc/collections")) else {
+        return named;
+    };
+    for entry in entries {
+        let text = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+        let Ok(object) = serde_json::from_str::<Value>(&text) else {
+            continue;
+        };
+        let Some(template) = object["match"].as_str() else {
+            continue;
+        };
+        let segments: Vec<&str> = template.split('/').collect();
+        for segment in &segments[..segments.len().saturating_sub(1)] {
+            if !segment.contains('*') && !segment.contains('{') {
+                named.insert((*segment).to_owned());
+            }
+        }
+    }
+    named
+}
+
+/// Every `.md` file below `dir` that a run reads, walked here rather than through
+/// `typdoc_core::index`, so the count owes nothing to typdoc's own idea of which files it reads.
+/// The rules, written out from the design: a folder whose name begins with `.` is entered only
+/// where a `match` writes that name out as plain text (`named`); a file whose name begins with
+/// `.` is counted like any other, since the leading-dot rule is about folders; a symbolic link
+/// is neither entered nor counted; and a folder holding its own `.typdoc/config.json` is a
+/// separate project and is not entered.
+fn count_markdown_files(
+    dir: &std::path::Path,
+    named: &std::collections::BTreeSet<String>,
+) -> usize {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return 0;
     };
@@ -1437,17 +1640,20 @@ fn count_markdown_files(dir: &std::path::Path) -> usize {
     for entry in entries {
         let entry = entry.unwrap();
         let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.starts_with('.') {
+        let Some(name) = name.to_str() else {
             continue;
-        }
+        };
         let path = entry.path();
         let file_type = entry.file_type().unwrap();
+        if file_type.is_symlink() {
+            continue;
+        }
         if file_type.is_dir() {
-            if path.join(".typdoc/config.json").is_file() {
+            let reached = !name.starts_with('.') || named.contains(name);
+            if !reached || path.join(".typdoc/config.json").is_file() {
                 continue;
             }
-            count += count_markdown_files(&path);
+            count += count_markdown_files(&path, named);
         } else if file_type.is_file() && name.ends_with(".md") {
             count += 1;
         }
@@ -1461,6 +1667,7 @@ fn count_markdown_files(dir: &std::path::Path) -> usize {
 /// fact `--audit`'s own report already relies on to answer `checked.namespaces` by name; only the
 /// folder each name maps to is read here, never how the name was matched).
 fn independent_document_count(project: &std::path::Path, namespaces: &[&str]) -> usize {
+    let named = folders_a_match_names(project);
     namespaces
         .iter()
         .map(|name| {
@@ -1469,7 +1676,7 @@ fn independent_document_count(project: &std::path::Path, namespaces: &[&str]) ->
             } else {
                 project.join(name)
             };
-            count_markdown_files(&folder)
+            count_markdown_files(&folder, &named)
         })
         .sum()
 }
