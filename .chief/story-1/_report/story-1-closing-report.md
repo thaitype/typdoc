@@ -35,6 +35,10 @@ Kept here rather than tidied away; none is a missing command.
   is still possible, says it should be a finding that stops nothing (ticket 8).
 - `audit.collections` omits a collection that holds no document and does not count an
   overlapping file for any collection (ticket 21).
+  Decided since this report was written: a file matched twice stays an error, with no rule that
+  chooses between the two collections, which is recorded in the design as intended; the audit
+  will list every collection, one with 0 documents included, and name the collections of each
+  overlap. Ticket 24 holds the change.
 - A `namespaces` entry that matches a symbolic link still stops the run with exit 6, while a
   `match` skips it and reports `files.unreadable` (ticket 23).
 - `files.unreadable` is reported by the whole-project scan of `validate` only: `validate <path>`
