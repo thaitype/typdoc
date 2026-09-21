@@ -1,5 +1,18 @@
 //! Reads a typdoc project and answers questions about it. It changes nothing.
 
+// A panic in the code that ships needs its reason written where it stands. Test code is left alone.
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::unreachable,
+        clippy::todo,
+        clippy::unimplemented
+    )
+)]
+
 mod argument;
 mod body;
 mod coerce;
