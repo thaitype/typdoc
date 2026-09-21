@@ -15,8 +15,8 @@ A file matched by two collections belongs in none of the three: it is not checke
 
 Every other project in the fixtures satisfies the invariant. Two that appear not to, on a first count, do satisfy it: one holds a file outside every namespace folder and one holds a file and a folder whose names begin with a dot, and a run reads none of those. The invariant is about the files a run reads, not the files on disk.
 
-## The test in the tree asserts a shape nobody has decided
-The suite contains a test of the invariant with a fourth term for the files matched by more than one collection. It is green, and it is **not** a statement of the contract: it records the gap rather than closing it, and the shape it assumes is one of the options and not a decision. It is left exactly as it is, deliberately, so that nothing is quietly turned into a specification by being written down and passing. A later reader should treat that fourth term as an open question, not as the rule.
+## The test in the tree asserted a shape nobody had decided (settled since; see Outcome)
+Before the amendment, the suite contained a test of the invariant with a fourth term for the files matched by more than one collection. It is green, and it is **not** a statement of the contract: it records the gap rather than closing it, and the shape it assumes is one of the options and not a decision. It is left exactly as it is, deliberately, so that nothing is quietly turned into a specification by being written down and passing. A later reader should treat that fourth term as an open question, not as the rule.
 
 ## What is built and green
 Rules set to `off` are reported as information under an audit; an audit exits 0 unless the config itself cannot be read; `summary.audit` and `summary.unreported`; the audit object with its collections, its uncollected files and its files with no frontmatter, which are listed and not evaluated; and the text form. The refusal that stood in for `--audit` is gone rather than left unreachable, along with its test.
