@@ -6,6 +6,7 @@ mod common;
 
 use common::{NOTES, Ran, Scratch, Spawn, fixture};
 use serde_json::{Value, json};
+use typdoc::registry;
 
 fn get(project: &std::path::Path, path: &str) -> Ran {
     Spawn::args(["get", path, "--json"]).cwd(project).run()
@@ -480,5 +481,69 @@ fn a_namespace_prefix_on_a_key_that_is_not_a_namespace_of_the_project_is_bad_arg
             .as_str()
             .unwrap()
             .contains("nosuch")
+    );
+}
+
+// -------------------------------------------------------------------------------------------
+// A gap the design's own sentence leaves open (`registry::KNOWN_GAPS`): "Sibling names and
+// import aliases may not collide with URL schemes... `validate` enforces this" names both, but
+// the rule table (and the code) names only import aliases, so only an alias is enforced. Pinned
+// here so that closing the gap — a namespace named for a scheme starting to be reported —
+// turns this test red rather than going unnoticed.
+// -------------------------------------------------------------------------------------------
+
+/// A schema whose one field, `title`, is what `project()`'s documents write, so a report of
+/// this project has nothing to say about anything but the namespace name itself.
+const TITLED_NOTE: [(&str, &str); 2] = [
+    (
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "*.md", "schema": "note.json" }"#,
+    ),
+    (
+        "note.json",
+        r#"{ "name": "note", "fields": { "title": { "type": "string" } } }"#,
+    ),
+];
+
+#[test]
+fn a_namespace_named_after_a_url_scheme_validates_clean_unlike_an_import_alias_of_the_same_name() {
+    assert!(
+        registry::KNOWN_GAPS
+            .iter()
+            .any(|gap| gap.starts_with("[namespace-scheme]")),
+        "this test pins a gap that `registry::KNOWN_GAPS` no longer lists"
+    );
+
+    // The namespace `http` (a name that is also one of the design's four reserved URL schemes):
+    // a project whose only complaint could be that name validates with no finding at all.
+    let project = Scratch::project(&TITLED_NOTE);
+    project.file(".typdoc/config.json", &config(r#""http""#));
+    project.file("http/a.md", "---\ntitle: x\n---\n");
+
+    let ran = Spawn::args(["validate", "--json"])
+        .cwd(project.path())
+        .run();
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout_json()["findings"], json!([]));
+
+    // The same name as an import alias, by contrast, is refused today (`schema.valid`) — the
+    // asymmetry this gap is about, shown from both sides in one test.
+    let project = Scratch::project(&NOTES);
+    project.file(
+        ".typdoc/config.json",
+        r#"{ "version": 1, "imports": { "http": "./nowhere" } }"#,
+    );
+
+    let ran = Spawn::args(["validate", "--json"])
+        .cwd(project.path())
+        .run();
+
+    let findings = ran.stdout_json()["findings"].clone();
+    let findings = findings.as_array().unwrap();
+    assert!(
+        findings.iter().any(|f| f["rule"] == json!("schema.valid")
+            && f["message"].as_str().unwrap().contains("http")),
+        "{findings:?}"
     );
 }

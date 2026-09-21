@@ -13,6 +13,7 @@ use typdoc_core::rules::{RULES, UNIMPLEMENTED_RULES};
 use typdoc_testkit::check::{Kind, acknowledged, broken_coverage, exact_set, tripped_rules};
 use typdoc_testkit::design::{command_names, exit_codes};
 use typdoc_testkit::fixtures::{broken_entries, design_text};
+use typdoc_testkit::golden;
 use typdoc_testkit::spec::FixtureSpec;
 
 fn set<T: Ord + Clone>(items: &[T]) -> BTreeSet<T> {
@@ -39,6 +40,42 @@ fn every_command_the_design_names_is_built_or_listed_and_nothing_listed_is_built
     );
 
     assert_eq!(result, Ok(()));
+}
+
+/// Every command the registry has is also a folder under `fixtures/output/`, and every folder
+/// there names a command of the registry: a golden for a command that has left the registry, or
+/// a command with no golden at all, is caught here rather than by noticing the gap by eye.
+#[test]
+fn every_command_of_the_registry_has_a_golden_and_every_golden_names_a_command_of_the_registry() {
+    let built: BTreeSet<String> = registry::commands().into_iter().collect();
+    let golden: BTreeSet<String> = golden::discover_fixtures()
+        .unwrap()
+        .iter()
+        .map(|case| {
+            case.id
+                .split_once('/')
+                .unwrap_or_else(|| panic!("golden id `{}` has no `/`", case.id))
+                .0
+                .to_owned()
+        })
+        .collect();
+
+    let mut problems = Vec::new();
+    for command in &built {
+        if !golden.contains(command) {
+            problems.push(format!(
+                "the command {command} is in the registry and has no golden under fixtures/output/"
+            ));
+        }
+    }
+    for command in &golden {
+        if !built.contains(command) {
+            problems.push(format!(
+                "fixtures/output/{command}/ holds a golden for a command that is not in the registry"
+            ));
+        }
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
 
 #[test]

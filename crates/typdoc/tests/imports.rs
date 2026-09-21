@@ -11,8 +11,9 @@
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
 
-use common::{Ran, Scratch, Spawn, fixture};
+use common::{NOTES, Ran, Scratch, Spawn, fixture};
 use serde_json::{Value, json};
+use typdoc::registry;
 
 fn run(args: &[&str], cwd: &std::path::Path) -> Ran {
     Spawn::args(args.iter().copied()).cwd(cwd).run()
@@ -815,4 +816,132 @@ fn refs_coded_by_path_now_warns_for_a_coded_document_of_an_import_referenced_by_
     let findings = findings.as_array().unwrap();
     assert_eq!(findings.len(), 1, "{findings:?}");
     assert_eq!(findings[0]["rule"], json!("refs.codedByPath"));
+}
+
+// ---------------------------------------------------------------------------------------------
+// A gap `registry::KNOWN_GAPS` names: the design says a reverse lookup scans this project's own
+// namespaces *and the namespaces of every project it imports*; `refs --reverse` scans this
+// project only (`Project::refs`'s own doc comment). Two mutually-importing scratch projects: `a`
+// imports `b` and `b` imports `a` back, so `b`'s own document can point into `a` the same way
+// any other cross-import ref does, using nothing `refs --reverse` with a `project::` argument
+// (refused outright, see `refs_reverse_with_a_project_prefix_is_refused` above) is needed for.
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn a_reverse_lookup_does_not_see_a_ref_from_an_imported_project() {
+    assert!(
+        registry::KNOWN_GAPS
+            .iter()
+            .any(|gap| gap.starts_with("[reverse-scope]")),
+        "this test pins a gap that `registry::KNOWN_GAPS` no longer lists"
+    );
+
+    let a = tempfile::tempdir().unwrap();
+    let b = tempfile::tempdir().unwrap();
+    let note_schema = |see: bool| {
+        if see {
+            json!({ "name": "note", "fields": { "see": { "type": "ref", "target": "*" } } })
+                .to_string()
+        } else {
+            json!({ "name": "note", "fields": {} }).to_string()
+        }
+    };
+    let write = |dir: &std::path::Path, imports_alias: &str, imported: &std::path::Path, see| {
+        std::fs::create_dir_all(dir.join(".typdoc/collections")).unwrap();
+        std::fs::write(
+            dir.join(".typdoc/config.json"),
+            json!({ "version": 1, "imports": { imports_alias: imported.to_str().unwrap() } })
+                .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join(".typdoc/collections/notes.json"),
+            r#"{ "match": "*.md", "schema": "note.json" }"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("note.json"), note_schema(see)).unwrap();
+    };
+    // `a` holds the target document, `x.md`, and imports `b` under the alias `b_import` only so
+    // that a fixed implementation would have somewhere to look; `a`'s own schema needs no ref
+    // field, since nothing in `a` points anywhere.
+    write(a.path(), "b_import", b.path(), false);
+    std::fs::write(a.path().join("x.md"), "").unwrap();
+    // `b` imports `a` back under `a_import`, and its one document, `y.md`, points at `a`'s
+    // `x.md` through that alias — an ordinary cross-import ref, read exactly as
+    // `an_alias_configured_and_present_resolves_and_carries_project_in_its_name` above reads
+    // one, just from the other side of the pair.
+    write(b.path(), "a_import", a.path(), true);
+    std::fs::write(b.path().join("y.md"), "---\nsee: a_import::x.md\n---\n").unwrap();
+
+    // The premise: `b`'s own ref genuinely resolves. If it did not, a reverse scan omitting it
+    // would prove nothing (a fixture that would pass under the wrong behaviour proves nothing).
+    let from_b = run(&["refs", "y.md", "--json"], b.path());
+    assert_eq!(from_b.code, 0, "{}", from_b.stderr);
+    let out = from_b.stdout_json();
+    assert_eq!(out["refs"][0]["path"], json!("x.md"));
+    assert_eq!(out["refs"][0]["project"], json!("a_import"));
+
+    // The gap: run from `a`, a reverse lookup on its own `x.md` does not see that ref, though
+    // the design's reverse lookup is meant to scan `a`'s imports too.
+    let from_a = run(&["refs", "x.md", "--reverse", "--json"], a.path());
+    assert_eq!(from_a.code, 0, "{}", from_a.stderr);
+    assert_eq!(from_a.stdout_json()["refs"], json!([]));
+}
+
+// ---------------------------------------------------------------------------------------------
+// A third gap `registry::KNOWN_GAPS` names, alongside the two above: a body link that crosses
+// an import has its target's existence checked (`body.links`) but not the `#anchor` after it
+// (`body.anchors`) — `Project::check_body_destination`'s own comment on the `Import` branch
+// says `resolved_path` stays `None` there, "so the anchor check below never runs for this
+// destination". `target.md` is given exactly one real heading, so a link to a different one
+// would be caught inside one project; across this import, it is not.
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn a_body_link_across_an_import_has_its_anchor_left_unchecked() {
+    assert!(
+        registry::KNOWN_GAPS
+            .iter()
+            .any(|gap| gap.starts_with("[import-anchor]")),
+        "this test pins a gap that `registry::KNOWN_GAPS` no longer lists"
+    );
+
+    let imported = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(imported.path().join(".typdoc/collections")).unwrap();
+    std::fs::write(
+        imported.path().join(".typdoc/config.json"),
+        r#"{ "version": 1 }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        imported.path().join(".typdoc/collections/notes.json"),
+        r#"{ "match": "*.md", "schema": "note.json" }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        imported.path().join("note.json"),
+        r#"{ "name": "note", "fields": {} }"#,
+    )
+    .unwrap();
+    // The one real heading here is `real-heading`; `missing-heading` names nothing.
+    std::fs::write(imported.path().join("target.md"), "# Real Heading\n").unwrap();
+
+    let project = Scratch::project(&NOTES);
+    project.file(
+        ".typdoc/config.json",
+        &json!({
+            "version": 1,
+            "imports": { "held_import": imported.path().to_str().unwrap() }
+        })
+        .to_string(),
+    );
+    project.file(
+        "a.md",
+        "[broken anchor](held_import::target.md#missing-heading)\n",
+    );
+
+    let ran = validate_json(project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout_json()["findings"], json!([]));
 }

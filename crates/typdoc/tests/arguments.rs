@@ -1,6 +1,7 @@
 //! The table under "Arguments that name a document" in the design: the string a document is
 //! named by, built by hand from the table, round-trips through `get`. Covers a project with
-//! one namespace and one with several; an imported project is not read yet.
+//! one namespace, one with several, and, through `fixtures/valid/imports/main`, an import into
+//! a one-namespace project and an import into a several-namespace one.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -91,10 +92,10 @@ fn a_namespace_prefix_on_a_path_validates_the_namespace_and_leaves_the_path_as_w
     );
 }
 
-/// Kept alongside the other forms of the table: a `project::` prefix is an import, which is
-/// not read yet, whatever it prefixes.
+/// An unknown `project::` prefix stays bad arguments (exit 1), the same as an unknown
+/// `namespace:` prefix already is; a configured one is read, below.
 #[test]
-fn a_double_colon_prefix_exits_1_as_not_read_yet_whether_it_prefixes_a_key_or_a_path() {
+fn an_unknown_double_colon_prefix_is_bad_arguments_whether_it_prefixes_a_key_or_a_path() {
     let project = fixture("valid/several-namespaces");
 
     for argument in ["chief::WF-9", "chief::story-2/tickets/WF-9.md"] {
@@ -102,4 +103,53 @@ fn a_double_colon_prefix_exits_1_as_not_read_yet_whether_it_prefixes_a_key_or_a_
 
         assert_eq!(ran.code, 1, "{argument}: {}", ran.stderr);
     }
+}
+
+/// The table's "In an imported project" row, through `fixtures/valid/imports/main`, which
+/// imports `memory_import` (one namespace, `default`) and `several_import` (several
+/// namespaces, reusing `valid/several-namespaces`). The path form takes only the project
+/// prefix, whichever project it names, and needs no namespace prefix, since — as the text
+/// above the table says of the path form generally — it "needs to know nothing about how many
+/// namespaces a project has"; the key form needs a namespace prefix too once the imported
+/// project has more than one.
+#[test]
+fn with_an_import_the_path_form_takes_no_namespace_and_the_key_form_needs_one_past_the_first() {
+    let project = fixture("valid/imports/main");
+
+    // One namespace on the far side of the import.
+    round_trips(
+        &project,
+        "memory_import::learnings/LRN-1.md",
+        "learnings/LRN-1.md",
+    );
+    round_trips(&project, "memory_import::LRN-1", "learnings/LRN-1.md");
+
+    // Several namespaces on the far side: the path form still takes no namespace prefix...
+    round_trips(
+        &project,
+        "several_import::story-1/tickets/WF-1.md",
+        "story-1/tickets/WF-1.md",
+    );
+    round_trips(
+        &project,
+        "several_import::story-2/tickets/WF-9.md",
+        "story-2/tickets/WF-9.md",
+    );
+    // ...while the key form needs one, the same as a ref into a several-namespace import does
+    // (Refs, "Across namespaces"): `several_import::WF-9` alone is bad arguments.
+    round_trips(
+        &project,
+        "several_import::story-1:WF-1",
+        "story-1/tickets/WF-1.md",
+    );
+    round_trips(
+        &project,
+        "several_import::story-2:WF-9",
+        "story-2/tickets/WF-9.md",
+    );
+
+    // A namespace that is not called `default` on the far side of a one-namespace import
+    // (`named_import`, whose only namespace is `only`): the path form still needs no prefix,
+    // and it works for an uncoded document too.
+    round_trips(&project, "named_import::only/notes/a.md", "only/notes/a.md");
 }

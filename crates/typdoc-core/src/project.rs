@@ -519,7 +519,7 @@ impl Project {
     pub fn get(&self, arg: &DocumentArg, scope: &Scope, env: &dyn Env) -> Result<Document, Error> {
         if let Some(alias) = arg.project_prefix() {
             let imported = self.imported(alias)?;
-            let inner = imported_scope(imported, arg.namespace_prefix())?;
+            let inner = imported_scope(imported, arg)?;
             let mut document = imported.get(&arg.without_project_prefix(), &inner, env)?;
             document.project = Some(alias.to_owned());
             return Ok(document);
@@ -1114,7 +1114,7 @@ impl Project {
     pub fn toc(&self, arg: &DocumentArg, scope: &Scope, env: &dyn Env) -> Result<Toc, Error> {
         if let Some(alias) = arg.project_prefix() {
             let imported = self.imported(alias)?;
-            let inner = imported_scope(imported, arg.namespace_prefix())?;
+            let inner = imported_scope(imported, arg)?;
             let mut toc = imported.toc(&arg.without_project_prefix(), &inner, env)?;
             toc.project = Some(alias.to_owned());
             return Ok(toc);
@@ -1167,7 +1167,7 @@ impl Project {
                 )));
             }
             let imported = self.imported(alias)?;
-            let inner = imported_scope(imported, arg.namespace_prefix())?;
+            let inner = imported_scope(imported, arg)?;
             let mut report =
                 imported.refs(&arg.without_project_prefix(), &inner, false, field, env)?;
             report.document.project = Some(alias.to_owned());
@@ -3079,14 +3079,20 @@ fn reject_import_scope(scope: &Scope) -> Result<(), Error> {
     )))
 }
 
-/// The scope a `project::` argument's own `namespace:` prefix chooses inside `imported`: the
-/// named namespace when there is a prefix; `imported`'s one namespace when it has exactly one
-/// and there is none; otherwise bad arguments (design: "a ref into a project with several
-/// namespaces must name one" — `chief::WF-5` is refused there whatever the key, unconditionally,
-/// not only when it happens to be ambiguous; ticket 10's report reads a ref the same way, and an
-/// argument follows it for the same reason).
-fn imported_scope(imported: &Project, namespace: Option<&str>) -> Result<Scope, Error> {
-    if let Some(name) = namespace {
+/// The scope a `project::` argument chooses inside `imported`: the named namespace when its own
+/// `namespace:` prefix has one; otherwise, for a path, every namespace of `imported`, since a
+/// path is not narrowed by scope and "needs to know nothing about how many namespaces a project
+/// has" whichever project it is read against (Arguments that name a document) — `resolve`
+/// never reads `namespaces` for a `DocumentArg::Path`, so what is returned here only has to be
+/// a namespace of `imported`, not the one the path happens to sit under; otherwise, for a key,
+/// `imported`'s one namespace when it has exactly one, and bad arguments when it has several
+/// (design: "a ref into a project with several namespaces must name one" — `chief::WF-5` is
+/// refused there whatever the key, unconditionally, not only when it happens to be ambiguous;
+/// ticket 10's report reads a ref the same way, and an argument follows it for the same reason;
+/// the design's own table gives this rule with key examples only, and gives the path form of a
+/// ref into an import no such condition).
+fn imported_scope(imported: &Project, arg: &DocumentArg) -> Result<Scope, Error> {
+    if let Some(name) = arg.namespace_prefix() {
         let index = imported.namespace_index(name).ok_or_else(|| {
             let known: Vec<&str> = imported
                 .config
@@ -3105,10 +3111,15 @@ fn imported_scope(imported: &Project, namespace: Option<&str>) -> Result<Scope, 
             imports: Vec::new(),
         });
     }
-    if imported.config.namespaces.len() == 1 {
+    if matches!(arg, DocumentArg::Path { .. }) || imported.config.namespaces.len() == 1 {
         return Ok(Scope {
             source: Source::Everything,
-            namespaces: vec![imported.config.namespaces[0].name.clone()],
+            namespaces: imported
+                .config
+                .namespaces
+                .iter()
+                .map(|n| n.name.clone())
+                .collect(),
             imports: Vec::new(),
         });
     }
