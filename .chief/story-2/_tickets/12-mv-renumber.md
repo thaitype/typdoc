@@ -1,7 +1,7 @@
 # 12: `mv --renumber`
 
 Type: implementation
-Status: open
+Status: claimed
 Blocked by: 8, 11
 
 ## What this delivers
