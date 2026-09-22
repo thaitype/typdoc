@@ -61,6 +61,9 @@ pub const RULES: &[&str] = &[
     "collections.overlap",
     "filename.pattern",
     "state.missing",
+    "state.malformed",
+    "state.behind",
+    "state.retired",
     "refs.resolve",
     "refs.target",
     "refs.acyclic",
@@ -79,7 +82,4 @@ pub const RULES: &[&str] = &[
 /// when it enters `RULES`, and it is empty when v1 is finished.
 pub const UNIMPLEMENTED_RULES: &[&str] = &[
     "frontmatter.transitions", // story 2
-    "state.malformed",         // story 2
-    "state.behind",            // story 2
-    "state.retired",           // story 2
 ];

@@ -74,4 +74,5 @@ pub use query::{
 };
 pub use schema::{Auto, Field, FieldType, OptBool, Resolved, Schema, Target};
 pub use scope::{Scope, Source};
+pub use state::write as write_state;
 pub use validate::{Finding, Severity, ValidateScope};

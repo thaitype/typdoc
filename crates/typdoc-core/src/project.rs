@@ -201,8 +201,11 @@ pub struct Project {
     /// only). An alias absent from this map names neither a sibling namespace nor an import, and
     /// a ref or argument using it as an import prefix is `bad-prefix`.
     imports: BTreeMap<String, ImportState>,
-    /// Every namespace's state file, read once at load (contract: "`state/<namespace>.json` is
-    /// read and never written"), by namespace name: `state.missing` reads it when `validate`
+    /// Every namespace's state file, read once at load, by namespace name: this project's own
+    /// reflection of it, never written back to. `Project` itself never writes anywhere — a write
+    /// command reaches `state::write` directly, under the lock it takes for itself, and loads
+    /// its own fresh `Project` afterward the same way any other run does. `state.missing`,
+    /// `state.malformed`, `state.behind` and `state.retired` all read this map when `validate`
     /// runs, and `load_inner` itself already reads it once to report `config.state-uncoded`.
     state: BTreeMap<String, state::StateFile>,
 }
@@ -1539,6 +1542,11 @@ impl Project {
             // has a document in the namespace (design, State: "A collection with no coded
             // documents in the namespace and no record is new, and nothing is reported").
             let mut present: BTreeSet<(usize, usize)> = BTreeSet::new();
+            // The highest number a document of `(namespace, collection)` actually carries, for
+            // `state.behind` below: the same digits-after-the-code reading `--sort`'s own `key`
+            // field already gives a key (`key_sort_value`), reused here rather than duplicated,
+            // since "the highest existing number" means the same thing in both places.
+            let mut highest: BTreeMap<(usize, usize), u64> = BTreeMap::new();
             // `--audit` only: the number of documents each collection holds (checked or not,
             // contract item 8's own reasoning for a file with no frontmatter: it was matched, it
             // was simply not evaluated) and the path of every one of them with no frontmatter
@@ -1552,6 +1560,14 @@ impl Project {
                 }
                 namespaces.insert(namespace.clone());
                 present.insert((entry.namespace, entry.collection));
+                if let Some(key) = &entry.key
+                    && let SortValue::Key(_, Some(number)) = key_sort_value(key)
+                {
+                    highest
+                        .entry((entry.namespace, entry.collection))
+                        .and_modify(|top| *top = (*top).max(number))
+                        .or_insert(number);
+                }
                 let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
                 if audit {
                     *documents_by_collection.entry(entry.collection).or_insert(0) += 1;
@@ -1564,6 +1580,9 @@ impl Project {
                 findings.extend(self.check_entry(path, entry, &text, strict, audit, &ref_project));
             }
             findings.extend(self.state_missing_findings(&present, &scope));
+            findings.extend(self.state_malformed_findings(&scope));
+            findings.extend(self.state_behind_findings(&highest, &scope));
+            findings.extend(self.state_retired_findings(&scope));
             // An overlapping path has no one collection to check its frontmatter against, so it
             // was never checked (contract item 8's reasoning for a document whose block cannot
             // be parsed does not reach this far: that document at least had a schema to check
@@ -2664,6 +2683,128 @@ impl Project {
         findings
     }
 
+    /// Every namespace in `scope` that has a state file recorded, paired with its index into
+    /// `self.config.namespaces` (`state.behind` needs it, to look `highest` up by) and the
+    /// record itself. The three `state.*` rule methods below share exactly this walk — a
+    /// namespace outside `scope` is skipped, one with nothing recorded has nothing to check —
+    /// so it is written once here rather than three times with the same two `continue`s.
+    fn state_in_scope<'a>(
+        &'a self,
+        scope: &'a Scope,
+    ) -> impl Iterator<Item = (usize, &'a Namespace, &'a state::StateFile)> {
+        self.config
+            .namespaces
+            .iter()
+            .enumerate()
+            .filter_map(move |(namespace_idx, namespace)| {
+                if !scope.contains(&namespace.name) {
+                    return None;
+                }
+                let recorded = self.state.get(&namespace.name)?;
+                Some((namespace_idx, namespace, recorded))
+            })
+    }
+
+    /// `state.malformed`: a coded collection's state entry has a `last` that is present but not
+    /// a usable whole number (design, State). Unlike `state.missing` and `state.behind`, this
+    /// does not read `present`: the record is wrong whether or not the collection currently has
+    /// a document in the namespace, since it is the state file's own text that is wrong, not
+    /// anything about a document (decision 13).
+    fn state_malformed_findings(&self, scope: &Scope) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        for (_, namespace, recorded) in self.state_in_scope(scope) {
+            for collection in &self.collections {
+                if collection.schema.code.is_none() {
+                    continue;
+                }
+                let Some(found) = recorded.malformed.get(&collection.name) else {
+                    continue;
+                };
+                findings.push(validate::state_malformed_finding(
+                    &state::file_path(&namespace.name),
+                    &namespace.name,
+                    &collection.name,
+                    format!(
+                        "the collection `{}`'s `last` in its state file is {found}, not a whole number that can be held: expected a non-negative integer",
+                        collection.name
+                    ),
+                ));
+            }
+        }
+        findings
+    }
+
+    /// `state.behind`, at `warn`: a coded collection's recorded `last` is a usable whole number
+    /// lower than the highest number a document of that collection actually carries in this
+    /// namespace (design, State). `highest` is gathered by the caller's own document walk, the
+    /// same one `present` comes from for `state.missing`; a `(namespace, collection)` with no
+    /// document at all has nothing in `highest`, so a `last` left behind by every document of a
+    /// collection having been deleted is not reported here — keeping that gap is decision 13's
+    /// whole point, not an oversight of this rule.
+    fn state_behind_findings(
+        &self,
+        highest: &BTreeMap<(usize, usize), u64>,
+        scope: &Scope,
+    ) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        for (namespace_idx, namespace, recorded) in self.state_in_scope(scope) {
+            for (collection_idx, collection) in self.collections.iter().enumerate() {
+                if collection.schema.code.is_none() {
+                    continue;
+                }
+                let Some(&last) = recorded.last.get(&collection.name) else {
+                    continue;
+                };
+                let Some(&top) = highest.get(&(namespace_idx, collection_idx)) else {
+                    continue;
+                };
+                if last >= top {
+                    continue;
+                }
+                findings.push(validate::state_behind_finding(
+                    &state::file_path(&namespace.name),
+                    &namespace.name,
+                    &collection.name,
+                    format!(
+                        "the collection `{}`'s `last` in its state file is {last}, lower than the highest existing number {top}: allocation still gives the right number, but the record itself is wrong",
+                        collection.name
+                    ),
+                ));
+            }
+        }
+        findings
+    }
+
+    /// `state.retired`, at `warn`: a state entry names a collection this project no longer has
+    /// (design, State). `self.collections` is every collection the project's config has right
+    /// now — complete, since a `Project` that loaded at all had no collection left out of it by
+    /// a config error (`load_inner` fails first) — so a name missing from it is a collection
+    /// genuinely gone, not one merely broken elsewhere. Unlike `config.state-uncoded`, its
+    /// predecessor for this case, this is a finding, not a config error, so it stops nothing —
+    /// reads included.
+    fn state_retired_findings(&self, scope: &Scope) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        let known: BTreeSet<&str> = self.collections.iter().map(|c| c.name.as_str()).collect();
+        for (_, namespace, recorded) in self.state_in_scope(scope) {
+            let mut names: BTreeSet<&str> = recorded.last.keys().map(String::as_str).collect();
+            names.extend(recorded.malformed.keys().map(String::as_str));
+            for name in names {
+                if known.contains(name) {
+                    continue;
+                }
+                findings.push(validate::state_retired_finding(
+                    &state::file_path(&namespace.name),
+                    &namespace.name,
+                    name,
+                    format!(
+                        "the state file records `{name}`, which is not a collection of this project any more: it is kept, since it is the only record that its numbers were issued"
+                    ),
+                ));
+            }
+        }
+        findings
+    }
+
     /// The whole-project pass `refs.moved` and `refs.acyclic` both need before any single
     /// document's refs can be judged: a moved record can be recorded in a document outside the
     /// scope of the run that reads it, and a cycle can pass through documents outside it too.
@@ -3408,12 +3549,12 @@ fn ref_name_in(
 /// up yet, a broken config at a real location will not fix itself by installing more machines,
 /// and folding it into `imports.absent` would hide a mistake the design gives no way to catch.
 /// Every namespace's state file, read once: `config.state-orphan` for a file in `.typdoc/state/`
-/// that matches no current namespace, and `config.state-uncoded` for an entry that names
-/// anything other than a coded collection of this project (a collection this project does not
-/// have at all, or one whose schema has no code — the design's own wording, "a state entry
-/// names a collection whose schema has no code", does not separately name "no such collection",
-/// and no other id fits it). Both join `report`, the same one `load_inner` finishes with every
-/// other config error this project has.
+/// that matches no current namespace, and `config.state-uncoded` for an entry that names a
+/// collection this project has whose schema has no code (decision 13 narrows it to exactly this:
+/// an entry naming a collection the project does not have at all is `state.retired` instead, a
+/// finding rather than a config error, found later from `self.state` once `validate` runs, so
+/// that it does not stop this load the way this function's own errors do). Both join `report`,
+/// the same one `load_inner` finishes with every other config error this project has.
 fn read_state(
     root: &Path,
     config: &Config,
@@ -3425,6 +3566,15 @@ fn read_state(
         .filter(|found| found.schema.code.is_some())
         .map(|found| found.name.as_str())
         .collect();
+    // Every collection this project's config has right now, coded or not: `loaded` is complete
+    // for that question, since a collection with its own config error never gets this far (the
+    // load fails on it before `read_state` is even asked). A name outside this set names a
+    // collection the project no longer has at all, which is `state.retired`, not a config
+    // error — found later, from `self.state` and `self.collections`, once `validate` runs, so
+    // that it stops nothing here (decision 13: unlike `config.state-uncoded`, its predecessor
+    // for this case, a retired entry never stops a command, reads included).
+    let known_collections: BTreeSet<&str> =
+        loaded.iter().map(|found| found.name.as_str()).collect();
     for orphan in state::orphans(root, &config.namespaces)? {
         report.add(
             "config.state-orphan",
@@ -3438,13 +3588,17 @@ fn read_state(
     for namespace in &config.namespaces {
         let read = state::read(root, &namespace.name)?;
         let state_path = state::file_path(&namespace.name);
-        for name in read.last.keys() {
+        for name in read.last.keys().chain(read.malformed.keys()) {
+            if !known_collections.contains(name.as_str()) {
+                // `state.retired`: not reported here (see above).
+                continue;
+            }
             if !coded_collections.contains(name.as_str()) {
                 report.add(
                     "config.state-uncoded",
                     &state_path,
                     format!(
-                        "the state file records `{name}`, which is not a coded collection of this project: state applies only to a collection whose schema has a code"
+                        "the state file records `{name}`, which is a collection of this project whose schema has no code: state applies only to a coded collection"
                     ),
                 );
             }

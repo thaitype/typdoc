@@ -1,9 +1,11 @@
-# typdoc-core writes, and it writes in one place. The environment, the home directory, the
-# spawning of a process, the time and every function that changes a file are reached through
-# `deps`; the write half of the seam is `src/fs/system.rs`, which says so where it stands and
-# is the only module exempted from the list below. The list covers test code too, because a
-# test that reaches around the seam is exactly the test that stops proving anything about the
-# code that ships.
+# typdoc-core changes nothing: the environment, the home directory, the spawning of a process,
+# the time and every function that changes a file are reached through `deps` or through the
+# `Fs` trait in `src/fs.rs`, both of which this crate can call freely because a trait method is
+# not one of the functions below. This list has no exception anywhere in this crate: the
+# concrete file system, the only place a call below is actually made, is the `typdoc-fs` crate,
+# which depends on this one rather than the other way round, and has no such list of its own.
+# The list covers test code too, because a test that reaches around the seam is exactly the
+# test that stops proving anything about the code that ships.
 disallowed-methods = [
     { path = "std::env::var", reason = "the environment is reached through Env in deps" },
     { path = "std::env::var_os", reason = "the environment is reached through Env in deps" },

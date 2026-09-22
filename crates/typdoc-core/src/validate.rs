@@ -460,6 +460,75 @@ pub(crate) fn state_missing_finding(
     )
 }
 
+/// A finding about a coded collection whose recorded `last` is present but not a usable whole
+/// number (`state.malformed`): the record is there, unlike `state.missing`, so this is `Error`
+/// the same way `state.missing` is — `new` and `mv --renumber` refuse to issue a number for the
+/// same reason, a guessed one is a key that already belongs to a document.
+pub(crate) fn state_malformed_finding(
+    path: &str,
+    namespace: &str,
+    collection: &str,
+    message: String,
+) -> Finding {
+    build_finding(
+        Severity::Error,
+        "state.malformed",
+        path,
+        Some(namespace),
+        Some(collection),
+        None,
+        None,
+        None,
+        message,
+    )
+}
+
+/// A finding about a coded collection whose recorded `last` is a valid number lower than the
+/// highest number that exists for it in the namespace (`state.behind`, `warn`): allocation
+/// already takes the larger of the two, so the number issued next is still right, but the
+/// record itself is telling a reader something untrue.
+pub(crate) fn state_behind_finding(
+    path: &str,
+    namespace: &str,
+    collection: &str,
+    message: String,
+) -> Finding {
+    build_finding(
+        Severity::Warn,
+        "state.behind",
+        path,
+        Some(namespace),
+        Some(collection),
+        None,
+        None,
+        None,
+        message,
+    )
+}
+
+/// A finding about a state entry naming a collection this project no longer has
+/// (`state.retired`, `warn`): kept rather than removed, since it is the only record that those
+/// numbers were issued, and unlike its predecessor as a config error, this stops nothing —
+/// reads included.
+pub(crate) fn state_retired_finding(
+    path: &str,
+    namespace: &str,
+    collection: &str,
+    message: String,
+) -> Finding {
+    build_finding(
+        Severity::Warn,
+        "state.retired",
+        path,
+        Some(namespace),
+        Some(collection),
+        None,
+        None,
+        None,
+        message,
+    )
+}
+
 fn display_value(value: &Value) -> String {
     match value {
         Value::Text(text) => format!("`{text}`"),
