@@ -4,7 +4,7 @@
 
 **typdoc** — a CLI that treats a folder of Markdown files as typed, linked documents: it validates frontmatter against JSON schemas, and resolves, queries and checks refs between documents. Every command has `--json` output and meaningful exit codes, because the main users are agents.
 
-Design source of truth: `docs/design.md` (original: `typdoc — Generic Markdown CLI Design.md`, 2026-09-19).
+Design source of truth: `docs/design/design.md` (original: `typdoc — Generic Markdown CLI Design.md`, 2026-09-19).
 
 ## Development Commands
 
@@ -49,7 +49,7 @@ TYPDOC_REGENERATE_GOLDEN=<command>/<case> scripts/test.sh -p typdoc --test golde
 
 - `crates/typdoc-core/` — lib
 - `crates/typdoc/` — bin (clap); the CLI itself is in its `src/lib.rs`, so that its tests reach the registry of commands
-- `crates/typdoc-testkit/` — dev-only, not published: the loader of `fixtures/` and `docs/design.md`, the reader of what the design names, the checks that compare it with the code, and the comparison of golden files with the guard of the generator that writes them, and the fake file system and fixed clock the write seam is tested against; both crates use it in tests
+- `crates/typdoc-testkit/` — dev-only, not published: the loader of `fixtures/` and `docs/design/design.md`, the reader of what the design names, the checks that compare it with the code, and the comparison of golden files with the guard of the generator that writes them, and the fake file system and fixed clock the write seam is tested against; both crates use it in tests
 - `fixtures/` — projects the tests read (`valid/`, `broken/`), and the golden cases of `--json` output in `output/<command>/<case>/`
 - `docs/` — design doc
 - `examples/` — sample namespaces (`.typdoc/config.json` + schemas)
