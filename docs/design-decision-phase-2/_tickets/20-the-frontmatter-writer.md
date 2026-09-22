@@ -97,9 +97,7 @@ untouched because frontmatter is split from it before either is read.
 
 **The dependency is the smallest part of it, and still counts.** One crate instead of two, and
 the one that remains is the one the reader already trusts, so the writer and the reader cannot
-disagree with each other about what a document says. A reparse guard across two crates was a
-guard against them diverging; across one it is a guard against a mistake in typdoc's own code,
-which is a smaller thing to guard but still worth its cost.
+disagree with each other about what a document says.
 
 **What is lost is written down rather than left to be discovered.** The design now carries the
 table: comments, blank lines, flow style, quote style and spacing go, and so do anchors, aliases
@@ -110,8 +108,29 @@ several would be worse than one that says so.
 
 **Kept from phase 1:** the trait of three operations in front of the writer, so that a
 line-based editor or `yaml-edit` can take the place behind it later without the call sites
-changing; the mandatory re-read before the temp file is renamed into place, now guarding values
-against typdoc's own mistakes rather than against a young crate; no automatic fallback.
+changing.
+
+**Dropped from phase 1: the mandatory re-read guard.** It was carried forward here at first, on
+the reasoning that a guard across one crate still catches a mistake in typdoc's own code. That
+reasoning does not survive being asked what event the guard prevents.
+
+With `yaml-edit` the event was immediate and had been reproduced: a block scalar fused four lines
+into one and swallowed the following field; an anchor's key, once set, left an alias pointing at
+nothing. With `yaml_serde` writing the text the reader already holds, there is no such event to
+tell. Sixty-five cases were run, covering every value shape YAML reinterprets, every odd key name
+and every list shape, and none of them came back changed.
+
+If one were found, it would be a round-trip defect in `yaml_serde` — the crate every read in the
+program already trusts without a second check. A guard would be that crate checking itself, and a
+defect in it is not one typdoc can fix; the read path would be wrong long before the write path
+was. Guarding the write and not the read would also be inconsistent: a misread document is a
+wrong answer to every command, and nothing re-reads to catch that.
+
+What replaces it is a test rather than code that ships: that typdoc assembles the block it meant
+to — the right fields, the right text, the right order — is checked at the boundary of typdoc's
+own code, which is where a test belongs. The atomic write stays, and so does the refusal to
+replace an existing file; both prevent events that can be told, an interrupted run and a
+destination that already holds someone's work.
 
 **Not verified:** how much real frontmatter in the repositories typdoc is meant for actually
 carries comments, anchors or tags. Nothing here depends on the answer — the loss is stated
@@ -123,18 +142,15 @@ either way — but it decides how loud the tool should be about it, which is ope
   find out which `yaml-edit` cases the guard turns into a refused write. There is no
   `yaml-edit`, so there are no such cases. Its findings are kept: they are the evidence this
   decision was made from.
-- **Closes most of [decision 9](9-the-error-of-a-write-the-guard-rejects.md).** The exit code and
-  error id for a guard rejection were needed because `yaml-edit` made rejection an ordinary
-  outcome of an ordinary document. Writing from text, a rejection means typdoc built a block
-  that does not say what it meant, which is a defect in typdoc and not a state of the user's
-  file. What remains of 9 is which code that defect exits with, and it is a much smaller
-  question.
+- **Closes [decision 9](9-the-error-of-a-write-the-guard-rejects.md) entirely.** It asked what a
+  user sees when the guard fires. There is no guard, so nothing fires, and the exit code and
+  error id it was opened for are not needed.
 - **Answers one of [decision 10](10-a-number-past-u64-on-the-write-path.md)'s four questions.**
   It asked whether the guard compares text or parsed values, and said that was the part deciding
-  whether the u64 defect is a wrong answer or a damaged file. The guard compares the text of each
-  value, because text is what the writer is given and what it writes; a value the reader cannot
-  represent exactly is never parsed on the write path, so it cannot be compared in its rounded
-  form or written in it. The other three — what `set` does when asked to write such a number,
+  whether the u64 defect is a wrong answer or a damaged file. The answer is that the write path
+  never parses a value at all: it is handed the text the reader kept and writes that text, so a
+  value the reader cannot represent exactly is never turned into a number on the way to disk and
+  cannot be written in its rounded form. The other three — what `set` does when asked to write such a number,
   what `--json` prints for it, and whether the read-side defect is fixed in this story — are
   untouched and still open. The prototype's separate finding that an untyped read fails outright
   on such a document is now moot: no path reads untyped.

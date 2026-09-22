@@ -1,22 +1,13 @@
 # 9: The error id and exit code of a write the re-read guard rejects
 
 Type: wayfinder:grilling
-Status: open
+Status: resolved
 Blocked by: None (can start immediately)
 
 ## Question
 
-**Narrowed by [decision 20](20-the-frontmatter-writer.md).** The guard was load-bearing because
-the writing crate was young and a document's own shape could defeat it, so a rejection was an
-ordinary outcome of an ordinary document and the user had to be told what to do about it. The
-writer is now the reader's own crate, writing text it already holds, and sixty-five round-trip
-cases came back exactly. A rejection now means typdoc assembled a block that does not say what
-it meant: a defect in typdoc, not a state of the user's file, and nothing the user can act on
-beyond reporting it.
-
-What is still to decide is the exit code and the id for that, and it is a smaller question than
-the one below, which is kept for its reasoning. The sub-question about `new` and the state
-file's own guard stands unchanged.
+**Dissolved by [decision 20](20-the-frontmatter-writer.md); see the answer at the end.** The
+question below assumes a guard that no longer exists.
 
 ## The question as it was first asked
 
@@ -32,4 +23,23 @@ Nothing says what the user sees when it fires.
 
 ## Answer
 
-<filled in on resolve>
+**Nothing is decided, because nothing is left to decide.** The re-read guard is dropped in
+[decision 20](20-the-frontmatter-writer.md), so there is no rejection to give an exit code, an
+id or a message to.
+
+The reason the question existed is worth keeping. The guard was there because `yaml-edit` was
+young and a document's own shape could defeat it: a block scalar or an anchor in the frontmatter
+turned an ordinary `set` into a refusal, which is a state of the user's file and something the
+user has to be told about and act on. That is what made the exit code and the message worth
+deciding.
+
+With `yaml_serde` writing the text the reader already holds, no document's shape defeats the
+write. A guard would only catch a round-trip defect in the crate that every read in the program
+already trusts without a second check, and such a defect is not one typdoc can fix. That typdoc
+assembles the block it meant to is proved by a test at the boundary of typdoc's own code, not by
+code that ships and re-reads its own output.
+
+The two sub-questions go with it. Whether `new` runs a guard: there is none to run. Whether the
+state file's guard is the same id and code: the state file is written by the same path, from
+values typdoc holds, and has no guard either. What a malformed `last` does is a different
+question and stays where it is, in [decision 13](13-writing-the-state-file.md).

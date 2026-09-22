@@ -340,7 +340,6 @@ A coded document's file name is its key and nothing else, so it never changes wh
 
   The last two change what the file means, not only how it looks. An alias is one value used in several places; after a write it is several values that no longer follow each other, and nothing afterwards reports it. A tag may be what another tool in the user's chain reads. A document that depends on either should be edited by hand, not by typdoc.
 
-- A write is checked before it lands: the new block is read back with the same reader that read the original, and if any value differs from what the command meant to write, the write is refused and the file on disk is not replaced. This guards the values, which are promised; it does not guard the layout, which is not.
 - Frontmatter fields not in the schema are kept on write and reported by `validate`.
 
 ## Refs
