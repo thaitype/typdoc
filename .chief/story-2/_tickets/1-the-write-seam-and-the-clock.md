@@ -1,7 +1,7 @@
 # 1: The write seam, the clock, and the narrowed write ban
 
 Type: implementation
-Status: open
+Status: claimed
 Blocked by: None (can start immediately)
 
 Throughout these tickets, `decision N` means ticket N of `docs/design-decision-phase-2/`.
