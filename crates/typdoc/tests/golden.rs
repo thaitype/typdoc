@@ -16,7 +16,11 @@ use typdoc_testkit::golden::{self, Case, REGENERATE_VAR};
 fn run(case: &Case) -> Ran {
     let staged = typdoc_testkit::staging::stage_command(&fixture(&case.project), &case.command)
         .unwrap_or_else(|e| panic!("{}: {e}", case.id));
-    Spawn::args(&case.command).cwd(staged.dir()).run()
+    let mut spawn = Spawn::args(&case.command).cwd(staged.dir());
+    for (name, value) in &case.env {
+        spawn = spawn.var(name, value);
+    }
+    spawn.run()
 }
 
 /// The output of the case's run as JSON, when the run ended with 0 and printed nothing on

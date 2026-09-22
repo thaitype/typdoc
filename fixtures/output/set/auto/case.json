@@ -1,0 +1,5 @@
+{
+  "project": "valid/set-auto",
+  "command": ["set", "note.md", "title=After the clock", "--json"],
+  "env": { "TYPDOC_FIXED_CLOCK": "2001-02-03T04:05:06+07:00" }
+}

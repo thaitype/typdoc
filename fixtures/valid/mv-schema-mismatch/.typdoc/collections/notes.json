@@ -1,1 +1,1 @@
-{ "match": "*.md", "schema": "note.json" }
+{ "match": "*.md", "schema": "note.json", "validation": { "body.links": { "level": "off" } } }

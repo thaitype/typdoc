@@ -16,6 +16,58 @@ impl Clock for MachineClock {
     }
 }
 
+/// Not part of the documented command-line interface (`docs/design.md` names no such
+/// variable): its only reason to exist is letting a golden fixture pin what an `auto: create`
+/// or `auto: update` field holds, which the machine's own moving clock cannot do twice the same
+/// way. Read through `Env`, the same as every other variable this binary reads (`main.rs`'s
+/// `ProcessEnv`), but before `deps` is built: which clock goes into `deps.clock` is decided from
+/// that one read, ahead of everything the clock itself is later reached through.
+pub const FIXED_CLOCK_VAR: &str = "TYPDOC_FIXED_CLOCK";
+
+/// A clock that always answers the one instant it was built with.
+pub struct FixedEnvClock(DateTime<FixedOffset>);
+
+impl Clock for FixedEnvClock {
+    fn now(&self) -> DateTime<FixedOffset> {
+        self.0
+    }
+}
+
+/// The clock the shipped binary actually runs on: the machine's own, unless `FIXED_CLOCK_VAR`
+/// names an instant with an offset, in which case every write of this run stamps that one
+/// instant into every `auto: create`/`auto: update` field instead.
+pub enum ShippedClock {
+    Machine(MachineClock),
+    Fixed(FixedEnvClock),
+}
+
+impl ShippedClock {
+    /// Builds the clock from `FIXED_CLOCK_VAR`'s value, when set. A value that does not parse as
+    /// an instant with an offset is a misuse of a variable no ordinary run ever sets, so this
+    /// panics naming the variable and the text, rather than silently falling back to the
+    /// machine's own clock and hiding the mistake in whatever the golden then records.
+    pub fn from_var(value: Option<String>) -> ShippedClock {
+        match value {
+            None => ShippedClock::Machine(MachineClock),
+            Some(text) => {
+                let instant: DateTime<FixedOffset> = text.parse().unwrap_or_else(|e| {
+                    panic!("{FIXED_CLOCK_VAR} is `{text}`, not an instant with an offset: {e}")
+                });
+                ShippedClock::Fixed(FixedEnvClock(at_one_second(instant)))
+            }
+        }
+    }
+}
+
+impl Clock for ShippedClock {
+    fn now(&self) -> DateTime<FixedOffset> {
+        match self {
+            ShippedClock::Machine(clock) => clock.now(),
+            ShippedClock::Fixed(clock) => clock.now(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -33,5 +85,39 @@ mod tests {
             MachineClock.now() >= first,
             "the machine's clock went backwards between two readings"
         );
+    }
+
+    #[test]
+    fn with_no_variable_set_the_shipped_clock_reads_the_machine() {
+        let clock = ShippedClock::from_var(None);
+
+        assert!(matches!(clock, ShippedClock::Machine(_)));
+    }
+
+    #[test]
+    fn with_the_variable_set_the_shipped_clock_reports_that_one_instant_every_time() {
+        let clock = ShippedClock::from_var(Some("2001-02-03T04:05:06+07:00".to_owned()));
+
+        let expected: DateTime<FixedOffset> = "2001-02-03T04:05:06+07:00".parse().unwrap();
+        assert_eq!(clock.now(), expected);
+        assert_eq!(
+            clock.now(),
+            expected,
+            "the same instant every call, not the machine's own"
+        );
+    }
+
+    #[test]
+    fn the_fixed_instant_is_truncated_to_one_second_the_same_as_the_machine_clock() {
+        let clock = ShippedClock::from_var(Some("2001-02-03T04:05:06.987654321+07:00".to_owned()));
+
+        assert_eq!(clock.now().timestamp_subsec_nanos(), 0);
+        assert_eq!(clock.now().to_rfc3339(), "2001-02-03T04:05:06+07:00");
+    }
+
+    #[test]
+    #[should_panic(expected = "TYPDOC_FIXED_CLOCK is `not-an-instant`")]
+    fn a_variable_set_to_text_that_is_not_an_instant_with_an_offset_panics_naming_the_variable() {
+        ShippedClock::from_var(Some("not-an-instant".to_owned()));
     }
 }

@@ -1,0 +1,7 @@
+{
+  "name": "note",
+  "fields": {
+    "title": { "type": "string", "required": true },
+    "updated_at": { "type": "datetime", "auto": "update" }
+  }
+}
