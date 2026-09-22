@@ -19,13 +19,13 @@ Version 0.1.0. Not released, and not finished: `pull` and remote schemas are not
 
 - `get`, `list`, `refs`, `toc` and `validate` read a project; `new`, `set` and `mv` (including `mv --renumber`, which moves a coded document to another namespace under a new key) write one. A ref may point into another project on this machine that yours imports, and is followed there, though a few checks stop at that edge; see below.
 - Schemas with types, enums, refs and inheritance; rules over frontmatter, schemas, keys, file names, refs and body links; a query language for `list`, including conditions that follow refs.
-- **A write changes only the fields it is given.** Every write is atomic — a temp file, then a rename — takes the namespace's lock, and is safe to interrupt: `SIGINT` and `SIGTERM` are caught, the lock is released, and two writers racing the same lock never issue the same key. Nothing outside the project is written, and no command deletes a document.
+- **A write changes only the values of the fields it is given, and never the body.** Every write is atomic — a temp file, then a rename — takes the namespace's lock, and is safe to interrupt: `SIGINT` and `SIGTERM` are caught, the lock is released, and two writers racing the same lock never issue the same key. Nothing outside the project is written, and no command deletes a document.
 
 **What is not built yet**
 
 - `pull`, remote schemas, and the project lock they need. The design describes them; the binary does not have them, and says so if you ask.
 - Plain text output for most commands. `list` prints a table, `validate --audit` prints a summary, and `new`'s coded form and `mv --renumber` print the bare key; every other command needs `--json` and exit 1 without it.
-- Some checks stop at the edge of an imported project. The ones known and deliberate are listed in `crates/typdoc/src/registry.rs`, each held in place by a test.
+- Some checks stop at the edge of an imported project: a reverse lookup does not enter one, and a `#heading` anchor across an import is not checked. Both are deliberate, and each is held in place by a test.
 
 Linux is the platform this is run and tested on. Nothing else is claimed.
 
@@ -39,26 +39,32 @@ $ cd typdoc
 $ cargo build
 ```
 
+The binary lands in `target/debug/typdoc`. Put it on your `PATH`, as the examples below and
+`docs/getting-started.md` assume, or write the path out in full.
+
 `examples/` is a small project you can copy. Run the tool inside it:
 
 ```console
 $ cd examples
 
-$ ./../target/debug/typdoc validate --json
+$ typdoc validate --json
 {"summary":{"scope":"all","strict":false,"checked":{"namespaces":["default"],"documents":3},"findings":{"error":0,"warn":0,"info":0}},"findings":[]}
 
-$ ./../target/debug/typdoc get WF-2 --json
+$ typdoc get WF-2 --json
 {"document":{"path":"tickets/WF-2.md","namespace":"default","key":"WF-2","code":"WF","collection":"wayfinder","schema":"wayfinder","fields":{"title":"Decide the numbering scheme","status":"open","kind":"research",...}}}
 
-$ ./../target/debug/typdoc list --where status=open --ids
+$ typdoc list --where status=open --ids
 WF-2
 
-$ ./../target/debug/typdoc set WF-2 status=claimed --json
+$ typdoc set WF-2 status=claimed --json
 {"document":{"path":"tickets/WF-2.md","namespace":"default","key":"WF-2","code":"WF","collection":"wayfinder","schema":"wayfinder","fields":{"title":"Decide the numbering scheme","status":"claimed","kind":"research","blocked_by":["WF-1"],"created_at":"2026-09-16T09:00:00+07:00","updated_at":"...the moment of the write..."}}}
 ```
 
-`set` writes the file; `git checkout examples/` in the clone undoes it. `docs/getting-started.md`
-walks through building a project of your own from an empty folder.
+`set` writes the file; `git checkout examples/` in the clone undoes it. A write rewrites the whole
+frontmatter block rather than the line it changed: every value is carried across exactly as it was
+written, but comments, blank lines, quoting and inline lists such as `[WF-1]` are not kept.
+`docs/design/design.md` has the full list of what a write does not promise to preserve.
+`docs/getting-started.md` walks through building a project of your own from an empty folder.
 
 ## What a project looks like
 
@@ -102,6 +108,8 @@ collections — a coded `_tickets` collection and an uncoded `_notes` collection
 .typdoc/config.json                  { "version": 1, "namespaces": ["story-1", "story-2"] }
 .typdoc/collections/_tickets.json    { "match": "_tickets/{key}.md", "schema": "schemas/ticket.json" }
 .typdoc/collections/_notes.json      { "match": "_notes/*.md", "schema": "schemas/note.json" }
+.typdoc/state/story-1.json           { "_tickets": { "last": 1 } }
+.typdoc/state/story-2.json           { "_tickets": { "last": 1 } }
 schemas/ticket.json                  the fields a ticket has, with the code WF
 schemas/note.json                    the fields a note has, with no code
 story-1/_tickets/WF-1.md             a ticket in story-1
