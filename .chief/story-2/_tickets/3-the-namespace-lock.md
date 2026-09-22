@@ -1,7 +1,7 @@
 # 3: The namespace lock, and one path to it
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: 1
 
 ## What this delivers
