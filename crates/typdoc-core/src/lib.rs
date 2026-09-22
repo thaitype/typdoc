@@ -28,6 +28,7 @@ mod index;
 mod lines;
 mod links;
 mod lock;
+mod namespace_lock;
 mod namespaces;
 mod project;
 mod query;
@@ -48,10 +49,15 @@ pub use config::{Collection, Config, Level, Namespace, RefBase, RuleSetting, Rul
 pub use document::{Document, Number, Value};
 pub use env::{Deps, Env};
 pub use error::{ConfigError, Error, ErrorKind};
-pub use fs::{Fs, Mode, TEMP_PREFIX, WriteHandle, is_temp_name, write_atomically};
+pub use fs::{FileId, Fs, Mode, TEMP_PREFIX, WriteHandle, is_temp_name, write_atomically};
 pub use lines::{LineMap, Position};
 pub use links::{
     BodyLink, BodyLinks, Definition, DuplicateDefinition, Mention, Suspect, mentions, scan,
+};
+pub use namespace_lock::{
+    NamespaceLock, Released, acquire, git_common_namespace_lock_path, git_common_project_lock_path,
+    local_namespace_lock_path, local_project_lock_path, order_locks, project_hash, project_hash_of,
+    release,
 };
 pub use project::{
     AuditCollection, AuditOverlap, AuditReport, ListFilter, ListResult, Project, RefName,

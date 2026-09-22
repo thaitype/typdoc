@@ -1,0 +1,15 @@
+error[E0061]: this function takes 4 arguments but 3 arguments were supplied
+ --> tests/trybuild/write_without_lock.rs:8:13
+  |
+8 |     let _ = typdoc_core::write_atomically(&fs, std::path::Path::new("/project/note.md"), b"x");
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^      ---------------------------------------- argument #2 of type `&NamespaceLock<'_>` is missing
+  |
+note: function defined here
+ --> src/fs.rs
+  |
+  | pub fn write_atomically(
+  |        ^^^^^^^^^^^^^^^^
+help: provide the argument
+  |
+8 |     let _ = typdoc_core::write_atomically(&fs, /* &NamespaceLock<'_> */, std::path::Path::new("/project/note.md"), b"x");
+  |                                                +++++++++++++++++++++++++

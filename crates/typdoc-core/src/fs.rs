@@ -27,6 +27,21 @@ pub fn is_temp_name(name: &str) -> bool {
     name.starts_with(TEMP_PREFIX)
 }
 
+/// What the file system reports about a file: enough to tell whether two names lead to one
+/// file, and whether a file behind a still-open handle has been unlinked.
+///
+/// `device` and `inode` are what a lock's release compares: a `stat` on the path a lock file
+/// sits at, against an `fstat` on the handle held since the lock was created. `links` is read
+/// from the handle side only, since the design's second removal check ("or the open file's
+/// link count is zero") is about whether the file the handle still refers to has been unlinked,
+/// which a `stat` on a path that may now lead to a different file cannot tell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileId {
+    pub device: u64,
+    pub inode: u64,
+    pub links: u64,
+}
+
 /// A file open for writing, from [`Fs::create_new`]. Dropping it closes the file.
 pub trait WriteHandle {
     /// Writes every byte, or fails having written some of them: what is on disk after a
@@ -37,6 +52,13 @@ pub trait WriteHandle {
     /// Asks the storage to hold what has been written. Whether a write flushes before it
     /// renames is not decided, so the operation is on the seam and the decision stays open.
     fn sync(&mut self) -> io::Result<()>;
+
+    /// The identity the file system gives this open handle (`fstat`), unaffected by anything
+    /// that happens to the path it was opened at: the inode stays alive, and reachable through
+    /// the handle, for as long as the handle is open, whatever a later writer does to the name.
+    /// This is what lets a lock's release tell its own file from whatever the path currently
+    /// leads to.
+    fn identity(&self) -> io::Result<FileId>;
 }
 
 /// The file operations a write is built from.
@@ -75,6 +97,10 @@ pub trait Fs {
     /// for the text of the two paths: the two answers differ exactly where the damage would
     /// be. A path that is not there names no file, so it is one file with nothing.
     fn same_file(&self, a: &Path, b: &Path) -> io::Result<bool>;
+
+    /// The identity of whatever is at `path` right now (`stat`), or `None` when nothing is.
+    /// The other half of a lock's release check: see [`FileId`].
+    fn identity_at(&self, path: &Path) -> io::Result<Option<FileId>>;
 }
 
 /// Writes `bytes` to `path` so that a reader sees the old file or the new one whole.
@@ -89,7 +115,18 @@ pub trait Fs {
 /// It does not promise that no temp file is left behind, since a kill that cannot be caught
 /// leaves one. The temp file this call made is removed when the call itself fails, on the
 /// evidence that it was made here and by nobody else.
-pub fn write_atomically(fs: &dyn Fs, path: &Path, bytes: &[u8]) -> io::Result<()> {
+///
+/// `_lock` is not inspected: it is here so that this function cannot be called without one
+/// (decision 6, "every function that writes takes it by reference"). There is no check that it
+/// is the right lock for `path`'s namespace; that a lock exists at all is what the type proves,
+/// which of the possibly several held locks a command must hold before calling this is a
+/// property of the command, not of this function.
+pub fn write_atomically(
+    fs: &dyn Fs,
+    _lock: &crate::namespace_lock::NamespaceLock<'_>,
+    path: &Path,
+    bytes: &[u8],
+) -> io::Result<()> {
     let carried = match fs.mode(path) {
         Ok(mode) => Some(mode),
         Err(e) if e.kind() == io::ErrorKind::NotFound => None,

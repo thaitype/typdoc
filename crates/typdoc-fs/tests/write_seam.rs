@@ -9,11 +9,12 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use tempfile::TempDir;
-use typdoc_core::{Fs, Mode, is_temp_name, write_atomically};
+use typdoc_core::{Fs, Mode, NamespaceLock, acquire, is_temp_name, write_atomically};
 use typdoc_fs::SystemFs;
-use typdoc_testkit::fake::{Failure, FakeFs, On, Stage};
+use typdoc_testkit::fake::{Failure, FakeFs, FixedClock, On, Stage};
 
 /// An unusual mode, which no umask hands out by itself, so that a mode found on a file after a
 /// write was carried there rather than defaulted there.
@@ -26,11 +27,29 @@ trait Disk {
     fn names_in(&self, directory: &Path) -> Vec<String>;
 }
 
-/// The file system a scenario runs against, and the directory it runs in.
+/// The file system a scenario runs against, the directory it runs in, and a lock held for the
+/// whole of it: `write_atomically` requires one (decision 6), and the scenarios in this table
+/// are about what the write seam does to `w.root`, not about locking, so one lock is acquired
+/// once, outside `w.root`, and reused for every write the table makes.
 struct World<'a> {
     fs: &'a dyn Fs,
     disk: &'a dyn Disk,
     root: PathBuf,
+    lock: NamespaceLock<'a>,
+}
+
+/// Acquires a lock at `lock_path`, which must sit outside every directory a scenario looks at
+/// with [`World::leftovers`] or [`Disk::names_in`], since the lock file is not one of the names
+/// a scenario expects to find there.
+fn a_lock<'a>(fs: &'a dyn Fs, lock_path: &Path) -> NamespaceLock<'a> {
+    acquire(
+        fs,
+        &FixedClock::new(),
+        lock_path.to_path_buf(),
+        "write-seam-test-host",
+        Duration::from_secs(5),
+    )
+    .unwrap_or_else(|e| panic!("the scenario's own lock could not be acquired: {e}"))
 }
 
 impl World<'_> {
@@ -44,7 +63,7 @@ impl World<'_> {
 
     /// Puts a file there through the seam, which is how a scenario sets up on either backend.
     fn given(&self, name: &str, bytes: &[u8]) {
-        write_atomically(self.fs, &self.path(name), bytes)
+        write_atomically(self.fs, &self.lock, &self.path(name), bytes)
             .unwrap_or_else(|e| panic!("the setup of {name} could not be written: {e}"));
     }
 
@@ -76,7 +95,7 @@ fn scenarios() -> Vec<Scenario> {
             name: "a file that was not there is created holding the bytes".to_owned(),
             stage: Stage::Nothing,
             setup: nothing,
-            act: |w| write_atomically(w.fs, &w.path("note.md"), b"new"),
+            act: |w| write_atomically(w.fs, &w.lock, &w.path("note.md"), b"new"),
             check: |w, outcome| {
                 outcome.expect("the write succeeds");
                 assert_eq!(w.bytes("note.md").as_deref(), Some(&b"new"[..]));
@@ -86,7 +105,7 @@ fn scenarios() -> Vec<Scenario> {
             name: "an existing file is replaced whole".to_owned(),
             stage: Stage::Nothing,
             setup: |w| w.given("note.md", b"old and longer than what replaces it"),
-            act: |w| write_atomically(w.fs, &w.path("note.md"), b"new"),
+            act: |w| write_atomically(w.fs, &w.lock, &w.path("note.md"), b"new"),
             check: |w, outcome| {
                 outcome.expect("the write succeeds");
                 assert_eq!(w.bytes("note.md").as_deref(), Some(&b"new"[..]));
@@ -100,7 +119,7 @@ fn scenarios() -> Vec<Scenario> {
                 w.fs.set_mode(&w.path("note.md"), UNUSUAL)
                     .expect("the setup can set a mode");
             },
-            act: |w| write_atomically(w.fs, &w.path("note.md"), b"new"),
+            act: |w| write_atomically(w.fs, &w.lock, &w.path("note.md"), b"new"),
             check: |w, outcome| {
                 outcome.expect("the write succeeds");
                 assert_eq!(w.bytes("note.md").as_deref(), Some(&b"new"[..]));
@@ -120,7 +139,7 @@ fn scenarios() -> Vec<Scenario> {
                 w.fs.set_mode(&w.path("neighbour.md"), UNUSUAL)
                     .expect("the setup can set a mode");
             },
-            act: |w| write_atomically(w.fs, &w.path("note.md"), b"new"),
+            act: |w| write_atomically(w.fs, &w.lock, &w.path("note.md"), b"new"),
             check: |w, outcome| {
                 outcome.expect("the write succeeds");
                 assert_ne!(
@@ -134,7 +153,7 @@ fn scenarios() -> Vec<Scenario> {
             name: "a write that finished leaves no file of the reserved shape".to_owned(),
             stage: Stage::Nothing,
             setup: |w| w.given("note.md", b"old"),
-            act: |w| write_atomically(w.fs, &w.path("note.md"), b"new"),
+            act: |w| write_atomically(w.fs, &w.lock, &w.path("note.md"), b"new"),
             check: |w, outcome| {
                 outcome.expect("the write succeeds");
                 assert_eq!(
@@ -241,7 +260,7 @@ fn scenarios() -> Vec<Scenario> {
             name: "no space left stops the write and leaves the file that was there".to_owned(),
             stage: Stage::Fail(On::Write, Failure::NoSpace),
             setup: |w| w.given("note.md", b"old"),
-            act: |w| write_atomically(w.fs, &w.path("note.md"), b"new"),
+            act: |w| write_atomically(w.fs, &w.lock, &w.path("note.md"), b"new"),
             check: |w, outcome| {
                 let error = outcome.expect_err("a write with no space left fails");
                 assert_eq!(error.raw_os_error(), Some(28));
@@ -254,7 +273,7 @@ fn scenarios() -> Vec<Scenario> {
                 .to_owned(),
             stage: Stage::Fail(On::Create, Failure::PermissionDenied),
             setup: |w| w.given("note.md", b"old"),
-            act: |w| write_atomically(w.fs, &w.path("note.md"), b"new"),
+            act: |w| write_atomically(w.fs, &w.lock, &w.path("note.md"), b"new"),
             check: |w, outcome| {
                 let error = outcome.expect_err("a create without the permission fails");
                 assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
@@ -267,7 +286,7 @@ fn scenarios() -> Vec<Scenario> {
                 .to_owned(),
             stage: Stage::Fail(On::Rename, Failure::CrossesDevices),
             setup: |w| w.given("note.md", b"old"),
-            act: |w| write_atomically(w.fs, &w.path("note.md"), b"new"),
+            act: |w| write_atomically(w.fs, &w.lock, &w.path("note.md"), b"new"),
             check: |w, outcome| {
                 let error = outcome.expect_err("a rename across devices fails");
                 assert_eq!(error.raw_os_error(), Some(18));
@@ -286,7 +305,7 @@ fn scenarios() -> Vec<Scenario> {
             w.fs.set_mode(&w.path("note.md"), UNUSUAL)
                 .expect("the setup can set a mode");
         },
-        act: |w| write_atomically(w.fs, &w.path("note.md"), b"new"),
+        act: |w| write_atomically(w.fs, &w.lock, &w.path("note.md"), b"new"),
         check: |w, outcome| {
             outcome.expect_err("a run that stopped does not report success");
             let left = w.leftovers(&["note.md"]);
@@ -313,7 +332,7 @@ fn scenarios() -> Vec<Scenario> {
             name: format!("a run stopped after {stopped_after} operations damages no document"),
             stage: Stage::StopAfter(stopped_after),
             setup: |w| w.given("note.md", b"old"),
-            act: |w| write_atomically(w.fs, &w.path("note.md"), b"new"),
+            act: |w| write_atomically(w.fs, &w.lock, &w.path("note.md"), b"new"),
             check: |w, _| {
                 let held = w.bytes("note.md");
                 assert!(
@@ -397,10 +416,12 @@ fn every_scenario_holds_against_the_fake() {
 
     for scenario in &table {
         let fake = FakeFs::new();
+        let lock = a_lock(&fake, Path::new("/locks/scenario.lock"));
         let world = World {
             fs: &fake,
             disk: &fake,
             root: fake_root(),
+            lock,
         };
         run(scenario, &world, |stage| fake.arm(stage));
         println!("fake: {}", scenario.name);
@@ -418,13 +439,16 @@ fn every_scenario_a_real_directory_reaches_holds_against_a_real_temporary_direct
         reachable.len()
     );
 
+    let lock_dir = TempDir::new().expect("a temporary directory for locks can be made");
     let mut ran = 0;
     for scenario in reachable {
         let directory = TempDir::new().expect("a temporary directory can be made");
+        let lock = a_lock(&SystemFs, &lock_dir.path().join("scenario.lock"));
         let world = World {
             fs: &SystemFs,
             disk: &RealDisk,
             root: directory.path().to_path_buf(),
+            lock,
         };
         // A real directory stages nothing, which is what puts a scenario in this half.
         run(scenario, &world, |_| {});
@@ -465,12 +489,13 @@ fn nothing_in_the_table_claims_to_cover_a_power_cut_or_a_kill() {
 fn what_a_run_that_stopped_leaves_is_a_leftover_and_not_a_promise_that_there_is_none() {
     let fake = FakeFs::new();
     let note = PathBuf::from("/project/note.md");
-    write_atomically(&fake, &note, b"old").expect("the setup succeeds");
+    let lock = a_lock(&fake, Path::new("/locks/note.lock"));
+    write_atomically(&fake, &lock, &note, b"old").expect("the setup succeeds");
 
     // Everything up to and including the write of the bytes, and then nothing: no rename, and
     // no removal of the temp file either, because the program that would have done it is gone.
     fake.arm(Stage::StopAfter(4));
-    let outcome = write_atomically(&fake, &note, b"new");
+    let outcome = write_atomically(&fake, &lock, &note, b"new");
 
     outcome.expect_err("a run that stopped does not report success");
     assert_eq!(

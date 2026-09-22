@@ -4,8 +4,9 @@
 use std::ffi::OsString;
 use std::io;
 use std::path::PathBuf;
+use std::time::Duration;
 
-use typdoc_core::{Clock, Deps, Env, at_one_second, write_atomically};
+use typdoc_core::{Clock, Deps, Env, acquire, at_one_second, write_atomically};
 use typdoc_testkit::fake::{FIXED_INSTANT, FakeFs, FixedClock};
 
 struct NoEnv;
@@ -70,8 +71,16 @@ fn a_write_reaches_a_file_system_only_through_the_seam_in_deps() {
         clock: &clock,
     };
     let note = PathBuf::from("/project/note.md");
+    let lock = acquire(
+        deps.fs,
+        deps.clock,
+        PathBuf::from("/locks/note.lock"),
+        "test-host",
+        Duration::from_secs(5),
+    )
+    .expect("the lock can be acquired");
 
-    write_atomically(deps.fs, &note, b"through the seam").expect("the write succeeds");
+    write_atomically(deps.fs, &lock, &note, b"through the seam").expect("the write succeeds");
 
     assert_eq!(fake.bytes(&note).as_deref(), Some(&b"through the seam"[..]));
 }

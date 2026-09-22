@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use chrono::{DateTime, FixedOffset};
-use typdoc_core::{Clock, Fs, Mode, WriteHandle};
+use typdoc_core::{Clock, FileId, Fs, Mode, WriteHandle};
 
 /// The mode a file gets from [`FakeFs::create_new`] when nothing sets one: what a umask that
 /// takes away nothing from the group and others leaves of a regular file.
@@ -29,6 +29,8 @@ pub enum On {
     ReadMode,
     Exists,
     SameFile,
+    IdentityAt,
+    HandleIdentity,
 }
 
 /// A failure a real directory will not produce on request.
@@ -213,6 +215,7 @@ impl Fs for FakeFs {
         Ok(Box::new(FakeHandle {
             state: Arc::clone(&self.state),
             path: path.to_path_buf(),
+            identity,
         }))
     }
 
@@ -281,12 +284,26 @@ impl Fs for FakeFs {
         };
         Ok(a.identity == b.identity)
     }
+
+    fn identity_at(&self, path: &Path) -> io::Result<Option<FileId>> {
+        let mut state = self.locked();
+        state.admit(On::IdentityAt)?;
+        Ok(state.files.get(path).map(|entry| FileId {
+            device: 0,
+            inode: entry.identity,
+            links: 1,
+        }))
+    }
 }
 
 /// A file of the fake, open for writing.
 struct FakeHandle {
     state: Arc<Mutex<State>>,
     path: PathBuf,
+    /// Captured when the handle was made, and never re-read from `path`: a real `fstat` on an
+    /// open descriptor answers for the file the descriptor was opened on, whatever a later
+    /// writer does to the name.
+    identity: u64,
 }
 
 impl WriteHandle for FakeHandle {
@@ -304,6 +321,26 @@ impl WriteHandle for FakeHandle {
 
     fn sync(&mut self) -> io::Result<()> {
         Ok(())
+    }
+
+    fn identity(&self) -> io::Result<FileId> {
+        let mut state = locked(&self.state);
+        state.admit(On::HandleIdentity)?;
+        // The link count is whether any entry in the fake still holds this identity: the fake
+        // never reuses an identity (`fresh_identity` only counts up), so a `remove_file` that
+        // drops the one entry that had it, and nothing else taking its place, is what "the open
+        // file's link count is zero" means here.
+        let links = u64::from(
+            state
+                .files
+                .values()
+                .any(|entry| entry.identity == self.identity),
+        );
+        Ok(FileId {
+            device: 0,
+            inode: self.identity,
+            links,
+        })
     }
 }
 

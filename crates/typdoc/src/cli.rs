@@ -875,6 +875,7 @@ fn exit_code(kind: ErrorKind) -> u8 {
         ErrorKind::Validation => 2,
         ErrorKind::NotFound => 5,
         ErrorKind::Io => 6,
+        ErrorKind::LockTimeout => 4,
     }
 }
 

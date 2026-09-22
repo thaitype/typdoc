@@ -7,6 +7,7 @@ pub enum ErrorKind {
     Validation,
     NotFound,
     Io,
+    LockTimeout,
 }
 
 /// One config error: the id from the design's table, the configuration file it is about
@@ -59,6 +60,12 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+
+    /// A namespace or project lock not acquired within `--lock-timeout`. `message` names the
+    /// path, pid, host and age, built where the lock was attempted, which is the one place
+    /// that knows enough about the failed attempt and the competing lock to say it.
+    #[error("{message}")]
+    LockTimeout { path: PathBuf, message: String },
 }
 
 impl Error {
@@ -78,6 +85,7 @@ impl Error {
                 ErrorKind::Validation
             }
             Error::Io { .. } => ErrorKind::Io,
+            Error::LockTimeout { .. } => ErrorKind::LockTimeout,
         }
     }
 }

@@ -17,7 +17,7 @@ use std::io::{self, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 
-use typdoc_core::{Fs, Mode, WriteHandle};
+use typdoc_core::{FileId, Fs, Mode, WriteHandle};
 
 /// The file system this process is running on. Linux is the platform that is run and claimed,
 /// and the mode and the identity of a file are read the way Unix reports them.
@@ -57,19 +57,29 @@ impl Fs for SystemFs {
     }
 
     fn same_file(&self, a: &Path, b: &Path) -> io::Result<bool> {
-        let (Some(a), Some(b)) = (identity(a)?, identity(b)?) else {
+        let (Some(a), Some(b)) = (self.identity_at(a)?, self.identity_at(b)?) else {
             return Ok(false);
         };
-        Ok(a == b)
+        Ok(a.device == b.device && a.inode == b.inode)
+    }
+
+    fn identity_at(&self, path: &Path) -> io::Result<Option<FileId>> {
+        match fs::metadata(path) {
+            Ok(data) => Ok(Some(file_id(&data))),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 }
 
-/// The device and inode a path leads to, or nothing when the path leads nowhere.
-fn identity(path: &Path) -> io::Result<Option<(u64, u64)>> {
-    match fs::metadata(path) {
-        Ok(data) => Ok(Some((data.dev(), data.ino()))),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e),
+/// The one place `dev()`, `ino()` and `nlink()` are read out of a platform `Metadata`, so that
+/// `identity_at` and a handle's own `identity` cannot drift into reading them two different
+/// ways.
+fn file_id(data: &fs::Metadata) -> FileId {
+    FileId {
+        device: data.dev(),
+        inode: data.ino(),
+        links: data.nlink(),
     }
 }
 
@@ -83,5 +93,9 @@ impl WriteHandle for OpenFile {
 
     fn sync(&mut self) -> io::Result<()> {
         self.0.sync_all()
+    }
+
+    fn identity(&self) -> io::Result<FileId> {
+        Ok(file_id(&self.0.metadata()?))
     }
 }
