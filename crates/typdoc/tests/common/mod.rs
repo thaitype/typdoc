@@ -1,8 +1,9 @@
 //! Shared by the CLI tests: the fixtures loader and the one place a process is started.
 
 use std::ffi::OsStr;
+use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 
 /// Written out here and never copied from the machine that runs the suite.
 const PATH: &str = "/usr/bin:/bin";
@@ -85,17 +86,20 @@ impl Spawn {
         self
     }
 
+    /// Builds the command every entry point below runs, so that `Command::new` itself appears
+    /// exactly once in this crate's tests (`../clippy.toml`'s own comment: "exactly two
+    /// places", this and the shell examples harness), whichever of those entry points a test
+    /// calls.
     #[allow(
         clippy::disallowed_methods,
         reason = "the one place a test starts a process, so that the environment it gets is decided here"
     )]
-    pub fn run(self) -> Ran {
-        let home = tempfile::tempdir().expect("a fresh HOME");
+    fn command(&self, home: &Path) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_typdoc"));
         command
             .env_clear()
             .env("PATH", PATH)
-            .env("HOME", home.path())
+            .env("HOME", home)
             .args(&self.args);
         for (name, value) in &self.vars {
             command.env(name, value);
@@ -103,6 +107,12 @@ impl Spawn {
         if let Some(cwd) = &self.cwd {
             command.current_dir(cwd);
         }
+        command
+    }
+
+    pub fn run(self) -> Ran {
+        let home = tempfile::tempdir().expect("a fresh HOME");
+        let mut command = self.command(home.path());
         let output = command.output().expect("the typdoc binary starts");
         Ran {
             code: output.status.code().expect("typdoc ended by a signal"),
@@ -110,6 +120,66 @@ impl Spawn {
             stderr: String::from_utf8(output.stderr).expect("UTF-8 on stderr"),
         }
     }
+
+    /// Starts the process without waiting for it, for a test that has to act on it while it
+    /// runs — sending it a real signal — rather than only see it once it has ended, which
+    /// [`run`](Self::run) alone cannot do.
+    pub fn spawn(self) -> RunningChild {
+        let home = tempfile::tempdir().expect("a fresh HOME");
+        let mut command = self.command(home.path());
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = command.spawn().expect("the typdoc binary starts");
+        RunningChild { child, _home: home }
+    }
+}
+
+/// A process started through [`Spawn::spawn`], while it is still running (or has just ended,
+/// for a caller that raced it and lost).
+pub struct RunningChild {
+    child: Child,
+    // Kept alive so `HOME` is not removed out from under a process still running against it.
+    _home: tempfile::TempDir,
+}
+
+impl RunningChild {
+    /// Sends `signal` (a POSIX signal number — `libc::SIGINT`, `libc::SIGTERM`) to this
+    /// process, through `kill(2)`, the one real way to deliver anything past `SIGKILL`: the
+    /// standard library's own [`Child::kill`] reaches no further than that.
+    pub fn signal(&self, signal: libc::c_int) {
+        // SAFETY: `kill(2)` takes a pid and a signal number and has no memory of its own to
+        // corrupt; the pid is this value's own child, read from the `Child` the standard
+        // library already gave it.
+        let sent = unsafe { libc::kill(self.child.id() as libc::pid_t, signal) };
+        assert_eq!(sent, 0, "kill(2) failed: {}", io::Error::last_os_error());
+    }
+
+    /// Waits for the process to end, whichever way it ends, and returns what it left behind.
+    pub fn wait(self) -> Ended {
+        let output = self
+            .child
+            .wait_with_output()
+            .expect("the process can be waited on");
+        Ended {
+            code: output.status.code(),
+            signal: std::os::unix::process::ExitStatusExt::signal(&output.status),
+            stdout: String::from_utf8(output.stdout).expect("UTF-8 on stdout"),
+            stderr: String::from_utf8(output.stderr).expect("UTF-8 on stderr"),
+        }
+    }
+}
+
+/// What a [`RunningChild`] left behind once it ended. `code` and `signal` are each an `Option`
+/// rather than one number chosen for the caller: a process a test signals ends by the signal,
+/// with no exit code of its own, and `code` is `None` exactly then — [`std::process::ExitStatus`]'s
+/// own documented rule on POSIX, not something this helper decides.
+pub struct Ended {
+    pub code: Option<i32>,
+    pub signal: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
 }
 
 /// A project made in a temporary folder, for the cases no committed fixture holds.

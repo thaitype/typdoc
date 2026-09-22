@@ -12,6 +12,8 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, FixedOffset};
@@ -20,7 +22,7 @@ use sha2::{Digest, Sha256};
 
 use crate::clock::Clock;
 use crate::error::Error;
-use crate::fs::Fs;
+use crate::fs::{FileId, Fs};
 
 /// `.typdoc/locks/<namespace>.lock`, the `local` mode of the lock table.
 pub fn local_namespace_lock_path(project_root: &Path, namespace: &str) -> PathBuf {
@@ -120,6 +122,85 @@ struct Stamp<'a> {
     timestamp: String,
 }
 
+/// What [`acquire`] records for a lock it just created, and what the signal-triggered cleanup
+/// thread reads back (see the module doc below the registry's own functions).
+#[derive(Debug, Clone)]
+struct Registered {
+    id: u64,
+    path: PathBuf,
+    expected: FileId,
+}
+
+/// Every lock this process currently holds, by the path it lives at and the identity [`acquire`]
+/// read from the handle right after creating it.
+///
+/// This exists because [`NamespaceLock`] cannot cross a thread: it holds `&dyn Fs` and a boxed
+/// `WriteHandle` with no `Send` bound, so a cleanup thread spawned for `SIGINT`/`SIGTERM`
+/// (decision 6) cannot call [`release`] on a lock the acquiring thread still owns. What the
+/// identity check needs is not the open handle itself, only the two things a `stat` can be
+/// compared against — the path, and the device/inode/link-count `acquire` already read from the
+/// handle once — so that is what crosses the thread instead, under this mutex.
+///
+/// Caching the identity at creation rather than reading it fresh at cleanup time loses nothing
+/// this check needs: the device and inode of a still-open file do not change for as long as the
+/// handle stays open, whatever happens to the path, so a `stat` on the path that still shows the
+/// same device and inode at cleanup time is exactly the evidence [`release_checked`] itself
+/// would have found from a fresh `fstat`. The one case that only a live `fstat` could catch — the
+/// same path relinked back to the exact same, still-open inode with the link count read as zero
+/// in between — cannot happen while this process keeps the handle open, because the kernel does
+/// not free an inode, and so never reuses its number, while any handle still refers to it.
+static REGISTRY: Mutex<Vec<Registered>> = Mutex::new(Vec::new());
+static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+fn register(path: PathBuf, expected: FileId) -> u64 {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let mut guard = REGISTRY
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    guard.push(Registered { id, path, expected });
+    id
+}
+
+fn deregister(id: u64) {
+    let mut guard = REGISTRY
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    guard.retain(|entry| entry.id != id);
+}
+
+/// Removes every lock this process still holds, for the cleanup thread `typdoc`'s own binary
+/// spawns off the `SIGINT`/`SIGTERM` handler (decisions 5 and 6): the same identity check
+/// [`release_checked`] runs, read from the registry above instead of from an open handle, since
+/// the handle cannot reach this thread. A lock whose path no longer shows the identity `acquire`
+/// recorded — taken away and replaced by something else, or simply gone — is left alone, the
+/// same refusal [`release_checked`] already makes: this process never removes a lock it did not
+/// create, on the signal path any more than on the ordinary one.
+///
+/// Nothing here removes an entry from the registry: the process ends by the signal right after
+/// this runs (`typdoc`'s own cleanup thread), so there is no later caller left to confuse.
+pub fn release_all_for_signal(fs: &dyn Fs) {
+    let entries: Vec<Registered> = {
+        let guard = REGISTRY
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.clone()
+    };
+    for entry in entries {
+        let current = fs.identity_at(&entry.path).ok().flatten();
+        if identity_matches(entry.expected, current) {
+            let _ = fs.remove_file(&entry.path);
+        }
+    }
+}
+
+/// The design's own identity check, shared by [`release_checked`] (a live `fstat` on the
+/// handle) and [`release_all_for_signal`] (the `FileId` `acquire` cached, since the signal
+/// path's cleanup thread cannot reach the handle itself): `held` still names a file with at
+/// least one link, and `current` — a `stat` on the lock's path — names that same file.
+fn identity_matches(held: FileId, current: Option<FileId>) -> bool {
+    held.links > 0 && current.is_some_and(|id| id.device == held.device && id.inode == held.inode)
+}
+
 /// A namespace's lock (or the project's), held for as long as this value lives.
 ///
 /// No public constructor and no public field: [`acquire`] is the only function that makes one.
@@ -131,6 +212,9 @@ pub struct NamespaceLock<'a> {
     path: PathBuf,
     handle: Box<dyn crate::fs::WriteHandle>,
     released: bool,
+    /// This lock's own entry in [`REGISTRY`], removed on [`release`] or on [`Drop`], whichever
+    /// runs first.
+    registry_id: u64,
 }
 
 impl NamespaceLock<'_> {
@@ -171,6 +255,9 @@ impl Drop for NamespaceLock<'_> {
             // since there is no channel left to report through by the time this runs.
             let _ = release_checked(self.fs, &self.path, self.handle.as_ref());
         }
+        // Runs whichever way this value's life ended, so the registry the signal-triggered
+        // cleanup thread reads never outlives the lock it describes.
+        deregister(self.registry_id);
     }
 }
 
@@ -191,9 +278,7 @@ fn release_checked(
 ) -> io::Result<Released> {
     let held = handle.identity()?;
     let current = fs.identity_at(path)?;
-    let still_ours = held.links > 0
-        && current.is_some_and(|id| id.device == held.device && id.inode == held.inode);
-    if still_ours {
+    if identity_matches(held, current) {
         fs.remove_file(path)?;
         Ok(Released::ByUs)
     } else {
@@ -232,6 +317,16 @@ pub fn acquire<'a>(
     loop {
         match fs.create_new(&path) {
             Ok(mut handle) => {
+                // Registered as soon as the handle can say what it is, so the window between
+                // the kernel's own creation of the file and this process recording that it
+                // holds it is as small as it can be made. It is not closed: a signal delivered
+                // before this line finds a lock file no list in the process yet names, exactly
+                // the residual window decision 6 writes down rather than promises away.
+                let identity = handle.identity().map_err(|source| Error::Io {
+                    file: path.clone(),
+                    source,
+                })?;
+                let registry_id = register(path.clone(), identity);
                 let stamp = Stamp {
                     pid: std::process::id(),
                     host,
@@ -247,6 +342,7 @@ pub fn acquire<'a>(
                     path,
                     handle,
                     released: false,
+                    registry_id,
                 });
             }
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
@@ -352,6 +448,160 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+
+    // ---- ticket 4: the registry itself, proven directly here rather than through a fake file
+    // system's file removal: `typdoc_testkit::fake`'s own `fresh_identity` never repeats a
+    // value, so no fake-backed test can tell a leaked registry entry apart from a properly
+    // deregistered one by which files end up removed — both look the same from there, since the
+    // identity check alone already refuses a leaked entry's mismatched device/inode. This is a
+    // unit test of `register`/`deregister` against `REGISTRY` itself, which is why it lives here
+    // and not in `tests/namespace_lock.rs` (no `Fs` or `Clock` needed).
+
+    fn registry_len() -> usize {
+        REGISTRY
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
+    }
+
+    /// `cargo test` runs this module's tests concurrently on several threads by default, and
+    /// `REGISTRY` is one static shared by the whole process: every test below that reads a
+    /// count relative to its own `before` holds this for its length, so two of them can never
+    /// interleave their register/deregister calls and see each other's.
+    static REGISTRY_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn deregister_removes_exactly_the_entry_register_returned_the_id_for() {
+        let _exclusive = REGISTRY_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let before = registry_len();
+        let id = register(
+            PathBuf::from("/does/not/matter"),
+            FileId {
+                device: 1,
+                inode: 2,
+                links: 1,
+            },
+        );
+        assert_eq!(registry_len(), before + 1, "register did not add an entry");
+
+        deregister(id);
+
+        assert_eq!(
+            registry_len(),
+            before,
+            "deregister did not remove the entry it was given the id for"
+        );
+    }
+
+    /// A minimal `Fs`/`WriteHandle` pair for the one test below that needs a real
+    /// [`NamespaceLock`] value to drop — every method but the two `identity` calls is
+    /// unreachable, since a plain drop touches nothing else.
+    struct NoopHandle;
+
+    impl crate::fs::WriteHandle for NoopHandle {
+        fn write_all(&mut self, _bytes: &[u8]) -> io::Result<()> {
+            unreachable!("not called by a plain drop")
+        }
+
+        fn sync(&mut self) -> io::Result<()> {
+            unreachable!("not called by a plain drop")
+        }
+
+        fn identity(&self) -> io::Result<FileId> {
+            Ok(FileId {
+                device: 1,
+                inode: 2,
+                links: 1,
+            })
+        }
+    }
+
+    struct NoopFs;
+
+    impl Fs for NoopFs {
+        fn create_new(&self, _path: &Path) -> io::Result<Box<dyn crate::fs::WriteHandle>> {
+            unreachable!("not called by a plain drop")
+        }
+
+        fn rename(&self, _from: &Path, _to: &Path) -> io::Result<()> {
+            unreachable!("not called by a plain drop")
+        }
+
+        fn remove_file(&self, _path: &Path) -> io::Result<()> {
+            // The drop below finds its own identity still matching (`identity_at` returns the
+            // same device/inode `NoopHandle::identity` does), so this is reached and only needs
+            // to succeed.
+            Ok(())
+        }
+
+        fn create_dir_all(&self, _path: &Path) -> io::Result<()> {
+            unreachable!("not called by a plain drop")
+        }
+
+        fn mode(&self, _path: &Path) -> io::Result<crate::fs::Mode> {
+            unreachable!("not called by a plain drop")
+        }
+
+        fn set_mode(&self, _path: &Path, _mode: crate::fs::Mode) -> io::Result<()> {
+            unreachable!("not called by a plain drop")
+        }
+
+        fn exists(&self, _path: &Path) -> io::Result<bool> {
+            unreachable!("not called by a plain drop")
+        }
+
+        fn same_file(&self, _a: &Path, _b: &Path) -> io::Result<bool> {
+            unreachable!("not called by a plain drop")
+        }
+
+        fn identity_at(&self, _path: &Path) -> io::Result<Option<FileId>> {
+            Ok(Some(FileId {
+                device: 1,
+                inode: 2,
+                links: 1,
+            }))
+        }
+    }
+
+    /// The one property `deregister_removes_exactly_the_entry_register_returned_the_id_for`
+    /// does not reach: that [`NamespaceLock`]'s own `Drop` actually calls `deregister`, not
+    /// only that `deregister` works when called directly. Built by hand rather than through
+    /// [`acquire`], which this module's own doc already explains is not a way around decision
+    /// 6's "no public constructor" — nothing outside this module can do the same, since these
+    /// fields are private to it.
+    #[test]
+    fn dropping_a_namespace_lock_deregisters_it_even_when_release_is_never_called() {
+        let _exclusive = REGISTRY_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let fs = NoopFs;
+        let before = registry_len();
+        let id = register(
+            PathBuf::from("/does/not/matter"),
+            FileId {
+                device: 1,
+                inode: 2,
+                links: 1,
+            },
+        );
+        let lock = NamespaceLock {
+            fs: &fs,
+            path: PathBuf::from("/does/not/matter"),
+            handle: Box::new(NoopHandle),
+            released: false,
+            registry_id: id,
+        };
+
+        drop(lock);
+
+        assert_eq!(
+            registry_len(),
+            before,
+            "Drop must deregister even when release() is never called"
+        );
+    }
 
     // ---- decision 3: one order for taking more than one lock ----
 

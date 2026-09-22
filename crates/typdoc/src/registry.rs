@@ -24,7 +24,6 @@ pub const UNIMPLEMENTED_COMMANDS: &[&str] = &[
 /// shrinks, and it is empty when v1 is finished.
 pub const UNPRODUCED_EXIT_CODES: &[u8] = &[
     3, // story 2
-    4, // story 2
 ];
 
 /// Gaps between the design and the binary that are neither a missing command, rule nor exit

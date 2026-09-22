@@ -63,7 +63,7 @@ pub use mv::{ContentChange, MvReport, UnrewrittenReason, UnrewrittenRef, commit}
 pub use namespace_lock::{
     NamespaceLock, Released, acquire, git_common_namespace_lock_path, git_common_project_lock_path,
     local_namespace_lock_path, local_project_lock_path, order_locks, project_hash, project_hash_of,
-    release,
+    release, release_all_for_signal,
 };
 pub use project::{
     AuditCollection, AuditNotRead, AuditOverlap, AuditReport, ListFilter, ListResult, NewTarget,
