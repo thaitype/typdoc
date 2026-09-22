@@ -4,7 +4,7 @@ Resolved. Commit `2acd905`. `cargo fmt --check` clean, `cargo clippy --workspace
 warnings` clean, public-text check clean, all re-run on the committed tree. `scripts/test.sh` with
 `TMPDIR` on a disk-backed folder: 979 passed / 0 failed / 1 ignored, unchanged — this ticket adds no
 test. One transient run showed 977/2/1 during independent re-verification; re-run twice more, both
-979/0/1 — a one-off flake from contending scratch activity, not a regression, confirmed by rerunning
+979/0/1 — a one-off flake from contending scratch activity, not a regression, verified clean by rerunning
 clean.
 
 ## Outcome
