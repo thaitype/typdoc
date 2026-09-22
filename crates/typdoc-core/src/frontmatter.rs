@@ -126,10 +126,9 @@ pub trait FrontmatterWriter {
     fn remove_item(&mut self, name: &str, item: &str);
 
     /// Adds `name` with no value, at the end, unless it already exists, in which case it is
-    /// left untouched. What "no value" is written as today is [`Value::Text`] holding an empty
-    /// string, the same form an empty string written by hand already reads as
-    /// (`docs/design.md`, "A field written with no value at all is not the same as one written
-    /// as an empty string" — closing that gap is not this ticket's job).
+    /// left untouched. "No value" is [`Value::Empty`], a field with a name and nothing after it
+    /// (`reviewer:`), kept apart from a field written as the empty string (`docs/design.md`, "A
+    /// field written with no value at all is not the same as one written as an empty string").
     fn add_key(&mut self, name: &str);
 
     /// The block's text, between the fences, assembled from every field this holds at the point
@@ -137,7 +136,8 @@ pub trait FrontmatterWriter {
     /// [`Value::Number`]'s written digits, a [`Value::Date`] or [`Value::Datetime`]'s written
     /// form and a [`Value::Bool`]'s `true`/`false` are all written out exactly, quoted only
     /// where YAML would otherwise read them as something else. A [`Value::List`] becomes a
-    /// block list, one item per line, or `[]` when it holds none.
+    /// block list, one item per line, or `[]` when it holds none. A [`Value::Empty`] is written
+    /// with nothing after its name, the form it was read in.
     fn finish(&self) -> Result<String, String>;
 }
 
@@ -189,8 +189,7 @@ impl FrontmatterWriter for YamlSerdeWriter {
 
     fn add_key(&mut self, name: &str) {
         if self.position(name).is_none() {
-            self.fields
-                .push((name.to_owned(), Value::Text(String::new())));
+            self.fields.push((name.to_owned(), Value::Empty));
         }
     }
 
@@ -200,8 +199,41 @@ impl FrontmatterWriter for YamlSerdeWriter {
         if self.fields.is_empty() {
             return Ok(String::new());
         }
-        yaml_serde::to_string(&Block(&self.fields)).map_err(|e| e.to_string())
+        let written = yaml_serde::to_string(&Block(&self.fields)).map_err(|e| e.to_string())?;
+        Ok(bare_the_empty_fields(written, &self.fields))
     }
+}
+
+/// `yaml_serde` has no call that writes a scalar with nothing after it: unit and `None` both
+/// spell YAML's null as the word `null`, and an empty string is quoted to keep it from reading
+/// as that same null on the way back in. So [`Block::serialize`] writes a [`Value::Empty`] field
+/// as `name: null`, the one place in a block this writer produces that exact line unquoted — a
+/// [`Value::Text`] holding the literal text `"null"` is quoted (`'null'`), because that text
+/// would otherwise read back as this word does — and this pass turns each such line into `name:`
+/// with nothing after it, matching every field this run's `fields` marks [`Value::Empty`] by
+/// name against a whole line of the text `yaml_serde` produced, never a substring, so a value
+/// that happens to contain the same text elsewhere is left alone.
+fn bare_the_empty_fields(written: String, fields: &[(String, Value)]) -> String {
+    let empty: Vec<&str> = fields
+        .iter()
+        .filter(|(_, value)| matches!(value, Value::Empty))
+        .map(|(name, _)| name.as_str())
+        .collect();
+    if empty.is_empty() {
+        return written;
+    }
+    let mut out = String::with_capacity(written.len());
+    for line in written.lines() {
+        match line.strip_suffix(": null") {
+            Some(name) if empty.contains(&name) => {
+                out.push_str(name);
+                out.push(':');
+            }
+            _ => out.push_str(line),
+        }
+        out.push('\n');
+    }
+    out
 }
 
 /// A `Serialize` wrapper over the fields of a block, in the order given: a `BTreeMap` would
@@ -214,6 +246,10 @@ impl Serialize for Block<'_> {
         for (name, value) in self.0 {
             match value {
                 Value::List(items) => map.serialize_entry(name, items)?,
+                // Written as the word `null` here and turned bare afterward
+                // (`bare_the_empty_fields`): nothing serde's data model offers writes as a
+                // scalar with nothing after it.
+                Value::Empty => map.serialize_entry(name, &())?,
                 Value::Text(text) | Value::Date(text) | Value::Datetime(text) => {
                     map.serialize_entry(name, text)?
                 }
@@ -230,6 +266,11 @@ impl Serialize for Block<'_> {
 /// What a value is, before its text is read.
 enum Shape {
     Scalar,
+    /// The reader resolved this scalar as YAML's null: a field written with a name and nothing
+    /// after it, or a plain `~`, `null`, `Null` or `NULL`. The two are told apart once the text
+    /// is read: empty text is the first (design, "Document files"), and any other text is a
+    /// value that happens to spell null and is kept as written, the same as every other scalar.
+    Null,
     ScalarList,
     Unreadable(&'static str),
 }
@@ -306,17 +347,17 @@ impl<'de> Deserialize<'de> for Shape {
             }
 
             fn visit_unit<E: de::Error>(self) -> Result<Shape, E> {
-                Ok(Shape::Scalar)
+                Ok(Shape::Null)
             }
 
             fn visit_none<E: de::Error>(self) -> Result<Shape, E> {
-                Ok(Shape::Scalar)
+                Ok(Shape::Null)
             }
 
             fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Shape, A::Error> {
                 let mut scalars = true;
                 while let Some(item) = seq.next_element::<Shape>()? {
-                    scalars &= matches!(item, Shape::Scalar);
+                    scalars &= matches!(item, Shape::Scalar | Shape::Null);
                 }
                 Ok(if scalars {
                     Shape::ScalarList
@@ -364,6 +405,10 @@ impl<'de> DeserializeSeed<'de> for WrittenFields<'_> {
                         .ok_or_else(|| de::Error::custom("the block changed while it was read"))?;
                     let value = match shape {
                         Shape::ScalarList => Value::List(map.next_value::<Texts>()?.0),
+                        Shape::Null => match map.next_value::<Text>()?.0 {
+                            text if text.is_empty() => Value::Empty,
+                            text => Value::Text(text),
+                        },
                         _ => Value::Text(map.next_value::<Text>()?.0),
                     };
                     fields.push((name, value));
@@ -791,13 +836,56 @@ mod tests {
         writer.add_key("title"); // already present: untouched, and not moved
 
         let written = writer.finish().unwrap();
-        assert_eq!(written, "title: Ship it\nreviewer: ''\n");
+        assert_eq!(written, "title: Ship it\nreviewer:\n");
         assert_eq!(
             reread(&written),
             vec![
                 ("title".to_owned(), text("Ship it")),
-                ("reviewer".to_owned(), text("")),
+                ("reviewer".to_owned(), Value::Empty),
             ]
+        );
+    }
+
+    /// Goal criterion 1, at the two forms decision 21 is about: a field read as
+    /// [`Value::Empty`] (`bare:`, YAML's null) and one read as [`Value::Text`] holding nothing
+    /// (`quoted: ''`) each write back in the form they were read in, byte for byte, whether or
+    /// not either is the field a `set` changes (`docs/design.md`, "A field written with no
+    /// value at all is not the same as one written as an empty string").
+    #[test]
+    fn a_bare_field_and_an_empty_string_field_are_each_written_back_in_the_form_they_held() {
+        let before = "bare:\nquoted: ''\nother: kept\n";
+        let read = reread(before);
+        assert_eq!(
+            read,
+            vec![
+                ("bare".to_owned(), Value::Empty),
+                ("quoted".to_owned(), text("")),
+                ("other".to_owned(), text("kept")),
+            ],
+            "the two forms are told apart on the way in"
+        );
+
+        // Neither is the field a write changes: both round-trip in the form they held.
+        let mut writer = YamlSerdeWriter::new(read.clone());
+        writer.set_scalar("other", "changed".to_owned());
+        assert_eq!(
+            writer.finish().unwrap(),
+            "bare:\nquoted: ''\nother: changed\n"
+        );
+
+        // Each in turn is the field a write changes, so the other keeps the form it held.
+        let mut writer = YamlSerdeWriter::new(read.clone());
+        writer.set_scalar("bare", "no longer bare".to_owned());
+        assert_eq!(
+            writer.finish().unwrap(),
+            "bare: no longer bare\nquoted: ''\nother: kept\n"
+        );
+
+        let mut writer = YamlSerdeWriter::new(read);
+        writer.set_scalar("quoted", "no longer empty".to_owned());
+        assert_eq!(
+            writer.finish().unwrap(),
+            "bare:\nquoted: no longer empty\nother: kept\n"
         );
     }
 }

@@ -555,6 +555,7 @@ fn cell_value(doc: &Document, field: &str) -> String {
 fn render_cell(value: &Value) -> String {
     match value {
         Value::Text(text) | Value::Date(text) | Value::Datetime(text) => text.clone(),
+        Value::Empty => String::new(),
         Value::List(items) => items.join(","),
         Value::Number(n) => n.converted(),
         Value::Bool(b) => b.to_string(),
@@ -1069,6 +1070,9 @@ fn document_json(document: &Document) -> Box<RawValue> {
 fn value_json(value: &Value) -> Box<RawValue> {
     match value {
         Value::Text(text) => raw(&json!(text)),
+        // A field written with no value at all, kept apart from one written as the empty
+        // string (design, "Document files" and "JSON output": "the first is `null`").
+        Value::Empty => raw(&json!(null)),
         Value::List(items) => raw(&json!(items)),
         // The one value that does not go through `serde_json::Value`: the digits as the
         // document wrote them, which `Number::read` has already checked are a JSON number.

@@ -163,8 +163,15 @@ pub fn check_document(
                 ));
             }
             Some(field) if field.kind == FieldType::Enum => {
-                if let (Value::Text(text), Some(values)) = (value, &field.values)
-                    && !values.contains(text)
+                // A field written with no value is checked against the schema's `values` the
+                // same as one written `''` is: both are the empty text.
+                let text = match value {
+                    Value::Text(text) => Some(text.as_str()),
+                    Value::Empty => Some(""),
+                    _ => None,
+                };
+                if let (Some(text), Some(values)) = (text, &field.values)
+                    && !values.iter().any(|allowed| allowed == text)
                 {
                     findings.push(finding(
                         name,
@@ -437,6 +444,8 @@ pub(crate) fn state_missing_finding(
 fn display_value(value: &Value) -> String {
     match value {
         Value::Text(text) => format!("`{text}`"),
+        // The same empty text a field written `''` displays as.
+        Value::Empty => "``".to_owned(),
         Value::List(items) => format!("[{}]", items.join(", ")),
         Value::Number(number) => number.converted(),
         Value::Bool(flag) => flag.to_string(),

@@ -40,12 +40,6 @@ pub const UNPRODUCED_EXIT_CODES: &[u8] = &[
 /// breaks the match; a change to the behaviour itself is meant to turn the test red, which is
 /// what keeps an entry here honest without a second, generated list to compare it against.
 pub const KNOWN_GAPS: &[&str] = &[
-    // crates/typdoc/tests/frontmatter_scalars.rs:
-    // `a_field_written_with_no_value_reads_the_same_as_an_empty_string`
-    "[empty-value] a field written with no value and one written as an empty string are read as \
-     the same thing, so the two cannot be told apart and a write would put back whichever form \
-     the writer emits; the design says each keeps the form it was written in and that `--json` \
-     shows the first as `null`",
     // crates/typdoc/tests/imports.rs:
     // `a_reverse_lookup_does_not_see_a_ref_from_an_imported_project`
     "[reverse-scope] a reverse lookup (`refs --reverse`) scans this project's own namespaces \

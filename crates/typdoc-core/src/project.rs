@@ -2990,11 +2990,18 @@ fn named_sort_value(field: &Field, value: &Value) -> SortValue {
             }
             _ => SortValue::Missing,
         },
+        // A bare enum field sorts as the empty text it reads as everywhere else: at whatever
+        // position `""` holds in `values`, `Missing` when it holds none.
         FieldType::Enum => match value {
             Value::Text(text) => field
                 .values
                 .as_deref()
                 .and_then(|values| values.iter().position(|v| v == text))
+                .map_or(SortValue::Missing, SortValue::EnumPos),
+            Value::Empty => field
+                .values
+                .as_deref()
+                .and_then(|values| values.iter().position(String::is_empty))
                 .map_or(SortValue::Missing, SortValue::EnumPos),
             _ => SortValue::Missing,
         },
@@ -3004,6 +3011,7 @@ fn named_sort_value(field: &Field, value: &Value) -> SortValue {
         // field indistinguishable from not sorting at all.
         _ => match value {
             Value::Text(text) => SortValue::Text(text.clone()),
+            Value::Empty => SortValue::Text(String::new()),
             Value::List(items) => SortValue::Text(items.join(",")),
             _ => SortValue::Missing,
         },
@@ -3084,6 +3092,9 @@ fn parsed_fields_and_body(
 fn ref_values(value: &Value) -> Vec<&str> {
     match value {
         Value::Text(text) => vec![text.as_str()],
+        // Empty text either way, so a `ref` written with no value is one ref of no text, the
+        // same as `field: ''` already is (`coerce::fits` treats the two alike).
+        Value::Empty => vec![""],
         Value::List(items) => items.iter().map(String::as_str).collect(),
         Value::Number(_) | Value::Bool(_) | Value::Date(_) | Value::Datetime(_) => Vec::new(),
     }

@@ -722,6 +722,8 @@ fn glob_matches(segments: &[String], text: &str) -> bool {
 fn value_is_empty(value: &Value) -> bool {
     match value {
         Value::Text(text) => text.is_empty(),
+        // A field written with no value reads as text with none in it here as everywhere else.
+        Value::Empty => true,
         Value::List(items) => items.is_empty(),
         Value::Number(_) | Value::Bool(_) | Value::Date(_) | Value::Datetime(_) => false,
     }
@@ -734,6 +736,7 @@ fn value_is_empty(value: &Value) -> bool {
 fn value_as_text(value: &Value) -> Option<String> {
     match value {
         Value::Text(text) | Value::Date(text) | Value::Datetime(text) => Some(text.clone()),
+        Value::Empty => Some(String::new()),
         Value::Number(n) => Some(n.converted()),
         Value::Bool(b) => Some(b.to_string()),
         Value::List(_) => None,

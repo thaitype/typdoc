@@ -61,9 +61,21 @@ impl Number {
 
 /// A frontmatter value. `Text` and `List` are a value as it is written, which is what a value
 /// stays when it does not fit the type its schema gives it; the others are a value that does.
+///
+/// `Empty` is `Text` holding no text, told apart because of how it was written: a field with a
+/// name and nothing after it (`reviewer:`, YAML's null), not a field written as the empty
+/// string (`reviewer: ''`). Everywhere a value is checked, compared, sorted or matched, `Empty`
+/// reads as text with nothing in it, exactly as `Text(String::new())` does — a required field
+/// holding it is present, not missing, and a field of a type that is not text still does not
+/// fit. The two forms differ only where the file itself differs: the block a write produces
+/// puts back the one that was there, and `--json` prints `Empty` as `null` where it prints
+/// `Text(String::new())` as `""` (`docs/design.md`, "Document files" and "JSON output").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     Text(String),
+    /// A field written with a name and no value at all (design, "Document files": "A field
+    /// written with no value at all is not the same as one written as an empty string").
+    Empty,
     List(Vec<String>),
     Number(Number),
     Bool(bool),
