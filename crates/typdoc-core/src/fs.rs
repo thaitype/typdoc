@@ -152,6 +152,39 @@ pub fn write_atomically(
     written
 }
 
+/// Creates `path`, which must not already exist, and writes `bytes` into it directly: no temp
+/// file and no rename, unlike [`write_atomically`]. `new` is the caller this is for, and its own
+/// document is what decides the shape: the file being created adds no state a temp file would
+/// have to protect (decision 7, "`new` keeps `O_EXCL` because it is one call that adds no state
+/// and costs nothing"). Fails with [`io::ErrorKind::AlreadyExists`] when `path` is already there,
+/// which is how the file system enforces decision 15's refusal rather than typdoc remembering to
+/// look first. The folder that will hold `path` is created first, the same way
+/// [`crate::namespace_lock::acquire`] creates its own lock folder before the first lock a project
+/// takes, so the first document of a namespace's own folder does not fail on a "not found".
+///
+/// `_lock` is not inspected, the same as `write_atomically`'s: there is no check that it is the
+/// right lock for `path`'s namespace.
+pub fn create_exclusively(
+    fs: &dyn Fs,
+    _lock: &crate::namespace_lock::NamespaceLock<'_>,
+    path: &Path,
+    bytes: &[u8],
+) -> io::Result<()> {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs.create_dir_all(parent)?;
+    }
+    let mut handle = fs.create_new(path)?;
+    let written = handle.write_all(bytes);
+    if written.is_err() {
+        // The file created here is the document itself, not a hidden temp file: left in place, a
+        // half-written failure would look like a real document rather than nothing having
+        // happened. Best effort, the same reasoning `write_atomically` already gives its own
+        // cleanup: the write's own error is what the caller needs to see.
+        let _ = fs.remove_file(path);
+    }
+    written
+}
+
 /// Every leftover temp file below `dir`, found by an ordinary recursive read: any file whose
 /// name has the reserved shape ([`is_temp_name`]), at any depth, a symbolic link never followed
 /// (the same rule every other walk of this crate keeps), and a folder holding its own

@@ -13,6 +13,9 @@ pub enum ErrorKind {
     /// A `set --if` condition was false; nothing was written (design, Exit codes: "3 | An
     /// `--if` condition was false; nothing written").
     IfFalse,
+    /// A write's destination is already there; nothing was written (design, Exit codes: "7 |
+    /// The destination already exists").
+    Exists,
 }
 
 /// One config error: the id from the design's table, the configuration file it is about
@@ -84,6 +87,19 @@ pub enum Error {
     /// that failed, never empty.
     #[error("{}", finding_summary(findings))]
     IfFalse { findings: Vec<Finding> },
+
+    /// `new`'s scope holds more than one namespace, and it writes into exactly one (design,
+    /// `typdoc new`: "if the scope holds more than one, it exits 1 with the choices"). Not
+    /// `AmbiguousKey`: no key was given here, only namespaces to choose among.
+    #[error("the scope holds more than one namespace: {}", candidates.join(", "))]
+    AmbiguousScope { candidates: Vec<String> },
+
+    /// A write's destination is already there, and nothing was written (decision 15): a path
+    /// given on the command line, or a name a `match` template produced, refused alike, checked
+    /// under the namespace's lock and enforced by the file system (`O_EXCL`) rather than
+    /// typdoc remembering to look first.
+    #[error("{message}")]
+    Exists { path: PathBuf, message: String },
 }
 
 impl Error {
@@ -95,7 +111,9 @@ impl Error {
 
     pub fn kind(&self) -> ErrorKind {
         match self {
-            Error::BadArgument(_) | Error::AmbiguousKey { .. } => ErrorKind::BadArguments,
+            Error::BadArgument(_) | Error::AmbiguousKey { .. } | Error::AmbiguousScope { .. } => {
+                ErrorKind::BadArguments
+            }
             Error::NoProject { .. } | Error::NoProjectAt { .. } | Error::NotFound { .. } => {
                 ErrorKind::NotFound
             }
@@ -106,6 +124,7 @@ impl Error {
             Error::Io { .. } => ErrorKind::Io,
             Error::LockTimeout { .. } => ErrorKind::LockTimeout,
             Error::IfFalse { .. } => ErrorKind::IfFalse,
+            Error::Exists { .. } => ErrorKind::Exists,
         }
     }
 }

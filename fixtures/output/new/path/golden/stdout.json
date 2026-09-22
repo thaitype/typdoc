@@ -1,0 +1,13 @@
+{
+  "document": {
+    "path": "new-note.md",
+    "namespace": "default",
+    "code": null,
+    "collection": "notes",
+    "schema": "note",
+    "fields": {
+      "title": "A new note",
+      "tags": ["a", "b"]
+    }
+  }
+}

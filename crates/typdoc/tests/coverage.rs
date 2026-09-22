@@ -134,8 +134,14 @@ fn produced_exit_codes() -> BTreeSet<u8> {
     unclosed.file("bad.md", "---\ntitle: never closed\n");
     let unreadable = Scratch::project(&NOTES);
     unreadable.file(".typdoc/collections/folder.json/inside", "");
+    // A scratch project, never the repository's own `fixtures/valid/minimal`: `new` is a write
+    // (`typdoc_testkit::spec::WRITE_COMMANDS`), and even a run refused at exit 7 acquires and
+    // releases the namespace's lock first, which is a write to `.typdoc/locks/` that the
+    // repository's own tree must never see (contract item 3).
+    let exists = Scratch::project(&NOTES);
+    exists.file("a.md", "---\ntitle: Already here\n---\n");
 
-    let runs: [(u8, Ran); 5] = [
+    let runs: [(u8, Ran); 6] = [
         (
             0,
             Spawn::args(["get", "note.md", "--json"])
@@ -164,6 +170,12 @@ fn produced_exit_codes() -> BTreeSet<u8> {
             6,
             Spawn::args(["get", "a.md", "--json"])
                 .cwd(unreadable.path())
+                .run(),
+        ),
+        (
+            7,
+            Spawn::args(["new", "a.md", "--json"])
+                .cwd(exists.path())
                 .run(),
         ),
     ];

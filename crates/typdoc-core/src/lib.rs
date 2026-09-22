@@ -51,8 +51,8 @@ pub use env::{Deps, Env};
 pub use error::{ConfigError, Error, ErrorKind};
 pub use frontmatter::{FrontmatterWriter, YamlSerdeWriter};
 pub use fs::{
-    FileId, Fs, Mode, TEMP_PREFIX, WriteHandle, find_leftovers, is_temp_name, remove_leftovers,
-    write_atomically,
+    FileId, Fs, Mode, TEMP_PREFIX, WriteHandle, create_exclusively, find_leftovers, is_temp_name,
+    remove_leftovers, write_atomically,
 };
 pub use lines::{LineMap, Position};
 pub use links::{
@@ -64,8 +64,8 @@ pub use namespace_lock::{
     release,
 };
 pub use project::{
-    AuditCollection, AuditNotRead, AuditOverlap, AuditReport, ListFilter, ListResult, Project,
-    RefName, RefOutcome, RefsDirection, RefsReference, RefsReport, SetOp, SortKey, Toc,
+    AuditCollection, AuditNotRead, AuditOverlap, AuditReport, ListFilter, ListResult, NewTarget,
+    Project, RefName, RefOutcome, RefsDirection, RefsReference, RefsReport, SetOp, SortKey, Toc,
     ValidateReport, discover,
 };
 pub use query::{

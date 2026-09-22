@@ -97,6 +97,23 @@ impl Segment {
             _ => None,
         }
     }
+
+    /// This segment rendered as a literal name, with `key` standing in for `{key}`: the inverse
+    /// of `capture_key`, for `typdoc new` to name the file it allocated a key for. `None` for a
+    /// segment holding `*` or an unbound `{key}`, neither of which a coded, bound template ever
+    /// has (`Template::bind` refuses a wildcard once a code is given, and binds every `{key}` to
+    /// it).
+    fn render(&self, key: &str) -> Option<String> {
+        let mut out = String::new();
+        for part in &self.parts {
+            match part {
+                Part::Literal(text) => out.push_str(text),
+                Part::Star | Part::Key(None) => return None,
+                Part::Key(Some(_)) => out.push_str(key),
+            }
+        }
+        Some(out)
+    }
 }
 
 fn push_literal(parts: &mut Vec<Part>, literal: &mut String) {
@@ -272,6 +289,22 @@ impl Template {
                 Step::Name(segment) => segment.capture_key(name),
                 Step::Folders => None,
             })
+    }
+
+    /// The path this template names for `key`, counted from the namespace folder: every step
+    /// rendered as a literal name, `{key}` replaced by `key` wherever it occurs, joined by `/`
+    /// (the inverse of [`Template::key`], for `typdoc new` to name the file a coded schema's
+    /// allocated key belongs at). `None` for a template holding `**`, `*` or an unbound `{key}`,
+    /// none of which a coded, bound template ever has.
+    pub fn render(&self, key: &str) -> Option<String> {
+        let mut parts = Vec::with_capacity(self.steps.len());
+        for step in &self.steps {
+            match step {
+                Step::Folders => return None,
+                Step::Name(segment) => parts.push(segment.render(key)?),
+            }
+        }
+        Some(parts.join("/"))
     }
 }
 
@@ -487,6 +520,37 @@ mod tests {
         );
         assert_eq!(coded("tickets/{key}.md").key("tickets/wf-3.md"), None);
         assert_eq!(coded("tickets/{key}.md").key("notes/a.md"), None);
+    }
+
+    #[test]
+    fn render_names_the_file_a_key_belongs_at_and_is_the_inverse_of_key() {
+        for (text, key) in [
+            ("tickets/{key}.md", "WF-3"),
+            ("{key}.md", "WF-30"),
+            ("{key}/index.md", "WF-3"),
+        ] {
+            let template = coded(text);
+            let rendered = template.render(key).unwrap();
+
+            assert_eq!(template.key(&rendered).as_deref(), Some(key), "{text}");
+        }
+
+        assert_eq!(
+            coded("tickets/{key}.md").render("WF-3"),
+            Some("tickets/WF-3.md".to_owned())
+        );
+    }
+
+    #[test]
+    fn render_is_none_for_a_wildcard_or_a_folders_step() {
+        let uncoded = Template::parse("notes/*.md")
+            .unwrap()
+            .bind("notes/*.md", None)
+            .unwrap();
+        assert_eq!(uncoded.render("anything"), None);
+
+        let with_folders = Template::parse("**/{key}.md").unwrap();
+        assert_eq!(with_folders.render("WF-3"), None);
     }
 
     #[test]

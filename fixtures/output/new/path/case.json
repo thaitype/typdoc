@@ -1,0 +1,4 @@
+{
+  "project": "valid/minimal",
+  "command": ["new", "new-note.md", "--set", "title=A new note", "--set", "tags=a,b", "--json"]
+}
