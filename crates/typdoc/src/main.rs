@@ -5,7 +5,8 @@ use std::process::ExitCode;
 
 use typdoc::cli;
 use typdoc::clock::MachineClock;
-use typdoc_core::{Deps, Env, SystemFs};
+use typdoc_core::{Deps, Env};
+use typdoc_fs::SystemFs;
 
 struct ProcessEnv;
 

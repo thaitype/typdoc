@@ -1,24 +1,23 @@
 //! The write half of the seam: the file system itself.
 //!
-//! This is the only module of this crate that calls a function which changes a file. Every
-//! other module reaches a file system through [`Fs`], which is why the expectation below is
-//! module-wide here and nowhere else: a write that appears in any other module of this crate
-//! is caught by the lint rather than by anyone remembering to look.
-#![expect(
-    clippy::disallowed_methods,
-    reason = "this module is the write half of the seam `Fs` names: every function of the \
-              implementation below is one operation of that trait and calls exactly the \
-              standard-library function that performs it, and `Deps` hands the rest of the \
-              program the trait rather than this type, so a write from any other module has \
-              no way through here and is caught where it stands"
-)]
+//! This crate exists to be the one place a file is changed. Everything else reaches a file
+//! system through [`typdoc_core::Fs`], and `typdoc-core`'s own lint list refuses the calls that
+//! would go round it, with no exception in it anywhere. Which code may write is therefore
+//! settled by the dependency graph: a crate that can write has to say so in its manifest, where
+//! it can be searched for and seen in a review, instead of by an attribute that a later one
+//! could be added beside without anyone noticing.
+//!
+//! Every function below is one operation of that trait and calls exactly the standard-library
+//! function that performs it. The rules about temp files, modes and renames are not here: they
+//! sit above the seam, in `typdoc_core`, so that they are the same whichever implementation is
+//! underneath.
 
 use std::fs;
 use std::io::{self, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 
-use super::{Fs, Mode, WriteHandle};
+use typdoc_core::{Fs, Mode, WriteHandle};
 
 /// The file system this process is running on. Linux is the platform that is run and claimed,
 /// and the mode and the identity of a file are read the way Unix reports them.

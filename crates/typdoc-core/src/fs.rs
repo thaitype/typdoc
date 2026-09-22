@@ -2,18 +2,15 @@
 //! interrupted write may leave behind.
 //!
 //! The seam is the file operations a write is built from rather than "write this document",
-//! so the rules about temp files, modes and renames sit above it, here. The write half of it
-//! is [`system`], the only module of this crate that calls a function which changes a file.
+//! so the rules about temp files, modes and renames sit above it, here. The write half of it is
+//! the `typdoc-fs` crate, which is the only crate that may change a file: no module of this one
+//! may, and the lint list beside this crate has no exception in it.
 
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-
-mod system;
-
-pub use system::SystemFs;
 
 /// A file's permission bits, as the platform's metadata gives them.
 pub type Mode = u32;

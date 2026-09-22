@@ -123,8 +123,20 @@ get a writable handle is through one of the banned constructors, so the handle c
 without a banned call having been made first. If a later change gives the core a writable handle
 by some other route, this lint will not be what catches it.
 
-The real implementation lives in `typdoc`, beside `Env`'s, and the fake lives in
-`typdoc-testkit`.
+The real implementation lives in a crate of its own, `typdoc-fs`, which is the only crate that
+may change a file, and the fake lives in `typdoc-testkit`.
+
+It is not beside `Env`'s, and the difference between the two seams is the reason. `Env` is the
+seam of a read, and nothing bans reading: it exists so that a test can choose what the process
+sees, and a module that went round it would give a wrong answer the next run corrects. `Fs` is
+the seam of a write, and the ban is the whole of why it exists: a module that goes round it
+damages a file, and nothing corrects that afterwards. So the two are held in place by different
+things. `Env` is held by the shape of the code. `Fs` is held by the dependency graph — what may
+write is decided by which crate a call sits in, which a manifest has to declare and a reader can
+search for, rather than by an attribute that a later one could be added beside. In a repository
+whose code is mostly written rather than read, a fence that needs someone to notice it is the
+weakest fence there is, so the lint list on `typdoc-core` keeps every entry and carries no
+exception at all.
 
 ### What the tests use: both, against one table
 

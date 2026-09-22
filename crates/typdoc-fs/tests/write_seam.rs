@@ -11,7 +11,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
-use typdoc_core::{Fs, Mode, SystemFs, is_temp_name, write_atomically};
+use typdoc_core::{Fs, Mode, is_temp_name, write_atomically};
+use typdoc_fs::SystemFs;
 use typdoc_testkit::fake::{Failure, FakeFs, On, Stage};
 
 /// An unusual mode, which no umask hands out by itself, so that a mode found on a file after a

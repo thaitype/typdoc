@@ -48,7 +48,7 @@ pub use config::{Collection, Config, Level, Namespace, RefBase, RuleSetting, Rul
 pub use document::{Document, Number, Value};
 pub use env::{Deps, Env};
 pub use error::{ConfigError, Error, ErrorKind};
-pub use fs::{Fs, Mode, SystemFs, TEMP_PREFIX, WriteHandle, is_temp_name, write_atomically};
+pub use fs::{Fs, Mode, TEMP_PREFIX, WriteHandle, is_temp_name, write_atomically};
 pub use lines::{LineMap, Position};
 pub use links::{
     BodyLink, BodyLinks, Definition, DuplicateDefinition, Mention, Suspect, mentions, scan,
