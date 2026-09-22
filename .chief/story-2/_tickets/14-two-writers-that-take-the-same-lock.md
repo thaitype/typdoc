@@ -1,7 +1,7 @@
 # 14: Two writers that take the same lock
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: 3, 9
 
 The goal's second criterion. Running several processes one after another and finding no duplicate
