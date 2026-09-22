@@ -1,7 +1,7 @@
 # 12: A `mv` that changes only the case of a path
 
 Type: wayfinder:grilling
-Status: open
+Status: resolved
 Blocked by: None (can start immediately)
 
 ## Question
@@ -78,4 +78,115 @@ filesystem. The two answers disagree exactly where the bug would be.
 
 ## Answer
 
-<filled in on resolve>
+**Decided: `mv` asks the file system whether the two paths are the same file, and refuses when they
+are. typdoc does not probe what the file system does in general, and v1 goes no further than a
+clear refusal.**
+
+### First, the prototype's finding has to be translated
+
+The probe was run while [decision 15](15-a-write-whose-destination-already-exists.md)'s mechanism
+was a no-replace rename, and its finding was that such a call refuses a case-only move on a
+case-insensitive file system with `EEXIST`, because there the two names are one file.
+
+[Decision 7](7-the-write-seam-and-the-clock.md) has since replaced that mechanism: `mv` checks the
+destination under the lock and then renames plainly. The finding survives the translation
+unchanged, which is worth saying rather than leaving to be rediscovered. The check asks whether the
+destination exists; on a case-insensitive file system `a.md` exists whenever `A.md` does, because
+they are the same file; so the check refuses the move. Different mechanism, same outcome, and the
+same question to decide.
+
+### Identity, not strings — and the reason is narrower than it looks
+
+`mv` compares the file the system reports, not the text of the two paths.
+
+Strings say `A.md` and `a.md` differ everywhere. Identity says they differ on a case-sensitive file
+system and are one file on a case-insensitive one. **The two answers disagree exactly where the
+damage is**, which settles it: the comparison that is right in both places is the one to make.
+
+The check already exists in the program, for the release of a lock, and it is the same check
+[decision 7](7-the-write-seam-and-the-clock.md) put on the write seam. Nothing new is built.
+
+**This is also the answer to whether typdoc probes the file system's case behaviour: it does not,
+and it does not need to.** A probe would cost a file created inside the user's project, it can be
+wrong for a different directory on the same machine, and it answers a question nobody asked. The
+question is not "is this file system case-insensitive". It is "are these two paths the same file",
+and the system answers that directly, for the two paths at hand, with no guess and no leftover.
+
+### What happens then: a refusal, exit 7
+
+A `mv` whose destination is the same file as its source is refused. Nothing is renamed and no ref
+is rewritten. It is exit 7, the code
+[decision 15](15-a-write-whose-destination-already-exists.md) created for a destination that
+already exists, which is what this is: the destination exists, and it happens to be the source.
+
+The bad outcome this ticket was opened about is avoided completely, because it comes from writing.
+typdoc believing it has two paths would rewrite every ref from the old spelling to the new one and
+then find that the file it renamed is the file it started from; a later `validate` on a
+case-sensitive machine — a colleague, a container, CI — would report every one of those refs as
+broken. A refusal writes nothing, so there is nothing to be wrong.
+
+**The message has to say what happened, because the path the user typed looks different from the
+one on disk.** It says that the file system does not tell the two names apart, that no change was
+made, and that typdoc cannot make this change here. A message that only said "the destination
+exists" would send the user looking for a file they would not find.
+
+**The same refusal covers `mv x.md x.md`.** POSIX makes that rename succeed and do nothing, so
+without the check it would be a command that reports success and changes nothing while claiming to
+have moved a document. Refusing is the more honest answer and costs no extra code, since it is the
+same comparison.
+
+### Why not carry the move out through an intermediate name
+
+It can be done: rename to a third name, then to the destination. Two things argue against it, and
+the second is the one that decides.
+
+It would be a special path through the command with the widest blast radius in v1, for a case that
+the supported platform meets rarely.
+
+And it would not be finished at the rename. The file system decides what spelling it keeps, and
+typdoc would have to read the directory back to learn which one it got before it could rewrite a
+single ref — and then either rewrite them to what it found, which is not what the user asked for,
+or undo the move. That is a second mechanism, with its own failure in the middle, to reach an end
+the user can reach with the tool their version control already provides for this exact case. The
+cost is real and it is stated: `mv`'s reason for existing is that it rewrites refs, and a user who
+renames by hand does not get that. On a case-insensitive file system they also do not need it
+today, since both spellings open the same file there; they need it on the day the repository is
+read somewhere case-sensitive, and that is the day `validate` tells them, by path, which refs to
+fix.
+
+### How far v1 goes
+
+This far and no further, which the ticket named as a legitimate answer: a known gap with a clear
+error rather than a mechanism.
+
+The proportion is worth stating, because "uncommon" was the reason offered and it is not quite
+right. The design supports Linux and says WSL is Linux and works. A repository kept under
+`/mnt/c` in WSL is on a case-insensitive file system, and that is an ordinary way to work, not an
+exotic one. So the event can be named — someone working in WSL on a Windows drive, changing a
+document's name from `Thing.md` to `thing.md` — and that is exactly why the clear refusal is worth
+building and the silence is not. It is also why this is not left undecided until macOS is
+supported.
+
+What v1 does not claim: that `mv` can change a name's case on such a file system. It says so, in
+the command's own words, at the moment the user asks.
+
+### The rules this meets
+
+**Two files with the same key is a validation error.** It is not reached here. On a
+case-insensitive file system two files whose names differ only in case cannot both exist, so the
+pair the rule is about cannot be created. On a case-sensitive one they are two files and the rule
+applies as it always has, unchanged by this decision.
+
+**`filename.pattern`** compares with case, as every path comparison does
+([phase 1, decision 22](../../design-decision-phase-1/_tickets/22-case-in-paths.md)). A file whose
+name the file system stores in a case the collection's `match` does not expect is reported by that
+rule. That is the correct behaviour and needs no exception: the rule is telling the user the truth
+about what is on disk.
+
+### Written into `docs/design.md`
+
+`mv`'s own paragraph gains a sentence: a destination that names the same file as the source — the
+same path, or a name differing only in case on a file system that does not tell them apart — is
+refused at exit 7 with nothing written, and the message says that the file system does not
+distinguish the two names. The Concurrency section needs nothing: the identity check it already
+describes is the one used here.
