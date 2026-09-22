@@ -28,7 +28,7 @@ The goal's second criterion: the collision is made to happen, not hoped absent.
   and still meeting a lock file that names the holder's own pid — a fail-fast ceiling bounds the wait,
   never proves it.
 - **The `git-common` carve-out** (`crates/typdoc-core/tests/git_common_duplicate.rs`): `LockMode::
-  GitCommon` is refused outright by every write command today, confirmed by reading the code rather
+  GitCommon` is refused outright by every write command today, verified by reading the code rather
   than assumed, so no write command can exercise it. The narrower, buildable form of the design's own
   claim is built instead — two ordinary projects allocate the same key with nothing coordinating
   them, and a third, hand-assembled project demonstrates `validate` reporting `keys.unique` once both
