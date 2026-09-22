@@ -88,6 +88,54 @@ Ordinary Markdown, which typdoc reads for its headings and links and otherwise l
 
 `docs/projects.md` explains collections, schemas, namespaces and imports.
 
+## Concept and mental model
+
+Two words carry most of the vocabulary, and they are easy to hold backward: **namespace** and
+**collection**. `--namespace` and `--collection` are flags; error ids such as
+`config.namespace-name`, `config.collection-name` and `collections.overlap` name one or the
+other. Getting the two words swapped reads that whole vocabulary backward.
+
+Take a project with two namespaces, `story-1` and `story-2`, each holding the same two
+collections — a coded `_tickets` collection and an uncoded `_notes` collection:
+
+```
+.typdoc/config.json                  { "version": 1, "namespaces": ["story-1", "story-2"] }
+.typdoc/collections/_tickets.json    { "match": "_tickets/{key}.md", "schema": "schemas/ticket.json" }
+.typdoc/collections/_notes.json      { "match": "_notes/*.md", "schema": "schemas/note.json" }
+schemas/ticket.json                  the fields a ticket has, with the code WF
+schemas/note.json                    the fields a note has, with no code
+story-1/_tickets/WF-1.md             a ticket in story-1
+story-1/_notes/kickoff.md            a note in story-1
+story-2/_tickets/WF-1.md             a ticket in story-2
+story-2/_notes/kickoff.md            a note in story-2
+```
+
+`typdoc list` reads namespace and collection as separate columns:
+
+```console
+$ typdoc list --fields namespace,collection,key,path
+WF-1                       Set up the folder         story-1  _tickets  WF-1  story-1/_tickets/WF-1.md
+WF-1                       Choose the folder layout  story-2  _tickets  WF-1  story-2/_tickets/WF-1.md
+story-1/_notes/kickoff.md  Kickoff notes             story-1  _notes          story-1/_notes/kickoff.md
+story-2/_notes/kickoff.md  Kickoff notes             story-2  _notes          story-2/_notes/kickoff.md
+```
+
+`WF-1` appears twice, once per namespace: the same key, two different documents, no conflict,
+because a key is unique within its namespace, never across the project.
+
+Laid out on the two axes, a document always sits at one intersection:
+
+| | `_tickets` (code `WF`) | `_notes` |
+| --- | --- | --- |
+| `story-1` | `WF-1` | `kickoff.md` |
+| `story-2` | `WF-1` | `kickoff.md` |
+
+Never in a namespace alone, and never in a collection alone — always one of each, at once.
+
+A collection says what kind of thing a document is, and which set of rules checks it. A
+namespace says what a document shares its numbering with, and which lock is held while it is
+written.
+
 ## Commands
 
 | Command | What it answers |
