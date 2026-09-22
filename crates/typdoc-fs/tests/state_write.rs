@@ -3,9 +3,9 @@
 //! real read of whatever is there now, `.typdoc/state/` created on the namespace's first write,
 //! and the write itself going through `write_atomically`, so nothing is left temp on success.
 //!
-//! No command calls `state::write` yet (`new` and `mv --renumber` are tickets 9 and 12), so this
-//! is the write half's own proof that it works: a library test reaching it directly, against a
-//! real file system, which is what this crate is for.
+//! `new` and `mv --renumber` are the two callers; this is the write half's own proof that it
+//! works regardless: a library test reaching it directly, against a real file system, which is
+//! what this crate is for.
 
 use std::fs;
 use std::path::Path;

@@ -91,10 +91,9 @@ fn parse(bytes: &[u8]) -> Result<StateFile, String> {
 /// namespace's first write, the same way `acquire` creates `.typdoc/locks/` first. The write
 /// itself goes through `write_atomically`, so a reader sees the old file or the new one whole.
 ///
-/// `pub`, and re-exported at the crate root: no command calls this yet (`new` and
-/// `mv --renumber` are tickets 9 and 12), so this ticket's own proof that it works is a set of
-/// library tests reaching it directly — `crates/typdoc-fs/tests/`, the crate allowed to write,
-/// is where a real file system exercises it.
+/// `pub`, and re-exported at the crate root: `new` and `mv --renumber` are the two callers, and
+/// `crates/typdoc-fs/tests/` is where a real file system exercises this function directly,
+/// against the crate that is allowed to write.
 pub fn write(
     fs: &dyn Fs,
     lock: &NamespaceLock<'_>,

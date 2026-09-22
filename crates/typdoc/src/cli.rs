@@ -141,8 +141,14 @@ enum Command {
     Mv {
         /// The key or path of the document to move, from the project folder
         from: OsString,
-        /// The path it moves to; a `mv` whose destination already exists writes nothing
-        to: OsString,
+        /// The path it moves to; not given with `--renumber`, which takes one positional
+        /// instead of two. A `mv` whose destination already exists writes nothing
+        to: Option<OsString>,
+        /// Moves a coded document to another namespace of this project under a new key, instead
+        /// of the plain, two-positional form; requires a namespace, and cannot name another
+        /// project
+        #[arg(long, value_name = "NAMESPACE")]
+        renumber: Option<OsString>,
         /// How long to wait for a namespace lock before giving up
         #[arg(long, value_name = "SECONDS", default_value_t = DEFAULT_LOCK_TIMEOUT_SECS)]
         lock_timeout: u64,
@@ -402,23 +408,61 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
         Command::Mv {
             from,
             to,
+            renumber,
             lock_timeout,
             json,
-        } => {
-            if !json {
-                return failure_text(false, 1, "the output without --json is not built yet");
+        } => match (to, renumber) {
+            (Some(_), Some(_)) => failure_text(
+                json,
+                1,
+                "mv takes a destination path, or --renumber <namespace>, not both: --renumber \
+                 reads one positional argument, not two",
+            ),
+            (None, None) => failure_text(
+                json,
+                1,
+                "mv needs a destination: a path to move to, or --renumber <namespace>",
+            ),
+            (Some(to), None) => {
+                if !json {
+                    return failure_text(false, 1, "the output without --json is not built yet");
+                }
+                match mv(
+                    deps,
+                    &from,
+                    &to,
+                    Duration::from_secs(lock_timeout),
+                    cli.namespace.as_deref(),
+                ) {
+                    Ok(report) => success_raw(&mv_json(&report)),
+                    Err(e) => failure(true, exit_code(e.kind()), &e),
+                }
             }
-            match mv(
-                deps,
-                &from,
-                &to,
-                Duration::from_secs(lock_timeout),
-                cli.namespace.as_deref(),
-            ) {
-                Ok(report) => success_raw(&mv_json(&report)),
-                Err(e) => failure(true, exit_code(e.kind()), &e),
+            (None, Some(namespace)) => {
+                match mv_renumber(
+                    deps,
+                    &from,
+                    &namespace,
+                    Duration::from_secs(lock_timeout),
+                    cli.namespace.as_deref(),
+                ) {
+                    Ok(report) if json => success_raw(&mv_json(&report)),
+                    Ok(report) => {
+                        // `Project::mv_renumber` only ever succeeds with a coded document, which
+                        // always carries a key (design, `typdoc mv`: "it prints the new key, and
+                        // nothing else, on standard output", the same shape `typdoc new` prints
+                        // for a coded target).
+                        let key = report.document.key.as_deref().unwrap_or_default();
+                        Outcome {
+                            code: 0,
+                            stdout: format!("{key}\n"),
+                            stderr: String::new(),
+                        }
+                    }
+                    Err(e) => failure(true, exit_code(e.kind()), &e),
+                }
             }
-        }
+        },
     }
 }
 
@@ -881,6 +925,31 @@ fn mv(
     };
     let scope = scope_for(&project, &from_arg, namespace, deps.env)?;
     project.mv(&from_arg, &to_arg, &scope, lock_timeout, deps)
+}
+
+/// `mv --renumber`: `namespace` is a bare namespace name, never a document argument, so it is
+/// read as plain text rather than through `Argument::parse`/`DocumentArg` the way `from` and
+/// `to` are — decision 11's own shape, `typdoc mv WF-2 --renumber story-3`, where the value
+/// after the flag names a namespace, not a document.
+fn mv_renumber(
+    deps: &Deps,
+    from: &std::ffi::OsStr,
+    namespace: &std::ffi::OsStr,
+    lock_timeout: Duration,
+    namespace_flag: Option<&str>,
+) -> Result<MvReport, Error> {
+    let (root, from_arg) = discover_for(Argument::parse(from)?, deps.env)?;
+    let project = Project::load(&root, deps.env)?;
+    let namespace_text = match namespace.to_str() {
+        Some(text) => text,
+        None => {
+            return Err(Error::BadArgument(format!(
+                "{namespace:?} is not valid UTF-8, so it names no namespace"
+            )));
+        }
+    };
+    let scope = scope_for(&project, &from_arg, namespace_flag, deps.env)?;
+    project.mv_renumber(&from_arg, namespace_text, &scope, lock_timeout, deps)
 }
 
 fn validate(

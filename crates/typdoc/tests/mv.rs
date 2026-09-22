@@ -25,10 +25,6 @@ fn mv(project: &Scratch, from: &str, to: &str) -> Ran {
         .run()
 }
 
-fn read(project: &Scratch, path: &str) -> String {
-    std::fs::read_to_string(project.path().join(path)).unwrap_or_else(|e| panic!("{path}: {e}"))
-}
-
 // ---------------------------------------------------------------------------------------------
 // Done when (a): a stopped run is its own way back.
 // ---------------------------------------------------------------------------------------------
@@ -73,7 +69,7 @@ fn the_same_command_run_again_finishes_a_run_a_stop_left_half_done() {
     assert_eq!(out["unrewritten"], json!([]));
     assert_eq!(out["findings"], json!([]));
     assert_eq!(
-        read(&project, "holder.md"),
+        project.read("holder.md"),
         "---\ntitle: B\nsee: new.md\n---\n",
         "already correct, so untouched"
     );
@@ -105,8 +101,8 @@ fn a_destination_that_already_exists_is_refused_at_exit_7_and_nothing_changes() 
 
     assert_eq!(ran.code, 7, "{}", ran.stderr);
     assert_eq!(ran.stderr_json()["code"], json!(7));
-    assert_eq!(read(&project, "a.md"), "---\ntitle: A\n---\n");
-    assert_eq!(read(&project, "b.md"), "---\ntitle: B\n---\n");
+    assert_eq!(project.read("a.md"), "---\ntitle: A\n---\n");
+    assert_eq!(project.read("b.md"), "---\ntitle: B\n---\n");
 }
 
 #[test]
@@ -117,7 +113,7 @@ fn the_same_path_given_twice_is_one_file_and_is_refused_at_exit_7() {
     let ran = mv(&project, "a.md", "a.md");
 
     assert_eq!(ran.code, 7, "{}", ran.stderr);
-    assert_eq!(read(&project, "a.md"), "---\ntitle: A\n---\n");
+    assert_eq!(project.read("a.md"), "---\ntitle: A\n---\n");
 }
 
 #[test]
@@ -146,7 +142,7 @@ fn a_coded_document_cannot_move_and_nothing_changes() {
          (which cannot help here either): {}",
         ran.stderr
     );
-    assert_eq!(read(&project, "tickets/WF-1.md"), "---\ntitle: One\n---\n");
+    assert_eq!(project.read("tickets/WF-1.md"), "---\ntitle: One\n---\n");
     assert!(!project.path().join("tickets/moved.md").exists());
 }
 
@@ -172,7 +168,7 @@ fn an_uncoded_document_cannot_move_into_a_coded_collection() {
     let ran = mv(&project, "a.md", "tickets/WF-9.md");
 
     assert_eq!(ran.code, 1, "{}", ran.stderr);
-    assert_eq!(read(&project, "a.md"), "---\ntitle: A\n---\n");
+    assert_eq!(project.read("a.md"), "---\ntitle: A\n---\n");
     assert!(!project.path().join("tickets/WF-9.md").exists());
 }
 
@@ -269,7 +265,7 @@ fn a_body_link_in_a_document_whose_body_links_rule_is_off_is_reported_unrewritte
     assert_eq!(out["unrewritten"][0]["path"], json!("holder.md"));
     assert_eq!(out["unrewritten"][0]["written"], json!("old.md"));
     assert_eq!(
-        read(&project, "holder.md"),
+        project.read("holder.md"),
         "---\ntitle: B\n---\n\nSee [a](old.md) for details.\n",
         "left exactly as written, per the rule being off"
     );
@@ -293,7 +289,7 @@ fn frontmatter_and_body_refs_are_both_rewritten_and_an_unrelated_link_is_left_al
 
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     assert_eq!(
-        read(&project, "holder.md"),
+        project.read("holder.md"),
         "---\ntitle: B\nsee: renamed.md\n---\n\nSee [a](renamed.md) and [another](other.md).\n"
     );
 }
@@ -321,7 +317,7 @@ fn only_the_matching_item_of_a_ref_list_field_is_rewritten_the_rest_keep_their_p
 
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     assert_eq!(
-        read(&project, "holder.md"),
+        project.read("holder.md"),
         "---\ntitle: B\nsee:\n- other.md\n- renamed.md\n---\n",
         "the first item, which never named old.md, keeps its own position"
     );
@@ -340,7 +336,7 @@ fn a_body_link_written_with_percent_encoding_keeps_that_convention() {
 
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     assert_eq!(
-        read(&project, "holder.md"),
+        project.read("holder.md"),
         "---\ntitle: B\n---\n\nSee [a](new%20file.md).\n"
     );
 }
@@ -369,7 +365,7 @@ fn auto_moves_appends_the_previous_path_and_a_second_run_with_the_same_state_doe
     let out = ran.stdout_json();
     assert_eq!(out["document"]["fields"]["moved_from"], json!(["old.md"]));
     assert_eq!(
-        read(&project, "new.md"),
+        project.read("new.md"),
         "---\ntitle: A\nmoved_from:\n- old.md\n---\n"
     );
 }
