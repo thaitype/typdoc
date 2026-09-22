@@ -117,6 +117,10 @@ pub struct RefsReference {
     pub position: Option<Position>,
 }
 
+/// Every ref `mv`/`mv --renumber` will rewrite, grouped by the holder that carries it
+/// (`mv_reverse_scan`'s own result, alongside the refs it cannot touch).
+type RewriteByHolder = BTreeMap<String, Vec<RefsReference>>;
+
 /// The report of a `refs` run: the document asked about (always resolved, since `refs` reads it
 /// the same way `get` and `toc` do), the direction, and its references in the design's order
 /// (the fields in document order, each value as written, then `$body` by position; for `In`,
@@ -1058,20 +1062,6 @@ impl Project {
             })?;
         let collection = &self.collections[collection_idx];
         let schema = &collection.schema;
-        #[expect(
-            clippy::expect_used,
-            reason = "`self.members` and `self.collections` are pushed together, once per \
-                      collection, only after `Template::bind` has already succeeded for it \
-                      (`load_inner`'s own loop: `members.push` happens before `loaded.push`, and \
-                      a `bind` failure `continue`s before either), so `collection_idx`, found \
-                      above by position in `self.collections`, is also a valid position in \
-                      `self.members`"
-        )]
-        let template = &self
-            .members
-            .get(collection_idx)
-            .expect("kept in lockstep with collections")
-            .template;
 
         let scope = self.scope(None, namespace_flag, deps.env)?;
         let namespace_name = match scope.namespaces.as_slice() {
@@ -1100,61 +1090,7 @@ impl Project {
 
         let lock = self.acquire_lock_for(&namespace_name, deps, lock_timeout)?;
 
-        let state = state::read(&self.root, &namespace_name)?;
-        if let Some(found) = state.malformed.get(&collection.name) {
-            return Err(Error::Invalid {
-                findings: vec![validate::state_malformed_finding(
-                    &state::file_path(&namespace_name),
-                    &namespace_name,
-                    &collection.name,
-                    format!(
-                        "the collection `{}`'s `last` in its state file is {found}, not a whole \
-                         number that can be held: expected a non-negative integer",
-                        collection.name
-                    ),
-                )],
-            });
-        }
-        let highest = self.highest_existing(namespace_idx, collection_idx);
-        if !state.has(&collection.name) && highest.is_some() {
-            return Err(Error::Invalid {
-                findings: vec![validate::state_missing_finding(
-                    &state::file_path(&namespace_name),
-                    &namespace_name,
-                    &collection.name,
-                    format!(
-                        "the collection `{}` has documents in this namespace and no `last` \
-                         recorded in its state file",
-                        collection.name
-                    ),
-                )],
-            });
-        }
-        let last = state.last.get(&collection.name).copied().unwrap_or(0);
-        let next = highest.unwrap_or(0).max(last) + 1;
-        let key = format!("{code}-{next}");
-        #[expect(
-            clippy::expect_used,
-            reason = "a coded collection's template is bound by `Template::bind` at load time, \
-                      which refuses a wildcard and binds every `{key}` to the schema's code once \
-                      one is given (a template that fails to bind is `config.match-template`, and \
-                      that collection is never in `self.collections`), so `render` only returns \
-                      `None` for a shape a bound coded template cannot have"
-        )]
-        // Counted from the namespace folder, the same as every `match` template is
-        // (`Index::build` walks `root.join(&space.folder)` and prepends it back below): a
-        // `default` namespace's own folder is empty, so `relative` and `below` were the same
-        // string for every fixture and golden this ticket wrote before a second namespace's own
-        // folder made the difference visible.
-        let below = template
-            .render(&key)
-            .expect("a bound coded template always renders its own key");
-        let namespace_folder = &self.config.namespaces[namespace_idx].folder;
-        let relative = if namespace_folder.is_empty() {
-            below
-        } else {
-            format!("{namespace_folder}/{below}")
-        };
+        let (key, relative, next) = self.allocate_key(namespace_idx, collection_idx)?;
         let file = self.root.join(&relative);
 
         let name = DocName {
@@ -1473,6 +1409,110 @@ impl Project {
                 _ => None,
             })
             .max()
+    }
+
+    /// The next key `new` and `mv --renumber` each allocate in `(namespace_idx, collection_idx)`,
+    /// and the project-relative path it names, counted from the namespace folder the same way
+    /// every `match` template is (`Index::build` walks `root.join(&space.folder)` and prepends
+    /// it back below): a `default` namespace's own folder is empty, so the rendered path and the
+    /// final one are the same string there, and differ only once a second namespace's own folder
+    /// makes the difference visible. The caller must already hold `namespace_idx`'s lock: two
+    /// processes racing for it must not both compute their number from a `last` that was already
+    /// stale before either started waiting (decision 2, phase 1).
+    ///
+    /// Refuses (`Error::Invalid`) exactly as `state.malformed` and `state.missing` say to: a
+    /// `last` that is present but not a usable whole number, or a collection with documents in
+    /// this namespace and no `last` recorded at all — in both cases because a guessed number is
+    /// a key that already belongs to a document. Returns the key, its path, and the raw number
+    /// (`next`), which the caller still has to write to the state file and create the document
+    /// under, in that order (decision 1, decision 13): this function only decides the number, it
+    /// does not spend it.
+    fn allocate_key(
+        &self,
+        namespace_idx: usize,
+        collection_idx: usize,
+    ) -> Result<(String, String, u64), Error> {
+        let namespace_name = &self.config.namespaces[namespace_idx].name;
+        let collection = &self.collections[collection_idx];
+        #[expect(
+            clippy::expect_used,
+            reason = "every collection in `self.collections` this function is ever asked about \
+                      already has a code: `new_coded` finds `collection_idx` by position among \
+                      collections whose `schema.code` is `Some`, and `mv_renumber` finds it from \
+                      an index entry whose own `key` is `Some`, which `Index::build` only sets \
+                      through a coded template (`Template::key`), itself only ever bound to a \
+                      collection whose schema carries a code (`Template::bind`)"
+        )]
+        let code = collection
+            .schema
+            .code
+            .as_deref()
+            .expect("only ever asked about a coded collection");
+        #[expect(
+            clippy::expect_used,
+            reason = "`self.members` and `self.collections` are pushed together, once per \
+                      collection, only after `Template::bind` has already succeeded for it \
+                      (`load_inner`'s own loop: `members.push` happens before `loaded.push`, and \
+                      a `bind` failure `continue`s before either), so `collection_idx`, always a \
+                      valid position in `self.collections`, is also one in `self.members`"
+        )]
+        let template = &self
+            .members
+            .get(collection_idx)
+            .expect("kept in lockstep with collections")
+            .template;
+
+        let state = state::read(&self.root, namespace_name)?;
+        if let Some(found) = state.malformed.get(&collection.name) {
+            return Err(Error::Invalid {
+                findings: vec![validate::state_malformed_finding(
+                    &state::file_path(namespace_name),
+                    namespace_name,
+                    &collection.name,
+                    format!(
+                        "the collection `{}`'s `last` in its state file is {found}, not a whole \
+                         number that can be held: expected a non-negative integer",
+                        collection.name
+                    ),
+                )],
+            });
+        }
+        let highest = self.highest_existing(namespace_idx, collection_idx);
+        if !state.has(&collection.name) && highest.is_some() {
+            return Err(Error::Invalid {
+                findings: vec![validate::state_missing_finding(
+                    &state::file_path(namespace_name),
+                    namespace_name,
+                    &collection.name,
+                    format!(
+                        "the collection `{}` has documents in this namespace and no `last` \
+                         recorded in its state file",
+                        collection.name
+                    ),
+                )],
+            });
+        }
+        let last = state.last.get(&collection.name).copied().unwrap_or(0);
+        let next = highest.unwrap_or(0).max(last) + 1;
+        let key = format!("{code}-{next}");
+        #[expect(
+            clippy::expect_used,
+            reason = "a coded collection's template is bound by `Template::bind` at load time, \
+                      which refuses a wildcard and binds every `{key}` to the schema's code once \
+                      one is given (a template that fails to bind is `config.match-template`, and \
+                      that collection is never in `self.collections`), so `render` only returns \
+                      `None` for a shape a bound coded template cannot have"
+        )]
+        let below = template
+            .render(&key)
+            .expect("a bound coded template always renders its own key");
+        let namespace_folder = &self.config.namespaces[namespace_idx].folder;
+        let relative = if namespace_folder.is_empty() {
+            below
+        } else {
+            format!("{namespace_folder}/{below}")
+        };
+        Ok((key, relative, next))
     }
 
     /// `list`: every document of `scope` whose collection is selected and whose fields satisfy
@@ -3879,10 +3919,6 @@ impl Project {
     /// finds only what is left and finishes it, rediscovering nothing extra — a ref already
     /// rewritten now resolves to the new path, not the old one, so it is not found again by the
     /// reverse scan below.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one write, one lock scope, one commit: splitting it further would scatter the single sequence decision 1 and decision 15 both describe as one run, across functions a reader would have to reassemble"
-    )]
     pub fn mv(
         &self,
         from: &DocumentArg,
@@ -3903,6 +3939,7 @@ impl Project {
         let from_namespace = from_entry.namespace;
         let from_key = from_entry.key.clone();
         let from_file = from_entry.file.clone();
+        let from_collection = from_entry.collection;
 
         let to_path = self.mv_destination_path(to, scope)?;
         let to_full = self.root.join(&to_path);
@@ -3965,12 +4002,218 @@ impl Project {
             )));
         }
 
-        // The reverse scan: every ref of this project that resolves to `from_path`, read before
-        // any lock is taken (a read never locks). `field == "$body"` distinguishes a body link
-        // from a frontmatter field of that literal name (`$` is reserved and no schema field may
-        // use it, so the two can never collide).
+        let (rewrite_by_holder, unrewritten) = self.mv_reverse_scan(from, scope, deps)?;
+        let locks = self.mv_lock(
+            from_namespace,
+            to_namespace,
+            &rewrite_by_holder,
+            deps,
+            lock_timeout,
+        )?;
+
+        // Decision 15's own check: authoritative because it runs under the lock. The advisory
+        // one above only rules out "the same file"; a different file that exists is caught only
+        // here, since nothing before this point may write and so nothing needed to be sure yet.
+        if deps.fs.exists(&to_full).map_err(Error::io_at(&to_full))? {
+            return Err(Error::AlreadyExists {
+                path: to_path.clone(),
+                message: format!("`{to_path}` already exists: nothing was written"),
+            });
+        }
+
+        let mut changes = self.mv_rewrite_changes(&rewrite_by_holder, &to_path, None)?;
+        if let Some(change) = self.mv_document_change(
+            &from_path,
+            from_collection,
+            &from_text,
+            &from_file,
+            to_collection,
+        )? {
+            changes.push(change);
+        }
+
+        self.mv_finish(deps, locks, &changes, &from_file, &to_full)?;
+
+        let (document, findings) =
+            self.mv_result(&to_path, to_namespace, to_collection, &to_full)?;
+        Ok(MvReport {
+            document,
+            unrewritten,
+            findings,
+        })
+    }
+
+    /// `typdoc mv FROM --renumber NAMESPACE`: moves a coded document to another namespace of
+    /// this project under a new key, allocated from that namespace's state the same way `new`
+    /// allocates one. The destination is the flag's value, one positional argument in this mode
+    /// (decision 11). Built on the same machinery `mv` above is: the reverse scan
+    /// (`mv_reverse_scan`), the lock set (`mv_lock`), the per-holder rewrite
+    /// (`mv_rewrite_changes`), `mv::commit`'s own two-phase prepare-then-rename, and
+    /// `mv_result`. This function's own job is the argument shape, the allocation, and the
+    /// refusals decision 11 gives: a destination equal to the document's own namespace, and any
+    /// attempt to cross a project on either argument.
+    ///
+    /// **The ordering rule decision 13 adds.** The destination namespace's state is written
+    /// before `mv::commit` runs at all, so it is written before the document appears under its
+    /// new key no matter where inside that run an interruption lands (decision 1's own promise
+    /// about `commit`). The source's state is never written: its `last` is the highest number
+    /// ever issued, not the highest that exists, and moving a document out issues nothing there
+    /// (decision 11, decision 13's "`mv --renumber` writes one state file").
+    pub fn mv_renumber(
+        &self,
+        from: &DocumentArg,
+        namespace: &str,
+        scope: &Scope,
+        lock_timeout: Duration,
+        deps: &Deps,
+    ) -> Result<MvReport, Error> {
+        if from.project_prefix().is_some() {
+            return Err(Error::BadArgument(
+                "mv writes only in the project it is run in: an argument naming a document of \
+                 another project is bad arguments"
+                    .to_owned(),
+            ));
+        }
+        // Decision 11 (4): renumbering into another project is not possible, and the shape for
+        // naming one (`project::namespace`) already exists elsewhere in the design, so a value
+        // that looks like it is refused by name rather than left to fail some other way further
+        // down.
+        if namespace.contains("::") {
+            return Err(Error::BadArgument(format!(
+                "`{namespace}` cannot name another project: --renumber moves a document to a \
+                 namespace of this project only; reading across projects is written \
+                 `project::namespace:key`, and no command writes into another project"
+            )));
+        }
+
+        let (from_path, from_entry, from_text) = self.resolve(from, scope, deps.env)?;
+        let from_namespace = from_entry.namespace;
+        let from_file = from_entry.file.clone();
+        let from_collection = from_entry.collection;
+        let Some(from_key) = from_entry.key.clone() else {
+            return Err(Error::BadArgument(format!(
+                "`{from_path}` has no code: --renumber moves a coded document to another \
+                 namespace under a new key, and this document has none to renumber"
+            )));
+        };
+
+        let Some(to_namespace) = self.namespace_index(namespace) else {
+            return Err(Error::BadArgument(format!(
+                "`{namespace}` is not a namespace of this project, which has: {}",
+                self.config
+                    .namespaces
+                    .iter()
+                    .map(|n| n.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        };
+        // Decision 11 (2): carrying this out would retire `from_key` for good while the
+        // document never moved, so it is refused before anything is written, not carried out as
+        // a no-op that still consumes a number.
+        if to_namespace == from_namespace {
+            return Err(Error::BadArgument(format!(
+                "`{namespace}` is the namespace `{from_path}` is already in: renumbering into \
+                 it would retire the key `{from_key}` for good while the document never moved, \
+                 so nothing is written"
+            )));
+        }
+
+        let (rewrite_by_holder, unrewritten) = self.mv_reverse_scan(from, scope, deps)?;
+        let locks = self.mv_lock(
+            from_namespace,
+            Some(to_namespace),
+            &rewrite_by_holder,
+            deps,
+            lock_timeout,
+        )?;
+        #[expect(
+            clippy::expect_used,
+            reason = "`mv_lock` always locks at least the source namespace, inserted \
+                      unconditionally into the set it builds"
+        )]
+        let proof = locks
+            .first()
+            .expect("mv --renumber always locks at least the source namespace");
+
+        // The number is allocated only once the lock is held (`allocate_key`'s own doc comment
+        // says why); `state.malformed`/`state.missing` are its refusal, the same one `new` gives.
+        let to_namespace_name = self.config.namespaces[to_namespace].name.clone();
+        let (new_key, to_path, next) = self.allocate_key(to_namespace, from_collection)?;
+        let to_full = self.root.join(&to_path);
+
+        // Decision 15's own check, the same reasoning `mv` gives it above: this key was just
+        // allocated and nothing typdoc did should be able to reach it already, but the check
+        // still runs under the lock, before anything is written, rather than being assumed.
+        if deps.fs.exists(&to_full).map_err(Error::io_at(&to_full))? {
+            return Err(Error::AlreadyExists {
+                path: to_path.clone(),
+                message: format!(
+                    "`{to_path}` already exists: the key `{new_key}` was just allocated and \
+                     should not be reachable (decision 15)"
+                ),
+            });
+        }
+
+        let mut changes =
+            self.mv_rewrite_changes(&rewrite_by_holder, &to_path, Some((&from_key, &new_key)))?;
+        // The value `auto: moves` records for a coded document: its previous key, with its own
+        // namespace's prefix, since a bare key alone would not say which namespace it belonged
+        // to (design, the `auto` field table: "always with its prefix", `story-2:WF-5`).
+        let previous_name = format!("{}:{from_key}", self.config.namespaces[from_namespace].name);
+        if let Some(change) = self.mv_document_change(
+            &previous_name,
+            from_collection,
+            &from_text,
+            &from_file,
+            Some(from_collection),
+        )? {
+            changes.push(change);
+        }
+
+        // Decision 13's own ordering rule: this write raises the destination's `last` before
+        // `mv::commit` runs at all, so it is written before the document appears under its new
+        // key no matter where inside that run an interruption lands. A number recorded here and
+        // then not used, because the run stops before `commit` finishes, is an ordinary skip
+        // (decision 1): the source's `last` never goes down, so the number this write just spent
+        // is never issued again.
+        state::write(
+            deps.fs,
+            proof,
+            &self.root,
+            &to_namespace_name,
+            &self.collections[from_collection].name,
+            next,
+        )?;
+
+        self.mv_finish(deps, locks, &changes, &from_file, &to_full)?;
+
+        let (document, findings) = self.mv_result(
+            &to_path,
+            Some(to_namespace),
+            Some(from_collection),
+            &to_full,
+        )?;
+        Ok(MvReport {
+            document,
+            unrewritten,
+            findings,
+        })
+    }
+
+    /// Every ref of this project that resolves to `from`, read before any lock is taken (a read
+    /// never locks): split into refs that will be rewritten, grouped by the holder that carries
+    /// them, and refs `mv`/`mv --renumber` already know they cannot touch. `field == "$body"`
+    /// distinguishes a body link from a frontmatter field of that literal name (`$` is reserved
+    /// and no schema field may use it, so the two can never collide).
+    fn mv_reverse_scan(
+        &self,
+        from: &DocumentArg,
+        scope: &Scope,
+        deps: &Deps,
+    ) -> Result<(RewriteByHolder, Vec<UnrewrittenRef>), Error> {
         let reverse = self.refs(from, scope, true, None, deps.env)?;
-        let mut rewrite_by_holder: BTreeMap<String, Vec<RefsReference>> = BTreeMap::new();
+        let mut rewrite_by_holder: RewriteByHolder = BTreeMap::new();
         let mut unrewritten: Vec<UnrewrittenRef> = Vec::new();
         for reference in reverse.refs {
             let RefOutcome::Resolved(holder) = &reference.other else {
@@ -4002,10 +4245,21 @@ impl Project {
                 .or_default()
                 .push(reference);
         }
+        Ok((rewrite_by_holder, unrewritten))
+    }
 
-        // The namespaces to lock: the source's, the destination's (when it has one) and every
-        // holder's that is actually rewritten — never a namespace touched only by an unrewritten
-        // ref, since nothing is written there.
+    /// The namespaces `mv`/`mv --renumber` must lock, in the order Lock order gives (decision
+    /// 3): the source's, the destination's (when it has one) and every holder's that is actually
+    /// rewritten — never a namespace touched only by an unrewritten ref, since nothing is
+    /// written there. `from_namespace` is always included, so the result is never empty.
+    fn mv_lock<'d>(
+        &self,
+        from_namespace: usize,
+        to_namespace: Option<usize>,
+        rewrite_by_holder: &RewriteByHolder,
+        deps: &Deps<'d>,
+        lock_timeout: Duration,
+    ) -> Result<Vec<NamespaceLock<'d>>, Error> {
         let mut namespace_names: BTreeSet<String> = BTreeSet::new();
         namespace_names.insert(self.config.namespaces[from_namespace].name.clone());
         if let Some(ns) = to_namespace {
@@ -4028,39 +4282,32 @@ impl Project {
         for path in order_locks(None, lock_paths) {
             locks.push(acquire(deps.fs, deps.clock, path, &host, lock_timeout)?);
         }
-        #[expect(
-            clippy::expect_used,
-            reason = "`namespace_names` always holds at least `from_namespace`'s own name, \
-                      inserted unconditionally above, so `locks` is never empty once every path \
-                      in `namespace_names` has been locked"
-        )]
-        let proof = locks
-            .first()
-            .expect("mv always locks at least the source namespace");
+        Ok(locks)
+    }
 
-        // Decision 15's own check: authoritative because it runs under the lock. The advisory
-        // one above only rules out "the same file"; a different file that exists is caught only
-        // here, since nothing before this point may write and so nothing needed to be sure yet.
-        if deps.fs.exists(&to_full).map_err(Error::io_at(&to_full))? {
-            return Err(Error::AlreadyExists {
-                path: to_path.clone(),
-                message: format!("`{to_path}` already exists: nothing was written"),
-            });
-        }
-
+    /// One [`ContentChange`] for every holder in `rewrite_by_holder` whose rewritten text
+    /// actually differs from what is on disk now: every ref recomputed to name `to_path`,
+    /// keeping its own written form (`rewrite_holder`).
+    fn mv_rewrite_changes(
+        &self,
+        rewrite_by_holder: &RewriteByHolder,
+        to_path: &str,
+        key_rewrite: Option<(&str, &str)>,
+    ) -> Result<Vec<ContentChange>, Error> {
         let mut changes = Vec::new();
-        for (holder_path, refs) in &rewrite_by_holder {
+        for (holder_path, refs) in rewrite_by_holder {
             #[expect(
                 clippy::expect_used,
                 reason = "every path in `rewrite_by_holder` came from `self.index.get(holder_path)` \
-                          succeeding, a few lines above, while building `namespace_names`"
+                          succeeding while `mv_reverse_scan` built it"
             )]
             let entry = self
                 .index
                 .get(holder_path)
                 .expect("holder paths in this map were already looked up above");
             let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
-            let new_text = self.rewrite_holder(holder_path, entry, &text, refs, &to_path)?;
+            let new_text =
+                self.rewrite_holder(holder_path, entry, &text, refs, to_path, key_rewrite)?;
             if new_text != text {
                 changes.push(ContentChange {
                     path: entry.file.clone(),
@@ -4068,41 +4315,47 @@ impl Project {
                 });
             }
         }
-        if let Some(change) = self.mv_document_change(
-            &from_path,
-            from_entry.collection,
-            &from_text,
-            &from_file,
-            to_collection,
-        )? {
-            changes.push(change);
-        }
+        Ok(changes)
+    }
 
-        // The destination's own folder may not exist yet — a move into a namespace's `elsewhere/`
-        // or into a collection's own subfolder is ordinary, and a rename cannot create the
-        // parent it lands in.
+    /// `mv` and `mv_renumber`'s shared tail, once each has its own `changes` and `to_full`
+    /// ready: creates the destination's parent folder if it does not exist yet (a move into a
+    /// namespace's `elsewhere/` or into a collection's own subfolder is ordinary, and a rename
+    /// cannot create the parent it lands in), commits every change and the document's own move
+    /// (`mv::commit`'s two-phase promise), and releases every lock. `locks` is never empty:
+    /// both callers insert the source namespace into the set `mv_lock` builds unconditionally.
+    fn mv_finish(
+        &self,
+        deps: &Deps,
+        locks: Vec<NamespaceLock>,
+        changes: &[ContentChange],
+        from_file: &Path,
+        to_full: &Path,
+    ) -> Result<(), Error> {
+        #[expect(
+            clippy::expect_used,
+            reason = "`mv_lock` always locks at least the source namespace, inserted \
+                      unconditionally into the set it builds"
+        )]
+        let proof = locks
+            .first()
+            .expect("mv/mv --renumber always locks at least the source namespace");
+
         if let Some(parent) = to_full.parent() {
             deps.fs
                 .create_dir_all(parent)
                 .map_err(Error::io_at(parent))?;
         }
 
-        mv::commit(deps.fs, proof, &changes, &from_file, &to_full).map_err(|source| Error::Io {
-            file: to_full.clone(),
+        mv::commit(deps.fs, proof, changes, from_file, to_full).map_err(|source| Error::Io {
+            file: to_full.to_owned(),
             source,
         })?;
 
         for lock in locks {
             let _ = release(lock);
         }
-
-        let (document, findings) =
-            self.mv_result(&to_path, to_namespace, to_collection, &to_full)?;
-        Ok(MvReport {
-            document,
-            unrewritten,
-            findings,
-        })
+        Ok(())
     }
 
     /// The destination `to` names, as a project-relative path: `to`'s own path when it is a
@@ -4122,7 +4375,9 @@ impl Project {
     /// keeping its own written form (`mv::rewritten_path_ref`), applied to a frontmatter field
     /// through the writer and to a body link by splicing the one line it sits on. Returns `text`
     /// unchanged when `refs` is empty, so a caller can compare before and after to know whether
-    /// anything actually needs preparing.
+    /// anything actually needs preparing. `key_rewrite` is `Some((old_key, new_key))` only from
+    /// `mv --renumber`, and is passed straight through to `mv::rewritten_path_ref`, the one place
+    /// that reads it.
     fn rewrite_holder(
         &self,
         holder_path: &str,
@@ -4130,6 +4385,7 @@ impl Project {
         text: &str,
         refs: &[RefsReference],
         new_target: &str,
+        key_rewrite: Option<(&str, &str)>,
     ) -> Result<String, Error> {
         let collection = &self.collections[entry.collection];
         let bad = |message| Error::Frontmatter {
@@ -4154,6 +4410,7 @@ impl Project {
                 holder_path,
                 &self.config.namespaces,
                 new_target,
+                key_rewrite,
             );
             if reference.field == "$body" {
                 let Some(position) = reference.position else {
@@ -4205,15 +4462,20 @@ impl Project {
     }
 
     /// The moved document's own file, unchanged except for a field with `auto: moves` on the
-    /// destination's schema, which gains the document's previous path (design.md, `typdoc mv`:
-    /// "the previous key or path is appended to it on every move"). `None` when there is no such
-    /// field, or the field already ends with `from_path` — a re-run after a stop between this
-    /// in-place update and the document's own final rename (below) must not append it twice, and
-    /// this is the only place a re-run can tell the two apart, since the update happens under
-    /// the source's own, unmoved path.
+    /// destination's schema, which gains the document's previous name (design.md, `typdoc mv`:
+    /// "the previous key or path is appended to it on every move"; the `auto` field table:
+    /// "always with its prefix", `story-2:WF-5` for a coded document's key, `notes/old-name.md`
+    /// for a path). `previous_name` is that literal text: `mv` passes the bare project-relative
+    /// path a document without a code is identified by; `mv_renumber` passes the source
+    /// namespace's name and the key it issued, since a bare key alone would not say which
+    /// namespace it belonged to. `None` when there is no such field, or the field already ends
+    /// with `previous_name` — a re-run after a stop between this in-place update and the
+    /// document's own final rename (below) must not append it twice, and this is the only place
+    /// a re-run can tell the two apart, since the update happens under the source's own, unmoved
+    /// path.
     fn mv_document_change(
         &self,
-        from_path: &str,
+        previous_name: &str,
         from_collection: usize,
         from_text: &str,
         from_file: &Path,
@@ -4248,13 +4510,13 @@ impl Project {
             .iter()
             .find(|(name, _)| name == field_name)
             .is_some_and(|(_, value)| {
-                matches!(value, Value::List(items) if items.last().map(String::as_str) == Some(from_path))
+                matches!(value, Value::List(items) if items.last().map(String::as_str) == Some(previous_name))
             });
         if already_recorded {
             return Ok(None);
         }
         let mut writer = frontmatter::YamlSerdeWriter::new(fields);
-        writer.append_item(field_name, from_path.to_owned());
+        writer.append_item(field_name, previous_name.to_owned());
         let new_block = writer.finish().map_err(bad)?;
         let split = frontmatter::split(from_text).map_err(bad)?;
         let new_text =
@@ -4298,15 +4560,23 @@ impl Project {
                               from matching `to_below`, which is itself `Some` only when \
                               `to_namespace` is"
                 )]
-                let namespace_name = self.config.namespaces
-                    [to_namespace.expect("to_collection is Some only when to_namespace is")]
-                .name
-                .clone();
+                let namespace_idx =
+                    to_namespace.expect("to_collection is Some only when to_namespace is");
+                let namespace_name = self.config.namespaces[namespace_idx].name.clone();
+                // The inverse of `new_coded`'s own `template.render(&key)`: a coded collection's
+                // template has exactly one `{key}`, so this is `Some` for a coded destination
+                // (`--renumber`'s own case, decision 17: "`--renumber` reports the key it issued
+                // in the field every other shape carries a key in") and `None` for an uncoded
+                // one, which is what plain `mv` always lands on here, since it refuses a document
+                // without a code moving into a coded collection before this is ever reached.
+                let below =
+                    strip_namespace_folder(to_path, &self.config.namespaces[namespace_idx].folder);
+                let key = self.members[ci].template.key(&below);
                 let name = DocName {
                     path: to_path,
                     namespace: &namespace_name,
                     collection: &collection.name,
-                    key: None,
+                    key: key.as_deref(),
                 };
                 let findings = validate::check_document(
                     &text,
@@ -4321,7 +4591,7 @@ impl Project {
                     Document {
                         path: to_path.to_owned(),
                         namespace: Some(namespace_name),
-                        key: None,
+                        key,
                         code: collection.schema.code.clone(),
                         collection: collection.name.clone(),
                         schema: collection.schema.name.clone(),

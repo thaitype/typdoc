@@ -138,12 +138,25 @@ fn sibling_prefix<'a>(written: &'a str, namespaces: &[Namespace]) -> Option<(&'a
 }
 
 /// The written form a ref to the document now at `new_target` should take, keeping the category
-/// (bare relative path, or sibling-namespace-prefixed) `written` already used, as design.md asks
-/// ("keeping each ref's written form"). `holder_namespace`/`holder_path` are the document that
-/// holds the ref; `ref_base` is its collection's own. When `written` was sibling-prefixed and
-/// `new_target` no longer falls inside any namespace (it left every namespace folder), the
-/// prefixed form falls back to a bare relative path, since there is no longer a namespace name to
-/// prefix it with.
+/// (key, sibling-namespace-prefixed, or bare relative path) `written` already used, as design.md
+/// asks ("keeping each ref's written form (key, prefixed reference or relative path)").
+/// `holder_namespace`/`holder_path` are the document that holds the ref; `ref_base` is its
+/// collection's own. When `written` was sibling-prefixed and `new_target` no longer falls inside
+/// any namespace (it left every namespace folder), the prefixed form falls back to a bare
+/// relative path, since there is no longer a namespace name to prefix it with.
+///
+/// `key_rewrite` is `Some((old_key, new_key))` only from `mv --renumber`, which is the only
+/// caller that can ever reach a key-form `written`: a plain `mv` never moves a coded document
+/// (refused before this is reached), and a key never ends in `.md`, so a path-form `written` can
+/// never equal `old_key` by coincidence (design.md, Arguments that name a document: "a key never
+/// ends in `.md` and a document is always a `.md` file"). `written` reaching this function has
+/// already been confirmed, by the reverse scan that found it, to resolve to the document being
+/// moved — so a bare `written` equal to `old_key`, or a sibling-prefixed one whose part after the
+/// colon is, is that document's own key form, never another document's that merely shares the
+/// same digits. A bare key form is always promoted to the target's own sibling prefix: `refs.rs`'s
+/// own module doc says a bare form always means the writing document's own namespace, and
+/// `--renumber` always crosses one (decision 11 refuses the one case where it would not), so a
+/// bare key can never stay bare and correct after this move.
 pub(crate) fn rewritten_path_ref(
     written: &str,
     ref_base: RefBase,
@@ -151,7 +164,19 @@ pub(crate) fn rewritten_path_ref(
     holder_path: &str,
     namespaces: &[Namespace],
     new_target: &str,
+    key_rewrite: Option<(&str, &str)>,
 ) -> String {
+    if let Some((old_key, new_key)) = key_rewrite
+        && let Some(target_ns) = namespace_of(namespaces, new_target)
+    {
+        let is_key_form = written == old_key
+            || written.split_once(':').is_some_and(|(prefix, rest)| {
+                rest == old_key && namespaces.iter().any(|ns| ns.name == prefix)
+            });
+        if is_key_form {
+            return format!("{}:{new_key}", namespaces[target_ns].name);
+        }
+    }
     if let Some((_, _)) = sibling_prefix(written, namespaces)
         && let Some(target_ns) = namespace_of(namespaces, new_target)
     {
@@ -356,6 +381,7 @@ mod tests {
             "tickets/holder.md",
             &namespaces,
             "tickets/new.md",
+            None,
         );
         assert_eq!(new, "new.md");
     }
@@ -370,6 +396,7 @@ mod tests {
             "holder.md",
             &namespaces,
             "story-2/moved/new.md",
+            None,
         );
         assert_eq!(new, "story-2:moved/new.md");
     }
@@ -384,8 +411,91 @@ mod tests {
             "holder.md",
             &namespaces,
             "outside/new.md",
+            None,
         );
         assert_eq!(new, "outside/new.md");
+    }
+
+    #[test]
+    fn a_bare_key_ref_is_promoted_to_the_targets_sibling_prefix_after_renumbering() {
+        // A bare key always means the holder's own namespace (`refs.rs`'s own module doc), and
+        // `--renumber` always crosses one, so a bare key can never stay bare and correct.
+        let namespaces = ns(&[("story-1", "story-1"), ("story-3", "story-3")]);
+        let new = rewritten_path_ref(
+            "WF-5",
+            RefBase::File,
+            0,
+            "story-1/notes/holder.md",
+            &namespaces,
+            "story-3/tickets/WF-1.md",
+            Some(("WF-5", "WF-1")),
+        );
+        assert_eq!(new, "story-3:WF-1");
+    }
+
+    #[test]
+    fn a_sibling_prefixed_key_ref_keeps_the_key_form_and_updates_both_the_prefix_and_the_key() {
+        let namespaces = ns(&[
+            ("default", ""),
+            ("story-1", "story-1"),
+            ("story-3", "story-3"),
+        ]);
+        let new = rewritten_path_ref(
+            "story-1:WF-5",
+            RefBase::File,
+            0,
+            "holder.md",
+            &namespaces,
+            "story-3/tickets/WF-1.md",
+            Some(("WF-5", "WF-1")),
+        );
+        assert_eq!(
+            new, "story-3:WF-1",
+            "a key form, not a path form: story-3:tickets/WF-1.md would be a defect here"
+        );
+    }
+
+    #[test]
+    fn a_sibling_prefixed_key_ref_into_the_holders_own_namespace_keeps_the_prefix_rather_than_downgrading_to_bare()
+     {
+        // The document moves into the same namespace `holder.md` itself lives in (`story-1`);
+        // the rewritten form still carries `story-1:`'s own prefix rather than downgrading to a
+        // bare key. This mirrors the pre-existing, already-tested policy for a sibling-prefixed
+        // PATH ref (`a_sibling_prefixed_written_ref_keeps_the_prefix_form_and_updates_it`,
+        // above): once a ref is written in prefixed form, `mv`/`mv --renumber` keep that
+        // category rather than minimizing it to the bare form a human might have chosen instead
+        // — design.md's own words are "keeping each ref's written form", not "keeping it in its
+        // shortest form". `story-1:WF-1` is self-referencing but not wrong: a document in
+        // `story-1` resolves a `story-1:` prefix onto itself fine.
+        let namespaces = ns(&[("story-1", "story-1"), ("story-9", "story-9")]);
+        let new = rewritten_path_ref(
+            "story-9:WF-5",
+            RefBase::File,
+            0,
+            "story-1/notes/holder.md",
+            &namespaces,
+            "story-1/tickets/WF-1.md",
+            Some(("WF-5", "WF-1")),
+        );
+        assert_eq!(new, "story-1:WF-1");
+    }
+
+    #[test]
+    fn a_path_shaped_written_ref_is_untouched_by_key_rewrite_even_when_a_move_is_also_a_renumber() {
+        // Defensive: a key never ends in `.md`, so this should never actually be reachable, but
+        // `key_rewrite` must not mistake a path for a key merely because the digits after a dash
+        // happen to match, if one ever did.
+        let namespaces = ns(&[("story-1", "story-1"), ("story-3", "story-3")]);
+        let new = rewritten_path_ref(
+            "tickets/WF-5.md",
+            RefBase::File,
+            0,
+            "story-1/notes/holder.md",
+            &namespaces,
+            "story-3/tickets/WF-1.md",
+            Some(("WF-5", "WF-1")),
+        );
+        assert_eq!(new, "../../story-3/tickets/WF-1.md");
     }
 
     #[test]

@@ -147,6 +147,13 @@ impl Scratch {
         std::os::unix::fs::symlink(target, self.dir.path().join(link)).expect("a symbolic link");
     }
 
+    /// The text of a file below the project folder, for a test that wrote or expects to read
+    /// one, panicking with the path on any failure (never valid UTF-8, missing, and so on).
+    pub fn read(&self, path: &str) -> String {
+        std::fs::read_to_string(self.dir.path().join(path))
+            .unwrap_or_else(|e| panic!("{path}: {e}"))
+    }
+
     /// A file whose path, from the project folder, is given as bytes and may not be valid UTF-8.
     pub fn file_named_by_bytes(&self, name: &[u8], text: &str) {
         use std::os::unix::ffi::OsStrExt;
