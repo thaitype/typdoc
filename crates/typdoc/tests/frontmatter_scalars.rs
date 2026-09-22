@@ -211,3 +211,41 @@ fn every_other_scalar_keeps_its_text() {
         reads_as(&format!("s: {written}"), json!({ "s": written }));
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// The binary converts a `number` out of its text before printing it, where the design says the
+// digits written in the document are printed. This test pins what it does today, so that making
+// it right turns the test red rather than leaving the gap list stale.
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn a_number_outside_the_integer_range_is_printed_converted_not_as_written() {
+    assert!(
+        typdoc::registry::KNOWN_GAPS
+            .iter()
+            .any(|gap| gap.starts_with("[number-text]")),
+        "this test pins a gap that `registry::KNOWN_GAPS` no longer lists"
+    );
+
+    // Two values one apart, both past what an integer holds, and one the design names directly.
+    let above = project_with("num: 99999999999999999999");
+    let below = project_with("num: 99999999999999999998");
+    let written = project_with("num: 1e3");
+
+    // Today: converted, so the digits are gone and the two are indistinguishable.
+    assert_eq!(fields_of(&above)["num"], fields_of(&below)["num"]);
+    assert_eq!(fields_of(&above)["num"], json!(1e20));
+    assert_eq!(fields_of(&written)["num"], json!(1000.0));
+
+    // What the design asks for, for whoever closes the gap: the digits as the file has them.
+    // `assert_ne` rather than a comment, so this half also fails once the behaviour changes.
+    assert_ne!(
+        fields_of(&above)["num"].to_string(),
+        "99999999999999999999"
+    );
+    assert_ne!(fields_of(&written)["num"].to_string(), "1e3");
+
+    // A `string` holding the same digits was never affected, which is what locates the loss.
+    let as_text = project_with("s: \"99999999999999999999\"");
+    assert_eq!(fields_of(&as_text)["s"], json!("99999999999999999999"));
+}

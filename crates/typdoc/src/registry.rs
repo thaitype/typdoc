@@ -46,6 +46,12 @@ pub const KNOWN_GAPS: &[&str] = &[
      only; the design says it also scans the namespaces of every project this one imports, so \
      a ref written in an imported project's own document, pointing back into this project, is \
      missing from the result rather than being in it",
+    // crates/typdoc/tests/frontmatter_scalars.rs:
+    // `a_number_outside_the_integer_range_is_printed_converted_not_as_written`
+    "[number-text] a field typed `number` is printed in `--json` from a value converted out of \
+     the text, not with the digits written in the document; the design says the digits are \
+     printed, so a number outside the range an integer holds comes back as a float that has \
+     lost them, and two documents whose numbers differ by one print the same value",
     // crates/typdoc/tests/imports.rs:
     // `a_body_link_across_an_import_has_its_anchor_left_unchecked`
     "[import-anchor] a body link that crosses an import has its target file's existence \

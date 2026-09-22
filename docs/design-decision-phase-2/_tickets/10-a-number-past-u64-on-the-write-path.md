@@ -1,7 +1,7 @@
 # 10: A `number` field past u64 on the write path
 
 Type: wayfinder:grilling
-Status: open
+Status: resolved
 Blocked by: None (can start immediately)
 
 ## Question
@@ -77,4 +77,110 @@ From [decision 8](8-yaml-edit-on-anchors-tags-and-text-values.md), run the same 
 
 ## Answer
 
-<filled in on resolve>
+**Decided: `set` writes such a number unchanged and never refuses it; `--json` prints a `number`
+with the digits written in the document; and the read side is fixed in this story, because the
+write commands cannot be right while it is wrong.**
+
+### What is measured, against the binary built from this branch
+
+The loss is not where the ticket feared it would be. With
+[decision 20](20-the-frontmatter-writer.md), the write path is handed the text the reader kept and
+writes that text; it never turns a value into a number on the way to disk. So the file is safe,
+and what is left is the last step, printing.
+
+That step is worse than "digits are lost":
+
+| In the document | `get --json` prints |
+| --- | --- |
+| `count: 99999999999999999999` | `1e+20` |
+| `count: 99999999999999999998` | `1e+20` |
+| `ratio: 1e3` | `1000.0` |
+| `version: "99999999999999999999"` (typed `string`) | `"99999999999999999999"` |
+
+Two documents whose numbers differ by one print the same value and cannot be told apart. And the
+comparison built on the same conversion agrees with itself:
+
+```
+typdoc list --where 'count>99999999999999999998'   ->   0 documents
+```
+
+`validate` reports nothing on either document: no error, no warning, exit 0. A project can hold a
+number typdoc cannot represent and be told it is entirely well.
+
+### `set` writes it, and does not refuse
+
+The three choices the ticket offered were refuse, write the text through unchanged, or accept the
+loss and say so. The third does not arise: there is no loss to accept, because nothing on the
+write path parses the value.
+
+Refusing would be forbidding a user to write a value that the file format holds exactly, that the
+reader keeps exactly, and that a field typed `string` already carries today without complaint. The
+tool would be declining to do a thing it can do, because of a defect in how it reports afterwards.
+
+### `--json` prints the digits written in the document
+
+JSON puts no limit on the digits of a number. The readers do, each in its own way, and that is the
+fact the decision turns on. Measured, with one object printed as the document has it:
+
+```
+{"count": 99999999999999999999, "ratio": 1e3, "exact": 12345678901234567890123}
+
+python  ->  99999999999999999999      12345678901234567890123     both whole
+jq      ->  99999999999999999999      12345678901234567890123     both whole
+node    ->  100000000000000000000     1.2345678901234568e+22      rounded
+```
+
+A reader that cannot hold the value still rounds it. The difference is who decides and on what.
+Today typdoc rounds, silently, and hands over a value no reader can recover the original from.
+With the digits printed, a reader that can hold them does, and a reader that cannot rounds a true
+value — which is its own limit, declared in its own language, rather than a loss buried in
+somebody else's output.
+
+The rule this follows is the one the whole read path is built on: nothing between the file and the
+caller decides what `1e3` is. Frontmatter is read into text for exactly that reason. The JSON
+printer was the one step that still decided, and `1e3` becoming `1000.0` is that decision showing
+in an ordinary document, not only in an extreme one.
+
+**The same rule covers `new` and `set`**, and not by a separate ruling.
+[Decision 17](17-the-json-shapes-of-new-set-and-mv.md) settled that both print the object `get`
+prints. One shape means one rule, which is what phase 1's ticket 15 asked for.
+
+### The read side is fixed in this story, and it is not scope creep
+
+The ticket asked whether to fix it here or guard the write path around it. There is nothing to
+guard: the write path never touches the conversion.
+
+But the write commands print a document, and it is `get`'s document. If that object lies, `new`
+and `set` lie in exactly the same way, on values they have just written correctly. So this is not
+story 2 reaching into story 1's work for tidiness; it is the condition under which story 2's own
+output can be right. Story 2 owns it.
+
+### What it costs, stated
+
+**Output changes for ordinary documents, not only extreme ones.** `ratio: 1e3` prints `1000.0`
+today and will print `1e3`. Every golden holding a number is affected. typdoc has never been
+released, so there is no compatibility to keep, and the design already says that distribution and
+versioning of the tool are not settled; this is the moment such a change is free.
+
+**A reader in a language with only doubles still loses the value.** Nothing can fix that from
+here. What changes is that the rounding is theirs, from a number that was true when it reached
+them.
+
+**Comparison is not fixed by this, and is not smuggled in.** `count>99999999999999999998`
+returning nothing comes from the same conversion, in a different place, and putting it right means
+comparing numbers that no primitive holds. That is its own piece of work with its own risks, it
+belongs to the query path rather than the write path, and it is
+[decision 22](22-comparing-numbers-beyond-a-primitive.md) rather than a sentence here.
+
+### Written into `docs/design.md`, and the gap the binary still has
+
+The JSON output section gains a paragraph: a `number` is printed with the digits written in the
+document, with the reason and with what converting first costs.
+
+The binary does not do this yet, and the design is the source of truth, so the difference is
+recorded where the suite can see it. `registry::KNOWN_GAPS` gains `[number-text]`, and
+`crates/typdoc/tests/frontmatter_scalars.rs` gains
+`a_number_outside_the_integer_range_is_printed_converted_not_as_written`, which pins today's
+behaviour in both directions: that the two values one apart print alike and that `1e3` prints
+`1000.0`, and that the printed text is not yet the text in the file. Closing the gap turns that
+test red, which is how the entry cannot go stale.
