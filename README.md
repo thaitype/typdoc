@@ -29,18 +29,24 @@ Version 0.1.0. Not released, and not finished: `pull` and remote schemas are not
 
 Linux is the platform this is run and tested on. Nothing else is claimed.
 
-## Quick start
+## Install
 
-typdoc builds with a recent Rust toolchain and has no other requirements.
+typdoc needs a recent Rust toolchain and nothing else. It is not published to crates.io yet, so
+install it from a clone:
 
 ```console
 $ git clone https://github.com/thaitype/typdoc
 $ cd typdoc
-$ cargo build
+$ cargo install --path crates/typdoc --bin typdoc
 ```
 
-The binary lands in `target/debug/typdoc`. Put it on your `PATH`, as the examples below and
-`docs/getting-started.md` assume, or write the path out in full.
+That puts `typdoc` in `~/.cargo/bin`, which is where the rest of this page and
+`docs/getting-started.md` expect to find it.
+
+To work on typdoc rather than with it, `cargo build` leaves the binary at `target/debug/typdoc`
+instead.
+
+## Quick start
 
 `examples/` is a small project you can copy. Run the tool inside it:
 
