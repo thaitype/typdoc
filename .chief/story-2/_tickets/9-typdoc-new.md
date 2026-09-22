@@ -1,7 +1,7 @@
 # 9: `typdoc new`
 
 Type: implementation
-Status: open
+Status: claimed
 Blocked by: 3, 5, 8
 
 ## What this delivers
