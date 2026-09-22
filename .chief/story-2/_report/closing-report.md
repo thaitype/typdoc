@@ -4,7 +4,7 @@
 
 `new`, `set` and `mv` (including `mv --renumber`) write a project story 1 can already read: create
 a document under an allocated or a chosen path, change fields under `--if`, and move or renumber a
-document while rewriting every ref this project holds to it. Sixteen tickets, all resolved, one
+document while rewriting every ref this project holds to it. Eighteen tickets, all resolved, one
 report per ticket in `.chief/story-2/_report/`. `scripts/test.sh`, run under the memory ceiling with
 `TMPDIR` on a disk-backed folder: 979 passed, 0 failed, 1 ignored.
 
@@ -155,7 +155,20 @@ What the story leaves exactly as it found it: the read path story 1 built (`get`
 already held at the end of story 1 — `[reverse-scope]` (a reverse lookup scans this project's own
 namespaces only, not those of a project it imports) and `[import-anchor]` (a body link across an
 import has its target file checked and its `#anchor` left unchecked). The goal states plainly that
-this story does not touch either, and nothing in the sixteen tickets did.
+this story does not touch either, and nothing in the eighteen tickets did.
+
+## Two tickets added after this report was first written
+
+Tickets 17 and 18 were not part of the original sixteen. Both had been sitting in
+`docs/design/design-decision-phase-2/_tickets/` as decision tickets that decided nothing — the
+decision map itself already said so of both, in as many words. A decision registry is not where a
+story keeps its own writing tasks, so both moved into `.chief/story-2/_tickets/`, renumbered 17 and
+18, and were built the same way as the other sixteen: a `Concept and mental model` section in the
+README separating namespace from collection, with a real two-namespace example run through the
+built binary rather than written by hand (ticket 17); and, in `docs/projects.md`'s `## State`
+section, the rule for resolving a merge conflict in a state file — take the higher `last`, never a
+side, never revert the file (ticket 18). Neither changes any command's behaviour; both are
+documentation. The counts and lists earlier in this report already include them.
 
 ## Not done, on purpose
 

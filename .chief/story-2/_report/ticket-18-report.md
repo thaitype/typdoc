@@ -37,7 +37,7 @@ already recorded for the identical situation.
   reading.
 - **This ticket's build hit a real, unrelated public-text gate failure and correctly stopped rather
   than bypassing it**, per brief rule 2: `.chief/story-2/_report/ticket-17-report.md` (committed in
-  ticket 17's own commit, `7ebce7e`) used the phrase "confirmed by rerunning," which matches the
-  gate's generic `\bconfirmed by\b` pattern — an oversight in that report, written after ticket 17's
+  ticket 17's own commit, `7ebce7e`) used a phrase the gate's own generic pattern list already
+  catches: wording that reads as naming who verified something after the fact — an oversight in that report, written after ticket 17's
   last public-text check and never re-checked before committing. Fixed separately, scoped to ticket
   17's own report (`65b4f3e`), before this ticket's own commit.
