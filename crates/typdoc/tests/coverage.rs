@@ -134,8 +134,11 @@ fn produced_exit_codes() -> BTreeSet<u8> {
     unclosed.file("bad.md", "---\ntitle: never closed\n");
     let unreadable = Scratch::project(&NOTES);
     unreadable.file(".typdoc/collections/folder.json/inside", "");
+    let mv_destination_exists = Scratch::project(&NOTES);
+    mv_destination_exists.file("a.md", "---\ntitle: A\n---\n");
+    mv_destination_exists.file("b.md", "---\ntitle: B\n---\n");
 
-    let runs: [(u8, Ran); 5] = [
+    let runs: [(u8, Ran); 6] = [
         (
             0,
             Spawn::args(["get", "note.md", "--json"])
@@ -164,6 +167,12 @@ fn produced_exit_codes() -> BTreeSet<u8> {
             6,
             Spawn::args(["get", "a.md", "--json"])
                 .cwd(unreadable.path())
+                .run(),
+        ),
+        (
+            7,
+            Spawn::args(["mv", "a.md", "b.md", "--json"])
+                .cwd(mv_destination_exists.path())
                 .run(),
         ),
     ];

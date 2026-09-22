@@ -1,0 +1,4 @@
+{
+  "project": "valid/mv-basic",
+  "command": ["mv", "a.md", "renamed.md", "--json"]
+}

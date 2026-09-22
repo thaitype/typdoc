@@ -278,8 +278,8 @@ mod tests {
             Ok(self.cwd.clone())
         }
 
-        fn hostname(&self) -> io::Result<String> {
-            Ok("test-host".to_owned())
+        fn hostname(&self) -> String {
+            "fixed-host".to_owned()
         }
     }
 

@@ -20,8 +20,8 @@ impl Env for NoEnv {
         Ok(PathBuf::from("/project"))
     }
 
-    fn hostname(&self) -> io::Result<String> {
-        Ok("test-host".to_owned())
+    fn hostname(&self) -> String {
+        "no-host".to_owned()
     }
 }
 

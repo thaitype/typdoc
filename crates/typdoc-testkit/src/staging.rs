@@ -28,7 +28,16 @@ impl StagedFixture {
 /// fixtures write, and a write fixture can never run in the repository's own tree by a test
 /// forgetting to copy it, because there is no path to a run that skips this decision.
 pub fn stage(dir: &Path, spec: &FixtureSpec) -> Result<StagedFixture, String> {
-    if !spec.is_write() {
+    stage_command(dir, &spec.command)
+}
+
+/// [`stage`], for a caller that has a bare command (`golden::Case`'s own, which is not a
+/// `FixtureSpec` — a golden case's `case.json` has no `trips` or `env` for one to hold) rather
+/// than a loaded fixture spec. Reads whether the command writes the same way `FixtureSpec::
+/// is_write` does (`crate::spec::is_write_command`, the one place that list is kept), so the two
+/// callers can never drift into disagreeing about which commands write.
+pub fn stage_command(dir: &Path, command: &[String]) -> Result<StagedFixture, String> {
+    if !crate::spec::is_write_command(command) {
         return Ok(StagedFixture {
             dir: dir.to_owned(),
             _copy: None,
@@ -38,7 +47,7 @@ pub fn stage(dir: &Path, spec: &FixtureSpec) -> Result<StagedFixture, String> {
         .map_err(|e| format!("a temporary folder for the copy of {}: {e}", dir.display()))?;
     copy_tree(dir, copy.path())?;
     let fixtures_root = crate::fixtures::root().join("fixtures");
-    refuse_if_in_repository(spec, copy.path(), &fixtures_root)?;
+    refuse_if_in_repository(copy.path(), &fixtures_root)?;
     Ok(StagedFixture {
         dir: copy.path().to_owned(),
         _copy: Some(copy),
@@ -46,15 +55,12 @@ pub fn stage(dir: &Path, spec: &FixtureSpec) -> Result<StagedFixture, String> {
 }
 
 /// The harness's own guard: a declared write must never be about to run inside the
-/// repository's own `fixtures/` tree. `stage` calls this on the folder it is about to hand
-/// back, after copying a write fixture out of that tree; firing here means the copy did not
-/// leave the tree, which is a fault of the loader and not of the fixture.
-fn refuse_if_in_repository(
-    spec: &FixtureSpec,
-    run_dir: &Path,
-    fixtures_root: &Path,
-) -> Result<(), String> {
-    if spec.is_write() && run_dir.starts_with(fixtures_root) {
+/// repository's own `fixtures/` tree. `stage_command` calls this on the folder it is about to
+/// hand back, after copying a write fixture out of that tree; firing here means the copy did not
+/// leave the tree, which is a fault of the loader and not of the fixture. Only ever called once
+/// `stage_command` has already established the command writes, so it has nothing left to ask.
+fn refuse_if_in_repository(run_dir: &Path, fixtures_root: &Path) -> Result<(), String> {
+    if run_dir.starts_with(fixtures_root) {
         return Err(format!(
             "a fixture that declares a write would run at {}, inside the repository's own \
              fixtures tree {}: it must run on a copy",
@@ -104,20 +110,12 @@ mod tests {
         .unwrap()
     }
 
-    fn read_spec() -> FixtureSpec {
-        FixtureSpec::parse(
-            "a.b",
-            r#"{ "command": ["get", "note.md"], "trips": ["a.b"] }"#,
-        )
-        .unwrap()
-    }
-
     #[test]
     fn a_write_pointed_at_the_repository_tree_is_refused_by_the_guard() {
         let fixtures_root = Path::new("/repo/fixtures");
         let run_dir = fixtures_root.join("broken/example");
 
-        let error = refuse_if_in_repository(&write_spec(), &run_dir, fixtures_root).unwrap_err();
+        let error = refuse_if_in_repository(&run_dir, fixtures_root).unwrap_err();
 
         assert!(error.contains("fixtures tree"), "{error}");
         assert!(error.contains("/repo/fixtures/broken/example"), "{error}");
@@ -128,22 +126,13 @@ mod tests {
         let fixtures_root = Path::new("/repo/fixtures");
         let run_dir = Path::new("/tmp/some-copy");
 
-        assert_eq!(
-            refuse_if_in_repository(&write_spec(), run_dir, fixtures_root),
-            Ok(())
-        );
+        assert_eq!(refuse_if_in_repository(run_dir, fixtures_root), Ok(()));
     }
 
-    #[test]
-    fn a_read_pointed_at_the_repository_tree_is_allowed_by_the_guard() {
-        let fixtures_root = Path::new("/repo/fixtures");
-        let run_dir = fixtures_root.join("broken/example");
-
-        assert_eq!(
-            refuse_if_in_repository(&read_spec(), &run_dir, fixtures_root),
-            Ok(())
-        );
-    }
+    // `refuse_if_in_repository` is only ever reached from `stage_command` once a command is
+    // already known to write; a *read* pointed at the repository tree never reaches it at all,
+    // which is what `stage`/`stage_command` guarantee, tested at that level below
+    // (`a_read_fixture_stages_in_its_own_folder_unchanged`).
 
     /// A fixture folder under a temporary directory, standing in for one committed under
     /// `fixtures/broken/`: a document and the `fixture.json` that declares the command.

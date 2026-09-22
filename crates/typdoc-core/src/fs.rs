@@ -152,6 +152,41 @@ pub fn write_atomically(
     written
 }
 
+/// Prepares a temp file beside `path` holding `bytes`, with `path`'s current mode carried to it
+/// (or the default, when there is none), but does not rename it into place: the "prepare" half
+/// of [`write_atomically`], split out for a caller that must prepare several files before
+/// committing any of them (`mv`, decision 1: "It prepares a temp file for every file that will
+/// change first, and then does the renames in one run at the end"). The temp file this call made
+/// is removed when it itself fails, on the same evidence `write_atomically` already acts on; a
+/// temp file a caller committed by renaming it elsewhere is no longer this function's to clean
+/// up.
+pub fn prepare_replacement(
+    fs: &dyn Fs,
+    _lock: &crate::namespace_lock::NamespaceLock<'_>,
+    path: &Path,
+    bytes: &[u8],
+) -> io::Result<PathBuf> {
+    let carried = match fs.mode(path) {
+        Ok(mode) => Some(mode),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e),
+    };
+    let temp = temp_path(path);
+    let mut handle = fs.create_new(&temp)?;
+    let written = match carried {
+        Some(mode) => fs.set_mode(&temp, mode),
+        None => Ok(()),
+    }
+    .and_then(|()| handle.write_all(bytes));
+    match written {
+        Ok(()) => Ok(temp),
+        Err(e) => {
+            let _ = fs.remove_file(&temp);
+            Err(e)
+        }
+    }
+}
+
 /// Every leftover temp file below `dir`, found by an ordinary recursive read: any file whose
 /// name has the reserved shape ([`is_temp_name`]), at any depth, a symbolic link never followed
 /// (the same rule every other walk of this crate keeps), and a folder holding its own

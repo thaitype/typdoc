@@ -13,6 +13,7 @@ pub enum ErrorKind {
     /// A `set --if` condition was false; nothing was written (design, Exit codes: "3 | An
     /// `--if` condition was false; nothing written").
     IfFalse,
+    AlreadyExists,
 }
 
 /// One config error: the id from the design's table, the configuration file it is about
@@ -84,6 +85,13 @@ pub enum Error {
     /// that failed, never empty.
     #[error("{}", finding_summary(findings))]
     IfFalse { findings: Vec<Finding> },
+
+    /// The destination of a write already exists (design, exit codes: "The destination already
+    /// exists: the write would replace a file that is there", exit 7 — decision 15). `message`
+    /// is built by the caller, which knows whether the two names are simply the same file
+    /// (decision 12) or a genuinely different one that is already there.
+    #[error("{message}")]
+    AlreadyExists { path: String, message: String },
 }
 
 impl Error {
@@ -106,6 +114,7 @@ impl Error {
             Error::Io { .. } => ErrorKind::Io,
             Error::LockTimeout { .. } => ErrorKind::LockTimeout,
             Error::IfFalse { .. } => ErrorKind::IfFalse,
+            Error::AlreadyExists { .. } => ErrorKind::AlreadyExists,
         }
     }
 }

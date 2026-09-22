@@ -9,20 +9,12 @@ use serde_json::{Value, json};
 use typdoc_testkit::fixtures;
 use typdoc_testkit::golden::{self, Case, REGENERATE_VAR};
 
-/// Runs `case`'s command where `typdoc_testkit::staging` says it belongs: the fixture's own
-/// folder for a declared read, exactly as before write commands existed; a fresh copy for a
-/// declared write, so a `set`/`new`/`mv` golden never writes into the repository's own fixture
-/// tree (contract item 3, the same guard `common::spawn_fixture` already gives `fixtures/broken/`
-/// fixtures). A golden case has no `fixture.json` of its own to read a `FixtureSpec` from, so one
-/// is built here from the case's own command; `trips` is never read by staging, only `is_write`
-/// is, so an empty one is fine.
+/// Stages the case's project the same way a write fixture is staged elsewhere
+/// (`typdoc_testkit::staging`): unchanged for a read, copied to a fresh temporary folder for a
+/// write, so a golden of `new`, `set` or `mv` never runs against the repository's own committed
+/// fixture tree.
 fn run(case: &Case) -> Ran {
-    let spec = typdoc_testkit::spec::FixtureSpec {
-        command: case.command.clone(),
-        trips: Default::default(),
-        env: Default::default(),
-    };
-    let staged = typdoc_testkit::staging::stage(&fixture(&case.project), &spec)
+    let staged = typdoc_testkit::staging::stage_command(&fixture(&case.project), &case.command)
         .unwrap_or_else(|e| panic!("{}: {e}", case.id));
     Spawn::args(&case.command).cwd(staged.dir()).run()
 }

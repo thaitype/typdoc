@@ -21,10 +21,15 @@ impl Env for ProcessEnv {
 
     // Linux is the only supported platform (design, Concurrency), so the kernel's own record
     // of the machine's name is read directly rather than through a crate: a plain file, not a
-    // call the write ban has any reason to cover.
-    fn hostname(&self) -> io::Result<String> {
-        let raw = std::fs::read_to_string("/proc/sys/kernel/hostname")?;
-        Ok(raw.trim_end_matches('\n').to_owned())
+    // call the write ban has any reason to cover. Read infallibly (`pid_alive`'s own shape, for
+    // the same reason): the hostname only ever decorates a message, so a read that fails or
+    // finds an empty file falls back to a placeholder rather than refusing to take the lock.
+    fn hostname(&self) -> String {
+        std::fs::read_to_string("/proc/sys/kernel/hostname")
+            .ok()
+            .map(|raw| raw.trim().to_owned())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "unknown-host".to_owned())
     }
 }
 

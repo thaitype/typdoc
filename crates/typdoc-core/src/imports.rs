@@ -197,8 +197,8 @@ mod tests {
             Ok(PathBuf::from("."))
         }
 
-        fn hostname(&self) -> io::Result<String> {
-            Ok("test-host".to_owned())
+        fn hostname(&self) -> String {
+            "fake-host".to_owned()
         }
     }
 

@@ -273,6 +273,47 @@ impl Template {
                 Step::Folders => None,
             })
     }
+
+    /// Whether `below`, a path counted from the namespace folder, fits this template as a whole
+    /// — every step matched, in order, with nothing left over on either side. Reads the template
+    /// the same way [`crate::index::Index::build`]'s own walk does (a name before the last step
+    /// is asked with [`Segment::matches_folder`], the last with [`Segment::matches`], and `**`
+    /// consumes any number of components, none included), but against a path already in hand
+    /// rather than by reading a directory: `mv`'s destination may not exist on disk yet, so there
+    /// is nothing there for a walk to find.
+    pub(crate) fn matches_path(&self, below: &str) -> bool {
+        let components: Vec<&str> = if below.is_empty() {
+            Vec::new()
+        } else {
+            below.split('/').collect()
+        };
+        fits_steps(&self.steps, &components)
+    }
+}
+
+/// The recursive half of [`Template::matches_path`], split out so `**` can backtrack over how
+/// many components it consumes, the same shape [`fits_capture`] already uses for `*` within one
+/// segment.
+fn fits_steps(steps: &[Step], components: &[&str]) -> bool {
+    let Some((step, rest_steps)) = steps.split_first() else {
+        return components.is_empty();
+    };
+    match step {
+        Step::Folders => {
+            (0..=components.len()).any(|taken| fits_steps(rest_steps, &components[taken..]))
+        }
+        Step::Name(segment) => match components.split_first() {
+            None => false,
+            Some((first, rest_components)) => {
+                let fits = if rest_steps.is_empty() {
+                    segment.matches(first)
+                } else {
+                    segment.matches_folder(first)
+                };
+                fits && fits_steps(rest_steps, rest_components)
+            }
+        },
+    }
 }
 
 #[cfg(test)]
@@ -532,5 +573,38 @@ mod tests {
             .unwrap();
 
         assert_eq!(uncoded.key("notes/a.md"), None);
+    }
+
+    fn uncoded(text: &str) -> Template {
+        Template::parse(text).unwrap().bind(text, None).unwrap()
+    }
+
+    #[test]
+    fn matches_path_fits_a_plain_glob_and_refuses_a_different_folder_or_extension() {
+        let t = uncoded("notes/*.md");
+
+        assert!(t.matches_path("notes/a.md"));
+        assert!(!t.matches_path("other/a.md"), "wrong folder");
+        assert!(!t.matches_path("notes/a.txt"), "wrong extension");
+        assert!(!t.matches_path("a.md"), "missing the literal folder");
+        assert!(!t.matches_path("notes/sub/a.md"), "one step too many");
+    }
+
+    #[test]
+    fn matches_path_lets_double_star_consume_any_number_of_folders_including_none() {
+        let t = uncoded("**/*.md");
+
+        assert!(t.matches_path("a.md"), "zero folders");
+        assert!(t.matches_path("x/a.md"), "one folder");
+        assert!(t.matches_path("x/y/a.md"), "several folders");
+    }
+
+    #[test]
+    fn matches_path_of_a_coded_template_fits_only_its_own_key() {
+        let t = coded("tickets/{key}.md");
+
+        assert!(t.matches_path("tickets/WF-3.md"));
+        assert!(!t.matches_path("tickets/WF-3.txt"));
+        assert!(!t.matches_path("tickets/other/WF-3.md"));
     }
 }

@@ -1,0 +1,4 @@
+{
+  "project": "valid/mv-schema-mismatch",
+  "command": ["mv", "plain.md", "tasks/plain.md", "--json"]
+}

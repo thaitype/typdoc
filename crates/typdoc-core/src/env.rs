@@ -11,9 +11,12 @@ pub trait Env {
     fn current_dir(&self) -> io::Result<PathBuf>;
     /// The machine's own hostname, stamped into a lock file so a competing lock's message can
     /// say whether it is on this host or another one (design, Concurrency: "A file created with
-    /// `O_EXCL`, holding pid, hostname and timestamp"). Nothing in `typdoc-core` reads it any
-    /// other way; the first write command to take a lock is the first caller.
-    fn hostname(&self) -> io::Result<String>;
+    /// `O_EXCL`, holding pid, hostname and timestamp"). A name that cannot be read cleanly is not
+    /// a reason to refuse taking the lock: the hostname only ever chooses the wording of a
+    /// timeout message (design: "The pid check only chooses the wording; it never decides
+    /// whether a lock is valid" — read the same way for the host), so this reads infallibly, the
+    /// same shape `pid_alive` already uses for the same reason.
+    fn hostname(&self) -> String;
 }
 
 /// What a command reaches the outside world through.
