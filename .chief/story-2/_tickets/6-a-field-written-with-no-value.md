@@ -1,7 +1,7 @@
 # 6: A field written with no value, kept apart from an empty string
 
 Type: implementation
-Status: open
+Status: claimed
 Blocked by: 5
 
 ## What this delivers
