@@ -2,6 +2,8 @@
   "name": "task",
   "fields": {
     "title": { "type": "string", "required": true },
-    "status": { "type": "enum", "values": ["open", "done"], "required": true }
+    "status": { "type": "enum", "values": ["open", "done"], "required": true },
+    "owner": { "type": "string", "required": true },
+    "moved_from": { "type": "list", "auto": "moves" }
   }
 }

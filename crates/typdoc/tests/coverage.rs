@@ -152,8 +152,23 @@ fn produced_exit_codes() -> BTreeSet<u8> {
         ".typdoc/locks/default.lock",
         r#"{"pid":999999999,"host":"nobody-here","timestamp":"1990-01-01T00:00:00+00:00"}"#,
     );
+    // The same scratch shape `set --if` already proves through the CLI
+    // (`crates/typdoc/tests/set.rs`, `a_false_if_writes_nothing_and_exits_3_naming_the_condition`):
+    // `--if` reads the document's own field values (design.md, `typdoc set`), against a schema
+    // that declares the field, which `NOTES`'s own empty schema does not.
+    let if_false = Scratch::project(&[
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "*.md", "schema": "note.json" }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": { "title": { "type": "string", "required": true } } }"#,
+        ),
+    ]);
+    if_false.file("a.md", "---\ntitle: Before\n---\n");
 
-    let runs: [(u8, Ran); 7] = [
+    let runs: [(u8, Ran); 8] = [
         (
             0,
             Spawn::args(["get", "note.md", "--json"])
@@ -171,6 +186,19 @@ fn produced_exit_codes() -> BTreeSet<u8> {
             Spawn::args(["get", "bad.md", "--json"])
                 .cwd(unclosed.path())
                 .run(),
+        ),
+        (
+            3,
+            Spawn::args([
+                "set",
+                "a.md",
+                "title=After",
+                "--if",
+                "title=Nonexistent",
+                "--json",
+            ])
+            .cwd(if_false.path())
+            .run(),
         ),
         (
             4,

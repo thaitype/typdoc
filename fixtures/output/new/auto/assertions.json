@@ -1,0 +1,9 @@
+{
+  "/document/path": "note.md",
+  "/document/namespace": "default",
+  "/document/code": null,
+  "/document/collection": "notes",
+  "/document/schema": "note",
+  "/document/fields/title": "A note with a clock",
+  "/document/fields/created_at": "2001-02-03T04:05:06+07:00"
+}

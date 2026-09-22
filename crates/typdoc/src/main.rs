@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use typdoc::cli;
-use typdoc::clock::MachineClock;
+use typdoc::clock::{FIXED_CLOCK_VAR, ShippedClock};
 use typdoc_core::{Deps, Env};
 use typdoc_fs::SystemFs;
 
@@ -49,10 +49,17 @@ fn main() -> ExitCode {
         return ExitCode::from(6);
     }
     let args: Vec<OsString> = std::env::args_os().collect();
+    let env = ProcessEnv;
+    let fixed_clock = env.var(FIXED_CLOCK_VAR).map(|value| {
+        value
+            .into_string()
+            .unwrap_or_else(|raw| panic!("{FIXED_CLOCK_VAR} is not UTF-8: {raw:?}"))
+    });
+    let clock = ShippedClock::from_var(fixed_clock);
     let deps = Deps {
-        env: &ProcessEnv,
+        env: &env,
         fs: &SystemFs,
-        clock: &MachineClock,
+        clock: &clock,
     };
     let outcome = cli::run(&args, &deps);
     write_all(&mut io::stdout(), &outcome.stdout);
