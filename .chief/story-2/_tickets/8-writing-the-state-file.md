@@ -1,7 +1,7 @@
 # 8: Writing the state file, and the rules that read it
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: 1, 3
 
 ## What this delivers
