@@ -46,6 +46,14 @@ pub(crate) const SYMBOLIC_LINK: &str = "a symbolic link is not read: a run does 
 pub(crate) const NAME_NOT_UTF8: &str = "the name is not valid UTF-8, so no path can name it; it is written here \
                         with a replacement character for each byte that cannot be read";
 
+/// Why a walk skips a file of the reserved temp-file shape: it is a leftover of a write that
+/// did not finish (decision: "a file whose name has that shape is never a document, whatever
+/// any `match` says"), so it is never taken as one, whatever glob reaches it. Reported at
+/// `warn` rather than at the `error` `files.unreadable` carries, and so a rule of its own: one
+/// rule has one level.
+pub(crate) const LEFTOVER_TEMP_FILE: &str = "this is a leftover of a write that did not finish, in the reserved shape typdoc's own temp \
+     files use; it is never a document, whatever the collection's match says";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
     Off,

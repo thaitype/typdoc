@@ -50,7 +50,10 @@ pub use document::{Document, Number, Value};
 pub use env::{Deps, Env};
 pub use error::{ConfigError, Error, ErrorKind};
 pub use frontmatter::{FrontmatterWriter, YamlSerdeWriter};
-pub use fs::{FileId, Fs, Mode, TEMP_PREFIX, WriteHandle, is_temp_name, write_atomically};
+pub use fs::{
+    FileId, Fs, Mode, TEMP_PREFIX, WriteHandle, find_leftovers, is_temp_name, remove_leftovers,
+    write_atomically,
+};
 pub use lines::{LineMap, Position};
 pub use links::{
     BodyLink, BodyLinks, Definition, DuplicateDefinition, Mention, Suspect, mentions, scan,
@@ -61,8 +64,9 @@ pub use namespace_lock::{
     release,
 };
 pub use project::{
-    AuditCollection, AuditOverlap, AuditReport, ListFilter, ListResult, Project, RefName,
-    RefOutcome, RefsDirection, RefsReference, RefsReport, SortKey, Toc, ValidateReport, discover,
+    AuditCollection, AuditNotRead, AuditOverlap, AuditReport, ListFilter, ListResult, Project,
+    RefName, RefOutcome, RefsDirection, RefsReference, RefsReport, SortKey, Toc, ValidateReport,
+    discover,
 };
 pub use query::{
     Condition, Dir, FieldRef, Item, Op, PlainCondition, Quant, QueryError, RefCondition, RefField,

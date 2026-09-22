@@ -678,6 +678,12 @@ fn validate_json(report: &ValidateReport) -> Json {
         // accounting equation reads `summary.overlapping` directly, so this is the number a
         // caller who only reads the summary needs to reconcile the run.
         summary.insert("overlapping".to_owned(), json!(audit.overlapping.len()));
+        // Beside `unreported` and `overlapping` for the same reason as `overlapping` itself:
+        // every one of these is already reported in `findings` (`files.unreadable` or
+        // `files.leftover`), so it is not `unreported`. Without it the account a reader takes
+        // from the summary would be short by every entry the run skipped (design, the
+        // paragraph on `not_read`).
+        summary.insert("not_read".to_owned(), json!(audit.not_read.len()));
     }
     let findings: Vec<Json> = report.findings.iter().map(finding_json).collect();
     let mut object = Map::new();
@@ -692,7 +698,9 @@ fn validate_json(report: &ValidateReport) -> Json {
 /// The `audit` object of `--json`'s report (design, JSON output, "Audit"): `collections`, one
 /// `{ "name", "documents" }` per collection of the project, sorted by name (already sorted by
 /// `AuditReport::collections`); `uncollected` and `no_frontmatter`, the sorted `path` of every file
-/// the design names; and `overlapping`, one `{ "path", "collections" }` per file, sorted by path.
+/// the design names; `overlapping`, one `{ "path", "collections" }` per file, sorted by path; and
+/// `not_read`, one `{ "path", "reason" }` per directory entry the run met and did not read,
+/// sorted by path.
 fn audit_json(audit: &AuditReport) -> Json {
     let collections: Vec<Json> = audit
         .collections
@@ -704,11 +712,17 @@ fn audit_json(audit: &AuditReport) -> Json {
         .iter()
         .map(|overlap| json!({ "path": overlap.path, "collections": overlap.collections }))
         .collect();
+    let not_read: Vec<Json> = audit
+        .not_read
+        .iter()
+        .map(|entry| json!({ "path": entry.path, "reason": entry.reason }))
+        .collect();
     json!({
         "collections": collections,
         "uncollected": audit.uncollected,
         "no_frontmatter": audit.no_frontmatter,
         "overlapping": overlapping,
+        "not_read": not_read,
     })
 }
 
@@ -751,13 +765,14 @@ fn audit_text(report: &ValidateReport) -> String {
         return String::new();
     };
     // Contract item 8's equation, in text form: `checked.documents` plus every count of what was
-    // not checked, `uncollected`, `no_frontmatter` and `overlapping`, is the number of files the
-    // run read. Leaving `overlapping` out of `total` would make a reader of the text see fewer
-    // files than a reader of the JSON's `summary` does.
+    // not checked, `uncollected`, `no_frontmatter`, `overlapping` and `not_read`, is the number
+    // of directory entries the run met. Leaving any one of them out of `total` would make a
+    // reader of the text see fewer entries than a reader of the JSON's `summary` does.
     let total = report.documents
         + audit.uncollected.len()
         + audit.no_frontmatter.len()
-        + audit.overlapping.len();
+        + audit.overlapping.len()
+        + audit.not_read.len();
     let mut out = format!(
         "typdoc audit: {} collections, {total} files ({} in no collection)\n\n",
         audit.collections.len(),
@@ -803,6 +818,19 @@ fn audit_text(report: &ValidateReport) -> String {
             "matched by more than one collection: {} ({})\n",
             overlapping.join(", "),
             audit.overlapping.len()
+        ));
+    }
+    if !audit.not_read.is_empty() {
+        out.push('\n');
+        let not_read: Vec<String> = audit
+            .not_read
+            .iter()
+            .map(|entry| format!("{} ({})", entry.path, entry.reason))
+            .collect();
+        out.push_str(&format!(
+            "not read: {} ({})\n",
+            not_read.join(", "),
+            audit.not_read.len()
         ));
     }
     out

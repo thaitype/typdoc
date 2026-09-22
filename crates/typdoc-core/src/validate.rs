@@ -361,6 +361,25 @@ pub(crate) fn unreadable_finding(path: &str, namespace: Option<&str>, message: S
     )
 }
 
+/// A finding about a leftover temp file a `match` or a `namespaces` glob reaches
+/// (`files.leftover`): a rule of its own rather than `files.unreadable`'s, since one rule has
+/// one level and this one is `warn` — a leftover is expected after a kill or a power cut and is
+/// not itself damage (decision 4). Carries `namespace` when found inside one, the same shape
+/// `unreadable_finding` uses.
+pub(crate) fn leftover_finding(path: &str, namespace: Option<&str>, message: String) -> Finding {
+    build_finding(
+        Severity::Warn,
+        "files.leftover",
+        path,
+        namespace,
+        None,
+        None,
+        None,
+        None,
+        message,
+    )
+}
+
 /// A finding about a document matched by more than one collection (`collections.overlap`):
 /// which collection is "the" collection of this document is exactly what is wrong, so it is
 /// left out rather than guessed; the message names every collection that matched.

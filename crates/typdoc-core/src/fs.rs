@@ -152,6 +152,64 @@ pub fn write_atomically(
     written
 }
 
+/// Every leftover temp file below `dir`, found by an ordinary recursive read: any file whose
+/// name has the reserved shape ([`is_temp_name`]), at any depth, a symbolic link never followed
+/// (the same rule every other walk of this crate keeps), and a folder holding its own
+/// `.typdoc/config.json` never entered, since a separate project's leftovers are its own to
+/// find. A read, not a write, so it takes no lock and changes nothing; pair it with
+/// [`remove_leftovers`] to act on what it finds.
+pub fn find_leftovers(dir: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    find_leftovers_into(dir, &mut found);
+    found
+}
+
+fn find_leftovers_into(dir: &Path, found: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
+        let path = entry.path();
+        if file_type.is_dir() {
+            if crate::config::config_file(&path).is_file() {
+                continue;
+            }
+            find_leftovers_into(&path, found);
+        } else if file_type.is_file() && entry.file_name().to_str().is_some_and(is_temp_name) {
+            found.push(path);
+        }
+    }
+}
+
+/// Removes every one of `paths` through `fs`, within the scope [`crate::namespace_lock`] proves
+/// the caller holds a lock over: a command holding a lock may remove leftovers there, on the
+/// evidence that no other typdoc is writing in that namespace while the lock is held (decision
+/// 4). Age is never a criterion, as it is never one for a lock: every path handed in is removed,
+/// whatever its age. A removal that fails is not reported here and does not stop the sweep —
+/// the caller's own write matters more than a tidy folder, the same reasoning
+/// [`write_atomically`] already carries for the temp file it made itself. Returns how many were
+/// actually removed, for a caller that wants to say so.
+///
+/// `_lock` is not inspected, the same as `write_atomically`'s: there is no check that it is the
+/// right lock for every path in `paths`, which of the possibly several held locks proves a
+/// caller may remove a given path is a property of the caller, not of this function.
+pub fn remove_leftovers(
+    fs: &dyn Fs,
+    _lock: &crate::namespace_lock::NamespaceLock<'_>,
+    paths: &[PathBuf],
+) -> usize {
+    paths
+        .iter()
+        .filter(|path| fs.remove_file(path).is_ok())
+        .count()
+}
+
 /// How many temp names this process has already made. It is what keeps two writers inside one
 /// process apart, and it is counted rather than drawn, so that two names an instant apart
 /// cannot be one name.

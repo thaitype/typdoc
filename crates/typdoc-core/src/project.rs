@@ -9,7 +9,8 @@ use chrono::{DateTime, FixedOffset, NaiveDate};
 use crate::argument::DocumentArg;
 use crate::body::{self, Heading};
 use crate::config::{
-    CONFIG_FILE, Collection, Config, Level, Namespace, RefBase, Report, Rules, config_file,
+    CONFIG_FILE, Collection, Config, LEFTOVER_TEMP_FILE, Level, Namespace, RefBase, Report, Rules,
+    config_file,
 };
 use crate::document::{Document, Value};
 use crate::env::Env;
@@ -299,6 +300,16 @@ pub struct AuditOverlap {
     pub collections: Vec<String>,
 }
 
+/// One directory entry a `match` or a `namespaces` glob reached and did not read — a symbolic
+/// link, a name that is not valid UTF-8, or a leftover temp file — for `audit.not_read`, so that
+/// an entry which is reported in `findings` (`files.unreadable` or `files.leftover`) is also
+/// counted somewhere in the account (design, the paragraph on `not_read`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditNotRead {
+    pub path: String,
+    pub reason: String,
+}
+
 /// `--audit`'s own report, alongside `findings` (design: "`collections`... `uncollected`...
 /// `no_frontmatter`... `overlapping`"). The three lists never overlap: a file that belongs to no
 /// collection has no schema to say whether it has frontmatter typdoc would recognise, so it is
@@ -327,6 +338,13 @@ pub struct AuditReport {
     /// `collections.overlap`; it is counted here, and in `summary.overlapping`, so the summary's
     /// own account of the run is complete without it (contract item 8).
     pub overlapping: Vec<AuditOverlap>,
+    /// Every directory entry the run met and did not read, sorted by `path`, each once
+    /// (design, the paragraph on `not_read`: "a symbolic link, a name that is not valid UTF-8,
+    /// or a leftover temp file"). Counted beside `unreported` and `overlapping`, not inside
+    /// either: every one of these is already reported under `files.unreadable` or
+    /// `files.leftover`, so closing this list out of `findings` would be wrong the same way
+    /// `overlapping` already is not counted twice.
+    pub not_read: Vec<AuditNotRead>,
 }
 
 impl Project {
@@ -1575,24 +1593,42 @@ impl Project {
                     overlap_message(collections),
                 ));
             }
-            // `files.unreadable`: an entry a `match` reached and the walk could not read. It is
-            // no document, so it is in none of the counts above; the run answered about every
-            // file beside it, which is why it is a finding and not a failure.
+            // `files.unreadable` or `files.leftover`: an entry a `match` reached and the walk
+            // could not read. It is no document, so it is in none of the counts above; the run
+            // answered about every file beside it, which is why it is a finding and not a
+            // failure. `not_read` is `--audit` only, and gathers both this loop and the one
+            // below, since the account it closes covers every entry the run met and did not
+            // read, whichever kind of glob reached it (design, the paragraph on `not_read`).
+            let mut not_read: Vec<AuditNotRead> = Vec::new();
             for (path, namespace_idx, why) in self.index.unreadable() {
                 let namespace = &self.config.namespaces[namespace_idx].name;
                 if !scope.contains(namespace) {
                     continue;
                 }
                 namespaces.insert(namespace.clone());
-                findings.push(validate::unreadable_finding(
-                    path,
-                    Some(namespace),
-                    why.to_owned(),
-                ));
+                if audit {
+                    not_read.push(AuditNotRead {
+                        path: path.to_owned(),
+                        reason: why.to_owned(),
+                    });
+                }
+                findings.push(if why == LEFTOVER_TEMP_FILE {
+                    validate::leftover_finding(path, Some(namespace), why.to_owned())
+                } else {
+                    validate::unreadable_finding(path, Some(namespace), why.to_owned())
+                });
             }
             // An entry of the project folder that a `namespaces` glob reached is in no
-            // namespace, so it carries none and is reported whatever the scope is.
+            // namespace, so it carries none and is reported whatever the scope is. A
+            // `namespaces` glob never reaches a leftover temp file (only a folder can be a
+            // namespace, design), so this loop's entries are always `files.unreadable`.
             for skipped in &self.config.skipped {
+                if audit {
+                    not_read.push(AuditNotRead {
+                        path: skipped.path.clone(),
+                        reason: skipped.why.to_owned(),
+                    });
+                }
                 findings.push(validate::unreadable_finding(
                     &skipped.path,
                     None,
@@ -1626,6 +1662,7 @@ impl Project {
                     documents_by_collection,
                     no_frontmatter,
                     overlapping,
+                    not_read,
                 )?)
             } else {
                 None
@@ -1728,6 +1765,7 @@ impl Project {
         documents_by_collection: BTreeMap<usize, usize>,
         mut no_frontmatter: Vec<String>,
         mut overlapping: Vec<AuditOverlap>,
+        mut not_read: Vec<AuditNotRead>,
     ) -> Result<AuditReport, Error> {
         let mut collections: Vec<AuditCollection> = self
             .collections
@@ -1762,11 +1800,13 @@ impl Project {
             overlap.collections.sort();
         }
         overlapping.sort_by(|a, b| a.path.cmp(&b.path));
+        not_read.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(AuditReport {
             collections,
             uncollected,
             no_frontmatter,
             overlapping,
+            not_read,
         })
     }
 
