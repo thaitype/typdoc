@@ -1,7 +1,7 @@
 # 13: Temp files and what a run leaves behind
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: 1
 
 ## What this delivers
