@@ -1,7 +1,7 @@
 # 2: A fixture whose command writes runs on a copy
 
 Type: implementation
-Status: open
+Status: claimed
 Blocked by: None (can start immediately)
 
 ## What this delivers
