@@ -249,3 +249,44 @@ fn a_number_outside_the_integer_range_is_printed_converted_not_as_written() {
     let as_text = project_with("s: \"99999999999999999999\"");
     assert_eq!(fields_of(&as_text)["s"], json!("99999999999999999999"));
 }
+
+// ---------------------------------------------------------------------------------------------
+// A field written with no value and one written as an empty string are two different YAML values,
+// and the design says each keeps the form it was written in, with the first shown as `null`. The
+// binary reads both as the same empty text. This pins that, so closing the gap turns it red.
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn a_field_written_with_no_value_reads_the_same_as_an_empty_string() {
+    assert!(
+        typdoc::registry::KNOWN_GAPS
+            .iter()
+            .any(|gap| gap.starts_with("[empty-value]")),
+        "this test pins a gap that `registry::KNOWN_GAPS` no longer lists"
+    );
+
+    let bare = project_with("s:");
+    let quoted = project_with("s: \"\"");
+
+    // Today: indistinguishable, both the empty string.
+    assert_eq!(fields_of(&bare)["s"], fields_of(&quoted)["s"]);
+    assert_eq!(fields_of(&bare)["s"], json!(""));
+
+    // What the design asks for: the first is `null`, the second is `""`.
+    assert_ne!(fields_of(&bare)["s"], Value::Null);
+
+    // Unchanged by the decision, and asserted here so that closing the gap cannot quietly change
+    // it: a field written with no value is present rather than missing, and one whose type it
+    // does not fit is reported the same way a written value would be.
+    let ran = run(&bare, &["validate", "--json"]);
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stdout_json()["findings"], json!([]));
+
+    let number = project_with("num:");
+    let ran = run(&number, &["validate", "--json"]);
+    assert_eq!(ran.code, 2, "stderr: {}", ran.stderr);
+    assert_eq!(
+        ran.stdout_json()["findings"][0]["rule"],
+        json!("frontmatter.types")
+    );
+}

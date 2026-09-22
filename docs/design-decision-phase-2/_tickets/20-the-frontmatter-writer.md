@@ -132,9 +132,11 @@ own code, which is where a test belongs. The atomic write stays, and so does the
 replace an existing file; both prevent events that can be told, an interrupted run and a
 destination that already holds someone's work.
 
-**Not verified:** how much real frontmatter in the repositories typdoc is meant for actually
-carries comments, anchors or tags. Nothing here depends on the answer — the loss is stated
-either way — but it decides how loud the tool should be about it, which is open below.
+**Verified since, by [decision 21](21-warning-on-a-write-that-drops-something.md):** across 486
+real frontmatter blocks in every repository typdoc is meant for, comments, anchors, aliases and
+tags occur zero times, and a field written with a name and no value occurs in 279 of 482. So the
+losses this decision names are real but unmet, and the one that is met every other document was
+not on this list at all.
 
 ## What this opens and closes
 

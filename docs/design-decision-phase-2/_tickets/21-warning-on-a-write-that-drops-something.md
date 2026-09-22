@@ -1,7 +1,7 @@
 # 21: Whether a write warns when it is about to drop something
 
 Type: wayfinder:grilling
-Status: open
+Status: resolved
 Blocked by: 20
 
 ## Question
@@ -43,4 +43,90 @@ handled gets a place in an accounting rather than silence.
 
 ## Answer
 
-<filled in on resolve>
+**Decided: a write says nothing. The one loss that had to be prevented is prevented at its source
+instead, because it was never a matter of warning — it was a value being changed.**
+
+### The measurement this ticket was missing
+
+[Decision 20](20-the-frontmatter-writer.md) recorded as not verified how much real frontmatter
+carries comments, anchors or tags. It has now been counted, across every repository typdoc is
+meant for:
+
+| Where | Markdown files | With frontmatter | Comments | Anchors | Aliases | Tags | Blank lines | `[flow]` | Quoted |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| chief | 56 | 26 | 0 | 0 | 0 | 0 | 5 | 0 | 0 |
+| typmem | 7 | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| the memory store | 465 | 456 | 0 | 0 | 0 | 0 | 0 | 33 | 0 |
+| four other projects | 57 | 0 | — | — | — | — | — | — | — |
+| **total** | **585** | **486** | **0** | **0** | **0** | **0** | **5** | **33** | **0** |
+
+**Not one of the four things this ticket was opened about occurs in 486 real documents.** No
+event can be told for a warning about an anchor or a tag: not who it happened to, not what they
+were doing.
+
+### And the count found something nobody was watching
+
+Run against the binary, on a document taken from the memory store:
+
+```
+before                          after a write
+author: Tiana                   author: Tiana
+reviewer:                       reviewer: ''
+created: 2026-08-17             created: 2026-08-17
+```
+
+**279 of 482 documents have a field written with a name and no value.** In YAML `reviewer:` is
+null and `reviewer: ''` is a string of no characters; typdoc reads both as the same empty text,
+so a write puts back whichever one the writer emits. A tool reading the same file afterwards —
+a site generator, a script of the user's — tells them apart even where typdoc does not.
+
+That is the same kind of harm a dropped tag would do, at 279 documents instead of none.
+
+### Why that is not answered by a warning
+
+A warning is an apology in advance for something the tool chose to do. Here the tool does not
+have to do it. The design says a write changes no value, and this is a value, not a style — so
+the honest fix is at the source: **typdoc keeps the two apart, and a write puts back the form it
+found.** Nothing to warn about, and 279 documents are not touched at all.
+
+This is stated as fixing a promise that is already broken rather than as a new promise, which is
+what it is.
+
+**In `--json`, a field written with no value is `null` and one written as an empty string is
+`""`**, for the reason [decision 10](10-a-number-past-u64-on-the-write-path.md) gives for a
+number's digits: the caller is told what the file says, not what typdoc would have made of it.
+
+**What does not change, and is guarded so it cannot drift.** Inside typdoc the two go on meaning
+the same thing — for every rule, for `--set`, for a template and for a query. A required field
+written with no value is present, not missing, and a `number` written with no value fails its
+type. Both were measured on the binary and both are asserted in the test below, because the
+obvious way to implement this decision is to make a bare field absent, and that would turn 279
+documents that pass today into findings. Nobody asked for that.
+
+### And for the rest of the losses, nothing is said
+
+Comments, blank lines, flow style, quote style, spacing, and anchors and tags where they occur:
+the command says nothing, and the design's table is where a user learns what a write does not
+keep.
+
+The argument against warning is the count, and the argument for stopping there is what a warning
+on 58 per cent of writes would do to the one that mattered. Warning about everything teaches a
+user to read nothing, and what would then be drowned is the rare case this ticket was opened
+for. Having removed the common loss rather than announced it, there is nothing left frequent
+enough to drown anything.
+
+The design already advises that a document depending on an anchor or a tag be edited by hand.
+That advice stays where it is, in the document, and is not moved into the command's output on
+the strength of a case nobody has met.
+
+### Written into `docs/design.md`, and the gap the binary still has
+
+The Documents rules gain the distinction between a field written with no value and one written as
+an empty string, that a write puts back the form it found, and — in the same breath, because this
+is where it would go wrong — that nothing inside typdoc changes meaning. The JSON output section
+gains the `null` and `""` sentence.
+
+The binary reads both as the same empty text, so the difference is recorded where the suite sees
+it: `registry::KNOWN_GAPS` gains `[empty-value]`, pinned by
+`a_field_written_with_no_value_reads_the_same_as_an_empty_string`, which asserts today's reading
+in both directions and also asserts the two validation behaviours that must survive the fix.
