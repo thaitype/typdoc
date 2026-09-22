@@ -1,7 +1,7 @@
 # 4: Signals
 
 Type: implementation
-Status: open
+Status: claimed
 Blocked by: 3
 
 ## What this delivers
