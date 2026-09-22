@@ -1,7 +1,7 @@
 # 15: Goldens for the write commands, and their exit codes
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: 9, 10, 11
 
 ## What this delivers
