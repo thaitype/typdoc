@@ -41,7 +41,7 @@ false-condition scenario. `UNPRODUCED_EXIT_CODES` is now empty.
   any fixture — a run with it unset against one with it set to `2001-02-03T04:05:06+07:00`.
 - All three lists were verified, not assumed: `UNIMPLEMENTED_COMMANDS` still holds only `"pull"`
   (untouched, already clean, both its consumers re-checked and passing); `UNIMPLEMENTED_RULES` was
-  already empty (confirmed by reading it, both its consumers re-checked and passing) — so the "a rule
+  already empty (verified by reading it directly, both its consumers re-checked and passing) — so the "a rule
   leaving the list brings its fixture in the same change" criterion does not apply to this ticket,
   stated rather than skipped silently; `UNPRODUCED_EXIT_CODES` is now empty, its one consumer passing
   both directions.
