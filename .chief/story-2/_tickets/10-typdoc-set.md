@@ -1,7 +1,7 @@
 # 10: `typdoc set`
 
 Type: implementation
-Status: open
+Status: claimed
 Blocked by: 2, 3, 5
 
 ## What this delivers
