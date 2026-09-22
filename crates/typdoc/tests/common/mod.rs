@@ -4,6 +4,7 @@ use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
 
 /// Written out here and never copied from the machine that runs the suite.
 const PATH: &str = "/usr/bin:/bin";
@@ -156,6 +157,22 @@ impl RunningChild {
         assert_eq!(sent, 0, "kill(2) failed: {}", io::Error::last_os_error());
     }
 
+    /// This process's own pid, for a caller that needs to tell it apart from another running
+    /// child (or from whatever a lock file names).
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
+    /// Whether this process is still running, checked without blocking: `Child::try_wait`
+    /// itself, the standard library's own non-blocking form of [`RunningChild::wait`], reaping
+    /// the child and recording its exit if it has already ended, and changing nothing if it has
+    /// not. A caller that needs the exit details afterward still calls
+    /// [`wait`](RunningChild::wait); this is only ever "has it ended yet", asked while still
+    /// holding the value.
+    pub fn is_alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+
     /// Waits for the process to end, whichever way it ends, and returns what it left behind.
     pub fn wait(self) -> Ended {
         let output = self
@@ -238,3 +255,78 @@ pub const NOTES: [(&str, &str); 2] = [
     ),
     ("note.json", r#"{ "name": "note", "fields": {} }"#),
 ];
+
+/// A coded schema, `WF`, for the tests that need a shipped binary to hold a namespace lock for
+/// a real stretch of wall-clock time: shared by every test that reuses ticket 4's own mechanism
+/// (see [`large_project`]) rather than building a second way to do it.
+pub const WF_SCHEMA: &str = r#"{
+  "name": "ticket",
+  "code": "WF",
+  "fields": {
+    "title": { "type": "string", "required": true },
+    "status": { "type": "enum", "values": ["open", "claimed"], "default": "open" },
+    "kind": { "type": "enum", "values": ["research", "task"], "required": true }
+  }
+}"#;
+
+/// The files of a project with one coded collection, `tickets/{key}.md`, matching
+/// [`WF_SCHEMA`].
+pub const WF_COLLECTION: [(&str, &str); 2] = [
+    (
+        ".typdoc/collections/tickets.json",
+        r#"{ "match": "tickets/{key}.md", "schema": "wf.json" }"#,
+    ),
+    ("wf.json", WF_SCHEMA),
+];
+
+/// The frontmatter every filler document of [`large_project`] carries: `WF_SCHEMA` requires no
+/// more than this to be valid.
+pub const FILLER: &str = "---\ntitle: Filler\nstatus: open\nkind: research\n---\n";
+
+/// A project with `document_count` documents already filed under the `WF` collection and its
+/// state file caught up to them: real input built for a test, not a fixture read from the
+/// repository (a fixture this size does not belong there). Making the shipped binary hold a
+/// namespace lock long enough to be observed, signalled or contended needs no code change to any
+/// command: a write command's own real validation (`Project::prescan_refs`, part of checking
+/// `refs.acyclic`) already reads every document already in the namespace from disk,
+/// unconditionally, under the lock, before the document it is creating is written — cost that
+/// scales with document count and was there before ticket 4, which measured this at ~2.7s for
+/// 30,000 documents. First built for ticket 4's own signal tests
+/// (`crates/typdoc/tests/signals.rs`); reused, not reinvented, by every test after it that needs
+/// the same mechanism.
+pub fn large_project(document_count: u32) -> Scratch {
+    let state_text = format!("{{ \"tickets\": {{ \"last\": {document_count} }} }}");
+    let mut files: Vec<(&str, &str)> = WF_COLLECTION.to_vec();
+    files.push((".typdoc/state/default.json", state_text.as_str()));
+    let project = Scratch::project(&files);
+    for n in 1..=document_count {
+        project.file(&format!("tickets/WF-{n}.md"), FILLER);
+    }
+    project
+}
+
+/// `.typdoc/locks/default.lock`, the lock every write against [`large_project`]'s single
+/// namespace takes.
+pub fn lock_path(project: &Path) -> PathBuf {
+    project.join(".typdoc/locks/default.lock")
+}
+
+/// Polls for `path` to exist, up to `timeout`; the last check's own answer is the return value,
+/// so a caller that gets `false` back knows the wait, not a stale read, is what failed.
+pub fn wait_for_file(path: &Path, timeout: Duration) -> bool {
+    let start = Instant::now();
+    loop {
+        if path.is_file() {
+            return true;
+        }
+        if start.elapsed() >= timeout {
+            return path.is_file();
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// How long a test waits for the lock file to appear before giving up: generous next to how
+/// quickly it actually shows up (`acquire` creates it before any of the holding command's own
+/// work runs), so this is headroom for a loaded machine, not the ordinary case.
+pub const LOCK_APPEARS_WITHIN: Duration = Duration::from_secs(20);
