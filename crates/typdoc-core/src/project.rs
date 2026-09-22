@@ -2,23 +2,27 @@ use std::cmp::Ordering;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use chrono::{DateTime, FixedOffset, NaiveDate};
 
 use crate::argument::DocumentArg;
 use crate::body::{self, Heading};
 use crate::config::{
-    CONFIG_FILE, Collection, Config, LEFTOVER_TEMP_FILE, Level, Namespace, RefBase, Report, Rules,
-    config_file,
+    CONFIG_FILE, Collection, Config, LEFTOVER_TEMP_FILE, Level, LockMode, Namespace, RefBase,
+    Report, Rules, config_file,
 };
 use crate::document::{Document, Value};
-use crate::env::Env;
+use crate::env::{Deps, Env};
 use crate::error::Error;
-use crate::frontmatter;
+use crate::frontmatter::{self, FrontmatterWriter, YamlSerdeWriter};
+use crate::fs::write_atomically;
 use crate::index::{Entry as Indexed, Index, Member};
 use crate::lines::Position;
 use crate::links::{self, BodyLink, BodyLinks};
+use crate::namespace_lock::{self, NamespaceLock};
 use crate::query::{self, Condition, Dir, FieldRef, PlainCondition, Quant, RefCondition, RefField};
 use crate::refs;
 use crate::schema::{self, Auto, Field, FieldType, Resolved};
@@ -602,6 +606,367 @@ impl Project {
             schema: collection.schema.name.clone(),
             project: None,
             fields,
+        })
+    }
+
+    /// `typdoc set`: writes `sets` to the document `arg` names, under its namespace's lock,
+    /// deciding every `ifs` condition under the same lock as the write (design, `typdoc set`;
+    /// Concurrency, "What is locked": "`set` holds it across read, `--if`, validation and
+    /// write"). Returns the document as it stands after the write, in the shape `get` already
+    /// returns (decision 17): `new` and `set` print the document and nothing about the write.
+    ///
+    /// This is the first command to take a namespace lock, so it is also where the lock's
+    /// scaffolding comes together for the first time: `namespace_lock::acquire` for the lock,
+    /// `FrontmatterWriter`/`YamlSerdeWriter` for the block text, and `write_atomically` for the
+    /// disk write, in that order, all inside the lock except the argument-shaped checks that do
+    /// not depend on the document's state (project prefix, an `auto` field named directly).
+    ///
+    /// A document matched by no collection at all — "outside every namespace" (contract item 8)
+    /// — has no schema to validate against, so it goes to [`Project::set_loose`] instead: an
+    /// ordinary write, with `--if` still decided but nothing else checked.
+    pub fn set(
+        &self,
+        arg: &DocumentArg,
+        scope: &Scope,
+        deps: &Deps,
+        sets: &[SetOp],
+        ifs: &[(String, Condition)],
+        lock_timeout: Duration,
+    ) -> Result<Document, Error> {
+        if let Some(alias) = arg.project_prefix() {
+            return Err(Error::BadArgument(format!(
+                "`{alias}::` cannot be written: no command writes into another project, which is \
+                 read-only here"
+            )));
+        }
+        match self.resolve_write_target(arg, scope, deps.env)? {
+            WriteTarget::Loose { path } => self.set_loose(&path, deps, sets, ifs, lock_timeout),
+            WriteTarget::Collected { path } => {
+                self.set_collected(&path, deps, sets, ifs, lock_timeout)
+            }
+        }
+    }
+
+    /// Acquires the lock for `namespace_name` under this project's lock mode, sourcing the host
+    /// from `deps.env` — the thread ticket 3 left open ("a hostname has no source yet... `Env`
+    /// is where the environment and the home directory are already reached"), closed here as the
+    /// first command to take a lock for real. `git-common` is refused plainly rather than
+    /// attempted: the resolution that mode needs (`git rev-parse --git-common-dir`, read under
+    /// decision 14) is not built yet, and silently taking the `local` lock path instead would be
+    /// the wrong lock file without saying so.
+    fn acquire_lock_for<'d>(
+        &self,
+        namespace_name: &str,
+        deps: &Deps<'d>,
+        lock_timeout: Duration,
+    ) -> Result<NamespaceLock<'d>, Error> {
+        let lock_path = match self.config.lock {
+            LockMode::Local => {
+                namespace_lock::local_namespace_lock_path(&self.root, namespace_name)
+            }
+            LockMode::GitCommon => {
+                return Err(Error::Io {
+                    file: self.root.clone(),
+                    source: io::Error::other(
+                        "this project's `lock` is `git-common`, which no write command supports \
+                         yet",
+                    ),
+                });
+            }
+        };
+        let host = deps.env.hostname().map_err(|source| Error::Io {
+            file: lock_path.clone(),
+            source,
+        })?;
+        namespace_lock::acquire(deps.fs, deps.clock, lock_path, &host, lock_timeout)
+    }
+
+    /// Where `set` finds the file an argument names, one path further than [`Project::resolve`]
+    /// goes: a path matched by no collection at all is not an error here as long as the file
+    /// exists, because such a file is still reachable and nameable (design, Namespaces: "Files
+    /// outside every namespace folder belong to no namespace; a relative path can still point at
+    /// them"), and this contract's own item 8 has `set` reach it the same way a ref does. A key
+    /// argument never reaches [`WriteTarget::Loose`]: a document with no collection has no
+    /// schema and so no code, and [`Project::resolve_key`] only ever finds a path the index
+    /// already holds.
+    fn resolve_write_target(
+        &self,
+        arg: &DocumentArg,
+        scope: &Scope,
+        env: &dyn Env,
+    ) -> Result<WriteTarget, Error> {
+        let path = match arg {
+            DocumentArg::Path { path, .. } => {
+                if let Some((_, collections)) = self.index.overlap(path) {
+                    return Err(Error::Config {
+                        file: self.root.join(path),
+                        message: format!(
+                            "{}, so there is no one schema to write it with: see \
+                             collections.overlap in a validate report",
+                            overlap_message(collections)
+                        ),
+                    });
+                }
+                if self.index.get(path).is_some() {
+                    path.clone()
+                } else if self.root.join(path).is_file() {
+                    return Ok(WriteTarget::Loose { path: path.clone() });
+                } else {
+                    return Err(self.not_found(path, env));
+                }
+            }
+            DocumentArg::Key { namespace, key, .. } => {
+                self.resolve_key(namespace.as_deref(), key, scope)?
+            }
+        };
+        Ok(WriteTarget::Collected { path })
+    }
+
+    /// A write to a file matched by no collection: there is no schema to validate against, so
+    /// this is exactly what the contract calls it (item 8), an ordinary write. A value is always
+    /// kept as plain text, because there is no field type here to say a comma should split it
+    /// into a list.
+    ///
+    /// `write_atomically` cannot be called without a real [`NamespaceLock`] (decision 6: no
+    /// public constructor, `acquire` the only function that returns one), and such a file
+    /// belongs to no namespace for an ordinary lock path to name. Rather than the design's own
+    /// namespace locks, every loose write shares one lock of its own, `.typdoc/locks/.loose.lock`
+    /// (a name starting with `.`, so no real namespace can ever collide with it, the same reason
+    /// the project lock's own name starts with `.`). Decided here rather than in the design,
+    /// because `write_atomically`'s own proof is what requires it.
+    fn set_loose(
+        &self,
+        path: &str,
+        deps: &Deps,
+        sets: &[SetOp],
+        ifs: &[(String, Condition)],
+        lock_timeout: Duration,
+    ) -> Result<Document, Error> {
+        for (raw, condition) in ifs {
+            if matches!(condition, Condition::Ref(_)) {
+                return Err(refby_if_unsupported(raw));
+            }
+        }
+        let no_schema = Resolved::new(String::new(), None, BTreeMap::new());
+        let file = self.root.join(path);
+
+        // The read and `--if` are decided under the lock too (design, Concurrency, "What is
+        // locked": "`set` holds it across read, `--if`, validation and write"), the same order
+        // `set_collected` uses: acquiring first is what makes a condition and the write it
+        // guards inseparable, rather than reading the file, deciding `--if` against a value
+        // that might already be stale, and only then taking the lock.
+        let lock = self.acquire_lock_for(".loose", deps, lock_timeout)?;
+
+        let text = fs::read_to_string(&file).map_err(Error::io_at(&file))?;
+        let split = frontmatter::split(&text).map_err(|message| Error::Frontmatter {
+            file: file.clone(),
+            message,
+        })?;
+        let before_fields = read_fields(split.block, &no_schema, &file)?;
+        let doc_now = Document {
+            path: path.to_owned(),
+            namespace: None,
+            key: None,
+            code: None,
+            collection: String::new(),
+            schema: String::new(),
+            project: None,
+            fields: before_fields.clone(),
+        };
+        let false_conditions = evaluate_plain_ifs(ifs, &no_schema, &doc_now, path)?;
+        if !false_conditions.is_empty() {
+            return Err(Error::IfFalse {
+                findings: false_conditions,
+            });
+        }
+
+        let mut writer = YamlSerdeWriter::new(before_fields);
+        apply_ops(&mut writer, sets, &no_schema);
+        let block_text = writer.finish().map_err(|message| Error::Frontmatter {
+            file: file.clone(),
+            message,
+        })?;
+        let after_fields = read_fields(Some(&block_text), &no_schema, &file)?;
+        let candidate = splice(&block_text, &text[split.body..]);
+
+        write_atomically(deps.fs, &lock, &file, candidate.as_bytes()).map_err(|source| {
+            Error::Io {
+                file: file.clone(),
+                source,
+            }
+        })?;
+        Ok(Document {
+            path: path.to_owned(),
+            namespace: None,
+            key: None,
+            code: None,
+            collection: String::new(),
+            schema: String::new(),
+            project: None,
+            fields: after_fields,
+        })
+    }
+
+    /// A write to a document matched by a collection: the full contract (types, enums,
+    /// transitions and refs), under the namespace's lock the whole time.
+    fn set_collected(
+        &self,
+        path: &str,
+        deps: &Deps,
+        sets: &[SetOp],
+        ifs: &[(String, Condition)],
+        lock_timeout: Duration,
+    ) -> Result<Document, Error> {
+        #[expect(
+            clippy::expect_used,
+            reason = "`resolve_write_target` only ever returns `WriteTarget::Collected` for a \
+                      path `self.index.get` just found `Some` for (the `Path` branch) or a path \
+                      `resolve_key` read out of the same index (the `Key` branch); the index has \
+                      no mutator between that check and here"
+        )]
+        let entry = self
+            .index
+            .get(path)
+            .expect("just resolved through the index");
+        let collection = &self.collections[entry.collection];
+        let schema = &collection.schema;
+        let namespace_name = self.config.namespaces[entry.namespace].name.clone();
+        let name = DocName {
+            path,
+            namespace: &namespace_name,
+            collection: &collection.name,
+            key: entry.key.as_deref(),
+        };
+
+        for (raw, condition) in ifs {
+            if matches!(condition, Condition::Ref(_)) {
+                return Err(refby_if_unsupported(raw));
+            }
+        }
+        for op in sets {
+            if let Some(field) = schema.field(op.field())
+                && field.auto.is_some()
+            {
+                return Err(Error::Invalid {
+                    findings: vec![validate::finding(
+                        &name,
+                        Severity::Error,
+                        "frontmatter.types",
+                        Some(op.field()),
+                        format!(
+                            "the field `{}` is set automatically (`auto`) and cannot be written \
+                             directly",
+                            op.field()
+                        ),
+                    )],
+                });
+            }
+        }
+
+        let lock = self.acquire_lock_for(&namespace_name, deps, lock_timeout)?;
+
+        let file = entry.file.clone();
+        let text = fs::read_to_string(&file).map_err(Error::io_at(&file))?;
+        let split = frontmatter::split(&text).map_err(|message| Error::Frontmatter {
+            file: file.clone(),
+            message,
+        })?;
+        let before_fields = read_fields(split.block, schema, &file)?;
+
+        let doc_now = Document {
+            path: path.to_owned(),
+            namespace: Some(namespace_name.clone()),
+            key: entry.key.clone(),
+            code: schema.code.clone(),
+            collection: collection.name.clone(),
+            schema: schema.name.clone(),
+            project: None,
+            fields: before_fields.clone(),
+        };
+        let false_conditions = evaluate_plain_ifs(ifs, schema, &doc_now, path)?;
+        if !false_conditions.is_empty() {
+            return Err(Error::IfFalse {
+                findings: false_conditions,
+            });
+        }
+
+        let mut writer = YamlSerdeWriter::new(before_fields.clone());
+        apply_ops(&mut writer, sets, schema);
+        let block_v1 = writer.finish().map_err(|message| Error::Frontmatter {
+            file: file.clone(),
+            message,
+        })?;
+        let after_v1 = read_fields(Some(&block_v1), schema, &file)?;
+        if fields_changed(&before_fields, &after_v1) {
+            for (field_name, field) in schema.fields() {
+                if matches!(field.auto, Some(Auto::Update)) {
+                    writer.set_scalar(field_name, deps.clock.now().to_rfc3339());
+                }
+            }
+        }
+        let block_final = writer.finish().map_err(|message| Error::Frontmatter {
+            file: file.clone(),
+            message,
+        })?;
+        let after_final = read_fields(Some(&block_final), schema, &file)?;
+        let candidate = splice(&block_final, &text[split.body..]);
+
+        let mut findings = validate::check_document(
+            &candidate,
+            schema,
+            &self.config.validation,
+            &collection.validation,
+            false,
+            false,
+            &name,
+        );
+        findings.extend(validate::check_transitions(
+            schema,
+            &before_fields,
+            &after_final,
+            &name,
+        ));
+        if !findings.iter().any(|f| f.rule == "frontmatter.parse") {
+            // `refs.acyclic`'s half of `ref_project()` is discarded rather than filtered by
+            // `path` the way `Project::validate`'s `Paths` scope does it: that filter picks
+            // cycles out of a scan already made from the files on disk, before this write, and
+            // a cycle found there is not evidence about `candidate`, the text this write is
+            // about to produce. Filtering the pre-write scan would refuse a write for a cycle
+            // this write does not touch (a false refusal on an unrelated field) and would miss
+            // one this write's own ref field just created (a false pass), which is worse than
+            // leaving it unchecked here: `validate`, run after the write, still catches a real
+            // cycle either way, just one step later than a same-command refusal would.
+            let (ref_project, _acyclic) = self.ref_project()?;
+            findings.extend(self.check_refs(
+                path,
+                entry,
+                &candidate,
+                &name,
+                false,
+                false,
+                &ref_project,
+            ));
+        }
+        if findings.iter().any(|f| f.level == Severity::Error) {
+            return Err(Error::Invalid { findings });
+        }
+
+        write_atomically(deps.fs, &lock, &file, candidate.as_bytes()).map_err(|source| {
+            Error::Io {
+                file: file.clone(),
+                source,
+            }
+        })?;
+
+        Ok(Document {
+            path: path.to_owned(),
+            namespace: Some(namespace_name),
+            key: entry.key.clone(),
+            code: schema.code.clone(),
+            collection: collection.name.clone(),
+            schema: schema.name.clone(),
+            project: None,
+            fields: after_final,
         })
     }
 
@@ -2994,6 +3359,148 @@ impl Project {
             hint,
         }
     }
+}
+
+/// One `set` argument, once its shape is known (`typdoc set <key|path> k=v [k=v ...]`): `k=v`
+/// sets `field` to the text `raw` (comma-split into a list by `apply_ops` once the field's
+/// type, if any, is known), and `k=` (nothing after the `=`) removes `field` entirely (design,
+/// `typdoc set`: "`k=` removes a field").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SetOp {
+    Set { field: String, raw: String },
+    Remove { field: String },
+}
+
+impl SetOp {
+    pub fn field(&self) -> &str {
+        match self {
+            SetOp::Set { field, .. } | SetOp::Remove { field } => field,
+        }
+    }
+}
+
+/// Where `set`'s document lives, once `Project::resolve_write_target` has looked: matched by a
+/// collection, with a schema to validate against, or reachable only by its path, with none.
+enum WriteTarget {
+    Collected { path: String },
+    Loose { path: String },
+}
+
+/// The fields of `block` (or none, when there was no block at all), read against `schema`,
+/// wrapping the read's error in `Error::Frontmatter` the way every read in this module already
+/// does: a block a write is about to rewrite that cannot even be read is refused before
+/// anything changes, the same guard `Project::get` already gives a read.
+fn read_fields(
+    block: Option<&str>,
+    schema: &Resolved,
+    file: &Path,
+) -> Result<Vec<(String, Value)>, Error> {
+    match block {
+        Some(block) => frontmatter::fields(block, schema).map_err(|message| Error::Frontmatter {
+            file: file.to_owned(),
+            message,
+        }),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// Applies every `set`/`k=` operation to `writer`, deciding list-vs-scalar from `schema` once,
+/// here, since neither `SetOp` nor the CLI layer that parses `k=v` knows a field's type: a list
+/// or `ref[]` field replaces its whole value from a comma-separated `raw` (design, `typdoc new`:
+/// "Array values are comma-separated" — the same convention `set` reads a value by), and every
+/// other field, known or not, is set as the scalar text it was given, which is only later found
+/// not to fit its type, by `frontmatter.types`, if it does not. A field the schema does not name
+/// is always a scalar, since there is no type to say a comma should split it.
+fn apply_ops(writer: &mut YamlSerdeWriter, sets: &[SetOp], schema: &Resolved) {
+    for op in sets {
+        match op {
+            SetOp::Set { field, raw } => {
+                let is_list = schema.field(field).is_some_and(|found| {
+                    matches!(found.kind, FieldType::List | FieldType::RefList)
+                });
+                if is_list {
+                    let items = if raw.is_empty() {
+                        Vec::new()
+                    } else {
+                        raw.split(',').map(str::to_owned).collect()
+                    };
+                    writer.set_list(field, items);
+                } else {
+                    writer.set_scalar(field, raw.clone());
+                }
+            }
+            SetOp::Remove { field } => writer.remove_field(field),
+        }
+    }
+}
+
+/// Whether any field's value differs between `before` and `after`, by the typed [`Value`] each
+/// holds and not by its text — the value promise ticket 5/decision 20 already gives a round
+/// trip, reused here for `auto: update`'s own condition (design, `typdoc set`: "when at least
+/// one value changes, `auto: update` fields are set"). A field only one side has counts as
+/// changed too: added by a `k=v` that named a new field, or removed by a `k=`.
+fn fields_changed(before: &[(String, Value)], after: &[(String, Value)]) -> bool {
+    fields_map(before) != fields_map(after)
+}
+
+fn fields_map(fields: &[(String, Value)]) -> BTreeMap<&str, &Value> {
+    fields
+        .iter()
+        .map(|(name, value)| (name.as_str(), value))
+        .collect()
+}
+
+/// The full file text a write produces: the fences around `block_text` (already ending in its
+/// own newline, or empty for no fields, matching what `frontmatter::split` reads back out of an
+/// existing block) and `body`, the bytes from the close of the original block onward, untouched
+/// (project rule 3: "Writes touch only the frontmatter block").
+fn splice(block_text: &str, body: &str) -> String {
+    format!("---\n{block_text}---\n{body}")
+}
+
+/// Evaluates every plain `--if` condition against `doc` (a `ref.*`/`refby.*` condition is
+/// refused earlier, by the caller, before this ever runs), returning one finding per condition
+/// that is false — every one, not only the first, the same "every problem is reported" choice
+/// `ConfigErrors` already makes — so `set --if a=1 --if b=2` with both false names both.
+fn evaluate_plain_ifs(
+    ifs: &[(String, Condition)],
+    schema: &Resolved,
+    doc: &Document,
+    path: &str,
+) -> Result<Vec<Finding>, Error> {
+    let mut false_conditions = Vec::new();
+    for (raw, condition) in ifs {
+        let Condition::Plain(plain) = condition else {
+            continue; // refused by the caller before this function is ever reached
+        };
+        let ok =
+            query::evaluate(plain, schema, doc).map_err(|e| Error::BadArgument(e.to_string()))?;
+        if !ok {
+            false_conditions.push(Finding {
+                level: Severity::Error,
+                rule: "set.if",
+                message: format!("`{raw}` is false"),
+                path: path.to_owned(),
+                namespace: doc.namespace.clone(),
+                collection: (!doc.collection.is_empty()).then(|| doc.collection.clone()),
+                key: doc.key.clone(),
+                field: None,
+                position: None,
+            });
+        }
+    }
+    Ok(false_conditions)
+}
+
+/// `--if`'s own open limit: a `ref.*`/`refby.*` condition needs the whole-project reverse-ref
+/// machinery `Project::list` builds for `--where`, which is out of proportion for deciding one
+/// compare-and-set before one write. Refused plainly (bad arguments) rather than evaluated
+/// wrongly.
+fn refby_if_unsupported(raw: &str) -> Error {
+    Error::BadArgument(format!(
+        "`--if {raw}` is a ref.*/refby.* condition, which `--if` does not support yet: only a \
+         plain condition (`field op value`) can be given to `--if`"
+    ))
 }
 
 /// The fields of a document already read, or `None` when its block cannot be parsed: the ref

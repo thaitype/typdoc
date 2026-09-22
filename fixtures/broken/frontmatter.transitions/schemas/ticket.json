@@ -1,0 +1,14 @@
+{
+  "name": "ticket",
+  "fields": {
+    "title": { "type": "string", "required": true },
+    "status": {
+      "type": "enum",
+      "values": ["open", "claimed", "resolved", "closed"],
+      "transitions": {
+        "open": ["claimed", "closed"],
+        "claimed": ["resolved", "open", "closed"]
+      }
+    }
+  }
+}

@@ -45,7 +45,7 @@ pub use argument::{Argument, DocumentArg, discover_for, resolve_on_disk};
 pub use body::{Heading, headings};
 pub use clock::{Clock, at_one_second};
 pub use coerce::{coerce, fits};
-pub use config::{Collection, Config, Level, Namespace, RefBase, RuleSetting, Rules};
+pub use config::{Collection, Config, Level, LockMode, Namespace, RefBase, RuleSetting, Rules};
 pub use document::{Document, Number, Value};
 pub use env::{Deps, Env};
 pub use error::{ConfigError, Error, ErrorKind};
@@ -65,8 +65,8 @@ pub use namespace_lock::{
 };
 pub use project::{
     AuditCollection, AuditNotRead, AuditOverlap, AuditReport, ListFilter, ListResult, Project,
-    RefName, RefOutcome, RefsDirection, RefsReference, RefsReport, SortKey, Toc, ValidateReport,
-    discover,
+    RefName, RefOutcome, RefsDirection, RefsReference, RefsReport, SetOp, SortKey, Toc,
+    ValidateReport, discover,
 };
 pub use query::{
     Condition, Dir, FieldRef, Item, Op, PlainCondition, Quant, QueryError, RefCondition, RefField,

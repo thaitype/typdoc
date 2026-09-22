@@ -277,6 +277,10 @@ mod tests {
         fn current_dir(&self) -> io::Result<PathBuf> {
             Ok(self.cwd.clone())
         }
+
+        fn hostname(&self) -> io::Result<String> {
+            Ok("test-host".to_owned())
+        }
     }
 
     #[test]

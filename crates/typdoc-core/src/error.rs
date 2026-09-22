@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::validate::Finding;
+
 /// What a caller can do differently after a failure; the binary maps each to an exit code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorKind {
@@ -8,6 +10,9 @@ pub enum ErrorKind {
     NotFound,
     Io,
     LockTimeout,
+    /// A `set --if` condition was false; nothing was written (design, Exit codes: "3 | An
+    /// `--if` condition was false; nothing written").
+    IfFalse,
 }
 
 /// One config error: the id from the design's table, the configuration file it is about
@@ -66,6 +71,19 @@ pub enum Error {
     /// that knows enough about the failed attempt and the competing lock to say it.
     #[error("{message}")]
     LockTimeout { path: PathBuf, message: String },
+
+    /// A write command's own validation refused the write before anything was written: a value
+    /// that does not fit its type, an enum value not in the schema, a transition `transitions`
+    /// does not allow, a ref that does not resolve, or a field the schema marks `auto` given
+    /// directly. `findings` is never empty; every problem found is reported, not only the first
+    /// (the design's error object: "`details` holds findings").
+    #[error("{}", finding_summary(findings))]
+    Invalid { findings: Vec<Finding> },
+
+    /// A `set --if` condition was false; nothing was written. `findings` names each condition
+    /// that failed, never empty.
+    #[error("{}", finding_summary(findings))]
+    IfFalse { findings: Vec<Finding> },
 }
 
 impl Error {
@@ -81,11 +99,13 @@ impl Error {
             Error::NoProject { .. } | Error::NoProjectAt { .. } | Error::NotFound { .. } => {
                 ErrorKind::NotFound
             }
-            Error::Config { .. } | Error::ConfigErrors { .. } | Error::Frontmatter { .. } => {
-                ErrorKind::Validation
-            }
+            Error::Config { .. }
+            | Error::ConfigErrors { .. }
+            | Error::Frontmatter { .. }
+            | Error::Invalid { .. } => ErrorKind::Validation,
             Error::Io { .. } => ErrorKind::Io,
             Error::LockTimeout { .. } => ErrorKind::LockTimeout,
+            Error::IfFalse { .. } => ErrorKind::IfFalse,
         }
     }
 }
@@ -108,5 +128,20 @@ fn summary(errors: &[ConfigError]) -> String {
     match errors.len() {
         1 => first,
         n => format!("{n} config errors, the first is {first}"),
+    }
+}
+
+/// `Error::Invalid` and `Error::IfFalse` share this: the top-level `error` string is the one
+/// finding's own message when there is one (design's own error object example, `frontmatter.
+/// transitions`: `"error"` is exactly the finding's `message`, not a wrapping phrase), and a
+/// count with the first message otherwise, the same shape `summary` above already gives
+/// `ConfigErrors`.
+fn finding_summary(findings: &[Finding]) -> String {
+    let Some(first) = findings.first() else {
+        return "nothing to report".to_owned();
+    };
+    match findings.len() {
+        1 => first.message.clone(),
+        n => format!("{n} problems, the first is {}", first.message),
     }
 }

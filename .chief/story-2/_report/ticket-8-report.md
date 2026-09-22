@@ -54,7 +54,7 @@ the way its predecessor did.
 ## Notes
 
 - **A whole, unrelated gate was red on this machine, and it now has a standing fix.** `/tmp` is a
-  9.5G tmpfs shared by every crew, sitting at 80%; `shell_examples.rs` hit `QuotaExceeded` copying a
+  9.5G tmpfs shared by every concurrent session on this machine, sitting at 80%; `shell_examples.rs` hit `QuotaExceeded` copying a
   stand-in binary there, confirmed unrelated to this diff. Pointing `TMPDIR` at a disk-backed folder
   (`/home` has 53G free) makes every test pass; this is recorded as the standing way to run the gates
   on this machine from here on, not a one-off workaround.

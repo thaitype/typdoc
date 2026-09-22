@@ -131,6 +131,25 @@ pub trait FrontmatterWriter {
     /// field written with no value at all is not the same as one written as an empty string").
     fn add_key(&mut self, name: &str);
 
+    /// Sets `name` to hold exactly `items`, replacing whatever it held before if the field
+    /// exists (a scalar included), or adding it at the end if it does not.
+    ///
+    /// None of the three operations above expresses this: [`FrontmatterWriter::append_item`]
+    /// only ever adds one item to what is already there, and nothing removes every item while
+    /// keeping the field. `typdoc set`'s own `k=v1,v2` is a comma-separated array value (design,
+    /// `typdoc new`: "Array values are comma-separated"), and it replaces the field's value, the
+    /// same as [`FrontmatterWriter::set_scalar`] does for a scalar one — so a list field needs
+    /// the same replacing operation a scalar field already has.
+    fn set_list(&mut self, name: &str, items: Vec<String>);
+
+    /// Removes `name` entirely, whatever it holds — a scalar, a list or [`Value::Empty`] alike.
+    /// A field that does not exist is left exactly as it was: removing something that was never
+    /// there is not a write, the same principle [`FrontmatterWriter::remove_item`] already
+    /// documents for one item of a list. This is `typdoc set`'s own `k=` (design, `typdoc set`:
+    /// "`k=` removes a field"), which [`FrontmatterWriter::remove_item`] cannot express, since
+    /// that method removes one item equal to a given value, never a whole field.
+    fn remove_field(&mut self, name: &str);
+
     /// The block's text, between the fences, assembled from every field this holds at the point
     /// it is called: no value is reinterpreted on the way, so a [`Value::Text`], a
     /// [`Value::Number`]'s written digits, a [`Value::Date`] or [`Value::Datetime`]'s written
@@ -190,6 +209,19 @@ impl FrontmatterWriter for YamlSerdeWriter {
     fn add_key(&mut self, name: &str) {
         if self.position(name).is_none() {
             self.fields.push((name.to_owned(), Value::Empty));
+        }
+    }
+
+    fn set_list(&mut self, name: &str, items: Vec<String>) {
+        match self.position(name) {
+            Some(at) => self.fields[at].1 = Value::List(items),
+            None => self.fields.push((name.to_owned(), Value::List(items))),
+        }
+    }
+
+    fn remove_field(&mut self, name: &str) {
+        if let Some(at) = self.position(name) {
+            self.fields.remove(at);
         }
     }
 
@@ -843,6 +875,47 @@ mod tests {
                 ("title".to_owned(), text("Ship it")),
                 ("reviewer".to_owned(), Value::Empty),
             ]
+        );
+    }
+
+    #[test]
+    fn set_list_replaces_a_list_or_a_scalar_field_and_starts_a_new_one_at_the_end() {
+        let mut writer = YamlSerdeWriter::new(vec![
+            ("tags".to_owned(), list(&["a", "b"])),
+            ("scalar".to_owned(), text("x")),
+            ("untouched".to_owned(), text("y")),
+        ]);
+
+        writer.set_list("tags", vec!["c".to_owned(), "d".to_owned()]);
+        writer.set_list("scalar", vec!["only".to_owned()]);
+        writer.set_list("new_list", vec!["first".to_owned()]);
+
+        assert_eq!(
+            reread(&writer.finish().unwrap()),
+            vec![
+                ("tags".to_owned(), list(&["c", "d"])),
+                ("scalar".to_owned(), list(&["only"])),
+                ("untouched".to_owned(), text("y")),
+                ("new_list".to_owned(), list(&["first"])),
+            ]
+        );
+    }
+
+    #[test]
+    fn remove_field_takes_out_the_whole_field_and_a_field_that_does_not_exist_changes_nothing() {
+        let mut writer = YamlSerdeWriter::new(vec![
+            ("tags".to_owned(), list(&["a", "b"])),
+            ("scalar".to_owned(), text("x")),
+            ("kept".to_owned(), text("y")),
+        ]);
+
+        writer.remove_field("tags");
+        writer.remove_field("scalar");
+        writer.remove_field("absent");
+
+        assert_eq!(
+            reread(&writer.finish().unwrap()),
+            vec![("kept".to_owned(), text("y"))]
         );
     }
 

@@ -18,6 +18,14 @@ impl Env for ProcessEnv {
     fn current_dir(&self) -> io::Result<PathBuf> {
         std::env::current_dir()
     }
+
+    // Linux is the only supported platform (design, Concurrency), so the kernel's own record
+    // of the machine's name is read directly rather than through a crate: a plain file, not a
+    // call the write ban has any reason to cover.
+    fn hostname(&self) -> io::Result<String> {
+        let raw = std::fs::read_to_string("/proc/sys/kernel/hostname")?;
+        Ok(raw.trim_end_matches('\n').to_owned())
+    }
 }
 
 fn main() -> ExitCode {
