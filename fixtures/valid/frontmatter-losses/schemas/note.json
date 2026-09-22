@@ -1,0 +1,12 @@
+{
+  "name": "note",
+  "fields": {
+    "title": { "type": "string" },
+    "subtitle": { "type": "string" },
+    "padded": { "type": "string" },
+    "tags": { "type": "list" },
+    "original": { "type": "string" },
+    "mirrored": { "type": "string" },
+    "typed": { "type": "string" }
+  }
+}

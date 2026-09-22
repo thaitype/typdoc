@@ -49,6 +49,7 @@ pub use config::{Collection, Config, Level, Namespace, RefBase, RuleSetting, Rul
 pub use document::{Document, Number, Value};
 pub use env::{Deps, Env};
 pub use error::{ConfigError, Error, ErrorKind};
+pub use frontmatter::{FrontmatterWriter, YamlSerdeWriter};
 pub use fs::{FileId, Fs, Mode, TEMP_PREFIX, WriteHandle, is_temp_name, write_atomically};
 pub use lines::{LineMap, Position};
 pub use links::{

@@ -83,6 +83,26 @@ pub fn exit_codes(design: &str) -> Result<BTreeSet<u8>, String> {
     Ok(codes)
 }
 
+/// What a write does not keep, from the table in the section "Document files": the first cell
+/// of each row of the table headed "Written in the file", whose second column is "After any
+/// write". A test that wants to know whether a shape is covered reads this rather than copying
+/// the table a second time, so a row the design adds or removes is a row the test sees too.
+pub fn frontmatter_losses(design: &str) -> Result<Vec<String>, String> {
+    for table in tables(&section(design, "Document files")) {
+        if table.header == "Written in the file" && table.second == "After any write" {
+            if table.first_cells.is_empty() {
+                return Err("the table of frontmatter losses has no rows".into());
+            }
+            return Ok(table.first_cells);
+        }
+    }
+    Err(
+        "no table headed `Written in the file` with the second column `After any write` is in \
+         the section Document files"
+            .into(),
+    )
+}
+
 /// The lines of the section `## <title>`, outside code fences, up to the next `## `.
 fn section(design: &str, title: &str) -> Vec<String> {
     let heading = format!("## {title}");
@@ -362,5 +382,57 @@ Text.
                 .unwrap()
                 .contains("body.links")
         );
+        assert_eq!(
+            frontmatter_losses(&design).unwrap(),
+            vec![
+                "Comments, anywhere in the block".to_owned(),
+                "Blank lines between fields".to_owned(),
+                "`tags: [a, b]`".to_owned(),
+                "`title: 'Ship it'`, `status: \"no\"`".to_owned(),
+                "`id:   WF-3`".to_owned(),
+                "`&anchor` with `*alias`".to_owned(),
+                "`!!str`, `!Ref`, any other tag".to_owned(),
+            ]
+        );
+    }
+
+    const LOSSES: &str = "\
+# Title
+
+## Document files
+
+Some text.
+
+**Rules**
+
+- A write rewrites the whole block:
+
+| Written in the file | After any write |
+| --- | --- |
+| Comments, anywhere in the block | Gone |
+| `tags: [a, b]` | A block list |
+
+## Refs
+
+| Written in the file | After any write |
+| --- | --- |
+| `elsewhere` | not read |
+";
+
+    #[test]
+    fn frontmatter_losses_come_from_the_table_in_document_files_only() {
+        assert_eq!(
+            frontmatter_losses(LOSSES).unwrap(),
+            vec![
+                "Comments, anywhere in the block".to_owned(),
+                "`tags: [a, b]`".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_design_with_no_losses_table_is_an_error_and_not_an_empty_list() {
+        assert!(frontmatter_losses("# Title\n\n## Document files\n\nNo table.\n").is_err());
+        assert!(frontmatter_losses("# Title\n").is_err());
     }
 }
