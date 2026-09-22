@@ -1,12 +1,11 @@
-# 18: A `Concept and Mental model` section in the README, separating namespace from collection
+# 17: A `Concept and Mental model` section in the README, separating namespace from collection
 
-Type: documentation
+Type: implementation
 Status: open
 Blocked by: None (can start immediately)
 
-Not a `wayfinder:*` type on purpose: nothing here is decided, so this ticket is not on the map's
-frontier and does not hold `/chief-plan` up. It is work to do, written down where the rest of
-story 2's paper lives.
+Moved here from the design-decision registry: nothing about it was ever a decision to make, only
+writing to do, and a decision registry is not where a story keeps its own work.
 
 ## The work
 
@@ -50,8 +49,8 @@ section:
 already works this way and says so in its first paragraph.
 
 Worth knowing before starting, because it changes what care is needed: nothing checks this. The
-shell-examples harness reads `docs/design.md` only, and what it checks is how a shell splits an
-example's words before typdoc sees them — not that any printed output is real. So a fabricated
+shell-examples harness reads `docs/design/design.md` only, and what it checks is how a shell splits
+an example's words before typdoc sees them — not that any printed output is real. So a fabricated
 output in the README would pass the whole suite. The discipline is the only guard there is.
 
 **No names, and no trace of who explained what to whom.** The rule that every line reads as the

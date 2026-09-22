@@ -1,11 +1,12 @@
-# 19: Write down how to resolve a merge conflict in a state file
+# 18: Write down how to resolve a merge conflict in a state file
 
-Type: documentation
+Type: implementation
 Status: open
 Blocked by: None (can start immediately)
 
-Not a `wayfinder:*` type: nothing here is decided, so this is not on the map's frontier. It is a
-separate ticket rather than a part of [18](18-readme-concept-and-mental-model.md) because it is a
+Moved here from the design-decision registry: nothing about it was ever a decision to make, only
+writing to do, and a decision registry is not where a story keeps its own work. It stays a separate
+ticket from [17](17-readme-concept-and-mental-model.md) rather than folding into it, because it is a
 different subject in a different file, and folding two unrelated pieces of writing into one ticket
 is how one of them ends up half done.
 

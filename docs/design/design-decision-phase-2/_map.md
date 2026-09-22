@@ -49,8 +49,11 @@ Story 2's fog is clear when every decision the write path needs is made and writ
 
 - [Comparing numbers no primitive holds](_tickets/22-comparing-numbers-beyond-a-primitive.md): a real decision, but about the query path, not the write path, so it is off this story's frontier and blocks neither the goal nor the contract. Measured: two documents whose `count` differs by one in the twentieth digit compare equal, so `count>...998` returns nothing, and `validate` reports nothing about either. Opened by decision 10, which fixed the printing and deliberately left the comparison alone.
 
-- [How to resolve a merge conflict in a state file](_tickets/19-state-file-merge-conflicts.md): written as guidance in `docs/projects.md`, not as a rule in the code — take the higher `last`, never a side, and never revert the file. The damage from taking the lower side is invisible until a key whose document has gone is handed out a second time, and then nothing reports it. Open, nothing to decide.
-- [A `Concept and Mental model` section in the README](_tickets/18-readme-concept-and-mental-model.md): separate namespace from collection, with a two-by-two example project, real `list` output showing `WF-1` twice, a two-axis table, and one closing sentence. Open, nothing to decide, does not hold the map up.
+Two entries this section held decided nothing either, and so were never decisions this registry
+should have kept: how to resolve a merge conflict in a state file, and a `Concept and Mental model`
+section for the README. Both are writing tasks for story 2 to do, not choices for this map to
+record, and both moved to `.chief/story-2/_tickets/` (18 and 17) rather than staying here as paper
+with no decision on it.
 
 ## Not yet specified
 
