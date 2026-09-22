@@ -36,6 +36,10 @@ impl Env for NoEnv {
     fn current_dir(&self) -> io::Result<PathBuf> {
         Ok(PathBuf::from("."))
     }
+
+    fn hostname(&self) -> io::Result<String> {
+        Ok("test-host".to_owned())
+    }
 }
 
 fn project() -> Project {

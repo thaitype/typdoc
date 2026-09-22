@@ -190,6 +190,85 @@ pub fn check_document(
     findings
 }
 
+/// `frontmatter.transitions`, always on and checked on write (design, Validation rules table):
+/// a field the schema marks `transitions` may not change to a value the map does not allow from
+/// where it was. Only a write reaches this — the read core has no "before" to compare against,
+/// which is why the design says "checked on write" rather than listing it among what `validate`
+/// reports on an existing file.
+///
+/// **Only a field that actually changed is checked.** The same document reached another way
+/// carries the same value, so "changed" is decided by equality of the typed [`Value`] `before`
+/// and `after` hold for that field, not of its text — the same value promise `auto: update`'s
+/// own stamping reuses (decision 20/ticket 5). A field neither side has (removed by `k=`, or
+/// never in the document) is not a transition either: there is no "from" or no "to" to compare.
+///
+/// **A source value the map does not name has no allowed next value.** `transitions`'s own doc
+/// says an *omitted option* allows any change; it does not say what an omitted *source value*
+/// inside a present map means. Read literally, a map from a value to its allowed next values
+/// simply has nothing for a value it does not list, so a value not named as a source is treated
+/// as one this field may not leave. This is a choice where the design is silent, not a settled
+/// reading, and it is why the design's own example (`base-ticket.json`, `docs/design.md`) never
+/// transitions a document away from `resolved` or `closed`, only into them.
+pub fn check_transitions(
+    schema: &Resolved,
+    before: &[(String, Value)],
+    after: &[(String, Value)],
+    name: &DocName,
+) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    for (field_name, field) in schema.fields() {
+        let Some(map) = &field.transitions else {
+            continue;
+        };
+        let Some(from) = find_field(before, field_name) else {
+            continue;
+        };
+        let Some(to) = find_field(after, field_name) else {
+            continue;
+        };
+        if from == to {
+            continue;
+        }
+        // A value that is not text-shaped (a list where a scalar was expected, say) does not fit
+        // an `enum` field's type at all: `frontmatter.types` already reports that on its own, and
+        // there is no "value" here for a transition to be about.
+        let (Some(from_text), Some(to_text)) = (enum_text(from), enum_text(to)) else {
+            continue;
+        };
+        let allowed = map
+            .get(from_text)
+            .is_some_and(|nexts| nexts.iter().any(|next| next == to_text));
+        if !allowed {
+            findings.push(finding(
+                name,
+                Severity::Error,
+                "frontmatter.transitions",
+                Some(field_name),
+                format!("transition not allowed: {from_text} -> {to_text}"),
+            ));
+        }
+    }
+    findings
+}
+
+fn find_field<'a>(fields: &'a [(String, Value)], name: &str) -> Option<&'a Value> {
+    fields
+        .iter()
+        .find(|(found, _)| found == name)
+        .map(|(_, value)| value)
+}
+
+/// A value read as `enum` text: [`Value::Text`] as itself, [`Value::Empty`] as the empty text
+/// (the same reading `check_document`'s own enum-membership check gives a bare field), anything
+/// else `None`.
+fn enum_text(value: &Value) -> Option<&str> {
+    match value {
+        Value::Text(text) => Some(text.as_str()),
+        Value::Empty => Some(""),
+        _ => None,
+    }
+}
+
 /// The level `rule` is reported at once the defaults, `validation.global` and the collection's
 /// own `validation` are merged, with `strict` raising a remaining `warn` to `error`. `None` is
 /// `off`: the rule produces no finding, unless `audit` is set, in which case an `off` rule is
@@ -834,5 +913,120 @@ mod tests {
             field: None,
             position,
         }
+    }
+
+    /// A schema of one enum field, `status`, with the design's own example transitions
+    /// (`docs/design.md`, Schema format: `base-ticket.json`).
+    fn status_schema() -> Resolved {
+        let text = json!({
+            "name": "ticket",
+            "fields": {
+                "status": {
+                    "type": "enum",
+                    "values": ["open", "claimed", "resolved", "closed"],
+                    "transitions": {
+                        "open": ["claimed", "closed"],
+                        "claimed": ["resolved", "open", "closed"]
+                    }
+                }
+            }
+        })
+        .to_string();
+        let schema = crate::schema::Schema::parse(&text).expect("a schema");
+        crate::schema::merge(&[crate::schema::ChainLink {
+            path: "schema.json".to_owned(),
+            schema,
+        }])
+    }
+
+    fn status(value: &str) -> Vec<(String, Value)> {
+        vec![("status".to_owned(), Value::Text(value.to_owned()))]
+    }
+
+    #[test]
+    fn an_allowed_transition_is_silent() {
+        let schema = status_schema();
+
+        assert_eq!(
+            check_transitions(&schema, &status("open"), &status("claimed"), &name()),
+            Vec::new()
+        );
+    }
+
+    #[test]
+    fn a_transition_not_named_by_the_map_is_refused() {
+        let schema = status_schema();
+
+        let findings = check_transitions(&schema, &status("open"), &status("resolved"), &name());
+
+        assert_eq!(
+            findings,
+            vec![Finding {
+                field: Some("status".to_owned()),
+                ..f(
+                    "a.md",
+                    None,
+                    "frontmatter.transitions",
+                    "transition not allowed: open -> resolved"
+                )
+            }]
+        );
+    }
+
+    #[test]
+    fn a_source_value_the_map_does_not_name_allows_no_transition() {
+        let schema = status_schema();
+
+        let findings = check_transitions(&schema, &status("resolved"), &status("open"), &name());
+
+        assert_eq!(
+            findings,
+            vec![Finding {
+                field: Some("status".to_owned()),
+                ..f(
+                    "a.md",
+                    None,
+                    "frontmatter.transitions",
+                    "transition not allowed: resolved -> open"
+                )
+            }]
+        );
+    }
+
+    #[test]
+    fn a_field_left_unchanged_is_not_a_transition_even_off_the_map() {
+        let schema = status_schema();
+
+        assert_eq!(
+            check_transitions(&schema, &status("resolved"), &status("resolved"), &name()),
+            Vec::new()
+        );
+    }
+
+    #[test]
+    fn a_field_missing_on_either_side_has_nothing_to_compare() {
+        let schema = status_schema();
+        let empty = Vec::new();
+
+        assert_eq!(
+            check_transitions(&schema, &empty, &status("open"), &name()),
+            Vec::new()
+        );
+        assert_eq!(
+            check_transitions(&schema, &status("open"), &empty, &name()),
+            Vec::new()
+        );
+    }
+
+    #[test]
+    fn a_field_the_schema_does_not_mark_transitions_allows_any_change() {
+        let schema = schema(&[("title", "string", false)]);
+        let before = vec![("title".to_owned(), Value::Text("a".to_owned()))];
+        let after = vec![("title".to_owned(), Value::Text("b".to_owned()))];
+
+        assert_eq!(
+            check_transitions(&schema, &before, &after, &name()),
+            Vec::new()
+        );
     }
 }

@@ -61,6 +61,7 @@ pub const RULES: &[&str] = &[
     "collections.overlap",
     "filename.pattern",
     "state.missing",
+    "frontmatter.transitions",
     "refs.resolve",
     "refs.target",
     "refs.acyclic",
@@ -78,8 +79,7 @@ pub const RULES: &[&str] = &[
 /// the design and the binary, with the story expected to deliver it as a comment. The list only shrinks: an id leaves it
 /// when it enters `RULES`, and it is empty when v1 is finished.
 pub const UNIMPLEMENTED_RULES: &[&str] = &[
-    "frontmatter.transitions", // story 2
-    "state.malformed",         // story 2
-    "state.behind",            // story 2
-    "state.retired",           // story 2
+    "state.malformed", // story 2
+    "state.behind",    // story 2
+    "state.retired",   // story 2
 ];

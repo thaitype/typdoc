@@ -1,0 +1,4 @@
+{
+  "project": "valid/minimal",
+  "command": ["set", "note.md", "title=A changed note", "--json"]
+}

@@ -1,0 +1,4 @@
+{
+  "command": ["set", "ticket.md", "status=resolved", "--json"],
+  "trips": ["frontmatter.transitions"]
+}

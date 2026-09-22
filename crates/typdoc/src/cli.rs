@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::error::ErrorKind as ClapKind;
 use clap::{Parser, Subcommand};
@@ -9,7 +10,7 @@ use serde_json::{Map, Value as Json, json};
 use typdoc_core::{
     Argument, AuditReport, Condition, Deps, Document, DocumentArg, Env, Error, ErrorKind, FieldRef,
     Finding, ListFilter, ListResult, Project, RefField, RefOutcome, RefsDirection, RefsReference,
-    RefsReport, Scope, Severity, SortKey, Source, Toc, ValidateReport, ValidateScope, Value,
+    RefsReport, Scope, SetOp, Severity, SortKey, Source, Toc, ValidateReport, ValidateScope, Value,
     discover, discover_for, parse_field, parse_query, resolve_on_disk,
 };
 
@@ -83,6 +84,22 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Update fields, optionally compare-and-set
+    Set {
+        /// The key or path of the document, from the project folder
+        document: OsString,
+        /// `field=value` to set, or `field=` to remove it; at least one is required
+        fields: Vec<String>,
+        /// A condition checked under the same lock as the write; may repeat, ANDed. If any is
+        /// false, nothing is written
+        #[arg(long = "if", value_name = "EXPR")]
+        if_: Vec<String>,
+        /// How long to wait for the namespace's lock before giving up
+        #[arg(long, value_name = "SECONDS", default_value_t = 5)]
+        lock_timeout: u64,
+        #[arg(long)]
+        json: bool,
+    },
     /// Check the project, or named documents, against its schemas and rules
     Validate {
         /// The keys or paths of the documents to check; the whole project when none is given
@@ -127,6 +144,47 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 return failure_text(false, 1, "the output without --json is not built yet");
             }
             match get(deps, &document, cli.namespace.as_deref()) {
+                Ok(document) => success_raw(&raw_object(&[("document", document_json(&document))])),
+                Err(e) => failure(true, exit_code(e.kind()), &e),
+            }
+        }
+        Command::Set {
+            document,
+            fields,
+            if_,
+            lock_timeout,
+            json,
+        } => {
+            if !json {
+                return failure_text(false, 1, "the output without --json is not built yet");
+            }
+            if fields.is_empty() {
+                return failure_text(
+                    true,
+                    1,
+                    "set needs at least one `field=value` or `field=` argument",
+                );
+            }
+            let sets = match fields
+                .iter()
+                .map(|raw| parse_set_op(raw))
+                .collect::<Result<Vec<SetOp>, Error>>()
+            {
+                Ok(sets) => sets,
+                Err(e) => return failure(true, exit_code(e.kind()), &e),
+            };
+            let ifs = match parse_ifs(&if_) {
+                Ok(ifs) => ifs,
+                Err(e) => return failure(true, exit_code(e.kind()), &e),
+            };
+            match set(
+                deps,
+                &document,
+                &sets,
+                &ifs,
+                Duration::from_secs(lock_timeout),
+                cli.namespace.as_deref(),
+            ) {
                 Ok(document) => success_raw(&raw_object(&[("document", document_json(&document))])),
                 Err(e) => failure(true, exit_code(e.kind()), &e),
             }
@@ -293,6 +351,63 @@ fn get(
     let project = Project::load(&root, deps.env)?;
     let scope = scope_for(&project, &arg, namespace, deps.env)?;
     project.get(&arg, &scope, deps.env)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each is a distinct argument set's own value"
+)]
+fn set(
+    deps: &Deps,
+    document: &std::ffi::OsStr,
+    sets: &[SetOp],
+    ifs: &[(String, Condition)],
+    lock_timeout: Duration,
+    namespace: Option<&str>,
+) -> Result<Document, Error> {
+    let (root, arg) = discover_for(Argument::parse(document)?, deps.env)?;
+    let project = Project::load(&root, deps.env)?;
+    let scope = scope_for(&project, &arg, namespace, deps.env)?;
+    project.set(&arg, &scope, deps, sets, ifs, lock_timeout)
+}
+
+/// One `set` argument as the design's grammar reads it: `field=value` sets it, `field=` (nothing
+/// after the `=`) removes it (design, `typdoc set`: "`k=` removes a field"). An argument with no
+/// `=` at all, or with nothing before it, is bad arguments: `=v` and `v` alike name no field.
+fn parse_set_op(raw: &str) -> Result<SetOp, Error> {
+    let Some((field, value)) = raw.split_once('=') else {
+        return Err(Error::BadArgument(format!(
+            "`{raw}` is not `field=value` or `field=`: a `set` argument needs an `=`"
+        )));
+    };
+    if field.is_empty() {
+        return Err(Error::BadArgument(format!(
+            "`{raw}` names no field before `=`"
+        )));
+    }
+    if value.is_empty() {
+        Ok(SetOp::Remove {
+            field: field.to_owned(),
+        })
+    } else {
+        Ok(SetOp::Set {
+            field: field.to_owned(),
+            raw: value.to_owned(),
+        })
+    }
+}
+
+/// Every `--if` expression, parsed by the same grammar `--where` uses (design, `typdoc set`:
+/// "`--if` uses `--where` expressions"), kept beside its own original text so a false condition's
+/// message can quote exactly what the caller wrote.
+fn parse_ifs(raw: &[String]) -> Result<Vec<(String, Condition)>, Error> {
+    raw.iter()
+        .map(|expr| {
+            parse_query(expr)
+                .map(|condition| (expr.clone(), condition))
+                .map_err(|e| Error::BadArgument(e.to_string()))
+        })
+        .collect()
 }
 
 fn toc(deps: &Deps, document: &std::ffi::OsStr, namespace: Option<&str>) -> Result<Toc, Error> {
@@ -874,9 +989,10 @@ fn exit_code(kind: ErrorKind) -> u8 {
     match kind {
         ErrorKind::BadArguments => 1,
         ErrorKind::Validation => 2,
+        ErrorKind::IfFalse => 3,
+        ErrorKind::LockTimeout => 4,
         ErrorKind::NotFound => 5,
         ErrorKind::Io => 6,
-        ErrorKind::LockTimeout => 4,
     }
 }
 
@@ -921,6 +1037,10 @@ fn failure(json: bool, code: u8, error: &Error) -> Outcome {
         }
         Error::AmbiguousKey { candidates, .. } => {
             object.insert("candidates".to_owned(), json!(candidates));
+        }
+        Error::Invalid { findings } | Error::IfFalse { findings } => {
+            let details: Vec<Json> = findings.iter().map(finding_json).collect();
+            object.insert("details".to_owned(), json!(details));
         }
         _ => return failure_text(json, code, &error.to_string()),
     }
@@ -1149,6 +1269,10 @@ mod tests {
 
         fn current_dir(&self) -> io::Result<PathBuf> {
             Ok(self.cwd.clone())
+        }
+
+        fn hostname(&self) -> io::Result<String> {
+            Ok("test-host".to_owned())
         }
     }
 

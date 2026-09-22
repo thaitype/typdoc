@@ -9,6 +9,11 @@ use crate::fs::Fs;
 pub trait Env {
     fn var(&self, name: &str) -> Option<OsString>;
     fn current_dir(&self) -> io::Result<PathBuf>;
+    /// The machine's own hostname, stamped into a lock file so a competing lock's message can
+    /// say whether it is on this host or another one (design, Concurrency: "A file created with
+    /// `O_EXCL`, holding pid, hostname and timestamp"). Nothing in `typdoc-core` reads it any
+    /// other way; the first write command to take a lock is the first caller.
+    fn hostname(&self) -> io::Result<String>;
 }
 
 /// What a command reaches the outside world through.
