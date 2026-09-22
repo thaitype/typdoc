@@ -1,7 +1,7 @@
 # 17: A `Concept and Mental model` section in the README, separating namespace from collection
 
 Type: implementation
-Status: open
+Status: claimed
 Blocked by: None (can start immediately)
 
 Moved here from the design-decision registry: nothing about it was ever a decision to make, only
