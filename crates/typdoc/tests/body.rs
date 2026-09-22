@@ -237,8 +237,11 @@ const CODED: [(&str, &str); 5] = [
     ("wf.json", r#"{ "name": "wf", "code": "WF", "fields": {} }"#),
     ("tickets/WF-1.md", "---\n---\n"),
     (
+        // Every test built from `CODED` adds `tickets/WF-2.md` of its own (below), so `last`
+        // is recorded here for both documents, not only the one `CODED` itself carries — a
+        // `last` that stopped at `1` would be `state.behind` once the second file lands.
         ".typdoc/state/default.json",
-        r#"{ "tickets": { "last": 1 } }"#,
+        r#"{ "tickets": { "last": 2 } }"#,
     ),
 ];
 
@@ -372,8 +375,10 @@ fn a_mention_that_matches_a_recorded_move_is_refs_moved_not_body_mentions() {
         ),
         ("tickets/WF-2.md", "---\nmoved_from: [WF-1]\n---\n"),
         (
+            // `tickets/WF-3.md` is added below, so `last` has to cover it too, or it is
+            // `state.behind` rather than the clean record this test otherwise wants.
             ".typdoc/state/default.json",
-            r#"{ "tickets": { "last": 2 } }"#,
+            r#"{ "tickets": { "last": 3 } }"#,
         ),
     ];
     let project = Scratch::project(&files);
