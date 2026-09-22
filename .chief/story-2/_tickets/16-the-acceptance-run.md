@@ -1,7 +1,7 @@
 # 16: The acceptance run and the closing report
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: 4, 6, 7, 12, 13, 14, 15
 
 ## What this delivers
