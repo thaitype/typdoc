@@ -1,7 +1,7 @@
 # 18: Write down how to resolve a merge conflict in a state file
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None (can start immediately)
 
 Moved here from the design-decision registry: nothing about it was ever a decision to make, only
