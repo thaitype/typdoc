@@ -1,7 +1,7 @@
 # 5: Writing frontmatter
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: 1
 
 ## What this delivers
