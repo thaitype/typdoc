@@ -1,7 +1,7 @@
 # 11: `typdoc mv` within the project
 
 Type: implementation
-Status: open
+Status: claimed
 Blocked by: 3, 5
 
 ## What this delivers
