@@ -191,7 +191,12 @@ test. That is unchanged from story 1, and no decision in story 2 rests on it.
 
 ### Written into `docs/design.md`
 
-Nothing. Every part of this decision is internal: which trait the program writes through, what the
+One bullet. Concurrency's "Two kinds of rename" ended by saying that the rename which must not
+replace still needed a call that refuses to replace, and that which call provides it was not
+decided. It is decided now, and not in the direction that sentence expected: `new` gets it from
+`O_EXCL` in the call that creates the file, while `mv` and `mv --renumber` check under the lock
+and then rename, with the instant between the two left open knowingly and the reason written
+down. The rest of this decision is internal — which trait the program writes through, what the
 lint forbids, and what the tests use. Nothing here changes what any command promises, and no
 decision already made is reopened: [decision 15](15-a-write-whose-destination-already-exists.md)'s
 refusal at exit 7 and [decision 1](1-a-mv-that-fails-partway.md)'s re-run that finishes the work
