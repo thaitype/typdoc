@@ -1,7 +1,7 @@
 # 4: Signals
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: 3
 
 ## What this delivers
