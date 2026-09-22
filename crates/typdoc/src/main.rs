@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use typdoc::cli;
-use typdoc_core::{Deps, Env};
+use typdoc::clock::MachineClock;
+use typdoc_core::{Deps, Env, SystemFs};
 
 struct ProcessEnv;
 
@@ -20,7 +21,11 @@ impl Env for ProcessEnv {
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().collect();
-    let deps = Deps { env: &ProcessEnv };
+    let deps = Deps {
+        env: &ProcessEnv,
+        fs: &SystemFs,
+        clock: &MachineClock,
+    };
     let outcome = cli::run(&args, &deps);
     write_all(&mut io::stdout(), &outcome.stdout);
     write_all(&mut io::stderr(), &outcome.stderr);

@@ -3,6 +3,7 @@
 
 pub mod check;
 pub mod design;
+pub mod fake;
 pub mod fixtures;
 pub mod golden;
 pub mod shell_examples;

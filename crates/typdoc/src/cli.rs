@@ -1064,6 +1064,7 @@ mod tests {
 
     use serde_json::json;
     use typdoc_core::{Deps, Env};
+    use typdoc_testkit::fake::{FakeFs, FixedClock};
 
     use super::run;
 
@@ -1091,7 +1092,14 @@ mod tests {
             .iter()
             .map(OsString::from)
             .collect();
-        run(&args, &Deps { env })
+        run(
+            &args,
+            &Deps {
+                env,
+                fs: &FakeFs::new(),
+                clock: &FixedClock::new(),
+            },
+        )
     }
 
     #[test]

@@ -15,12 +15,14 @@
 
 mod argument;
 mod body;
+mod clock;
 mod coerce;
 mod config;
 mod document;
 mod env;
 mod error;
 mod frontmatter;
+mod fs;
 mod imports;
 mod index;
 mod lines;
@@ -40,11 +42,13 @@ mod validate;
 
 pub use argument::{Argument, DocumentArg, discover_for, resolve_on_disk};
 pub use body::{Heading, headings};
+pub use clock::{Clock, at_one_second};
 pub use coerce::{coerce, fits};
 pub use config::{Collection, Config, Level, Namespace, RefBase, RuleSetting, Rules};
 pub use document::{Document, Value};
 pub use env::{Deps, Env};
 pub use error::{ConfigError, Error, ErrorKind};
+pub use fs::{Fs, Mode, SystemFs, TEMP_PREFIX, WriteHandle, is_temp_name, write_atomically};
 pub use lines::{LineMap, Position};
 pub use links::{
     BodyLink, BodyLinks, Definition, DuplicateDefinition, Mention, Suspect, mentions, scan,

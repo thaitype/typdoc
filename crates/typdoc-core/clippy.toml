@@ -1,23 +1,30 @@
-# typdoc-core reads and changes nothing. The environment, the home directory and the
-# spawning of a process are reached only through `deps`, and no file is written.
+# typdoc-core writes, and it writes in one place. The environment, the home directory, the
+# spawning of a process, the time and every function that changes a file are reached through
+# `deps`; the write half of the seam is `src/fs/system.rs`, which says so where it stands and
+# is the only module exempted from the list below. The list covers test code too, because a
+# test that reaches around the seam is exactly the test that stops proving anything about the
+# code that ships.
 disallowed-methods = [
     { path = "std::env::var", reason = "the environment is reached through Env in deps" },
     { path = "std::env::var_os", reason = "the environment is reached through Env in deps" },
     { path = "std::env::home_dir", reason = "the home directory is reached through Env in deps" },
     { path = "std::process::Command::new", reason = "a process could be spawned to do the writing" },
-    { path = "std::fs::write", reason = "the read core changes no file" },
-    { path = "std::fs::rename", reason = "the read core changes no file" },
-    { path = "std::fs::copy", reason = "the read core changes no file" },
-    { path = "std::fs::remove_file", reason = "the read core changes no file" },
-    { path = "std::fs::remove_dir", reason = "the read core changes no file" },
-    { path = "std::fs::remove_dir_all", reason = "the read core changes no file" },
-    { path = "std::fs::create_dir", reason = "the read core changes no file" },
-    { path = "std::fs::create_dir_all", reason = "the read core changes no file" },
-    { path = "std::fs::hard_link", reason = "the read core changes no file" },
-    { path = "std::fs::set_permissions", reason = "the read core changes no file" },
-    { path = "std::fs::File::create", reason = "the read core changes no file" },
-    { path = "std::fs::File::create_new", reason = "the read core changes no file" },
-    { path = "std::fs::File::set_len", reason = "the read core changes no file" },
+    { path = "std::time::SystemTime::now", reason = "the time is reached through Clock in deps, so that a stamped time is one a test chose" },
+    { path = "chrono::Utc::now", reason = "the time is reached through Clock in deps, so that a stamped time is one a test chose" },
+    { path = "chrono::Local::now", reason = "the time is reached through Clock in deps, so that a stamped time is one a test chose" },
+    { path = "std::fs::write", reason = "a write goes through the seam" },
+    { path = "std::fs::rename", reason = "a write goes through the seam" },
+    { path = "std::fs::copy", reason = "a write goes through the seam" },
+    { path = "std::fs::remove_file", reason = "a write goes through the seam" },
+    { path = "std::fs::remove_dir", reason = "a write goes through the seam" },
+    { path = "std::fs::remove_dir_all", reason = "a write goes through the seam" },
+    { path = "std::fs::create_dir", reason = "a write goes through the seam" },
+    { path = "std::fs::create_dir_all", reason = "a write goes through the seam" },
+    { path = "std::fs::hard_link", reason = "a write goes through the seam" },
+    { path = "std::fs::set_permissions", reason = "a write goes through the seam" },
+    { path = "std::fs::File::create", reason = "a write goes through the seam" },
+    { path = "std::fs::File::create_new", reason = "a write goes through the seam" },
+    { path = "std::fs::File::set_len", reason = "a write goes through the seam" },
     { path = "std::fs::OpenOptions::open", reason = "a file opened for writing is no call to any other listed function" },
-    { path = "std::os::unix::fs::symlink", reason = "the read core changes no file" },
+    { path = "std::os::unix::fs::symlink", reason = "a write goes through the seam" },
 ]

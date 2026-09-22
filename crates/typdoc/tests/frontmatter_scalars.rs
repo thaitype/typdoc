@@ -239,10 +239,7 @@ fn a_number_outside_the_integer_range_is_printed_converted_not_as_written() {
 
     // What the design asks for, for whoever closes the gap: the digits as the file has them.
     // `assert_ne` rather than a comment, so this half also fails once the behaviour changes.
-    assert_ne!(
-        fields_of(&above)["num"].to_string(),
-        "99999999999999999999"
-    );
+    assert_ne!(fields_of(&above)["num"].to_string(), "99999999999999999999");
     assert_ne!(fields_of(&written)["num"].to_string(), "1e3");
 
     // A `string` holding the same digits was never affected, which is what locates the loss.
