@@ -413,11 +413,12 @@ fn state_retired_does_not_stop_a_read_where_its_predecessor_as_a_config_error_di
 ///
 /// Deriving `last` from the files instead would set it to `2`, the highest that *exists* after
 /// the deletion — and the next `new` would issue `WF-3` again, since allocation is one past the
-/// larger of the highest existing number and `last`. This is simulated here without `new`
-/// itself (tickets 9's own command; not built by this ticket) by recreating `WF-3.md` as a
-/// *different* document by hand, the way a freshly issued `WF-3` would be: the link is well
-/// formed, the document exists, and `validate` reports nothing about it at all — the silent
-/// wrong answer decision 13 is written to prevent.
+/// larger of the highest existing number and `last`. This is simulated here without running
+/// `new` itself, by recreating `WF-3.md` as a *different* document by hand, the way a freshly
+/// issued `WF-3` would be: the link is well formed, the document exists, and `validate` reports
+/// nothing about it at all — the silent wrong answer decision 13 is written to prevent. The same
+/// measurement run through `new` itself, for real, is
+/// `crates/typdoc/tests/new.rs`'s `new_never_reissues_a_number_whose_document_was_deleted`.
 #[test]
 fn the_measurement_behind_decision_13_deriving_last_reissues_a_retired_key_silently() {
     let schema = r#"{ "name": "wf", "code": "WF", "fields": { "title": { "type": "string" } } }"#;
@@ -463,9 +464,9 @@ fn the_measurement_behind_decision_13_deriving_last_reissues_a_retired_key_silen
     // Deriving `last` from the files: right after the deletion this would set it to `2`, the
     // highest that still exists, and the next `new` allocates one past the larger of that and
     // `last` — `3` again — records it as the new `last` (decision 13's own wording) and issues
-    // `WF-3` to a document that is not the one `WF-1` was written about. `new` is not built by
-    // this ticket, so both of its effects (the file and the state file) are put in place by
-    // hand here, exactly as `new` would leave them: `last` ends at `3`, not `2`, which is the
+    // `WF-3` to a document that is not the one `WF-1` was written about. Both of its effects (the
+    // file and the state file) are put in place by hand here, exactly as `new` would leave them,
+    // so this test stays a `validate`-only measurement: `last` ends at `3`, not `2`, which is the
     // point — the file says nothing is wrong any more, because as far as it knows nothing is.
     let derived_from_files = Scratch::project(&[
         (

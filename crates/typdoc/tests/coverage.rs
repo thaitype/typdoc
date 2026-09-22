@@ -134,9 +134,14 @@ fn produced_exit_codes() -> BTreeSet<u8> {
     unclosed.file("bad.md", "---\ntitle: never closed\n");
     let unreadable = Scratch::project(&NOTES);
     unreadable.file(".typdoc/collections/folder.json/inside", "");
-    let mv_destination_exists = Scratch::project(&NOTES);
-    mv_destination_exists.file("a.md", "---\ntitle: A\n---\n");
-    mv_destination_exists.file("b.md", "---\ntitle: B\n---\n");
+    // A scratch project, never the repository's own `fixtures/valid/minimal`: `new` is a write
+    // (`typdoc_testkit::spec::WRITE_COMMANDS`), and even a run refused at exit 7 acquires and
+    // releases the namespace's lock first, which is a write to `.typdoc/locks/` that the
+    // repository's own tree must never see (contract item 3). The same is true of `mv`, which
+    // also produces exit 7 for a destination that already exists (decision 15); either command
+    // demonstrates the code, and `new`'s single-file setup is the smaller of the two.
+    let exists = Scratch::project(&NOTES);
+    exists.file("a.md", "---\ntitle: Already here\n---\n");
 
     let runs: [(u8, Ran); 6] = [
         (
@@ -171,8 +176,8 @@ fn produced_exit_codes() -> BTreeSet<u8> {
         ),
         (
             7,
-            Spawn::args(["mv", "a.md", "b.md", "--json"])
-                .cwd(mv_destination_exists.path())
+            Spawn::args(["new", "a.md", "--json"])
+                .cwd(exists.path())
                 .run(),
         ),
     ];

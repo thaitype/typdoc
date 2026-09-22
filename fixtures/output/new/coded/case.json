@@ -1,0 +1,4 @@
+{
+  "project": "valid/new-coded",
+  "command": ["new", "WF", "Second ticket", "--set", "kind=task", "--json"]
+}

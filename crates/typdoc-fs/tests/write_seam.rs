@@ -12,7 +12,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tempfile::TempDir;
-use typdoc_core::{Fs, Mode, NamespaceLock, acquire, is_temp_name, write_atomically};
+use typdoc_core::{
+    Fs, Mode, NamespaceLock, acquire, create_exclusively, is_temp_name, write_atomically,
+};
 use typdoc_fs::SystemFs;
 use typdoc_testkit::fake::{Failure, FakeFs, FixedClock, On, Stage};
 
@@ -292,6 +294,58 @@ fn scenarios() -> Vec<Scenario> {
                 assert_eq!(error.raw_os_error(), Some(18));
                 assert_eq!(w.bytes("note.md").as_deref(), Some(&b"old"[..]));
                 assert_eq!(w.leftovers(&["note.md"]), Vec::<String>::new());
+            },
+        },
+        // `create_exclusively` is `new`'s own half of the seam: no temp file and no rename, a
+        // file created once and never replaced (decision 7).
+        Scenario {
+            name: "create_exclusively makes a file that was not there, holding the bytes"
+                .to_owned(),
+            stage: Stage::Nothing,
+            setup: nothing,
+            act: |w| create_exclusively(w.fs, &w.lock, &w.path("note.md"), b"new"),
+            check: |w, outcome| {
+                outcome.expect("the create succeeds");
+                assert_eq!(w.bytes("note.md").as_deref(), Some(&b"new"[..]));
+            },
+        },
+        Scenario {
+            name:
+                "create_exclusively refuses a file that is already there, and leaves it untouched"
+                    .to_owned(),
+            stage: Stage::Nothing,
+            setup: |w| w.given("note.md", b"old"),
+            act: |w| create_exclusively(w.fs, &w.lock, &w.path("note.md"), b"new"),
+            check: |w, outcome| {
+                let error = outcome.expect_err("a destination that exists is refused");
+                assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+                assert_eq!(w.bytes("note.md").as_deref(), Some(&b"old"[..]));
+            },
+        },
+        Scenario {
+            name: "create_exclusively makes the folder that will hold the file first".to_owned(),
+            stage: Stage::Nothing,
+            setup: nothing,
+            act: |w| create_exclusively(w.fs, &w.lock, &w.path("tickets/WF-3.md"), b"new"),
+            check: |w, outcome| {
+                outcome.expect("the create succeeds, folder included");
+                assert_eq!(w.bytes("tickets/WF-3.md").as_deref(), Some(&b"new"[..]));
+            },
+        },
+        Scenario {
+            name: "create_exclusively leaves nothing behind when the write itself fails".to_owned(),
+            stage: Stage::Fail(On::Write, Failure::NoSpace),
+            setup: nothing,
+            act: |w| create_exclusively(w.fs, &w.lock, &w.path("note.md"), b"new"),
+            check: |w, outcome| {
+                let error = outcome.expect_err("a write with no space left fails");
+                assert_eq!(error.raw_os_error(), Some(28));
+                assert_eq!(
+                    w.bytes("note.md"),
+                    None,
+                    "a create that never finished writing must not leave a half-written document \
+                     at the final path, since there is no temp file to have held it instead"
+                );
             },
         },
     ];

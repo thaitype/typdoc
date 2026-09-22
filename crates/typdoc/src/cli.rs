@@ -9,10 +9,10 @@ use serde_json::value::RawValue;
 use serde_json::{Map, Value as Json, json};
 use typdoc_core::{
     Argument, AuditReport, Condition, Deps, Document, DocumentArg, Env, Error, ErrorKind, FieldRef,
-    Finding, ListFilter, ListResult, MvReport, Project, RefField, RefOutcome, RefsDirection,
-    RefsReference, RefsReport, Scope, SetOp, Severity, SortKey, Source, Toc, UnrewrittenReason,
-    UnrewrittenRef, ValidateReport, ValidateScope, Value, discover, discover_for, parse_field,
-    parse_query, resolve_on_disk,
+    Finding, ListFilter, ListResult, MvReport, NewTarget, Project, RefField, RefOutcome,
+    RefsDirection, RefsReference, RefsReport, Scope, SetOp, Severity, SortKey, Source, Toc,
+    UnrewrittenReason, UnrewrittenRef, ValidateReport, ValidateScope, Value, discover,
+    discover_for, parse_field, parse_query, resolve_on_disk,
 };
 
 /// `--lock-timeout`'s default (design, Concurrency: "Retries with backoff until a timeout
@@ -32,6 +32,22 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Create a document; allocate a key for a coded schema
+    New {
+        /// The code of a coded schema (`[A-Z][A-Z0-9]*`), or the path to create, which ends in
+        /// `.md`
+        target: OsString,
+        /// The title to give the document; required for a coded schema, and not taken for a path
+        title: Option<String>,
+        /// `field=value` to set; may repeat
+        #[arg(long = "set", value_name = "K=V")]
+        set: Vec<String>,
+        /// How long to wait for the namespace's lock before giving up
+        #[arg(long, value_name = "SECONDS", default_value_t = 5)]
+        lock_timeout: u64,
+        #[arg(long)]
+        json: bool,
+    },
     /// Read one document's frontmatter
     Get {
         /// The key or path of the document, from the project folder
@@ -156,6 +172,71 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
         Err(e) => return failure_text(json, 1, e.to_string().trim_end()),
     };
     match cli.command {
+        Command::New {
+            target,
+            title,
+            set,
+            lock_timeout,
+            json,
+        } => {
+            let target_text = match target.to_str() {
+                Some(text) => text,
+                None => {
+                    return failure_text(
+                        json,
+                        1,
+                        &format!("{target:?} is not valid UTF-8, so it names no schema or path"),
+                    );
+                }
+            };
+            let parsed = match parse_new_target(target_text, title.as_deref()) {
+                Ok(parsed) => parsed,
+                Err(e) => return failure(true, exit_code(e.kind()), &e),
+            };
+            // Unlike every other command, `--json` is not checked first: which text form (if
+            // any) is built depends on the parsed target (the bare-key form the design shows for
+            // a coded schema, design `typdoc new`: "stdout: WF-3"; nothing yet for a path), and
+            // parsing is pure, so deciding this after it costs nothing and does not risk a write
+            // whose report is then refused.
+            if !json && matches!(parsed, NewTarget::Path { .. }) {
+                return failure_text(
+                    false,
+                    1,
+                    "the output without --json is not built yet for a path-identified document",
+                );
+            }
+            let sets = match set
+                .iter()
+                .map(|raw| parse_set_op(raw))
+                .collect::<Result<Vec<SetOp>, Error>>()
+            {
+                Ok(sets) => sets,
+                Err(e) => return failure(true, exit_code(e.kind()), &e),
+            };
+            match new_document(
+                deps,
+                &parsed,
+                &sets,
+                Duration::from_secs(lock_timeout),
+                cli.namespace.as_deref(),
+            ) {
+                Ok(document) if json => {
+                    success_raw(&raw_object(&[("document", document_json(&document))]))
+                }
+                Ok(document) => {
+                    // `parsed` was refused above unless it is `NewTarget::Coded`, which
+                    // `Project::new_document` always answers with a `key` (design, `typdoc new`:
+                    // "It prints the new key, and nothing else, on standard output").
+                    let key = document.key.as_deref().unwrap_or_default();
+                    Outcome {
+                        code: 0,
+                        stdout: format!("{key}\n"),
+                        stderr: String::new(),
+                    }
+                }
+                Err(e) => failure(true, exit_code(e.kind()), &e),
+            }
+        }
         Command::Get { document, json } => {
             if !json {
                 return failure_text(false, 1, "the output without --json is not built yet");
@@ -388,6 +469,59 @@ fn get(
     let project = Project::load(&root, deps.env)?;
     let scope = scope_for(&project, &arg, namespace, deps.env)?;
     project.get(&arg, &scope, deps.env)
+}
+
+/// `new`'s one argument, once its shape is known: `[A-Z][A-Z0-9]*` is a coded schema's code and
+/// needs `title`; anything ending in `.md` is a path and takes none (design, `typdoc new`: two
+/// forms, told apart by shape, the same way every argument that could be either always is in
+/// this design). Anything else, or a form given the title shape it does not take, is bad
+/// arguments.
+fn parse_new_target(target: &str, title: Option<&str>) -> Result<NewTarget, Error> {
+    if target.ends_with(".md") {
+        if title.is_some() {
+            return Err(Error::BadArgument(format!(
+                "`{target}` is a path, and `new` takes no title after one: `typdoc new <path> \
+                 [--set k=v ...]`"
+            )));
+        }
+        return Ok(NewTarget::Path {
+            path: target.to_owned(),
+        });
+    }
+    if looks_like_code(target) {
+        let Some(title) = title else {
+            return Err(Error::BadArgument(format!(
+                "`{target}` is a schema's code, and `new` needs a title: `typdoc new {target} \
+                 \"<title>\"`"
+            )));
+        };
+        return Ok(NewTarget::Coded {
+            code: target.to_owned(),
+            title: title.to_owned(),
+        });
+    }
+    Err(Error::BadArgument(format!(
+        "`{target}` is neither a schema's code (`[A-Z][A-Z0-9]*`) nor a path, which ends in `.md`"
+    )))
+}
+
+/// `[A-Z][A-Z0-9]*`, the shape of a schema's own `code` (design, Schema format).
+fn looks_like_code(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars.next().is_some_and(|c| c.is_ascii_uppercase())
+        && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+}
+
+fn new_document(
+    deps: &Deps,
+    target: &NewTarget,
+    sets: &[SetOp],
+    lock_timeout: Duration,
+    namespace: Option<&str>,
+) -> Result<Document, Error> {
+    let root = discover(deps.env)?;
+    let project = Project::load(&root, deps.env)?;
+    project.new_document(target, deps, sets, lock_timeout, namespace)
 }
 
 #[allow(
@@ -1123,7 +1257,7 @@ fn failure(json: bool, code: u8, error: &Error) -> Outcome {
             object.insert("details".to_owned(), json!(details));
             object.insert("complete".to_owned(), json!(complete));
         }
-        Error::AmbiguousKey { candidates, .. } => {
+        Error::AmbiguousKey { candidates, .. } | Error::AmbiguousScope { candidates } => {
             object.insert("candidates".to_owned(), json!(candidates));
         }
         Error::Invalid { findings } | Error::IfFalse { findings } => {

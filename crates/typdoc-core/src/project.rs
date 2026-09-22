@@ -18,7 +18,7 @@ use crate::document::{Document, Value};
 use crate::env::{Deps, Env};
 use crate::error::Error;
 use crate::frontmatter::{self, FrontmatterWriter, YamlSerdeWriter};
-use crate::fs::{Fs, write_atomically};
+use crate::fs::{Fs, create_exclusively, write_atomically};
 use crate::index::{Entry as Indexed, Index, Member};
 use crate::lines::Position;
 use crate::links::{self, BodyLink, BodyLinks};
@@ -968,6 +968,511 @@ impl Project {
             project: None,
             fields: after_final,
         })
+    }
+
+    /// `typdoc new`: creates a document, either under a key allocated for a coded schema or at
+    /// the path given for an uncoded one (design, `typdoc new`; contract item 8: "`new` cannot
+    /// create [a document outside every namespace], since `new` requires a collection"). Builds
+    /// on `set`'s own scaffolding (`namespace_lock::acquire` through `Project::acquire_lock_for`,
+    /// `FrontmatterWriter`/`YamlSerdeWriter`, the candidate-text-then-validate-then-write shape),
+    /// with a lock and a write of its own: [`Project::new_coded`] and [`Project::new_uncoded`]
+    /// below say exactly where.
+    pub fn new_document(
+        &self,
+        target: &NewTarget,
+        deps: &Deps,
+        sets: &[SetOp],
+        lock_timeout: Duration,
+        namespace_flag: Option<&str>,
+    ) -> Result<Document, Error> {
+        match target {
+            NewTarget::Coded { code, title } => {
+                self.new_coded(code, title, deps, sets, lock_timeout, namespace_flag)
+            }
+            NewTarget::Path { path } => self.new_uncoded(path, deps, sets, lock_timeout),
+        }
+    }
+
+    /// The coded form: `typdoc new <CODE> "<title>"`.
+    ///
+    /// **What happens before the lock.** Resolving `code` to its collection reads only the
+    /// project's own config (`self.collections`), never anything another process could be
+    /// writing; resolving the scope to exactly one namespace reads the environment and the
+    /// current directory, the same as every other command's scope choice, and is refused here
+    /// (`Error::AmbiguousScope`, exit 1) before a lock is even considered, since the design's
+    /// own reason for the code ("the call was correct in every part" does not apply — this
+    /// call itself is ambiguous) is closer to bad arguments than to anything a lock could fix.
+    ///
+    /// **What happens under the lock, and why.** The number is allocated only once the lock is
+    /// held: `state::read` reads the namespace's state file fresh from disk rather than through
+    /// `self.state` (loaded when this `Project` did, which may be older than the lock), because
+    /// two processes racing for this lock must not both compute their number from a `last` that
+    /// was already stale before either of them started waiting — decision 2 (phase 1) ties the
+    /// allocation to the lock for exactly this reason. `self.index`'s own count of the highest
+    /// existing number is read as it stood at load time; that is safe rather than merely
+    /// convenient, because whichever process wins the lock also raises `last` to its own number
+    /// before releasing it, so the process that was waiting recomputes `max(_, last)` against a
+    /// `last` that already accounts for what the winner just created, and the file itself is
+    /// still created with `O_EXCL` under this same lock as the backstop decision 15 asks for —
+    /// two protections doing one job is not a fault, and ticket 14's own collision test is what
+    /// this reasoning has to survive.
+    ///
+    /// **The state write happens before the document is created, on purpose.** `state::write`
+    /// runs first, so that a crash between it and the create leaves `last` already raised and
+    /// only a document missing — an ordinary skipped number (decision 13, and `mv --renumber`'s
+    /// own "the destination namespace's `last` is written before the document appears under its
+    /// new key") — rather than a number a later `new` could reissue. Validation runs *before*
+    /// that write, though, not after: nothing here forces the two into the design's one
+    /// sentence's order, and refusing a bad `--set` without spending the number it would have
+    /// needed is strictly better than the alternative, which only trades a burned number for
+    /// nothing. This is chosen rather than settled: the contract leaves the order of filling
+    /// defaults, filling `auto` fields, validating and taking the lock unspecified, and this is
+    /// the reading that fits best, not the only one the sentence allows.
+    ///
+    /// **One more check sits between validation and the state write:** `deps.fs.exists(&file)`,
+    /// still under the lock, still immediately before `last` is raised. It exists so that "a run
+    /// that refuses leaves no file and no changed `last`" (this ticket's own done-when) holds
+    /// even for decision 15's own "should not be reachable" case, not only for the ordinary
+    /// refusals above it. `O_EXCL` stays the real enforcement underneath it — a look this close
+    /// to the write it guards is not the stale, pre-lock advice decision 15 rules out, and the
+    /// window this leaves for a genuinely unreachable collision (a non-typdoc writer landing on
+    /// this exact path in the instant between this check and the create) still ends at `O_EXCL`,
+    /// with a burned number, exactly as decision 15 already accepts.
+    fn new_coded(
+        &self,
+        code: &str,
+        title: &str,
+        deps: &Deps,
+        sets: &[SetOp],
+        lock_timeout: Duration,
+        namespace_flag: Option<&str>,
+    ) -> Result<Document, Error> {
+        let collection_idx = self
+            .collections
+            .iter()
+            .position(|collection| collection.schema.code.as_deref() == Some(code))
+            .ok_or_else(|| {
+                Error::BadArgument(format!(
+                    "`{code}` is not the code of any coded schema in this project"
+                ))
+            })?;
+        let collection = &self.collections[collection_idx];
+        let schema = &collection.schema;
+        #[expect(
+            clippy::expect_used,
+            reason = "`self.members` and `self.collections` are pushed together, once per \
+                      collection, only after `Template::bind` has already succeeded for it \
+                      (`load_inner`'s own loop: `members.push` happens before `loaded.push`, and \
+                      a `bind` failure `continue`s before either), so `collection_idx`, found \
+                      above by position in `self.collections`, is also a valid position in \
+                      `self.members`"
+        )]
+        let template = &self
+            .members
+            .get(collection_idx)
+            .expect("kept in lockstep with collections")
+            .template;
+
+        let scope = self.scope(None, namespace_flag, deps.env)?;
+        let namespace_name = match scope.namespaces.as_slice() {
+            [one] => one.clone(),
+            other => {
+                return Err(Error::AmbiguousScope {
+                    candidates: other.to_vec(),
+                });
+            }
+        };
+        #[expect(
+            clippy::expect_used,
+            reason = "`namespace_name` came from `scope.namespaces`, which `Project::scope` only \
+                      ever fills with names of `self.config.namespaces`"
+        )]
+        let namespace_idx = self
+            .namespace_index(&namespace_name)
+            .expect("a scoped namespace name is a namespace of this project");
+
+        let mut all_sets = Vec::with_capacity(sets.len() + 1);
+        all_sets.push(SetOp::Set {
+            field: "title".to_owned(),
+            raw: title.to_owned(),
+        });
+        all_sets.extend_from_slice(sets);
+
+        let lock = self.acquire_lock_for(&namespace_name, deps, lock_timeout)?;
+
+        let state = state::read(&self.root, &namespace_name)?;
+        if let Some(found) = state.malformed.get(&collection.name) {
+            return Err(Error::Invalid {
+                findings: vec![validate::state_malformed_finding(
+                    &state::file_path(&namespace_name),
+                    &namespace_name,
+                    &collection.name,
+                    format!(
+                        "the collection `{}`'s `last` in its state file is {found}, not a whole \
+                         number that can be held: expected a non-negative integer",
+                        collection.name
+                    ),
+                )],
+            });
+        }
+        let highest = self.highest_existing(namespace_idx, collection_idx);
+        if !state.has(&collection.name) && highest.is_some() {
+            return Err(Error::Invalid {
+                findings: vec![validate::state_missing_finding(
+                    &state::file_path(&namespace_name),
+                    &namespace_name,
+                    &collection.name,
+                    format!(
+                        "the collection `{}` has documents in this namespace and no `last` \
+                         recorded in its state file",
+                        collection.name
+                    ),
+                )],
+            });
+        }
+        let last = state.last.get(&collection.name).copied().unwrap_or(0);
+        let next = highest.unwrap_or(0).max(last) + 1;
+        let key = format!("{code}-{next}");
+        #[expect(
+            clippy::expect_used,
+            reason = "a coded collection's template is bound by `Template::bind` at load time, \
+                      which refuses a wildcard and binds every `{key}` to the schema's code once \
+                      one is given (a template that fails to bind is `config.match-template`, and \
+                      that collection is never in `self.collections`), so `render` only returns \
+                      `None` for a shape a bound coded template cannot have"
+        )]
+        // Counted from the namespace folder, the same as every `match` template is
+        // (`Index::build` walks `root.join(&space.folder)` and prepends it back below): a
+        // `default` namespace's own folder is empty, so `relative` and `below` were the same
+        // string for every fixture and golden this ticket wrote before a second namespace's own
+        // folder made the difference visible.
+        let below = template
+            .render(&key)
+            .expect("a bound coded template always renders its own key");
+        let namespace_folder = &self.config.namespaces[namespace_idx].folder;
+        let relative = if namespace_folder.is_empty() {
+            below
+        } else {
+            format!("{namespace_folder}/{below}")
+        };
+        let file = self.root.join(&relative);
+
+        let name = DocName {
+            path: &relative,
+            namespace: &namespace_name,
+            collection: &collection.name,
+            key: Some(key.as_str()),
+        };
+        let now = deps.clock.now().to_rfc3339();
+        let block = new_block(schema, &all_sets, &now).map_err(|message| Error::Frontmatter {
+            file: file.clone(),
+            message,
+        })?;
+        let candidate = splice(&block, "");
+
+        let findings = self.validate_new_candidate(
+            collection_idx,
+            namespace_idx,
+            &file,
+            Some(key.clone()),
+            &relative,
+            &candidate,
+            &all_sets,
+            schema,
+            &collection.validation,
+            &name,
+        )?;
+        if findings.iter().any(|f| f.level == Severity::Error) {
+            return Err(Error::Invalid { findings });
+        }
+
+        // The number the state write below is about to burn should never be one a file is
+        // already sitting on: `code`-`next` came from `max(highest existing, last) + 1`, and
+        // nobody has used it. Checked here, still under the lock, before `last` is raised for
+        // it — a run that finds this impossible state anyway refuses with the state file
+        // untouched, rather than burning the number it was about to allocate on a collision the
+        // `O_EXCL` create below would catch regardless. `O_EXCL` stays as the real enforcement
+        // (decision 15: "rather than typdoc remembering to look first"); this is the one case
+        // that check alone cannot make true of the state file too, since it runs after the
+        // create, not before it.
+        if deps.fs.exists(&file).map_err(Error::io_at(&file))? {
+            return Err(Error::AlreadyExists {
+                path: file.display().to_string(),
+                message: format!(
+                    "`{relative}` already exists: the key `{key}` was just allocated and should \
+                     not be reachable (decision 15)"
+                ),
+            });
+        }
+
+        state::write(
+            deps.fs,
+            &lock,
+            &self.root,
+            &namespace_name,
+            &collection.name,
+            next,
+        )?;
+
+        create_document_or_exists(
+            deps,
+            &lock,
+            &file,
+            candidate.as_bytes(),
+            format!(
+                "`{relative}` already exists: the key `{key}` was just allocated and should not \
+                 be reachable, but the file system enforces the refusal either way (decision 15)"
+            ),
+        )?;
+
+        let after_fields = read_fields(Some(&block), schema, &file)?;
+        Ok(Document {
+            path: relative,
+            namespace: Some(namespace_name),
+            key: Some(key),
+            code: schema.code.clone(),
+            collection: collection.name.clone(),
+            schema: schema.name.clone(),
+            project: None,
+            fields: after_fields,
+        })
+    }
+
+    /// The path-identified form: `typdoc new <path>`. There is no number to allocate and no
+    /// state file to touch, so the only shared, lock-protected state is the document itself: the
+    /// namespace and the collection a bare path belongs to are read from the project's own,
+    /// static config (`self.config.namespaces`, `self.collections`), which a concurrent writer
+    /// cannot change, so resolving them ahead of the lock costs nothing. The lock is still taken,
+    /// because every write does (design, Locks), and the file is still created with `O_EXCL`
+    /// under it, because a path given on the command line is exactly the first of decision 15's
+    /// four refused cases.
+    ///
+    /// **Where the namespace comes from.** Unlike the coded form, `--namespace`/
+    /// `TYPDOC_NAMESPACE` play no part: the design's grammar shows no prefix on `typdoc new
+    /// <path>`, and "for a path, the path must match a collection" sits in its own sentence,
+    /// never mentioning scope the way the sentence about a coded allocation does two sentences
+    /// earlier. A project-relative path already carries its namespace as a literal folder prefix
+    /// (`Index::build` walks `root.join(&space.folder)` per namespace), the same way an existing
+    /// document's own path already does for `set`'s `resolve_write_target`; this reads that
+    /// prefix instead of asking scope to break a tie scope was never asked about. The doubt this
+    /// leaves: a `--namespace` given alongside a path is silently ignored rather than checked
+    /// against it, which nothing in the design or the contract says either way.
+    fn new_uncoded(
+        &self,
+        path: &str,
+        deps: &Deps,
+        sets: &[SetOp],
+        lock_timeout: Duration,
+    ) -> Result<Document, Error> {
+        let (namespace_idx, collection_idx) = self.resolve_uncoded_target(path)?;
+        let collection = &self.collections[collection_idx];
+        let schema = &collection.schema;
+        let namespace_name = self.config.namespaces[namespace_idx].name.clone();
+
+        let lock = self.acquire_lock_for(&namespace_name, deps, lock_timeout)?;
+
+        let file = self.root.join(path);
+        let name = DocName {
+            path,
+            namespace: &namespace_name,
+            collection: &collection.name,
+            key: None,
+        };
+        let now = deps.clock.now().to_rfc3339();
+        let block = new_block(schema, sets, &now).map_err(|message| Error::Frontmatter {
+            file: file.clone(),
+            message,
+        })?;
+        let candidate = splice(&block, "");
+
+        let findings = self.validate_new_candidate(
+            collection_idx,
+            namespace_idx,
+            &file,
+            None,
+            path,
+            &candidate,
+            sets,
+            schema,
+            &collection.validation,
+            &name,
+        )?;
+        if findings.iter().any(|f| f.level == Severity::Error) {
+            return Err(Error::Invalid { findings });
+        }
+
+        create_document_or_exists(
+            deps,
+            &lock,
+            &file,
+            candidate.as_bytes(),
+            format!("`{path}` already exists: choose another path or open the file that is there"),
+        )?;
+
+        let after_fields = read_fields(Some(&block), schema, &file)?;
+        Ok(Document {
+            path: path.to_owned(),
+            namespace: Some(namespace_name),
+            key: None,
+            code: None,
+            collection: collection.name.clone(),
+            schema: schema.name.clone(),
+            project: None,
+            fields: after_fields,
+        })
+    }
+
+    /// The validation both forms of `new` run on their candidate text, once the block and the
+    /// name are built: [`check_auto_direct`], then [`validate::check_document`], then, unless
+    /// the block itself did not even parse, [`Project::check_refs`] — the same three calls, in
+    /// the same order, `Project::set_collected` already makes on its own candidate, shared here
+    /// once rather than written out twice for `new`'s two forms.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "each argument is context `new_coded` and `new_uncoded` already hold from their \
+                  own earlier steps; bundling them into a type built only to make one call \
+                  shorter would be a type with no use beyond this one function, the same \
+                  reasoning `check_body`'s own `#[allow(clippy::too_many_arguments)]` already \
+                  gives beside it in this file"
+    )]
+    fn validate_new_candidate(
+        &self,
+        collection_idx: usize,
+        namespace_idx: usize,
+        file: &Path,
+        key: Option<String>,
+        path: &str,
+        candidate: &str,
+        sets: &[SetOp],
+        schema: &Resolved,
+        collection_validation: &Rules,
+        name: &DocName,
+    ) -> Result<Vec<Finding>, Error> {
+        let mut findings = check_auto_direct(schema, sets, name);
+        findings.extend(validate::check_document(
+            candidate,
+            schema,
+            &self.config.validation,
+            collection_validation,
+            false,
+            false,
+            name,
+        ));
+        if !findings.iter().any(|f| f.rule == "frontmatter.parse") {
+            let (ref_project, _acyclic) = self.ref_project()?;
+            let entry = Indexed {
+                collection: collection_idx,
+                namespace: namespace_idx,
+                file: file.to_owned(),
+                key,
+            };
+            findings.extend(self.check_refs(
+                path,
+                &entry,
+                candidate,
+                name,
+                false,
+                false,
+                &ref_project,
+            ));
+        }
+        Ok(findings)
+    }
+
+    /// The namespace and the collection a not-yet-existing project-relative `path` belongs to,
+    /// for [`Project::new_uncoded`]: the namespace whose folder is a literal prefix of `path` (or
+    /// the one namespace of a project with no `namespaces` folders, whose own folder is empty and
+    /// so a prefix of everything), and, within it, the one uncoded collection whose `match`
+    /// matches what is left of `path` below that folder ([`ignore_matches`], the same whole-path
+    /// template match `body.links`' own `ignore` option already reads by). More than one match is
+    /// the read path's own `collections.overlap`, read here before the file exists rather than
+    /// from the index, which does not hold a path that is not on disk yet.
+    fn resolve_uncoded_target(&self, path: &str) -> Result<(usize, usize), Error> {
+        let namespace_idx = self
+            .config
+            .namespaces
+            .iter()
+            .position(|space| {
+                space.folder.is_empty() || path.starts_with(&format!("{}/", space.folder))
+            })
+            .ok_or_else(|| {
+                Error::BadArgument(format!(
+                    "`{path}` is not inside any namespace of this project"
+                ))
+            })?;
+        let namespace = &self.config.namespaces[namespace_idx];
+        let below = if namespace.folder.is_empty() {
+            path.to_owned()
+        } else {
+            #[expect(
+                clippy::expect_used,
+                reason = "`namespace_idx` was found above by testing exactly this condition"
+            )]
+            path.strip_prefix(&format!("{}/", namespace.folder))
+                .expect("the namespace was found by this same prefix test")
+                .to_owned()
+        };
+
+        let matches: Vec<usize> = self
+            .collections
+            .iter()
+            .enumerate()
+            .filter(|(_, collection)| collection.schema.code.is_none())
+            .filter(|(i, _)| ignore_matches(&self.members[*i].template, &below))
+            .map(|(i, _)| i)
+            .collect();
+        match matches.len() {
+            1 => Ok((namespace_idx, matches[0])),
+            0 => {
+                let coded = self.collections.iter().enumerate().find(|(i, collection)| {
+                    collection.schema.code.is_some()
+                        && ignore_matches(&self.members[*i].template, &below)
+                });
+                if let Some((_, collection)) = coded {
+                    return Err(Error::BadArgument(format!(
+                        "`{path}` matches the coded collection `{}`: create it with `new <CODE> \
+                         \"<title>\"` instead",
+                        collection.name
+                    )));
+                }
+                Err(Error::BadArgument(format!(
+                    "`{path}` matches no collection: `new` needs the path to fit an uncoded \
+                     collection's `match`"
+                )))
+            }
+            _ => Err(Error::Config {
+                file: self.root.join(path),
+                message: format!(
+                    "{}, so there is no one schema to write it with: see collections.overlap in \
+                     a validate report",
+                    overlap_message(
+                        &matches
+                            .iter()
+                            .map(|&i| self.collections[i].name.clone())
+                            .collect::<Vec<_>>()
+                    )
+                ),
+            }),
+        }
+    }
+
+    /// The highest number a document of `(namespace, collection)` actually carries, read from
+    /// the index the same way `Project::validate`'s own `state.behind` scan reads it
+    /// (`key_sort_value`): `new`'s allocation takes the larger of this and the state file's
+    /// `last`, and this is this crate's one reading of "the highest existing number" (design,
+    /// State), reused here rather than duplicated.
+    fn highest_existing(&self, namespace_idx: usize, collection_idx: usize) -> Option<u64> {
+        self.index
+            .iter()
+            .filter(|(_, entry)| {
+                entry.namespace == namespace_idx && entry.collection == collection_idx
+            })
+            .filter_map(|(_, entry)| entry.key.as_deref())
+            .filter_map(|key| match key_sort_value(key) {
+                SortValue::Key(_, number) => number,
+                _ => None,
+            })
+            .max()
     }
 
     /// `list`: every document of `scope` whose collection is selected and whose fields satisfy
@@ -3903,6 +4408,140 @@ impl SetOp {
             SetOp::Set { field, .. } | SetOp::Remove { field } => field,
         }
     }
+}
+
+/// `typdoc new`'s one argument, once its shape is known: the code of a coded schema plus the
+/// title to give the document (`typdoc new <CODE> "<title>"`), or the path of an uncoded one
+/// (`typdoc new <path>`). The CLI layer tells the two apart by shape (a code, or a path ending
+/// in `.md`), the same way every argument that could be either always is in this design.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NewTarget {
+    Coded { code: String, title: String },
+    Path { path: String },
+}
+
+/// A schema field's `default`, ready for [`FrontmatterWriter::set_scalar`]/
+/// [`FrontmatterWriter::set_list`] (design, Field options: "`default` | all | Filled in by
+/// `typdoc new`").
+enum DefaultValue {
+    Scalar(String),
+    List(Vec<String>),
+}
+
+/// `field`'s own `default`, as text or as a list of text. `None` when the field has none. A JSON
+/// array becomes a list of its items' own text; anything else becomes one scalar's text — the
+/// two shapes the design's own examples use (`"default": "open"`, `"default": []"`), and a
+/// mismatch with the field's own type (a `list` field given a scalar default, say) is left for
+/// `frontmatter.types` to report once the block is read back, the same as any other value a
+/// write puts somewhere its type does not fit.
+fn schema_default(field: &Field) -> Option<DefaultValue> {
+    match field.default.as_ref()? {
+        serde_json::Value::Array(items) => Some(DefaultValue::List(
+            items.iter().map(json_scalar_text).collect(),
+        )),
+        other => Some(DefaultValue::Scalar(json_scalar_text(other))),
+    }
+}
+
+/// A JSON scalar's own text, the way a frontmatter value would be written by hand: a string as
+/// itself, a number or a bool as its JSON text. An object, a nested array or `null` has no
+/// scalar text of its own and is read as empty, which a schema that declares one is a schema
+/// error `frontmatter.types` reports once the field is read back, not something this function
+/// decides.
+fn json_scalar_text(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Bool(_) | serde_json::Value::Number(_) => value.to_string(),
+        _ => String::new(),
+    }
+}
+
+/// The frontmatter block `new` writes for a brand new document: every field's own `default`
+/// (`schema_default`), then every `auto: create`/`auto: update` field stamped with `now` (design,
+/// Field options: "`create`: set by `new`... `update`: set by `new` and by every `set` that
+/// changes a value"), then `sets` applied last through `apply_ops`, so an explicit `--set k=v` —
+/// or, for a coded schema, the `title` `new_coded` puts at the front of its own `sets` — overrides
+/// whichever of the first two wrote there, the same "last write wins" grammar `apply_ops` already
+/// gives `set`. A field the schema does not name is untouched by the first two passes, which walk
+/// only `schema.fields()`, so it reaches the block only when `sets` names it, at the end, the
+/// same as `set` already keeps an unknown field.
+fn new_block(schema: &Resolved, sets: &[SetOp], now: &str) -> Result<String, String> {
+    let mut writer = YamlSerdeWriter::new(Vec::new());
+    for (field_name, field) in schema.fields() {
+        match schema_default(field) {
+            Some(DefaultValue::Scalar(text)) => writer.set_scalar(field_name, text),
+            Some(DefaultValue::List(items)) => writer.set_list(field_name, items),
+            None => {}
+        }
+    }
+    for (field_name, field) in schema.fields() {
+        if matches!(field.auto, Some(Auto::Create) | Some(Auto::Update)) {
+            writer.set_scalar(field_name, now.to_owned());
+        }
+    }
+    apply_ops(&mut writer, sets, schema);
+    writer.finish()
+}
+
+/// The findings of every one of `sets` that names a field the schema marks `auto` directly: `new`
+/// refuses this the same way `set` does (design, `typdoc set`: "Writing an `auto` field directly
+/// is a validation error"), reused here since `new`'s own `--set` shares `set`'s grammar (ticket
+/// 10's own report: "`new`'s `--set k=v` can reuse them directly if its grammar matches, which
+/// the design suggests it does").
+///
+/// **Every offending field is reported, not only the first**, which is where this reaches past
+/// `set_collected`'s own inline version of the same rule: that loop returns on the first `auto`
+/// field it meets, so `set a=1 b=2` with both `auto` names only `a`. This one does not stop
+/// early, on purpose — it is the same choice `evaluate_plain_ifs` and
+/// `validate::check_document` already make for their own findings ("every problem is reported,
+/// not only the first"), and a caller that gave two bad fields in one `--set` list learns about
+/// both from one run rather than fixing one and being told about the other on a second try.
+/// `set_collected`'s own check is not changed to match: it already ships and is tested to stop
+/// at the first, and this ticket's scope is `new`, not revisiting `set`'s.
+fn check_auto_direct(schema: &Resolved, sets: &[SetOp], name: &DocName) -> Vec<Finding> {
+    sets.iter()
+        .filter_map(|op| {
+            let field = schema.field(op.field())?;
+            field.auto.as_ref()?;
+            Some(validate::finding(
+                name,
+                Severity::Error,
+                "frontmatter.types",
+                Some(op.field()),
+                format!(
+                    "the field `{}` is set automatically (`auto`) and cannot be written directly",
+                    op.field()
+                ),
+            ))
+        })
+        .collect()
+}
+
+/// The tail both forms of `new` share once validation has passed: create the document, and turn
+/// a destination that is already there into [`Error::AlreadyExists`] with `message` rather than
+/// the bare `io::Error` `create_exclusively` returns (decision 15) — the one difference between
+/// the two forms at this last step is what `message` says, since a coded form's collision names
+/// the key it had just allocated and a path form's names the path the caller gave.
+fn create_document_or_exists(
+    deps: &Deps,
+    lock: &NamespaceLock,
+    file: &Path,
+    bytes: &[u8],
+    message: String,
+) -> Result<(), Error> {
+    create_exclusively(deps.fs, lock, file, bytes).map_err(|source| {
+        if source.kind() == io::ErrorKind::AlreadyExists {
+            Error::AlreadyExists {
+                path: file.display().to_string(),
+                message,
+            }
+        } else {
+            Error::Io {
+                file: file.to_owned(),
+                source,
+            }
+        }
+    })
 }
 
 /// Where `set`'s document lives, once `Project::resolve_write_target` has looked: matched by a

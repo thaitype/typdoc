@@ -86,10 +86,18 @@ pub enum Error {
     #[error("{}", finding_summary(findings))]
     IfFalse { findings: Vec<Finding> },
 
-    /// The destination of a write already exists (design, exit codes: "The destination already
-    /// exists: the write would replace a file that is there", exit 7 — decision 15). `message`
-    /// is built by the caller, which knows whether the two names are simply the same file
-    /// (decision 12) or a genuinely different one that is already there.
+    /// `new`'s scope holds more than one namespace, and it writes into exactly one (design,
+    /// `typdoc new`: "if the scope holds more than one, it exits 1 with the choices"). Not
+    /// `AmbiguousKey`: no key was given here, only namespaces to choose among.
+    #[error("the scope holds more than one namespace: {}", candidates.join(", "))]
+    AmbiguousScope { candidates: Vec<String> },
+
+    /// The destination of a write already exists, and nothing was written (design, exit codes:
+    /// "The destination already exists: the write would replace a file that is there", exit 7 —
+    /// decision 15): a same-file identity match (decision 12), a path given on the command line,
+    /// or a name a `match` template produced, refused alike — checked under the namespace's lock
+    /// and, for a create, enforced by the file system (`O_EXCL`) rather than typdoc remembering
+    /// to look first. `message` is built by the caller, which knows which of these it is.
     #[error("{message}")]
     AlreadyExists { path: String, message: String },
 }
@@ -103,7 +111,9 @@ impl Error {
 
     pub fn kind(&self) -> ErrorKind {
         match self {
-            Error::BadArgument(_) | Error::AmbiguousKey { .. } => ErrorKind::BadArguments,
+            Error::BadArgument(_) | Error::AmbiguousKey { .. } | Error::AmbiguousScope { .. } => {
+                ErrorKind::BadArguments
+            }
             Error::NoProject { .. } | Error::NoProjectAt { .. } | Error::NotFound { .. } => {
                 ErrorKind::NotFound
             }
