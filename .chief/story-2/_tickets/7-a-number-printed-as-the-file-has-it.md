@@ -1,7 +1,7 @@
 # 7: A number printed with the digits the document holds
 
 Type: implementation
-Status: open
+Status: claimed
 Blocked by: None (can start immediately)
 
 This ticket is on its own and its change is its own commit. Closing this gap rewrites every golden
