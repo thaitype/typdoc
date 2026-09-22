@@ -142,8 +142,18 @@ fn produced_exit_codes() -> BTreeSet<u8> {
     // demonstrates the code, and `new`'s single-file setup is the smaller of the two.
     let exists = Scratch::project(&NOTES);
     exists.file("a.md", "---\ntitle: Already here\n---\n");
+    // A lock file nobody owns, made by hand rather than by a real contending process: exit 4
+    // only needs a run that meets one and gives up before the timeout, not two processes racing
+    // (ticket 4's own "done when" (c); the window this cannot close, the instant inside
+    // `acquire`'s own creating call, is left untested on purpose, as decision 6 records).
+    let locked = Scratch::project(&NOTES);
+    locked.file("a.md", "---\ntitle: Locked out\n---\n");
+    locked.file(
+        ".typdoc/locks/default.lock",
+        r#"{"pid":999999999,"host":"nobody-here","timestamp":"1990-01-01T00:00:00+00:00"}"#,
+    );
 
-    let runs: [(u8, Ran); 6] = [
+    let runs: [(u8, Ran); 7] = [
         (
             0,
             Spawn::args(["get", "note.md", "--json"])
@@ -160,6 +170,12 @@ fn produced_exit_codes() -> BTreeSet<u8> {
             2,
             Spawn::args(["get", "bad.md", "--json"])
                 .cwd(unclosed.path())
+                .run(),
+        ),
+        (
+            4,
+            Spawn::args(["set", "a.md", "title=x", "--lock-timeout", "1", "--json"])
+                .cwd(locked.path())
                 .run(),
         ),
         (

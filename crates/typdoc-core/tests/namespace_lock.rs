@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use typdoc_core::{Clock, ErrorKind, Fs, Released, acquire, release};
+use typdoc_core::{Clock, ErrorKind, Fs, Released, acquire, release, release_all_for_signal};
 use typdoc_testkit::fake::{FakeFs, FixedClock};
 
 const HOST: &str = "test-host";
@@ -145,6 +145,112 @@ fn a_lock_taken_away_and_replaced_is_reported_and_the_replacement_is_left_alone(
         fake.bytes(&path),
         Some(replacement),
         "the file that replaced ours must be left exactly as it was"
+    );
+}
+
+// ---- ticket 4: the registry the signal-triggered cleanup thread reads, since the boxed
+// handle inside a `NamespaceLock` cannot cross a thread the way `acquire`'s own caller can ----
+
+#[test]
+fn release_all_for_signal_removes_every_lock_this_process_still_holds() {
+    let fake = FakeFs::new();
+    let clock = FixedClock::new();
+    let one = PathBuf::from("/project/.typdoc/locks/a.lock");
+    let two = PathBuf::from("/project/.typdoc/locks/b.lock");
+    let lock_one = acquire(&fake, &clock, one.clone(), HOST, AMPLE).expect("nothing holds it");
+    let lock_two = acquire(&fake, &clock, two.clone(), HOST, AMPLE).expect("nothing holds it");
+
+    release_all_for_signal(&fake);
+
+    assert_eq!(fake.bytes(&one), None, "the first lock was not removed");
+    assert_eq!(fake.bytes(&two), None, "the second lock was not removed");
+    // Kept alive until here on purpose, so neither value's own `Drop` runs before the
+    // assertions above; the drop that follows is a second, harmless no-op release.
+    drop(lock_one);
+    drop(lock_two);
+}
+
+#[test]
+fn release_all_for_signal_never_touches_a_lock_taken_away_and_replaced() {
+    let fake = FakeFs::new();
+    let clock = FixedClock::new();
+    let path = PathBuf::from("/project/.typdoc/locks/default.lock");
+    let lock = acquire(&fake, &clock, path.clone(), HOST, AMPLE).expect("nothing holds it");
+    // Someone else removes what this process holds and puts their own file at the same path,
+    // the same substitution `a_lock_taken_away_and_replaced_is_reported...` above models for
+    // the ordinary release path; this is the same property proved for the signal path instead.
+    fake.remove_file(&path).expect("the path existed");
+    foreign_lock(
+        &fake,
+        &path,
+        9999,
+        "another-host",
+        &clock.now().to_rfc3339(),
+    );
+    let replacement = fake.bytes(&path).expect("the replacement is there");
+
+    release_all_for_signal(&fake);
+
+    assert_eq!(
+        fake.bytes(&path),
+        Some(replacement),
+        "a lock taken away and replaced must be left exactly as it was, even through the \
+         signal path"
+    );
+    drop(lock);
+}
+
+// The two tests below show the public pipeline (`acquire` then `release`, or `acquire` then a
+// plain drop) leaves nothing for `release_all_for_signal` to touch afterward, through a foreign
+// file at the same path exactly as the identity-mismatch test above uses. They cannot, on their
+// own, tell a properly deregistered entry apart from a merely leaked one that happens to be
+// harmless: `typdoc_testkit::fake`'s own `fresh_identity` never repeats a value, so a leaked
+// entry's cached identity can never coincide with a later file's, and the identity check alone
+// already protects the foreign file either way. What actually proves `Drop` calls `deregister`
+// is `namespace_lock::tests::dropping_a_namespace_lock_deregisters_it_even_when_release_is_never_called`,
+// a unit test beside the code that reads the registry's own length directly, which is not
+// reachable from here.
+
+#[test]
+fn a_lock_released_normally_leaves_a_later_file_at_the_same_path_untouched() {
+    let fake = FakeFs::new();
+    let clock = FixedClock::new();
+    let path = PathBuf::from("/project/.typdoc/locks/default.lock");
+    let lock = acquire(&fake, &clock, path.clone(), HOST, AMPLE).expect("nothing holds it");
+    release(lock).expect("the release itself does not fail");
+    foreign_lock(&fake, &path, 4242, HOST, &clock.now().to_rfc3339());
+    let unrelated = fake.bytes(&path).expect("the foreign lock is there");
+
+    release_all_for_signal(&fake);
+
+    assert_eq!(
+        fake.bytes(&path),
+        Some(unrelated),
+        "a lock already released through the ordinary path must leave nothing for the signal \
+         path to remove"
+    );
+}
+
+#[test]
+fn a_lock_dropped_without_releasing_leaves_a_later_file_at_the_same_path_untouched() {
+    let fake = FakeFs::new();
+    let clock = FixedClock::new();
+    let path = PathBuf::from("/project/.typdoc/locks/default.lock");
+    {
+        let _lock = acquire(&fake, &clock, path.clone(), HOST, AMPLE).expect("nothing holds it");
+        // Dropped here, exactly as `a_lock_dropped_without_calling_release_is_released_anyway`
+        // already covers for the ordinary path.
+    }
+    foreign_lock(&fake, &path, 4242, HOST, &clock.now().to_rfc3339());
+    let unrelated = fake.bytes(&path).expect("the foreign lock is there");
+
+    release_all_for_signal(&fake);
+
+    assert_eq!(
+        fake.bytes(&path),
+        Some(unrelated),
+        "a lock already dropped without releasing must leave nothing for the signal path to \
+         remove"
     );
 }
 

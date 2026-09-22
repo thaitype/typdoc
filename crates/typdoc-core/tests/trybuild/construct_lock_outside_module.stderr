@@ -6,4 +6,4 @@ error: cannot construct `NamespaceLock<'_>` with struct literal syntax due to pr
 6 |         path: std::path::PathBuf::new(),
   |         ------------------------------- private field
   |
-  = note: ...and other private fields `fs`, `handle` and `released` that were not provided
+  = note: ...and other private fields `fs`, `handle`, `released` and `registry_id` that were not provided
