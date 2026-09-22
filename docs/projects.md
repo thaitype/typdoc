@@ -2,7 +2,7 @@
 
 A typdoc project is a folder with a `.typdoc` folder in it. This page describes what goes in that folder. `getting-started.md` builds one step by step; this one is for looking things up.
 
-`design.md` is the source of truth for all of it. Where this page is shorter, it is a summary, not a different rule.
+`docs/design/design.md` is the source of truth for all of it. Where this page is shorter, it is a summary, not a different rule.
 
 ## The layout
 
@@ -117,4 +117,6 @@ A collection whose schema has a `code` records the last number it handed out, pe
 { "tickets": { "last": 12 } }
 ```
 
-This version of typdoc reads that file and never writes it, so write it yourself when you add a keyed collection. `validate` reports `state.missing` for a keyed collection that has documents and no entry.
+`typdoc new` and `typdoc mv --renumber` write this file, under the namespace's lock, and never take a number back down. Write it yourself only when adopting typdoc on documents a keyed collection already has, so that the number typdoc allocates next does not collide with one already in use — `validate` reports `state.missing` for a keyed collection that has documents and no entry.
+
+Three rules read the file after that: `state.malformed` (error) for a `last` that is present and unusable — text, absent, negative, a fraction, or too large; `state.behind` (warn) for a `last` lower than the highest key that actually exists, which still allocates correctly but is a record nobody has checked; `state.retired` (warn) for an entry whose collection the project no longer has, kept rather than treated as a config error, since it is the only record that its numbers were ever issued. No command removes an entry or derives `last` from what exists on disk: deriving it would let a deleted document's number be handed out again.

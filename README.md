@@ -13,18 +13,18 @@ That asks a folder of tickets which of them are open and waiting on nothing unfi
 
 ## Status
 
-Version 0.1.0. Not released, and not finished: this is the read-only half of the tool.
+Version 0.1.0. Not released, and not finished: `pull` and remote schemas are not built.
 
 **What works today**
 
-- `get`, `list`, `refs`, `toc` and `validate`. A ref may point into another project on this machine that yours imports, and is followed there, though a few checks stop at that edge; see below.
+- `get`, `list`, `refs`, `toc` and `validate` read a project; `new`, `set` and `mv` (including `mv --renumber`, which moves a coded document to another namespace under a new key) write one. A ref may point into another project on this machine that yours imports, and is followed there, though a few checks stop at that edge; see below.
 - Schemas with types, enums, refs and inheritance; rules over frontmatter, schemas, keys, file names, refs and body links; a query language for `list`, including conditions that follow refs.
-- **Nothing is written.** Every command reads. The tool does not create, edit, move or fetch anything, and the state file it reads is never written back.
+- **A write changes only the fields it is given.** Every write is atomic — a temp file, then a rename — takes the namespace's lock, and is safe to interrupt: `SIGINT` and `SIGTERM` are caught, the lock is released, and two writers racing the same lock never issue the same key. Nothing outside the project is written, and no command deletes a document.
 
 **What is not built yet**
 
-- `new`, `set`, `mv` and `pull`. The design describes them; the binary does not have them, and says so if you ask.
-- Plain text output for most commands. `list` prints a table and `validate --audit` prints a summary; `get`, `toc`, `refs` and plain `validate` need `--json` and exit 1 without it.
+- `pull`, remote schemas, and the project lock they need. The design describes them; the binary does not have them, and says so if you ask.
+- Plain text output for most commands. `list` prints a table, `validate --audit` prints a summary, and `new`'s coded form and `mv --renumber` print the bare key; every other command needs `--json` and exit 1 without it.
 - Some checks stop at the edge of an imported project. The ones known and deliberate are listed in `crates/typdoc/src/registry.rs`, each held in place by a test.
 
 Linux is the platform this is run and tested on. Nothing else is claimed.
@@ -52,9 +52,13 @@ $ ./../target/debug/typdoc get WF-2 --json
 
 $ ./../target/debug/typdoc list --where status=open --ids
 WF-2
+
+$ ./../target/debug/typdoc set WF-2 status=claimed --json
+{"document":{"path":"tickets/WF-2.md","namespace":"default","key":"WF-2","code":"WF","collection":"wayfinder","schema":"wayfinder","fields":{"title":"Decide the numbering scheme","status":"claimed","kind":"research","blocked_by":["WF-1"],"created_at":"2026-09-16T09:00:00+07:00","updated_at":"...the moment of the write..."}}}
 ```
 
-`docs/getting-started.md` walks through building a project of your own from an empty folder.
+`set` writes the file; `git checkout examples/` in the clone undoes it. `docs/getting-started.md`
+walks through building a project of your own from an empty folder.
 
 ## What a project looks like
 
@@ -93,6 +97,9 @@ Ordinary Markdown, which typdoc reads for its headings and links and otherwise l
 | `typdoc refs <key\|path>` | What does this document point at, and what points at it? |
 | `typdoc toc <key\|path>` | What are this document's headings, and which lines do they cover? |
 | `typdoc validate [<key\|path>...]` | Does the project keep the promises its schemas and rules make? |
+| `typdoc new <CODE\|path> [title]` | Create a document; a coded schema allocates its key. |
+| `typdoc set <key\|path> <field=value>...` | Change fields, optionally only if a condition holds. |
+| `typdoc mv <from> [to\|--renumber <namespace>]` | Move or renumber a document, rewriting every ref this project holds to it. |
 
 Every command takes `--json`. `docs/commands.md` has the options, the exit codes and the shape of what each one prints.
 
@@ -100,12 +107,12 @@ Every command takes `--json`. `docs/commands.md` has the options, the exit codes
 
 - `docs/getting-started.md` — build a project from an empty folder.
 - `docs/projects.md` — config, collections, schemas, namespaces, imports.
-- `docs/commands.md` — the five commands, their options and their output.
+- `docs/commands.md` — the eight commands, their options and their output.
 
 The design is the source of truth for behaviour, and the two documents below are written for whoever works on typdoc rather than for whoever uses it:
 
-- `docs/design.md` — what typdoc does and why, in full. Where this README and the docs above disagree with it, it wins.
-- `docs/design-decision-phase-1/` — the decisions behind the design, with the research they rest on.
+- `docs/design/design.md` — what typdoc does and why, in full. Where this README and the docs above disagree with it, it wins.
+- `docs/design/design-decision-phase-1/` and `docs/design/design-decision-phase-2/` — the decisions behind the design, with the research they rest on.
 
 ## License
 

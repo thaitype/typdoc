@@ -106,7 +106,6 @@ $ cat > schemas/ticket.json <<'JSON'
 JSON
 $ echo '{ "match": "tickets/{key}.md", "schema": "schemas/ticket.json" }' > .typdoc/collections/tickets.json
 $ printf -- '---\ntitle: First ticket\nstatus: done\n---\n' > tickets/WF-1.md
-$ printf -- '---\ntitle: Second ticket\nstatus: open\nblocked_by: [WF-1]\n---\n' > tickets/WF-2.md
 ```
 
 Validating now reports something you have not seen yet:
@@ -118,18 +117,38 @@ $ typdoc validate --json
 ```json
 {
   "rule": "state.missing",
-  "message": "the collection `tickets` has documents in this namespace and no `last`"
+  "message": "the collection `tickets` has documents in this namespace and no `last` recorded in its state file"
 }
 ```
 
-A collection whose schema has a `code` keeps the last number it handed out in a state file, so that two people numbering tickets at once do not collide. typdoc does not write that file in this version, so write it yourself, with the highest number you have used:
+A collection whose schema has a `code` keeps the last number it handed out in a state file, so that two people numbering tickets at once do not collide. `WF-1` was written by hand rather than by typdoc, so nothing has recorded it yet; tell typdoc the highest number you have used, once, the same way you would when adopting typdoc on a folder of documents that already have keys:
 
 ```console
 $ mkdir -p .typdoc/state
-$ echo '{ "tickets": { "last": 2 } }' > .typdoc/state/default.json
+$ echo '{ "tickets": { "last": 1 } }' > .typdoc/state/default.json
 $ typdoc validate --json
-{"summary":{"scope":"all","strict":false,"checked":{"namespaces":["default"],"documents":3},"findings":{"error":0,"warn":0,"info":0}},"findings":[]}
+{"summary":{"scope":"all","strict":false,"checked":{"namespaces":["default"],"documents":2},"findings":{"error":0,"warn":0,"info":0}},"findings":[]}
 ```
+
+## Create and change documents
+
+From here on, `typdoc new` allocates the key and writes the state file for you — there is no state file to maintain by hand once one exists:
+
+```console
+$ typdoc new WF "Second ticket" --set status=open --set blocked_by=WF-1 --json
+{"document":{"path":"tickets/WF-2.md","namespace":"default","key":"WF-2","code":"WF","collection":"tickets","schema":"ticket","fields":{"title":"Second ticket","status":"open","blocked_by":["WF-1"]}}}
+```
+
+The coded form of `new` takes a title and prints the bare key without `--json`; every other field goes through `--set`, the same `field=value` syntax `set` takes below. `new` validates the candidate before it allocates anything, so a `--set` that fails never burns a number, and it creates the file with no replace: a destination that already exists is refused, nothing written.
+
+`typdoc set` changes fields on a document that already exists, under the same lock as the write:
+
+```console
+$ typdoc set WF-1 title="The first ticket" --json
+{"document":{"path":"tickets/WF-1.md","namespace":"default","key":"WF-1","code":"WF","collection":"tickets","schema":"ticket","fields":{"title":"The first ticket","status":"done"}}}
+```
+
+Only `title` changed; every other field, and everything about the file that is not frontmatter, reads back exactly as it did. `typdoc mv` moves or renames a document and rewrites every ref this project holds to it; a coded document such as these two keeps its key within its own namespace and needs `mv --renumber <namespace>` to leave it, which `projects.md` and `commands.md` cover. None of the three writes anything without the namespace's lock, and all three refuse rather than guess wherever the destination is ambiguous.
 
 ## Follow the links
 
@@ -180,5 +199,5 @@ From there, adopting is a loop: widen `match` until the files you meant to cover
 ## Where to go next
 
 - `projects.md` — namespaces, imports, match templates, and every field option a schema has.
-- `commands.md` — the five commands, their options, and their exit codes.
+- `commands.md` — the eight commands, their options, and their exit codes.
 - `../examples/` — the project this page builds, ready to copy.
