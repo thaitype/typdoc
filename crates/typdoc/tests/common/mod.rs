@@ -12,6 +12,24 @@ pub fn fixture(relative: &str) -> PathBuf {
     typdoc_testkit::fixtures::path(relative)
 }
 
+/// Loads the fixture for `rule` in `dir`, stages it (a write runs on a copy; a read runs in
+/// `dir` unchanged, exactly as before `typdoc_testkit::staging` existed), and spawns its
+/// declared command with the environment it declares. The spec is returned alongside the run,
+/// since a caller checking the rules tripped needs the declared `trips` too.
+pub fn spawn_fixture(
+    dir: &Path,
+    rule: &str,
+) -> Result<(typdoc_testkit::spec::FixtureSpec, Ran), String> {
+    let spec = typdoc_testkit::spec::FixtureSpec::load(dir, rule)?;
+    let staged = typdoc_testkit::staging::stage(dir, &spec)?;
+    let mut spawn = Spawn::args(&spec.command).cwd(staged.dir());
+    for (name, value) in &spec.env {
+        spawn = spawn.var(name, value);
+    }
+    let ran = spawn.run();
+    Ok((spec, ran))
+}
+
 /// What a finished run left behind.
 pub struct Ran {
     pub code: i32,

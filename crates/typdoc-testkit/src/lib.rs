@@ -8,3 +8,4 @@ pub mod fixtures;
 pub mod golden;
 pub mod shell_examples;
 pub mod spec;
+pub mod staging;

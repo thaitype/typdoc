@@ -14,7 +14,6 @@ use typdoc_testkit::check::{Kind, acknowledged, broken_coverage, exact_set, trip
 use typdoc_testkit::design::{command_names, exit_codes};
 use typdoc_testkit::fixtures::{broken_entries, design_text};
 use typdoc_testkit::golden;
-use typdoc_testkit::spec::FixtureSpec;
 
 fn set<T: Ord + Clone>(items: &[T]) -> BTreeSet<T> {
     items.iter().cloned().collect()
@@ -89,14 +88,11 @@ fn every_broken_fixture_names_a_rule_that_exists_and_every_rule_that_exists_has_
     assert_eq!(result, Ok(()));
 }
 
-/// Runs the fixture for `rule` in `dir` as its spec says, and compares the rules it trips.
+/// Runs the fixture for `rule` in `dir` as its spec says, and compares the rules it trips. A
+/// write fixture runs on a copy of `dir`, never on `dir` itself: `common::spawn_fixture` is
+/// what decides that, so this function does not have to.
 fn check_fixture(dir: &Path, rule: &str) -> Result<(), String> {
-    let spec = FixtureSpec::load(dir, rule)?;
-    let mut spawn = Spawn::args(&spec.command).cwd(dir);
-    for (name, value) in &spec.env {
-        spawn = spawn.var(name, value);
-    }
-    let ran = spawn.run();
+    let (spec, ran) = common::spawn_fixture(dir, rule)?;
     let tripped = tripped_rules(&ran.stdout, &ran.stderr)?;
     exact_set(rule, &spec.trips, &tripped)
 }
