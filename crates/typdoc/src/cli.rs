@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use clap::error::ErrorKind as ClapKind;
 use clap::{Parser, Subcommand};
+use serde_json::value::RawValue;
 use serde_json::{Map, Value as Json, json};
 use typdoc_core::{
     Argument, AuditReport, Condition, Deps, Document, DocumentArg, Env, Error, ErrorKind, FieldRef,
@@ -126,7 +127,7 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 return failure_text(false, 1, "the output without --json is not built yet");
             }
             match get(deps, &document, cli.namespace.as_deref()) {
-                Ok(document) => success(json!({ "document": document_json(&document) })),
+                Ok(document) => success_raw(&raw_object(&[("document", document_json(&document))])),
                 Err(e) => failure(true, exit_code(e.kind()), &e),
             }
         }
@@ -245,10 +246,16 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
     }
 }
 
+/// A run that ends with 0 and prints `result` on standard output. A command whose result
+/// holds a document has already built its JSON text and calls `success_raw` instead.
 fn success(result: Json) -> Outcome {
+    success_raw(&raw(&result))
+}
+
+fn success_raw(result: &RawValue) -> Outcome {
     Outcome {
         code: 0,
-        stdout: format!("{result}\n"),
+        stdout: format!("{}\n", result.get()),
         stderr: String::new(),
     }
 }
@@ -384,7 +391,7 @@ fn list_outcome(
     if json {
         return Outcome {
             stderr,
-            ..success(list_json(listed, total, truncated))
+            ..success_raw(&list_json(listed, total, truncated))
         };
     }
     if ids {
@@ -419,9 +426,13 @@ fn dangling_refs_stderr(dangling_refs: &[String]) -> String {
     text
 }
 
-fn list_json(documents: &[Document], total: usize, truncated: bool) -> Json {
-    let documents: Vec<Json> = documents.iter().map(document_json).collect();
-    json!({ "documents": documents, "total": total, "truncated": truncated })
+fn list_json(documents: &[Document], total: usize, truncated: bool) -> Box<RawValue> {
+    let documents: Vec<Box<RawValue>> = documents.iter().map(document_json).collect();
+    raw_object(&[
+        ("documents", raw_array(&documents)),
+        ("total", raw(&json!(total))),
+        ("truncated", raw(&json!(truncated))),
+    ])
 }
 
 /// The default table's extra columns (beyond the key-or-path identity and `title`): `--fields`
@@ -538,14 +549,14 @@ fn cell_value(doc: &Document, field: &str) -> String {
     }
 }
 
-/// A field's value as the table prints it: as written for text-shaped values, canonical for a
-/// number or a bool, and comma-joined for a list (the table has one cell per document, not one
-/// per element).
+/// A field's value as the table prints it: as written for text-shaped values, the value a
+/// number or a bool converts to, and comma-joined for a list (the table has one cell per
+/// document, not one per element). `--json` is where a number's own digits are printed.
 fn render_cell(value: &Value) -> String {
     match value {
         Value::Text(text) | Value::Date(text) | Value::Datetime(text) => text.clone(),
         Value::List(items) => items.join(","),
-        Value::Number(n) => n.to_string(),
+        Value::Number(n) => n.converted(),
         Value::Bool(b) => b.to_string(),
     }
 }
@@ -1026,33 +1037,86 @@ fn document_name(
     object
 }
 
-fn document_json(document: &Document) -> Json {
-    let mut object = document_name(
+/// A document as the design's JSON output has it. It is built as JSON text rather than as a
+/// `serde_json::Value` for one reason: a `number` is printed with the digits written in the
+/// document, and no `serde_json::Number` holds `1e3` as `1e3` — it is either converted to
+/// `1000.0` or, with the digits kept, written back with an exponent sign the file never had.
+/// Everything else here is an ordinary value turned into its JSON text first.
+fn document_json(document: &Document) -> Box<RawValue> {
+    let name = document_name(
         &document.path,
         document.namespace.as_deref(),
         document.key.as_deref(),
         document.project.as_deref(),
     );
-    object.insert("code".to_owned(), json!(document.code));
-    object.insert("collection".to_owned(), json!(document.collection));
-    object.insert("schema".to_owned(), json!(document.schema));
-    let fields: Map<String, Json> = document
+    let mut object: Vec<(&str, Box<RawValue>)> = name
+        .iter()
+        .map(|(key, value)| (&**key, raw(value)))
+        .collect();
+    let fields: Vec<(&str, Box<RawValue>)> = document
         .fields
         .iter()
-        .map(|(name, value)| (name.clone(), value_json(value)))
+        .map(|(name, value)| (&**name, value_json(value)))
         .collect();
-    object.insert("fields".to_owned(), Json::Object(fields));
-    Json::Object(object)
+    object.push(("code", raw(&json!(document.code))));
+    object.push(("collection", raw(&json!(document.collection))));
+    object.push(("schema", raw(&json!(document.schema))));
+    object.push(("fields", raw_object(&fields)));
+    raw_object(&object)
 }
 
-fn value_json(value: &Value) -> Json {
+fn value_json(value: &Value) -> Box<RawValue> {
     match value {
-        Value::Text(text) => json!(text),
-        Value::List(items) => json!(items),
-        Value::Number(number) => Json::Number(number.clone()),
-        Value::Bool(flag) => json!(flag),
-        Value::Date(text) | Value::Datetime(text) => json!(text),
+        Value::Text(text) => raw(&json!(text)),
+        Value::List(items) => raw(&json!(items)),
+        // The one value that does not go through `serde_json::Value`: the digits as the
+        // document wrote them, which `Number::read` has already checked are a JSON number.
+        Value::Number(number) => raw_text(number.written().to_owned()),
+        Value::Bool(flag) => raw(&json!(flag)),
+        Value::Date(text) | Value::Datetime(text) => raw(&json!(text)),
     }
+}
+
+/// `value` as the JSON text that stands for it.
+fn raw(value: &Json) -> Box<RawValue> {
+    raw_text(value.to_string())
+}
+
+/// `text`, which is already JSON, as a value that can be put inside another.
+#[expect(
+    clippy::expect_used,
+    reason = "every caller passes either the printed form of a `serde_json::Value`, or an \
+              object or array `joined` has assembled from values that are themselves JSON \
+              text, or the digits `Number::read` has parsed as a JSON number"
+)]
+fn raw_text(text: String) -> Box<RawValue> {
+    RawValue::from_string(text).expect("assembled from JSON")
+}
+
+/// A JSON object of values that are already JSON text, in the order given.
+fn raw_object(entries: &[(&str, Box<RawValue>)]) -> Box<RawValue> {
+    let parts = entries
+        .iter()
+        .map(|(key, value)| format!("{}:{}", json!(key), value.get()));
+    joined('{', parts, '}')
+}
+
+/// A JSON array of values that are already JSON text, in the order given.
+fn raw_array(items: &[Box<RawValue>]) -> Box<RawValue> {
+    joined('[', items.iter().map(|item| item.get().to_owned()), ']')
+}
+
+/// `parts`, each of them JSON text, separated by commas and wrapped in `open` and `close`.
+fn joined(open: char, parts: impl Iterator<Item = String>, close: char) -> Box<RawValue> {
+    let mut text = String::from(open);
+    for (at, part) in parts.enumerate() {
+        if at > 0 {
+            text.push(',');
+        }
+        text.push_str(&part);
+    }
+    text.push(close);
+    raw_text(text)
 }
 
 #[cfg(test)]

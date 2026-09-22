@@ -45,7 +45,7 @@ pub use body::{Heading, headings};
 pub use clock::{Clock, at_one_second};
 pub use coerce::{coerce, fits};
 pub use config::{Collection, Config, Level, Namespace, RefBase, RuleSetting, Rules};
-pub use document::{Document, Value};
+pub use document::{Document, Number, Value};
 pub use env::{Deps, Env};
 pub use error::{ConfigError, Error, ErrorKind};
 pub use fs::{Fs, Mode, SystemFs, TEMP_PREFIX, WriteHandle, is_temp_name, write_atomically};

@@ -355,14 +355,14 @@ mod tests {
     }
 
     #[test]
-    fn a_number_field_written_past_u64_is_a_float_to_the_precision_a_float_has() {
+    fn a_number_field_written_past_u64_keeps_its_digits_and_converts_to_a_float() {
         let read = read("n: 123456789012345678901");
 
         let [(name, Value::Number(number))] = read.as_slice() else {
             panic!("one number: {read:?}");
         };
         assert_eq!(name, "n");
-        assert!(number.is_f64());
+        assert_eq!(number.written(), "123456789012345678901");
         assert!((number.as_f64().unwrap() / 1.2345678901234568e20 - 1.0).abs() < 1e-15);
     }
 

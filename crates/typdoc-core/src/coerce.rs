@@ -3,7 +3,7 @@
 
 use chrono::{DateTime, NaiveDate};
 
-use crate::document::Value;
+use crate::document::{Number, Value};
 use crate::schema::FieldType;
 
 /// `written`, a `Text` or a `List`, as a value of `kind`, or `None` when it does not fit. A
@@ -13,7 +13,7 @@ pub fn coerce(kind: &FieldType, written: &Value) -> Option<Value> {
         (FieldType::Other(_), Value::Text(_) | Value::List(_))
         | (FieldType::String | FieldType::Enum | FieldType::Ref, Value::Text(_))
         | (FieldType::List | FieldType::RefList, Value::List(_)) => Some(written.clone()),
-        (FieldType::Number, Value::Text(text)) => text.parse().ok().map(Value::Number),
+        (FieldType::Number, Value::Text(text)) => Number::read(text).map(Value::Number),
         (FieldType::Bool, Value::Text(text)) => match text.as_str() {
             "true" => Some(Value::Bool(true)),
             "false" => Some(Value::Bool(false)),

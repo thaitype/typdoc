@@ -5,7 +5,7 @@
   "/document/schema": "record",
   "/document/fields/title": "Typed",
   "/document/fields/count": 3,
-  "/document/fields/ratio": 1000.0,
+  "/document/fields/ratio": 1e3,
   "/document/fields/done": true,
   "/document/fields/due": "2026-09-19",
   "/document/fields/at": "2026-09-19T14:30:00+07:00",

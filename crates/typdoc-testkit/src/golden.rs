@@ -13,6 +13,12 @@
 //! assertions are checked against the output itself, not against the golden, so a golden that
 //! was regenerated wrongly is still caught by them.
 //!
+//! One thing this comparison cannot see. A `number` is printed with the digits written in the
+//! document, and reading JSON turns a number into a primitive, so `1e3` and `1000.0` are one
+//! value here and a golden records whichever form that primitive prints in. The digits
+//! themselves are pinned where they can be seen, against the bytes on standard output, in
+//! `crates/typdoc/tests/frontmatter_scalars.rs`.
+//!
 //! The generator writes one golden, named by `<command>/<case>`, and never a file whose parent
 //! folder is not named `golden` or whose name is not `stdout.json`. It has no mode that writes
 //! every golden, and no path by which it writes an assertion file.

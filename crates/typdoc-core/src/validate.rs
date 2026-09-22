@@ -438,7 +438,7 @@ fn display_value(value: &Value) -> String {
     match value {
         Value::Text(text) => format!("`{text}`"),
         Value::List(items) => format!("[{}]", items.join(", ")),
-        Value::Number(number) => number.to_string(),
+        Value::Number(number) => number.converted(),
         Value::Bool(flag) => flag.to_string(),
         Value::Date(text) | Value::Datetime(text) => text.clone(),
     }
