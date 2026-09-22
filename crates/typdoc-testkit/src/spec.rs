@@ -51,19 +51,25 @@ impl FixtureSpec {
     }
 
     /// Whether the declared command changes a project's files. The first word of `command`
-    /// names the command; a write is one of the three story 2 builds. None of the three is a
-    /// command the binary has yet, so this reads only the declaration, never the binary.
+    /// names the command; a write is one of the three story 2 builds.
     pub fn is_write(&self) -> bool {
-        self.command
-            .first()
-            .is_some_and(|first| WRITE_COMMANDS.contains(&first.as_str()))
+        is_write_command(&self.command)
     }
 }
 
 /// The commands whose run changes a project's files. Every other command reads. Kept here
-/// rather than derived from the registry, since a write command does not exist in the binary
-/// yet for this to read from.
+/// rather than derived from the registry: `golden::Case`'s own `command` (`crates/typdoc-testkit/
+/// src/golden.rs`) is a plain `Vec<String>` with no `FixtureSpec` of its own, and shares this
+/// check through here rather than each keeping a second copy of the list.
 const WRITE_COMMANDS: &[&str] = &["new", "set", "mv"];
+
+/// Whether `command`'s first word (the command name) is one that writes, the same reading
+/// [`FixtureSpec::is_write`] gives its own `command`.
+pub fn is_write_command(command: &[String]) -> bool {
+    command
+        .first()
+        .is_some_and(|first| WRITE_COMMANDS.contains(&first.as_str()))
+}
 
 #[cfg(test)]
 mod tests {

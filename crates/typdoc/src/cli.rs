@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::error::ErrorKind as ClapKind;
 use clap::{Parser, Subcommand};
@@ -8,10 +9,15 @@ use serde_json::value::RawValue;
 use serde_json::{Map, Value as Json, json};
 use typdoc_core::{
     Argument, AuditReport, Condition, Deps, Document, DocumentArg, Env, Error, ErrorKind, FieldRef,
-    Finding, ListFilter, ListResult, Project, RefField, RefOutcome, RefsDirection, RefsReference,
-    RefsReport, Scope, Severity, SortKey, Source, Toc, ValidateReport, ValidateScope, Value,
-    discover, discover_for, parse_field, parse_query, resolve_on_disk,
+    Finding, ListFilter, ListResult, MvReport, Project, RefField, RefOutcome, RefsDirection,
+    RefsReference, RefsReport, Scope, Severity, SortKey, Source, Toc, UnrewrittenReason,
+    UnrewrittenRef, ValidateReport, ValidateScope, Value, discover, discover_for, parse_field,
+    parse_query, resolve_on_disk,
 };
+
+/// `--lock-timeout`'s default (design, Concurrency: "Retries with backoff until a timeout
+/// (default 5 s, `--lock-timeout`)").
+const DEFAULT_LOCK_TIMEOUT_SECS: u64 = 5;
 
 #[derive(Parser)]
 #[command(name = "typdoc", version)]
@@ -96,6 +102,18 @@ enum Command {
         /// What has to be fixed before typdoc can be adopted
         #[arg(long)]
         audit: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Move a document within this project, rewriting every ref this project holds to it
+    Mv {
+        /// The key or path of the document to move, from the project folder
+        from: OsString,
+        /// The path it moves to; a `mv` whose destination already exists writes nothing
+        to: OsString,
+        /// How long to wait for a namespace lock before giving up
+        #[arg(long, value_name = "SECONDS", default_value_t = DEFAULT_LOCK_TIMEOUT_SECS)]
+        lock_timeout: u64,
         #[arg(long)]
         json: bool,
     },
@@ -241,6 +259,26 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
             ) {
                 Ok(report) => validate_outcome(&report, json),
                 Err(e) => failure(json, exit_code(e.kind()), &e),
+            }
+        }
+        Command::Mv {
+            from,
+            to,
+            lock_timeout,
+            json,
+        } => {
+            if !json {
+                return failure_text(false, 1, "the output without --json is not built yet");
+            }
+            match mv(
+                deps,
+                &from,
+                &to,
+                Duration::from_secs(lock_timeout),
+                cli.namespace.as_deref(),
+            ) {
+                Ok(report) => success_raw(&mv_json(&report)),
+                Err(e) => failure(true, exit_code(e.kind()), &e),
             }
         }
     }
@@ -575,6 +613,28 @@ fn refs(
     project.refs(&arg, &scope, reverse, field, deps.env)
 }
 
+/// `mv`: `to` is read the same way `from` is (design.md, Arguments that name a document: "`mv`
+/// reads both its arguments in this way"), resolved against the project `from` already found —
+/// an on-disk `to` is read against that same root, the same way a second `validate` argument is
+/// (`validate_args`), since a destination on disk in a different project names no document `mv`
+/// could ever reach.
+fn mv(
+    deps: &Deps,
+    from: &std::ffi::OsStr,
+    to: &std::ffi::OsStr,
+    lock_timeout: Duration,
+    namespace: Option<&str>,
+) -> Result<MvReport, Error> {
+    let (root, from_arg) = discover_for(Argument::parse(from)?, deps.env)?;
+    let project = Project::load(&root, deps.env)?;
+    let to_arg = match Argument::parse(to)? {
+        Argument::Named(document) => document,
+        Argument::OnDisk(path) => resolve_on_disk(&root, &path, deps.env)?,
+    };
+    let scope = scope_for(&project, &from_arg, namespace, deps.env)?;
+    project.mv(&from_arg, &to_arg, &scope, lock_timeout, deps)
+}
+
 fn validate(
     deps: &Deps,
     documents: &[OsString],
@@ -905,6 +965,7 @@ fn exit_code(kind: ErrorKind) -> u8 {
         ErrorKind::NotFound => 5,
         ErrorKind::Io => 6,
         ErrorKind::LockTimeout => 4,
+        ErrorKind::AlreadyExists => 7,
     }
 }
 
@@ -993,7 +1054,11 @@ fn toc_json(toc: &Toc, depth: Option<u8>) -> Json {
 /// `refs`' report: the document asked about, `direction`, and its references in the order
 /// `Project::refs` already gives them.
 fn refs_json(report: &RefsReport) -> Json {
-    let refs: Vec<Json> = report.refs.iter().map(reference_json).collect();
+    let refs: Vec<Json> = report
+        .refs
+        .iter()
+        .map(|reference| Json::Object(reference_json(reference)))
+        .collect();
     json!({
         "document": Json::Object(document_name(
             &report.document.path,
@@ -1015,8 +1080,10 @@ fn direction_name(direction: RefsDirection) -> &'static str {
 
 /// One reference: the name of the document at the other end when it resolved, `unresolved`
 /// otherwise (never both — the ticket's own guarantee), plus `field`, `written` and, for a body
-/// link, `line` and `col`.
-fn reference_json(reference: &RefsReference) -> Json {
+/// link, `line` and `col`. Returns the object's own fields rather than `Json::Object` of them,
+/// so `mv`'s `unrewritten` (decision 17) can add `reason` to the same object instead of nesting
+/// one inside another.
+fn reference_json(reference: &RefsReference) -> Map<String, Json> {
     let mut object = Map::new();
     match &reference.other {
         RefOutcome::Resolved(name) => {
@@ -1041,7 +1108,42 @@ fn reference_json(reference: &RefsReference) -> Json {
         object.insert("line".to_owned(), json!(position.line));
         object.insert("col".to_owned(), json!(position.col));
     }
-    Json::Object(object)
+    object
+}
+
+/// `mv`'s own shape (decision 17): the document under its new name, in the same object `get`
+/// prints; `unrewritten`, the reference object `refs --reverse` uses (`reference_json`) with
+/// `reason` added; and `findings`, the finding object `validate` already prints. Built as JSON
+/// text rather than `serde_json::Value`, the same reason `document_json` is: `document` may hold
+/// a `number` whose digits `serde_json::Number` cannot carry unchanged.
+fn mv_json(report: &MvReport) -> Box<RawValue> {
+    let unrewritten: Vec<Box<RawValue>> = report.unrewritten.iter().map(unrewritten_json).collect();
+    let findings: Vec<Box<RawValue>> = report
+        .findings
+        .iter()
+        .map(|finding| raw(&finding_json(finding)))
+        .collect();
+    raw_object(&[
+        ("document", document_json(&report.document)),
+        ("unrewritten", raw_array(&unrewritten)),
+        ("findings", raw_array(&findings)),
+    ])
+}
+
+/// One entry of `mv`'s `unrewritten`: the reference object plus `reason`, one of the three
+/// decision 17 names.
+fn unrewritten_json(item: &UnrewrittenRef) -> Box<RawValue> {
+    let mut object = reference_json(&item.reference);
+    object.insert("reason".to_owned(), json!(reason_name(item.reason)));
+    raw(&Json::Object(object))
+}
+
+fn reason_name(reason: UnrewrittenReason) -> &'static str {
+    match reason {
+        UnrewrittenReason::ImportedProject => "imported-project",
+        UnrewrittenReason::Mention => "mention",
+        UnrewrittenReason::LinksRuleOff => "links-rule-off",
+    }
 }
 
 /// The name of a document: `path` always, `namespace` unless the file is outside every
@@ -1088,9 +1190,15 @@ fn document_json(document: &Document) -> Box<RawValue> {
         .iter()
         .map(|(name, value)| (&**name, value_json(value)))
         .collect();
-    object.push(("code", raw(&json!(document.code))));
-    object.push(("collection", raw(&json!(document.collection))));
-    object.push(("schema", raw(&json!(document.schema))));
+    // A collection name is never empty (`config.rs`'s `plain_name` refuses one), so an empty
+    // string here can only mean `mv` moved the document out of every collection (decision 16,
+    // "Allowed, and said out loud"): there is then no schema and no code to report, and printing
+    // `""` for either would claim a collection that does not exist rather than say there is none.
+    if !document.collection.is_empty() {
+        object.push(("code", raw(&json!(document.code))));
+        object.push(("collection", raw(&json!(document.collection))));
+        object.push(("schema", raw(&json!(document.schema))));
+    }
     object.push(("fields", raw_object(&fields)));
     raw_object(&object)
 }
@@ -1177,6 +1285,10 @@ mod tests {
 
         fn current_dir(&self) -> io::Result<PathBuf> {
             Ok(self.cwd.clone())
+        }
+
+        fn hostname(&self) -> String {
+            "fake-host".to_owned()
         }
     }
 

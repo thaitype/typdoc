@@ -125,6 +125,14 @@ pub trait FrontmatterWriter {
     /// nothing here decides that removing the last item should remove the field.
     fn remove_item(&mut self, name: &str, item: &str);
 
+    /// Replaces the first item at `name` equal to `old` with `new`, in the position it already
+    /// held. A field that does not exist, or does not hold `old`, is left exactly as it was.
+    /// `mv` is the caller: a `ref[]` field can hold several values and only the one that named
+    /// the document being moved is rewritten, the rest kept exactly as written, in the order
+    /// they were — which `remove_item` then `append_item` cannot do, since `append_item` always
+    /// moves the value to the end.
+    fn replace_item(&mut self, name: &str, old: &str, new: String);
+
     /// Adds `name` with no value, at the end, unless it already exists, in which case it is
     /// left untouched. "No value" is [`Value::Empty`], a field with a name and nothing after it
     /// (`reviewer:`), kept apart from a field written as the empty string (`docs/design.md`, "A
@@ -184,6 +192,15 @@ impl FrontmatterWriter for YamlSerdeWriter {
             && let Some(found) = items.iter().position(|held| held == item)
         {
             items.remove(found);
+        }
+    }
+
+    fn replace_item(&mut self, name: &str, old: &str, new: String) {
+        if let Some(at) = self.position(name)
+            && let Value::List(items) = &mut self.fields[at].1
+            && let Some(found) = items.iter().position(|held| held == old)
+        {
+            items[found] = new;
         }
     }
 
@@ -823,6 +840,39 @@ mod tests {
             reread(&writer.finish().unwrap()),
             vec![
                 ("tags".to_owned(), list(&["a"])),
+                ("scalar".to_owned(), text("x")),
+            ]
+        );
+    }
+
+    #[test]
+    fn replace_item_swaps_one_match_in_place_and_leaves_the_rest_of_the_list_where_it_was() {
+        let mut writer = YamlSerdeWriter::new(vec![("refs".to_owned(), list(&["a", "b", "a"]))]);
+
+        writer.replace_item("refs", "a", "z".to_owned());
+
+        assert_eq!(
+            reread(&writer.finish().unwrap()),
+            vec![("refs".to_owned(), list(&["z", "b", "a"]))],
+            "only the first match moves, and it stays at its own position"
+        );
+    }
+
+    #[test]
+    fn replace_item_on_a_field_that_does_not_hold_it_or_does_not_exist_changes_nothing() {
+        let mut writer = YamlSerdeWriter::new(vec![
+            ("refs".to_owned(), list(&["a"])),
+            ("scalar".to_owned(), text("x")),
+        ]);
+
+        writer.replace_item("refs", "not-there", "z".to_owned());
+        writer.replace_item("scalar", "x", "z".to_owned());
+        writer.replace_item("absent", "x", "z".to_owned());
+
+        assert_eq!(
+            reread(&writer.finish().unwrap()),
+            vec![
+                ("refs".to_owned(), list(&["a"])),
                 ("scalar".to_owned(), text("x")),
             ]
         );

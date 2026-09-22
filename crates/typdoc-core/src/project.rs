@@ -3,6 +3,7 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use chrono::{DateTime, FixedOffset, NaiveDate};
 
@@ -13,12 +14,17 @@ use crate::config::{
     config_file,
 };
 use crate::document::{Document, Value};
-use crate::env::Env;
+use crate::env::{Deps, Env};
 use crate::error::Error;
-use crate::frontmatter;
+use crate::frontmatter::{self, FrontmatterWriter};
+use crate::fs::Fs;
 use crate::index::{Entry as Indexed, Index, Member};
 use crate::lines::Position;
 use crate::links::{self, BodyLink, BodyLinks};
+use crate::mv::{self, ContentChange, MvReport, UnrewrittenReason, UnrewrittenRef};
+use crate::namespace_lock::{
+    NamespaceLock, acquire, local_namespace_lock_path, order_locks, release,
+};
 use crate::query::{self, Condition, Dir, FieldRef, PlainCondition, Quant, RefCondition, RefField};
 use crate::refs;
 use crate::schema::{self, Auto, Field, FieldType, Resolved};
@@ -2447,8 +2453,11 @@ impl Project {
         clippy::too_many_arguments,
         reason = "each part is independent context a caller already holds (the document's name,
     which field and ref, why it failed, the project's moved records, the collection's own rule
-    levels, strict); bundling them would hide which one changes across the two call sites that
-    would use it, `check_refs` and a future `body.mentions` (ticket 11, also `refs.moved`)"
+    levels, strict); bundling them would hide which one changes across the call sites that would
+    use it, `check_refs` and a future `body.mentions` (`body.mentions` is not built by the mv
+    command: a mention is always key-shaped, and mv within one project only ever moves a document
+    without a code successfully, so the two never meet there; a future rule that checks mentions
+    against `refs.moved` is still a plausible second caller)"
     )]
     fn unresolved_ref_finding(
         &self,
@@ -2853,6 +2862,529 @@ impl Project {
             hint,
         }
     }
+
+    /// Moves `from` to `to` within this project, rewriting every ref this project holds to it —
+    /// in frontmatter and in body links, in every namespace of the project — keeping each ref's
+    /// written form (design.md, `typdoc mv`). Neither argument may carry a `project::` prefix:
+    /// `mv` writes only in the project it is run in (decision 2).
+    ///
+    /// Every temp file is prepared first, then the renames happen in one run, the document
+    /// itself moved last of all (decision 1): a stop or a failure partway leaves some renames
+    /// done and the rest not, and the document still where it was, so the same command run again
+    /// finds only what is left and finishes it, rediscovering nothing extra — a ref already
+    /// rewritten now resolves to the new path, not the old one, so it is not found again by the
+    /// reverse scan below.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one write, one lock scope, one commit: splitting it further would scatter the single sequence decision 1 and decision 15 both describe as one run, across functions a reader would have to reassemble"
+    )]
+    pub fn mv(
+        &self,
+        from: &DocumentArg,
+        to: &DocumentArg,
+        scope: &Scope,
+        lock_timeout: Duration,
+        deps: &Deps,
+    ) -> Result<MvReport, Error> {
+        if from.project_prefix().is_some() || to.project_prefix().is_some() {
+            return Err(Error::BadArgument(
+                "mv writes only in the project it is run in: an argument naming a document of \
+                 another project is bad arguments"
+                    .to_owned(),
+            ));
+        }
+
+        let (from_path, from_entry, from_text) = self.resolve(from, scope, deps.env)?;
+        let from_namespace = from_entry.namespace;
+        let from_key = from_entry.key.clone();
+        let from_file = from_entry.file.clone();
+
+        let to_path = self.mv_destination_path(to, scope)?;
+        let to_full = self.root.join(&to_path);
+
+        // Decision 12: identity before anything else. A refusal here writes nothing and needs no
+        // lock to be right about, so it is checked first; the authoritative check, under the
+        // lock, is decision 15's own (below).
+        if deps
+            .fs
+            .same_file(&from_file, &to_full)
+            .map_err(Error::io_at(&to_full))?
+        {
+            return Err(Error::AlreadyExists {
+                path: to_path.clone(),
+                message: format!(
+                    "`{to_path}` is not a different file from `{from_path}`: the file system \
+                     does not tell the two names apart, so no change was made"
+                ),
+            });
+        }
+
+        // Decision 16 (1): a coded collection's `match` takes `{key}` exactly once and no
+        // globs, so a coded document's path is fixed entirely by its key. The identity check
+        // above already refused the one path that key names; reaching here with a key means
+        // `to_path` genuinely differs, which `mv` (not `--renumber`) cannot do at all.
+        if let Some(key) = &from_key {
+            let to_namespace = mv::namespace_of(&self.config.namespaces, &to_path);
+            let message = if to_namespace != Some(from_namespace) {
+                format!(
+                    "`{from_path}` is a coded document: its key `{key}` belongs to the \
+                     namespace that issued it, so `mv` cannot move it to another namespace; use \
+                     `mv --renumber` instead"
+                )
+            } else {
+                format!(
+                    "`{from_path}` is a coded document: its path is fixed by its key `{key}` \
+                     within its own namespace, so it cannot be moved to `{to_path}`"
+                )
+            };
+            return Err(Error::BadArgument(message));
+        }
+
+        let to_namespace = mv::namespace_of(&self.config.namespaces, &to_path);
+        let to_below = to_namespace
+            .map(|ns| strip_namespace_folder(&to_path, &self.config.namespaces[ns].folder));
+        let to_collection = to_below.as_deref().and_then(|below| {
+            self.members
+                .iter()
+                .position(|member| member.template.matches_path(below))
+        });
+        // Decision 16 (1), the other half: a document without a code cannot move into a coded
+        // collection, since it has no key to fill the template with.
+        if let Some(ci) = to_collection
+            && self.collections[ci].schema.code.is_some()
+        {
+            return Err(Error::BadArgument(format!(
+                "`{to_path}` is in the coded collection `{}`, and a document without a code \
+                 cannot move into it; `typdoc new` allocates a key there",
+                self.collections[ci].name
+            )));
+        }
+
+        // The reverse scan: every ref of this project that resolves to `from_path`, read before
+        // any lock is taken (a read never locks). `field == "$body"` distinguishes a body link
+        // from a frontmatter field of that literal name (`$` is reserved and no schema field may
+        // use it, so the two can never collide).
+        let reverse = self.refs(from, scope, true, None, deps.env)?;
+        let mut rewrite_by_holder: BTreeMap<String, Vec<RefsReference>> = BTreeMap::new();
+        let mut unrewritten: Vec<UnrewrittenRef> = Vec::new();
+        for reference in reverse.refs {
+            let RefOutcome::Resolved(holder) = &reference.other else {
+                continue; // a reverse scan resolves the holder itself, always
+            };
+            if reference.field == "$body" {
+                let links_off = self.index.get(&holder.path).is_none_or(|entry| {
+                    let collection = &self.collections[entry.collection];
+                    validate::effective_level(
+                        Level::Error,
+                        "body.links",
+                        &self.config.validation,
+                        &collection.validation,
+                        false,
+                        false,
+                    )
+                    .is_none()
+                });
+                if links_off {
+                    unrewritten.push(UnrewrittenRef {
+                        reference,
+                        reason: UnrewrittenReason::LinksRuleOff,
+                    });
+                    continue;
+                }
+            }
+            rewrite_by_holder
+                .entry(holder.path.clone())
+                .or_default()
+                .push(reference);
+        }
+
+        // The namespaces to lock: the source's, the destination's (when it has one) and every
+        // holder's that is actually rewritten — never a namespace touched only by an unrewritten
+        // ref, since nothing is written there.
+        let mut namespace_names: BTreeSet<String> = BTreeSet::new();
+        namespace_names.insert(self.config.namespaces[from_namespace].name.clone());
+        if let Some(ns) = to_namespace {
+            namespace_names.insert(self.config.namespaces[ns].name.clone());
+        }
+        for holder_path in rewrite_by_holder.keys() {
+            if let Some(entry) = self.index.get(holder_path) {
+                namespace_names.insert(self.config.namespaces[entry.namespace].name.clone());
+            }
+        }
+        let mut lock_paths = Vec::with_capacity(namespace_names.len());
+        for name in &namespace_names {
+            lock_paths.push(canonical_lock_path(
+                deps.fs,
+                local_namespace_lock_path(&self.root, name),
+            )?);
+        }
+        let host = deps.env.hostname();
+        let mut locks: Vec<NamespaceLock> = Vec::with_capacity(lock_paths.len());
+        for path in order_locks(None, lock_paths) {
+            locks.push(acquire(deps.fs, deps.clock, path, &host, lock_timeout)?);
+        }
+        #[expect(
+            clippy::expect_used,
+            reason = "`namespace_names` always holds at least `from_namespace`'s own name, \
+                      inserted unconditionally above, so `locks` is never empty once every path \
+                      in `namespace_names` has been locked"
+        )]
+        let proof = locks
+            .first()
+            .expect("mv always locks at least the source namespace");
+
+        // Decision 15's own check: authoritative because it runs under the lock. The advisory
+        // one above only rules out "the same file"; a different file that exists is caught only
+        // here, since nothing before this point may write and so nothing needed to be sure yet.
+        if deps.fs.exists(&to_full).map_err(Error::io_at(&to_full))? {
+            return Err(Error::AlreadyExists {
+                path: to_path.clone(),
+                message: format!("`{to_path}` already exists: nothing was written"),
+            });
+        }
+
+        let mut changes = Vec::new();
+        for (holder_path, refs) in &rewrite_by_holder {
+            #[expect(
+                clippy::expect_used,
+                reason = "every path in `rewrite_by_holder` came from `self.index.get(holder_path)` \
+                          succeeding, a few lines above, while building `namespace_names`"
+            )]
+            let entry = self
+                .index
+                .get(holder_path)
+                .expect("holder paths in this map were already looked up above");
+            let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
+            let new_text = self.rewrite_holder(holder_path, entry, &text, refs, &to_path)?;
+            if new_text != text {
+                changes.push(ContentChange {
+                    path: entry.file.clone(),
+                    bytes: new_text.into_bytes(),
+                });
+            }
+        }
+        if let Some(change) = self.mv_document_change(
+            &from_path,
+            from_entry.collection,
+            &from_text,
+            &from_file,
+            to_collection,
+        )? {
+            changes.push(change);
+        }
+
+        // The destination's own folder may not exist yet — a move into a namespace's `elsewhere/`
+        // or into a collection's own subfolder is ordinary, and a rename cannot create the
+        // parent it lands in.
+        if let Some(parent) = to_full.parent() {
+            deps.fs
+                .create_dir_all(parent)
+                .map_err(Error::io_at(parent))?;
+        }
+
+        mv::commit(deps.fs, proof, &changes, &from_file, &to_full).map_err(|source| Error::Io {
+            file: to_full.clone(),
+            source,
+        })?;
+
+        for lock in locks {
+            let _ = release(lock);
+        }
+
+        let (document, findings) =
+            self.mv_result(&to_path, to_namespace, to_collection, &to_full)?;
+        Ok(MvReport {
+            document,
+            unrewritten,
+            findings,
+        })
+    }
+
+    /// The destination `to` names, as a project-relative path: `to`'s own path when it is a
+    /// path, or the path a key already names (which then trips decision 15's "already exists"
+    /// refusal downstream) when it is a key — `mv`'s destination is a place to put a document,
+    /// and a key is never invented for one that does not exist yet.
+    fn mv_destination_path(&self, to: &DocumentArg, scope: &Scope) -> Result<String, Error> {
+        match to {
+            DocumentArg::Path { path, .. } => Ok(path.clone()),
+            DocumentArg::Key { namespace, key, .. } => {
+                self.resolve_key(namespace.as_deref(), key, scope)
+            }
+        }
+    }
+
+    /// One holder's file, rewritten: every ref in `refs` recomputed to name `new_target`,
+    /// keeping its own written form (`mv::rewritten_path_ref`), applied to a frontmatter field
+    /// through the writer and to a body link by splicing the one line it sits on. Returns `text`
+    /// unchanged when `refs` is empty, so a caller can compare before and after to know whether
+    /// anything actually needs preparing.
+    fn rewrite_holder(
+        &self,
+        holder_path: &str,
+        entry: &Indexed,
+        text: &str,
+        refs: &[RefsReference],
+        new_target: &str,
+    ) -> Result<String, Error> {
+        let collection = &self.collections[entry.collection];
+        let bad = |message| Error::Frontmatter {
+            file: entry.file.clone(),
+            message,
+        };
+        let split = frontmatter::split(text).map_err(bad)?;
+        let fields = match split.block {
+            Some(block) => frontmatter::fields(block, &collection.schema).map_err(bad)?,
+            None => Vec::new(),
+        };
+        let mut writer = frontmatter::YamlSerdeWriter::new(fields.clone());
+        let mut frontmatter_touched = false;
+        let mut body = text.to_owned();
+        let mut body_touched = false;
+
+        for reference in refs {
+            let new_written = mv::rewritten_path_ref(
+                &reference.written,
+                collection.ref_base,
+                entry.namespace,
+                holder_path,
+                &self.config.namespaces,
+                new_target,
+            );
+            if reference.field == "$body" {
+                let Some(position) = reference.position else {
+                    continue;
+                };
+                let Some((line_start, line_end)) = mv::line_span(&body, position.line) else {
+                    continue;
+                };
+                let Some(new_line) = mv::splice_body_destination(
+                    &body[line_start..line_end],
+                    position.col,
+                    &reference.written,
+                    &new_written,
+                ) else {
+                    // Defensive: leave this one line untouched rather than guess at a shape
+                    // this function did not expect (`mv::splice_body_destination`'s own doc
+                    // comment names the one construction this does not cover).
+                    continue;
+                };
+                body.replace_range(line_start..line_end, &new_line);
+                body_touched = true;
+            } else {
+                match fields.iter().find(|(name, _)| name == &reference.field) {
+                    Some((_, Value::List(_))) => {
+                        writer.replace_item(&reference.field, &reference.written, new_written);
+                    }
+                    _ => writer.set_scalar(&reference.field, new_written),
+                }
+                frontmatter_touched = true;
+            }
+        }
+
+        if !frontmatter_touched && !body_touched {
+            return Ok(text.to_owned());
+        }
+        if !frontmatter_touched {
+            return Ok(body);
+        }
+        let new_block = writer.finish().map_err(bad)?;
+        // The body may have been spliced above; re-split it fresh (frontmatter edits never move
+        // where the body begins, since they replace the block in place) so the reassembly uses
+        // whichever of the two changed.
+        let body_split = frontmatter::split(&body).map_err(bad)?;
+        Ok(assemble_frontmatter(
+            split.block.is_some(),
+            &new_block,
+            &body[body_split.body..],
+        ))
+    }
+
+    /// The moved document's own file, unchanged except for a field with `auto: moves` on the
+    /// destination's schema, which gains the document's previous path (design.md, `typdoc mv`:
+    /// "the previous key or path is appended to it on every move"). `None` when there is no such
+    /// field, or the field already ends with `from_path` — a re-run after a stop between this
+    /// in-place update and the document's own final rename (below) must not append it twice, and
+    /// this is the only place a re-run can tell the two apart, since the update happens under
+    /// the source's own, unmoved path.
+    fn mv_document_change(
+        &self,
+        from_path: &str,
+        from_collection: usize,
+        from_text: &str,
+        from_file: &Path,
+        to_collection: Option<usize>,
+    ) -> Result<Option<ContentChange>, Error> {
+        let Some(ci) = to_collection else {
+            return Ok(None);
+        };
+        let dest_schema = &self.collections[ci].schema;
+        let Some((field_name, _)) = dest_schema
+            .fields()
+            .find(|(_, field)| field.auto == Some(Auto::Moves))
+        else {
+            return Ok(None);
+        };
+        let bad = |message| Error::Frontmatter {
+            file: from_file.to_owned(),
+            message,
+        };
+        // Read with the source's own schema, the one `from_text` is actually written against
+        // (`auto: moves`'s field may not even exist there, when the move changes collection —
+        // `YamlSerdeWriter::append_item` below adds it either way, per its own documented rule
+        // for a field the writer starts from that does not exist yet).
+        let block = frontmatter::block(from_text).map_err(bad)?;
+        let fields = match block {
+            Some(b) => {
+                frontmatter::fields(b, &self.collections[from_collection].schema).map_err(bad)?
+            }
+            None => Vec::new(),
+        };
+        let already_recorded = fields
+            .iter()
+            .find(|(name, _)| name == field_name)
+            .is_some_and(|(_, value)| {
+                matches!(value, Value::List(items) if items.last().map(String::as_str) == Some(from_path))
+            });
+        if already_recorded {
+            return Ok(None);
+        }
+        let mut writer = frontmatter::YamlSerdeWriter::new(fields);
+        writer.append_item(field_name, from_path.to_owned());
+        let new_block = writer.finish().map_err(bad)?;
+        let split = frontmatter::split(from_text).map_err(bad)?;
+        let new_text =
+            assemble_frontmatter(split.block.is_some(), &new_block, &from_text[split.body..]);
+        if new_text == from_text {
+            return Ok(None);
+        }
+        Ok(Some(ContentChange {
+            path: from_file.to_owned(),
+            bytes: new_text.into_bytes(),
+        }))
+    }
+
+    /// The result `mv` reports: the document under its new name, read fresh from `to_full` after
+    /// the move, and, when it landed in a collection, what that collection's schema rejects
+    /// (decision 16: carried out and reported, never refused). A document that left every
+    /// collection has no schema to report against, and its `fields` are read as written, with no
+    /// type coercion, the same as an unknown field's value already is elsewhere.
+    fn mv_result(
+        &self,
+        to_path: &str,
+        to_namespace: Option<usize>,
+        to_collection: Option<usize>,
+        to_full: &Path,
+    ) -> Result<(Document, Vec<Finding>), Error> {
+        let text = fs::read_to_string(to_full).map_err(Error::io_at(to_full))?;
+        let bad = |message| Error::Frontmatter {
+            file: to_full.to_owned(),
+            message,
+        };
+        match to_collection {
+            Some(ci) => {
+                let collection = &self.collections[ci];
+                let fields = match frontmatter::block(&text).map_err(bad)? {
+                    Some(block) => frontmatter::fields(block, &collection.schema).map_err(bad)?,
+                    None => Vec::new(),
+                };
+                #[expect(
+                    clippy::expect_used,
+                    reason = "`to_collection` is `Some` only when `to_namespace` is too: both come \
+                              from matching `to_below`, which is itself `Some` only when \
+                              `to_namespace` is"
+                )]
+                let namespace_name = self.config.namespaces
+                    [to_namespace.expect("to_collection is Some only when to_namespace is")]
+                .name
+                .clone();
+                let name = DocName {
+                    path: to_path,
+                    namespace: &namespace_name,
+                    collection: &collection.name,
+                    key: None,
+                };
+                let findings = validate::check_document(
+                    &text,
+                    &collection.schema,
+                    &self.config.validation,
+                    &collection.validation,
+                    false,
+                    false,
+                    &name,
+                );
+                Ok((
+                    Document {
+                        path: to_path.to_owned(),
+                        namespace: Some(namespace_name),
+                        key: None,
+                        code: collection.schema.code.clone(),
+                        collection: collection.name.clone(),
+                        schema: collection.schema.name.clone(),
+                        project: None,
+                        fields,
+                    },
+                    findings,
+                ))
+            }
+            None => {
+                let empty_schema = Resolved::new(String::new(), None, BTreeMap::new());
+                let fields = match frontmatter::block(&text).map_err(bad)? {
+                    Some(block) => frontmatter::fields(block, &empty_schema).map_err(bad)?,
+                    None => Vec::new(),
+                };
+                Ok((
+                    Document {
+                        path: to_path.to_owned(),
+                        namespace: to_namespace.map(|i| self.config.namespaces[i].name.clone()),
+                        key: None,
+                        code: None,
+                        collection: String::new(),
+                        schema: String::new(),
+                        project: None,
+                        fields,
+                    },
+                    Vec::new(),
+                ))
+            }
+        }
+    }
+}
+
+/// `path` with `folder/` stripped from the front, when `folder` is not empty; `path` unchanged
+/// otherwise (`default`'s folder is empty, and it already covers the whole project).
+fn strip_namespace_folder(path: &str, folder: &str) -> String {
+    if folder.is_empty() {
+        return path.to_owned();
+    }
+    path.strip_prefix(folder)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .unwrap_or(path)
+        .to_owned()
+}
+
+/// The frontmatter block `finish` produced, fenced, followed by `body` exactly as it stands
+/// (already spliced, when a body link changed): `has_block` chooses whether an empty block still
+/// gets fences (a document that had one keeps having one, even if every field left it empty) or
+/// none at all (a document with no block is not given one just because a ref inside a field it
+/// never had needed rewriting — which cannot happen, since a field with no block has no fields to
+/// rewrite in the first place, but the two are kept independent rather than assumed to agree).
+fn assemble_frontmatter(has_block: bool, new_block: &str, body: &str) -> String {
+    if !has_block {
+        return body.to_owned();
+    }
+    format!("---\n{new_block}---\n{body}")
+}
+
+/// Brings the directory holding a lock file to its canonical form before it is taken (decision
+/// 3: "the directory is created before the first lock is taken... what is canonicalized is the
+/// directory that holds the lock file, with the file's name joined to it"), so two spellings of
+/// one namespace's lock directory sort as one lock rather than two.
+fn canonical_lock_path(fs: &dyn Fs, path: PathBuf) -> Result<PathBuf, Error> {
+    let dir = path.parent().map(Path::to_owned).unwrap_or_default();
+    fs.create_dir_all(&dir).map_err(Error::io_at(&dir))?;
+    let canonical_dir = std::fs::canonicalize(&dir).map_err(Error::io_at(&dir))?;
+    let name = path.file_name().unwrap_or_default();
+    Ok(canonical_dir.join(name))
 }
 
 /// The fields of a document already read, or `None` when its block cannot be parsed: the ref

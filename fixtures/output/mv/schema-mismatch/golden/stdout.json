@@ -1,0 +1,24 @@
+{
+  "document": {
+    "path": "tasks/plain.md",
+    "namespace": "default",
+    "code": null,
+    "collection": "tasks",
+    "schema": "task",
+    "fields": {
+      "title": "Plain note"
+    }
+  },
+  "unrewritten": [],
+  "findings": [
+    {
+      "path": "tasks/plain.md",
+      "namespace": "default",
+      "collection": "tasks",
+      "field": "status",
+      "rule": "frontmatter.types",
+      "level": "error",
+      "message": "the field `status` is required and is missing"
+    }
+  ]
+}

@@ -8,6 +8,7 @@ pub enum ErrorKind {
     NotFound,
     Io,
     LockTimeout,
+    AlreadyExists,
 }
 
 /// One config error: the id from the design's table, the configuration file it is about
@@ -66,6 +67,13 @@ pub enum Error {
     /// that knows enough about the failed attempt and the competing lock to say it.
     #[error("{message}")]
     LockTimeout { path: PathBuf, message: String },
+
+    /// The destination of a write already exists (design, exit codes: "The destination already
+    /// exists: the write would replace a file that is there", exit 7 — decision 15). `message`
+    /// is built by the caller, which knows whether the two names are simply the same file
+    /// (decision 12) or a genuinely different one that is already there.
+    #[error("{message}")]
+    AlreadyExists { path: String, message: String },
 }
 
 impl Error {
@@ -86,6 +94,7 @@ impl Error {
             }
             Error::Io { .. } => ErrorKind::Io,
             Error::LockTimeout { .. } => ErrorKind::LockTimeout,
+            Error::AlreadyExists { .. } => ErrorKind::AlreadyExists,
         }
     }
 }

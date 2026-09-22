@@ -28,6 +28,7 @@ mod index;
 mod lines;
 mod links;
 mod lock;
+mod mv;
 mod namespace_lock;
 mod namespaces;
 mod project;
@@ -51,13 +52,14 @@ pub use env::{Deps, Env};
 pub use error::{ConfigError, Error, ErrorKind};
 pub use frontmatter::{FrontmatterWriter, YamlSerdeWriter};
 pub use fs::{
-    FileId, Fs, Mode, TEMP_PREFIX, WriteHandle, find_leftovers, is_temp_name, remove_leftovers,
-    write_atomically,
+    FileId, Fs, Mode, TEMP_PREFIX, WriteHandle, find_leftovers, is_temp_name, prepare_replacement,
+    remove_leftovers, write_atomically,
 };
 pub use lines::{LineMap, Position};
 pub use links::{
     BodyLink, BodyLinks, Definition, DuplicateDefinition, Mention, Suspect, mentions, scan,
 };
+pub use mv::{ContentChange, MvReport, UnrewrittenReason, UnrewrittenRef, commit};
 pub use namespace_lock::{
     NamespaceLock, Released, acquire, git_common_namespace_lock_path, git_common_project_lock_path,
     local_namespace_lock_path, local_project_lock_path, order_locks, project_hash, project_hash_of,

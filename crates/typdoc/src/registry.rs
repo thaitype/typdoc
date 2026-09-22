@@ -18,7 +18,6 @@ pub fn commands() -> Vec<String> {
 pub const UNIMPLEMENTED_COMMANDS: &[&str] = &[
     "new",  // story 2
     "set",  // story 2
-    "mv",   // story 2
     "pull", // story 3
 ];
 
@@ -28,7 +27,6 @@ pub const UNIMPLEMENTED_COMMANDS: &[&str] = &[
 pub const UNPRODUCED_EXIT_CODES: &[u8] = &[
     3, // story 2
     4, // story 2
-    7, // story 2
 ];
 
 /// Gaps between the design and the binary that are neither a missing command, rule nor exit

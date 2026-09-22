@@ -1,0 +1,12 @@
+{
+  "/document/path": "tasks/plain.md",
+  "/document/namespace": "default",
+  "/document/collection": "tasks",
+  "/document/schema": "task",
+  "/document/fields/title": "Plain note",
+  "/unrewritten": [],
+  "/findings/0/rule": "frontmatter.types",
+  "/findings/0/path": "tasks/plain.md",
+  "/findings/0/field": "status",
+  "/findings/0/level": "error"
+}

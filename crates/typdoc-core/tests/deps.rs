@@ -19,6 +19,10 @@ impl Env for NoEnv {
     fn current_dir(&self) -> io::Result<PathBuf> {
         Ok(PathBuf::from("/project"))
     }
+
+    fn hostname(&self) -> String {
+        "no-host".to_owned()
+    }
 }
 
 /// The instant a command gets from `deps`, written out here rather than read from the fake,

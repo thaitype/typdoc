@@ -1,0 +1,7 @@
+{
+  "name": "task",
+  "fields": {
+    "title": { "type": "string", "required": true },
+    "status": { "type": "enum", "values": ["open", "done"], "required": true }
+  }
+}

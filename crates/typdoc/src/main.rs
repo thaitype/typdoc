@@ -18,6 +18,12 @@ impl Env for ProcessEnv {
     fn current_dir(&self) -> io::Result<PathBuf> {
         std::env::current_dir()
     }
+
+    fn hostname(&self) -> String {
+        hostname::get()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "unknown-host".to_owned())
+    }
 }
 
 fn main() -> ExitCode {

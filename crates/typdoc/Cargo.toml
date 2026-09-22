@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 clap = { version = "4.6.7", features = ["derive"] }
+hostname = "0.4"
 # `raw_value` is how `--json` prints a `number` with the digits written in the document: a
 # `serde_json::Number` holds a `u64`, an `i64` or an `f64` and nothing else, so `1e3` cannot
 # survive one, and a document is assembled as JSON text instead. `preserve_order` keeps the
