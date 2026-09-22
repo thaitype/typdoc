@@ -13,28 +13,9 @@
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
 
-use std::path::Path;
-use std::time::{Duration, Instant};
-
-use common::{Scratch, Spawn};
-
-const WF_SCHEMA: &str = r#"{
-  "name": "ticket",
-  "code": "WF",
-  "fields": {
-    "title": { "type": "string", "required": true },
-    "status": { "type": "enum", "values": ["open", "claimed"], "default": "open" },
-    "kind": { "type": "enum", "values": ["research", "task"], "required": true }
-  }
-}"#;
-
-const WF_COLLECTION: [(&str, &str); 2] = [
-    (
-        ".typdoc/collections/tickets.json",
-        r#"{ "match": "tickets/{key}.md", "schema": "wf.json" }"#,
-    ),
-    ("wf.json", WF_SCHEMA),
-];
+use common::{
+    LOCK_APPEARS_WITHIN, Scratch, Spawn, WF_COLLECTION, large_project, lock_path, wait_for_file,
+};
 
 /// How many documents the namespace holds before a test sends a signal. Large enough that
 /// `Project::prescan_refs`'s read-every-document loop measurably holds the lock on every machine
@@ -43,52 +24,11 @@ const WF_COLLECTION: [(&str, &str); 2] = [
 /// file appears, which is before that loop even starts.
 const DOCUMENT_COUNT: u32 = 20_000;
 
-const FILLER: &str = "---\ntitle: Filler\nstatus: open\nkind: research\n---\n";
-
-/// A project with `DOCUMENT_COUNT` documents already filed under the `WF` collection and its
-/// state file caught up to them: real input built for this test, not a fixture read from the
-/// repository (a fixture this size does not belong there — the round-trip corpus of goal
-/// criterion 1 is what fixtures under `fixtures/` are for).
-fn large_project() -> Scratch {
-    let state_text = format!("{{ \"tickets\": {{ \"last\": {DOCUMENT_COUNT} }} }}");
-    let mut files: Vec<(&str, &str)> = WF_COLLECTION.to_vec();
-    files.push((".typdoc/state/default.json", &state_text));
-    let project = Scratch::project(&files);
-    for n in 1..=DOCUMENT_COUNT {
-        project.file(&format!("tickets/WF-{n}.md"), FILLER);
-    }
-    project
-}
-
-fn lock_path(project: &Path) -> std::path::PathBuf {
-    project.join(".typdoc/locks/default.lock")
-}
-
-/// Polls for `path` to exist, up to `timeout`; the last check's own answer is the return value,
-/// so a caller that gets `false` back knows the wait, not a stale read, is what failed.
-fn wait_for_file(path: &Path, timeout: Duration) -> bool {
-    let start = Instant::now();
-    loop {
-        if path.is_file() {
-            return true;
-        }
-        if start.elapsed() >= timeout {
-            return path.is_file();
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    }
-}
-
-/// How long a test waits for the lock file to appear before giving up: generous next to how
-/// quickly it actually shows up (`acquire` creates it before any of `prescan_refs`'s own work
-/// runs), so this is headroom for a loaded machine, not the ordinary case.
-const LOCK_APPEARS_WITHIN: Duration = Duration::from_secs(20);
-
 // ---- done when (a): a real SIGINT and a real SIGTERM, sent while the lock is held ----
 
 #[test]
 fn sigint_sent_while_the_lock_is_held_removes_it_and_ends_the_process_by_the_signal() {
-    let project = large_project();
+    let project = large_project(DOCUMENT_COUNT);
     let lock = lock_path(project.path());
     let running = Spawn::args(["new", "WF", "Interrupted", "--set", "kind=task", "--json"])
         .cwd(project.path())
@@ -117,7 +57,7 @@ fn sigint_sent_while_the_lock_is_held_removes_it_and_ends_the_process_by_the_sig
 
 #[test]
 fn sigterm_sent_while_the_lock_is_held_removes_it_and_ends_the_process_by_the_signal() {
-    let project = large_project();
+    let project = large_project(DOCUMENT_COUNT);
     let lock = lock_path(project.path());
     let running = Spawn::args(["new", "WF", "Interrupted", "--set", "kind=task", "--json"])
         .cwd(project.path())
@@ -144,7 +84,7 @@ fn sigterm_sent_while_the_lock_is_held_removes_it_and_ends_the_process_by_the_si
 
 #[test]
 fn a_second_signal_arriving_right_behind_the_first_does_not_cut_the_cleanup_short() {
-    let project = large_project();
+    let project = large_project(DOCUMENT_COUNT);
     let lock = lock_path(project.path());
     let running = Spawn::args(["new", "WF", "Interrupted", "--set", "kind=task", "--json"])
         .cwd(project.path())

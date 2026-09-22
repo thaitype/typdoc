@@ -712,6 +712,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "trybuild",
+ "typdoc-fs",
  "typdoc-testkit",
  "unicode-general-category",
  "yaml_serde",
