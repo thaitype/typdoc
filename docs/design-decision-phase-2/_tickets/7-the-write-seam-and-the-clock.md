@@ -51,9 +51,8 @@ like the domain. The answer is not to raise the seam but to put one function abo
 temp file then appears in two places, the seam and that function, and in none of the commands.
 
 **The operations.** Create a file that must not already exist; write bytes to an open handle;
-rename, replacing what is there; link a name to an existing file, failing if the name is taken;
-remove a file; create a directory and its parents; read a file's mode and set it; ask whether two
-paths are the same file; and flush a file to storage. Their exact signatures belong to the build.
+rename; remove a file; create a directory and its parents; read a file's mode and set it; ask
+whether a path exists and whether two paths are the same file; and flush a file to storage. Their exact signatures belong to the build.
 Two of them are on the list for reasons worth saying: `create_dir_all` because
 [decision 3](3-one-order-for-taking-locks.md) needs the lock's directory to exist before the
 first lock is taken, and the flush because
@@ -61,7 +60,7 @@ first lock is taken, and the flush because
 undecided — having it in the seam means that decision can be made either way later without the
 trait changing.
 
-### The rename that must not replace, which decision 15 left open
+### The gap decision 15 left open, and why it is left open
 
 [Decision 15](15-a-write-whose-destination-already-exists.md) refused a write whose destination
 exists, made the check under the lock, and had `new` create with `O_EXCL` so the file system
@@ -69,41 +68,42 @@ enforces it rather than a check that can go stale. It recorded one gap: `O_EXCL`
 `mv` or `--renumber`, which put a document in place with a rename, and a plain rename replaces
 silently.
 
-**The operation that fills the gap is a hard link, followed by removing the source.** `link` fails
-when the destination name is taken, and it is the only call in the standard library that creates a
-name atomically without replacing.
+**Decided: `mv` moves a document with a plain rename, after the check, under the lock. The gap
+stays open and is not worth closing.**
 
-Measured 2026-09-21 on this machine, with `std::fs`:
+There is a way to close it. `link` is the one call in the standard library that takes a name or
+fails rather than replacing — measured here, it returns `AlreadyExists` and leaves the file that
+is there untouched, where `rename` replaces with no error — so `link` followed by removing the
+source would move a document without ever replacing anything.
 
-```
-hard_link onto an existing path: Err kind=AlreadyExists raw=Some(17)
-b still holds: "must not be lost"
-hard_link onto a free path: OK, c = "temp"
-after removing the temp, c = "temp"
+What that buys is the reason not to do it. Under the lock, no other typdoc run can be in this
+namespace, and the check immediately precedes the rename. The only thing left in that window is a
+program that is not typdoc creating a file at exactly the destination path in the microseconds
+between the two calls. That event cannot be told: not who it happened to, not what they were
+doing.
 
-rename onto an existing path: the old contents are gone, with no error
-```
+What it costs is a state on disk that does not otherwise exist. Between the link and the removal
+the document has two names, and the tool has to have a rule for meeting that state on a re-run,
+a test for the rule, and a sentence in the design telling a user why their document briefly had
+two names. A protection against an event nobody can describe, paid for with a state that needs
+its own rule, is the wrong trade.
 
-So a move that must not replace is `hard_link(from, to)` then `remove_file(from)`, and a write
-that is replacing an existing document on purpose stays a plain `rename`. `std::fs::hard_link` is
-already on `typdoc-core`'s banned list and moves behind the seam with the rest.
+**Where `O_EXCL` stays, and why the line is there.** `new` keeps it. It is one call that either
+creates the file or does not, it adds no second name and no window, and it costs nothing. The
+line is not "how much protection" but "what the protection costs": a guarantee that comes free
+with a call already being made is taken, and one that has to be bought with a new state on disk
+has to name the event it prevents first.
 
-**Two limits, recorded rather than guarded against.** A hard link cannot cross a filesystem, which
-costs nothing here because the temp file is made in the destination's own directory. A filesystem
-with no hard links at all — some network mounts, FAT — fails the operation. That failure is a
-refusal with nothing written, which is the right way for it to fail, and it is not silently turned
-into a replacing rename.
+**What this leaves.** A document is moved with `rename`. A document whose content is being
+replaced — every file an `mv` rewrites a ref in, and every `set` — is written to a temp file in
+the same directory and renamed over the original, which is not a move but the way to replace a
+file's contents so that an interrupted run cannot leave half of one. That event can be told
+immediately, and [decision 4](4-what-an-interrupted-write-leaves-behind.md) is about it.
 
-**One consequence, which is not this ticket's to settle.** Between the link and the removal both
-names exist, and they are the same file. A re-run then meets a destination that is already there,
-which [decision 1](1-a-mv-that-fails-partway.md) wants to finish the work and
-[decision 15](15-a-write-whose-destination-already-exists.md) wants to refuse at exit 7. The two
-can be told apart, because a file and a link to it are the same file and the system says so —
-the same identity check that already runs before a lock is removed, and the one
-[decision 12](12-a-mv-that-changes-only-case.md) is about. The rule that follows is that a
-destination which is the same file as the source means the move already happened and the command
-finishes it, while a destination that is a different file is the exit 7 refusal. That rule amends
-both decisions and is raised there rather than decided here.
+**A rename cannot cross a filesystem**, measured: `errno 18, Invalid cross-device link`. The shell
+command of the same name falls back to copying and deleting; typdoc does not, and fails with the
+error instead. The event to tell would be a user with another device mounted inside their own
+project folder, moving a document across the mount point, and it cannot be told.
 
 ### What is banned outside the seam
 
@@ -192,6 +192,7 @@ test. That is unchanged from story 1, and no decision in story 2 rests on it.
 ### Written into `docs/design.md`
 
 Nothing. Every part of this decision is internal: which trait the program writes through, what the
-lint forbids, and what the tests use. The one user-visible consequence — what happens when a `mv`
-is re-run after it was stopped between the link and the removal — belongs to decisions 1 and 15
-and is raised there.
+lint forbids, and what the tests use. Nothing here changes what any command promises, and no
+decision already made is reopened: [decision 15](15-a-write-whose-destination-already-exists.md)'s
+refusal at exit 7 and [decision 1](1-a-mv-that-fails-partway.md)'s re-run that finishes the work
+both stand exactly as they were written.
