@@ -6,7 +6,7 @@ You need a recent Rust toolchain to install the tool, and nothing else.
 
 ```console
 $ git clone https://github.com/thaitype/typdoc
-$ cd typdoc && cargo install --path crates/typdoc --bin typdoc
+$ cd typdoc && cargo install --path crates/typdoc
 ```
 
 That puts `typdoc` in `~/.cargo/bin`, and this page calls it by that name throughout.

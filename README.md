@@ -37,7 +37,7 @@ install it from a clone:
 ```console
 $ git clone https://github.com/thaitype/typdoc
 $ cd typdoc
-$ cargo install --path crates/typdoc --bin typdoc
+$ cargo install --path crates/typdoc
 ```
 
 That puts `typdoc` in `~/.cargo/bin`, which is where the rest of this page and
