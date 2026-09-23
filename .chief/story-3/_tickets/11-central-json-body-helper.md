@@ -1,7 +1,7 @@
 # 11: The central helper for reading a typdoc document's JSON body
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None (can start immediately)
 
 Ticket 7 (M-9) fixed the scope: internal to `typdoc-core`, used by tests, not wired into
