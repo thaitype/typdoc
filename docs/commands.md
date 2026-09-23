@@ -1,6 +1,6 @@
 # Commands
 
-Eight commands: `get`, `list`, `refs`, `toc` and `validate` read a project; `new`, `set` and `mv` write one. `docs/design/design.md` is the source of truth; this page is the working reference.
+Eight commands: `get`, `list`, `refs`, `toc` and `validate` read a project; `new`, `set` and `mv` write one. [docs/design/design.md](design/design.md) is the source of truth; this page is the working reference.
 
 Every command takes `--namespace <list>` to choose which namespaces it reaches, and `--json`. Today `list` and `validate --audit` also print plain text, as do `new`'s coded form and `mv --renumber` (the bare key); every other command needs `--json` and exit 1 without it. A write command also takes `--lock-timeout <seconds>` (default 5), how long to wait for the namespace's lock before giving up at exit 4.
 
@@ -117,7 +117,7 @@ $ typdoc set WF-2 status=done --if status=done --json
 {"error":"`status=done` is false","code":3,"details":[{"path":"tickets/WF-2.md","namespace":"default","collection":"tickets","key":"WF-2","rule":"set.if","level":"error","message":"`status=done` is false"}]}
 ```
 
-A false `--if` writes nothing and exits 3; the condition and the write happen under one lock, so nothing can change the field between the check and the write. Writing a field the schema marks `auto` directly is refused; `auto: update` is stamped on its own when a value actually changes. A field the schema does not name is written anyway, as plain text, and reported afterward by `frontmatter.unknown` — `set` never refuses an unknown field. Only the fields named change: every other value, and everything about the file that is not frontmatter, is carried across exactly (`docs/design/design.md`'s table of what a write's formatting may lose is the complete list of what is not promised).
+A false `--if` writes nothing and exits 3; the condition and the write happen under one lock, so nothing can change the field between the check and the write. Writing a field the schema marks `auto` directly is refused; `auto: update` is stamped on its own when a value actually changes. A field the schema does not name is written anyway, as plain text, and reported afterward by `frontmatter.unknown` — `set` never refuses an unknown field. Only the fields named change: every other value, and everything about the file that is not frontmatter, is carried across exactly ([docs/design/design.md](design/design.md)'s table of what a write's formatting may lose is the complete list of what is not promised).
 
 ## `typdoc mv <from> [to]` / `typdoc mv <from> --renumber <namespace>`
 

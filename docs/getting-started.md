@@ -148,7 +148,7 @@ $ typdoc set WF-1 title="The first ticket" --json
 {"document":{"path":"tickets/WF-1.md","namespace":"default","key":"WF-1","code":"WF","collection":"tickets","schema":"ticket","fields":{"title":"The first ticket","status":"done"}}}
 ```
 
-Only `title` changed; every other field, and everything about the file that is not frontmatter, reads back exactly as it did. `typdoc mv` moves or renames a document and rewrites every ref this project holds to it; a coded document such as these two keeps its key within its own namespace and needs `mv --renumber <namespace>` to leave it, which `projects.md` and `commands.md` cover. None of the three writes anything without the namespace's lock, and all three refuse rather than guess wherever the destination is ambiguous.
+Only `title` changed; every other field, and everything about the file that is not frontmatter, reads back exactly as it did. `typdoc mv` moves or renames a document and rewrites every ref this project holds to it; a coded document such as these two keeps its key within its own namespace and needs `mv --renumber <namespace>` to leave it, which [projects.md](projects.md) and [commands.md](commands.md) cover. None of the three writes anything without the namespace's lock, and all three refuse rather than guess wherever the destination is ambiguous.
 
 ## Follow the links
 
@@ -179,7 +179,7 @@ That is the question worth asking a folder of tickets: what is open and not wait
 
 The walkthrough above builds a project from nothing. Adopting typdoc on a folder that already exists is the other way round, and `--audit` is the mode for it: it answers "what would I have to fix to use this here", and it ends with 0 whatever it finds, so you can run it on a folder you have not decided about yet.
 
-Take a folder holding five Markdown files, three under `notes/`, a `README.md` and a scratch file under `drafts/`. Give it the smallest config, one collection and one schema, and ask:
+Take a folder holding five Markdown files, three under `notes/`, a [README.md](../README.md) and a scratch file under `drafts/`. Give it the smallest config, one collection and one schema, and ask:
 
 ```console
 $ typdoc validate --audit
@@ -198,6 +198,6 @@ From there, adopting is a loop: widen `match` until the files you meant to cover
 
 ## Where to go next
 
-- `projects.md` — namespaces, imports, match templates, and every field option a schema has.
-- `commands.md` — the eight commands, their options, and their exit codes.
-- `../examples/` — the project this page builds, ready to copy.
+- [projects.md](projects.md) — namespaces, imports, match templates, and every field option a schema has.
+- [commands.md](commands.md) — the eight commands, their options, and their exit codes.
+- [../examples/](../examples/) — the project this page builds, ready to copy.

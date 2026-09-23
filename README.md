@@ -9,7 +9,7 @@ $ typdoc list --where status=open --where 'ref.all(blocked_by).status=resolved'
 WF-2  Decide the numbering scheme  open  WF-1
 ```
 
-That asks a folder of tickets which of them are open and waiting on nothing unfinished. Every part of it is explained in `docs/getting-started.md`; nothing here is a language you have to learn before the tool is useful.
+That asks a folder of tickets which of them are open and waiting on nothing unfinished. Every part of it is explained in [docs/getting-started.md](docs/getting-started.md); nothing here is a language you have to learn before the tool is useful.
 
 ## Status
 
@@ -41,14 +41,14 @@ $ cargo install --path crates/typdoc
 ```
 
 That puts `typdoc` in `~/.cargo/bin`, which is where the rest of this page and
-`docs/getting-started.md` expect to find it.
+[docs/getting-started.md](docs/getting-started.md) expect to find it.
 
 To work on typdoc rather than with it, `cargo build` leaves the binary at `target/debug/typdoc`
-instead, and `docs/development.md` has the rest: the workspace, the tests and the lints.
+instead, and [docs/development.md](docs/development.md) has the rest: the workspace, the tests and the lints.
 
 ## Quick start
 
-`examples/` is a small project you can copy. Run the tool inside it:
+[examples/](examples/) is a small project you can copy. Run the tool inside it:
 
 ```console
 $ cd examples
@@ -69,8 +69,8 @@ $ typdoc set WF-2 status=claimed --json
 `set` writes the file; `git checkout examples/` in the clone undoes it. A write rewrites the whole
 frontmatter block rather than the line it changed: every value is carried across exactly as it was
 written, but comments, blank lines, quoting and inline lists such as `[WF-1]` are not kept.
-`docs/design/design.md` has the full list of what a write does not promise to preserve.
-`docs/getting-started.md` walks through building a project of your own from an empty folder.
+[docs/design/design.md](docs/design/design.md) has the full list of what a write does not promise to preserve.
+[docs/getting-started.md](docs/getting-started.md) walks through building a project of your own from an empty folder.
 
 ## What a project looks like
 
@@ -98,7 +98,7 @@ blocked_by: [WF-1]
 Ordinary Markdown, which typdoc reads for its headings and links and otherwise leaves alone.
 ```
 
-`docs/projects.md` explains collections, schemas, namespaces and imports.
+[docs/projects.md](docs/projects.md) explains collections, schemas, namespaces and imports.
 
 ## Concept and mental model
 
@@ -163,20 +163,31 @@ written.
 | `typdoc set <key\|path> <field=value>...` | Change fields, optionally only if a condition holds. |
 | `typdoc mv <from> [to\|--renumber <namespace>]` | Move or renumber a document, rewriting every ref this project holds to it. |
 
-Every command takes `--json`. `docs/commands.md` has the options, the exit codes and the shape of what each one prints.
+Every command takes `--json`. [docs/commands.md](docs/commands.md) has the options, the exit codes and the shape of what each one prints.
 
 ## Documentation
 
-- `docs/getting-started.md` — build a project from an empty folder.
-- `docs/projects.md` — config, collections, schemas, namespaces, imports.
-- `docs/commands.md` — the eight commands, their options and their output.
+- [docs/getting-started.md](docs/getting-started.md) — build a project from an empty folder.
+- [docs/projects.md](docs/projects.md) — config, collections, schemas, namespaces, imports.
+- [docs/commands.md](docs/commands.md) — the eight commands, their options and their output.
 
 The design is the source of truth for behaviour, and the documents below are written for whoever works on typdoc rather than for whoever uses it:
 
-- `docs/development.md` — the workspace, how to build, how to run the tests, and what the lints hold in place.
-- `docs/design/design.md` — what typdoc does and why, in full. Where this README and the docs above disagree with it, it wins.
-- `docs/design/design-decision-phase-1/` and `docs/design/design-decision-phase-2/` — the decisions behind the design, with the research they rest on.
+- [docs/development.md](docs/development.md) — the workspace, how to build, how to run the tests, and what the lints hold in place.
+- [docs/design/design.md](docs/design/design.md) — what typdoc does and why, in full. Where this README and the docs above disagree with it, it wins.
+- [docs/design/design-decision-phase-1/](docs/design/design-decision-phase-1/) and [docs/design/design-decision-phase-2/](docs/design/design-decision-phase-2/) — the decisions behind the design, with the research they rest on.
+
+## Contributing
+
+Issues and pull requests are welcome. [docs/development.md](docs/development.md) is what to read
+first: the four crates and why the split between them is load-bearing, how to build, how to run the
+tests, and what the per-crate lints hold in place.
+
+Two things about the tests are worth knowing before the first change. They run through
+`scripts/test.sh`, which puts them under a memory ceiling, and a run started any other way has no
+ceiling at all. And there is no CI here, so that run is the only thing between a change and the
+trunk.
 
 ## License
 
-MIT. See `LICENSE`.
+MIT. See [LICENSE](LICENSE).
