@@ -558,7 +558,7 @@ fn project_with_notes() -> Scratch {
 /// A move that rewrites at least one ref: the same fixture
 /// `renumber_rewrites_refs_held_by_other_documents_in_the_project` already proves the file
 /// content for, read here as the hand-written golden for `--renumber`'s text-mode shape
-/// (contract, text-output shapes, `mv --renumber`) — `rewritten: 2 refs in 1 documents` (the
+/// (contract, text-output shapes, `mv --renumber`) — `rewritten: 2 refs in 1 document` (the
 /// frontmatter `see` and the body link, both held by the one holder).
 #[test]
 fn a_renumber_that_rewrites_refs_prints_the_labeled_block_and_the_rewritten_count() {
@@ -580,7 +580,7 @@ fn a_renumber_that_rewrites_refs_prints_the_labeled_block_and_the_rewritten_coun
          namespace: story-3\n\
          key: WF-1\n\
          title: One\n\
-         rewritten: 2 refs in 1 documents\n\
+         rewritten: 2 refs in 1 document\n\
          unrewritten: none\n\
          findings: none\n"
     );

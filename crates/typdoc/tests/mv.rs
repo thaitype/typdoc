@@ -439,7 +439,7 @@ fn the_mode_of_a_rewritten_holder_is_carried_across_its_own_content_replacement(
 /// A move that rewrites at least one ref: the hand-written golden for `mv`'s text-mode shape
 /// (contract, text-output shapes, `mv` (plain)) — the destination's `get`-shaped block, then
 /// `rewritten:` (one ref in frontmatter's `see`, one in the body link, both in the same holder,
-/// so `1 documents`), `unrewritten: none`, `findings: none`.
+/// so `1 document`), `unrewritten: none`, `findings: none`.
 #[test]
 fn a_move_that_rewrites_refs_prints_the_labeled_block_and_the_rewritten_count() {
     let project = Scratch::project(&REF_NOTES);
@@ -460,7 +460,7 @@ fn a_move_that_rewrites_refs_prints_the_labeled_block_and_the_rewritten_count() 
          schema: note\n\
          namespace: default\n\
          title: A\n\
-         rewritten: 2 refs in 1 documents\n\
+         rewritten: 2 refs in 1 document\n\
          unrewritten: none\n\
          findings: none\n"
     );
@@ -502,6 +502,33 @@ fn mv_json_carries_the_full_rewritten_list_behind_the_text_count() {
     assert_eq!(out["document"]["path"], json!("renamed.md"));
     assert_eq!(out["unrewritten"], json!([]));
     assert_eq!(out["findings"], json!([]));
+}
+
+/// The fully-singular case both counts in `rewritten_summary` can independently hit: exactly one
+/// ref, held by exactly one document — `1 ref in 1 document`, not `1 refs in 1 documents`.
+/// Caught in review after the two-refs-in-one-document golden above (which exercises the plural
+/// `N refs` / singular `1 document` mix, but not `N == 1` on the ref count itself) shipped with
+/// this bug still in it.
+#[test]
+fn a_move_that_rewrites_exactly_one_ref_in_one_document_uses_the_singular_form() {
+    let project = Scratch::project(&REF_NOTES);
+    project.file("old.md", "---\ntitle: A\n---\n");
+    project.file("holder.md", "---\ntitle: B\nsee: old.md\n---\n");
+
+    let ran = mv_text(&project, "old.md", "renamed.md");
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(
+        ran.stdout,
+        "path: renamed.md\n\
+         collection: notes\n\
+         schema: note\n\
+         namespace: default\n\
+         title: A\n\
+         rewritten: 1 ref in 1 document\n\
+         unrewritten: none\n\
+         findings: none\n"
+    );
 }
 
 /// A move that leaves a ref unrewritten (`body.links` off): the text-mode golden shows

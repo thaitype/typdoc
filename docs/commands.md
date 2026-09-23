@@ -147,7 +147,7 @@ collection: notes
 schema: note
 namespace: default
 title: A
-rewritten: 2 refs in 1 documents
+rewritten: 2 refs in 1 document
 unrewritten: none
 findings: none
 ```

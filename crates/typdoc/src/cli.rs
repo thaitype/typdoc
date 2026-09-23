@@ -1033,12 +1033,29 @@ fn mv_text(report: &MvReport) -> String {
     out
 }
 
-/// `rewritten: N refs in M documents`: `N` is `rewritten.len()`, but `M` is the number of
+/// `rewritten: N ref(s) in M document(s)`: `N` is `rewritten.len()`, but `M` is the number of
 /// *distinct* holders among them, not the same count — a holder rewritten in two fields (or in
-/// one field and its body) still counts as one document.
+/// one field and its body) still counts as one document. Singular/plural on both counts
+/// independently, since `N` and `M` can differ (one holder, two rewritten refs: "2 refs in 1
+/// document").
 fn rewritten_summary(rewritten: &[RewrittenRef]) -> String {
     let documents: BTreeSet<&str> = rewritten.iter().map(|r| r.document.as_str()).collect();
-    format!("{} refs in {} documents", rewritten.len(), documents.len())
+    format!(
+        "{} in {}",
+        count_noun(rewritten.len(), "ref"),
+        count_noun(documents.len(), "document"),
+    )
+}
+
+/// `N noun` or `N nouns` — plural is the noun plus `s`, true of every noun this prints
+/// (`ref`/`refs`, `document`/`documents`); `1` is the only count that takes the singular form,
+/// including `0` ("0 documents", not "0 document").
+fn count_noun(n: usize, noun: &str) -> String {
+    if n == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{n} {noun}s")
+    }
 }
 
 /// `unrewritten:`'s own count, then one line per entry naming the project, document, field and

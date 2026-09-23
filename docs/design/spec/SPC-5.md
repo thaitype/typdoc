@@ -49,9 +49,11 @@ line  end  level  heading
 **Both forms of `mv` print the destination's `get`-shaped block, then three lines always
 present**, so a clean move reads as loud as a busy one:
 
-- `rewritten: N refs in M documents` — `N` is how many refs were rewritten, `M` is the number of
-  distinct documents that held them (a document rewritten in two fields, or in one field and its
-  body, counts once).
+- `rewritten: N ref(s) in M document(s)` — `N` is how many refs were rewritten, `M` is the number
+  of distinct documents that held them (a document rewritten in two fields, or in one field and
+  its body, counts once). Singular/plural on each count independently: `1 ref`/`N refs`,
+  `1 document`/`M documents` — including `0 refs in 0 documents` for a clean move, since a count
+  of zero still takes the plural form.
 - `unrewritten:` — `none`, or its own count followed by one line per entry: the holder's identity,
   the field it lives in (`$body` for a body link), and the written form `mv` left untouched.
 - `findings:` — `none`, or one line per finding in the destination's new schema, the same finding
@@ -85,7 +87,7 @@ collection: notes
 schema: note
 namespace: default
 title: A
-rewritten: 2 refs in 1 documents
+rewritten: 2 refs in 1 document
 unrewritten: none
 findings: none
 ```
