@@ -12,26 +12,57 @@ env:
   # RUNNER_TEMP is GitHub Actions' own equivalent: a directory every runner
   # guarantees exists, is backed by the runner's own disk, and is unique to
   # and cleaned up with the job — the same shape of fix as story 2's, without
-  # hard-coding any one machine's path into the workflow.
+  # hard-coding any one machine's path into the workflow. `runner.temp` is a
+  # core Actions context value, not an ubuntu-specific one: it resolves on
+  # macos-latest runners the same way (a per-job disk-backed temp directory
+  # under $RUNNER_TEMP), so no per-OS branching is needed here.
   TMPDIR: ${{ runner.temp }}
 
 jobs:
   test:
     name: scripts/test.sh
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       # rust-toolchain.toml at the repo root pins the toolchain (1.96.0) and
       # its rustfmt/clippy components. rustup, preinstalled on GitHub-hosted
-      # runners, reads that file and installs the matching toolchain (and
-      # components) on first use, so no separate toolchain-install action is
-      # needed here.
+      # runners (both ubuntu-latest and macos-latest), reads that file and
+      # installs the matching toolchain (and components) on first use, so no
+      # separate toolchain-install action is needed here.
       - run: rustc --version
+      # Proves the memory ceiling itself is enforced on this runner before
+      # trusting it for the real run below. On Linux this exercises the
+      # existing systemd-run --user --scope path (already known to work from
+      # this ticket's earlier, ubuntu-only build). On macOS this is the
+      # first real evidence, on real hardware, of whether `ulimit -v`
+      # actually stops a runaway (see scripts/test.sh's own header comment
+      # for why that was unverifiable from a Linux dev machine, and why it's
+      # a virtual-memory cap rather than the resident-memory cap Linux gets).
+      # A failure here means the cap doesn't work on this OS, not that the
+      # suite is broken — worth telling apart if this step is the one that
+      # goes red.
+      - run: scripts/test.sh --self-test
+      # The real gate. scripts/test.sh itself now prints how many tests
+      # passed and refuses to report success if that count is zero, so a
+      # step that silently ran nothing shows up as red here, not as a quiet
+      # skip. Compare this count between the ubuntu-latest and macos-latest
+      # runs in the Actions log: same suite, same source, so the counts
+      # should match unless there's a real, named platform difference (none
+      # is known as of this workflow — every test in this workspace is
+      # `#[cfg(unix)]` at most, never `#[cfg(target_os = "linux")]`).
       - run: scripts/test.sh
 
   fmt:
     name: cargo fmt --check
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - run: rustc --version
@@ -39,7 +70,11 @@ jobs:
 
   clippy:
     name: cargo clippy
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - run: rustc --version
