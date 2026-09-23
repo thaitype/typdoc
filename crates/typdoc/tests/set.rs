@@ -224,6 +224,62 @@ fn a_number_no_primitive_holds_on_an_untouched_field_is_written_back_and_printed
     );
 }
 
+/// The hand-written golden for `set`'s text-mode shape (contract, text-output shapes: the same
+/// labeled block `get` prints, for the document as it stands after the write). `valid/minimal`'s
+/// `note.md` writes `title` before `tags`, and `set` here only touches `title`, so the labeled
+/// block shows the changed title and the untouched `tags` in that same file order.
+#[test]
+fn set_without_json_prints_the_labeled_block_after_the_write() {
+    let project = Scratch::project(&NOTES);
+    project.file(
+        "note.md",
+        "---\ntitle: A minimal note\ntags: [alpha, beta]\n---\n\nBody.\n",
+    );
+
+    let ran = run(project.path(), &["set", "note.md", "title=A changed note"]);
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stderr, "");
+    assert_eq!(
+        ran.stdout,
+        "path: note.md\n\
+         collection: notes\n\
+         schema: note\n\
+         namespace: default\n\
+         title: A changed note\n\
+         tags: alpha,beta\n"
+    );
+}
+
+/// The already-fixed error path (contract decision 4, ticket 16's own "a validation failure on
+/// set" case): a validation failure prints plain text on stderr without `--json`, never the
+/// `--json` error object.
+#[test]
+fn set_without_json_prints_a_plain_text_error_on_a_validation_failure() {
+    let project = Scratch::project(&[
+        (".typdoc/collections/tickets.json", STATUS_COLLECTION),
+        ("ticket.json", STATUS_SCHEMA),
+        ("a.md", "---\ntitle: A ticket\nstatus: open\n---\n\nBody.\n"),
+    ]);
+    let before = std::fs::read(project.path().join("a.md")).unwrap();
+
+    let ran = run(project.path(), &["set", "a.md", "status=resolved"]);
+
+    assert_eq!(ran.code, 2, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
+    assert_eq!(ran.stdout, "");
+    assert!(
+        ran.stderr.starts_with("typdoc: ") && !ran.stderr.starts_with("typdoc: {"),
+        "{}",
+        ran.stderr
+    );
+
+    let after = std::fs::read(project.path().join("a.md")).unwrap();
+    assert_eq!(
+        before, after,
+        "a refused write must leave the file untouched"
+    );
+}
+
 /// `k=` removes a field entirely.
 #[test]
 fn k_with_nothing_after_the_equals_removes_the_field() {

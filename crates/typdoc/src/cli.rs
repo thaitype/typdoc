@@ -197,27 +197,15 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
             };
             let parsed = match parse_new_target(target_text, title.as_deref()) {
                 Ok(parsed) => parsed,
-                Err(e) => return failure(true, exit_code(e.kind()), &e),
+                Err(e) => return failure(json, exit_code(e.kind()), &e),
             };
-            // Unlike every other command, `--json` is not checked first: which text form (if
-            // any) is built depends on the parsed target (the bare-key form the design shows for
-            // a coded schema, design `typdoc new`: "stdout: WF-3"; nothing yet for a path), and
-            // parsing is pure, so deciding this after it costs nothing and does not risk a write
-            // whose report is then refused.
-            if !json && matches!(parsed, NewTarget::Path { .. }) {
-                return failure_text(
-                    false,
-                    1,
-                    "the output without --json is not built yet for a path-identified document",
-                );
-            }
             let sets = match set
                 .iter()
                 .map(|raw| parse_set_op(raw))
                 .collect::<Result<Vec<SetOp>, Error>>()
             {
                 Ok(sets) => sets,
-                Err(e) => return failure(true, exit_code(e.kind()), &e),
+                Err(e) => return failure(json, exit_code(e.kind()), &e),
             };
             match new_document(
                 deps,
@@ -229,29 +217,25 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 Ok(document) if json => {
                     success_raw(&raw_object(&[("document", document_json(&document))]))
                 }
-                Ok(document) => {
-                    // `parsed` was refused above unless it is `NewTarget::Coded`, which
-                    // `Project::new_document` always answers with a `key` (design, `typdoc new`:
-                    // "It prints the new key, and nothing else, on standard output").
-                    let key = document.key.as_deref().unwrap_or_default();
-                    Outcome {
-                        code: 0,
-                        stdout: format!("{key}\n"),
-                        stderr: String::new(),
-                    }
-                }
-                Err(e) => failure(true, exit_code(e.kind()), &e),
+                Ok(document) => Outcome {
+                    code: 0,
+                    stdout: document_text(&document),
+                    stderr: String::new(),
+                },
+                Err(e) => failure(json, exit_code(e.kind()), &e),
             }
         }
-        Command::Get { document, json } => {
-            if !json {
-                return failure_text(false, 1, "the output without --json is not built yet");
+        Command::Get { document, json } => match get(deps, &document, cli.namespace.as_deref()) {
+            Ok(document) if json => {
+                success_raw(&raw_object(&[("document", document_json(&document))]))
             }
-            match get(deps, &document, cli.namespace.as_deref()) {
-                Ok(document) => success_raw(&raw_object(&[("document", document_json(&document))])),
-                Err(e) => failure(true, exit_code(e.kind()), &e),
-            }
-        }
+            Ok(document) => Outcome {
+                code: 0,
+                stdout: document_text(&document),
+                stderr: String::new(),
+            },
+            Err(e) => failure(json, exit_code(e.kind()), &e),
+        },
         Command::Set {
             document,
             fields,
@@ -259,12 +243,9 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
             lock_timeout,
             json,
         } => {
-            if !json {
-                return failure_text(false, 1, "the output without --json is not built yet");
-            }
             if fields.is_empty() {
                 return failure_text(
-                    true,
+                    json,
                     1,
                     "set needs at least one `field=value` or `field=` argument",
                 );
@@ -275,11 +256,11 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 .collect::<Result<Vec<SetOp>, Error>>()
             {
                 Ok(sets) => sets,
-                Err(e) => return failure(true, exit_code(e.kind()), &e),
+                Err(e) => return failure(json, exit_code(e.kind()), &e),
             };
             let ifs = match parse_ifs(&if_) {
                 Ok(ifs) => ifs,
-                Err(e) => return failure(true, exit_code(e.kind()), &e),
+                Err(e) => return failure(json, exit_code(e.kind()), &e),
             };
             match set(
                 deps,
@@ -289,8 +270,15 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 Duration::from_secs(lock_timeout),
                 cli.namespace.as_deref(),
             ) {
-                Ok(document) => success_raw(&raw_object(&[("document", document_json(&document))])),
-                Err(e) => failure(true, exit_code(e.kind()), &e),
+                Ok(document) if json => {
+                    success_raw(&raw_object(&[("document", document_json(&document))]))
+                }
+                Ok(document) => Outcome {
+                    code: 0,
+                    stdout: document_text(&document),
+                    stderr: String::new(),
+                },
+                Err(e) => failure(json, exit_code(e.kind()), &e),
             }
         }
         Command::List {
@@ -888,6 +876,64 @@ fn render_cell(value: &Value) -> String {
         Value::Empty => String::new(),
         Value::List(items) => items.join(","),
         Value::Number(n) => n.converted(),
+        Value::Bool(b) => b.to_string(),
+    }
+}
+
+/// The labeled block `get`, `set`, and both forms of `new` print without `--json` (contract,
+/// text-output shapes): one `name: value` line per field — `path`, `collection`, `schema`,
+/// `namespace` (present only when the document has one, absent for a file outside every
+/// namespace folder), `key` (present only for a coded document), then the frontmatter fields in
+/// file order (`document.fields` is already "in the order of the file", `Document`'s own doc
+/// comment). `collection` and `schema` are left out when `collection` is empty, the same case
+/// `document_json` already carries its own reason for: a collection name is never empty except
+/// when `mv` has moved a document out of every collection (decision 16), and there is then no
+/// schema to report either.
+///
+/// This is the one function every ticket that prints this block calls (ticket 21's `mv` reuses
+/// it for the destination's `get`-shaped block), so a caller only ever writes this shape once.
+fn document_text(document: &Document) -> String {
+    let mut out = String::new();
+    push_line(&mut out, "path", &document.path);
+    if !document.collection.is_empty() {
+        push_line(&mut out, "collection", &document.collection);
+        push_line(&mut out, "schema", &document.schema);
+    }
+    if let Some(namespace) = &document.namespace {
+        push_line(&mut out, "namespace", namespace);
+    }
+    if let Some(key) = &document.key {
+        push_line(&mut out, "key", key);
+    }
+    for (name, value) in &document.fields {
+        push_line(&mut out, name, &field_text(value));
+    }
+    out
+}
+
+/// One `name: value` line, `name` never escaped or quoted: the field-names principle asks only
+/// that a value be labeled, not that the block be machine-parsed back (that reader uses `--json`
+/// instead).
+fn push_line(out: &mut String, name: &str, value: &str) {
+    out.push_str(name);
+    out.push_str(": ");
+    out.push_str(value);
+    out.push('\n');
+}
+
+/// A field's value for [`document_text`]'s labeled block: as written for text-shaped values,
+/// comma-joined for a list — the same as `render_cell`, which is `list`'s own table cell — except
+/// for a `number`, which prints the digits the document itself holds (`Number::written`) rather
+/// than the value they convert to. This is the write path's existing `[number-text]` rule
+/// (`value_json`, below, holds `--json` to the same rule already); reused here rather than
+/// reimplemented, so a text reader and a `--json` reader are never told two different digit
+/// strings for the same field.
+fn field_text(value: &Value) -> String {
+    match value {
+        Value::Text(text) | Value::Date(text) | Value::Datetime(text) => text.clone(),
+        Value::Empty => String::new(),
+        Value::List(items) => items.join(","),
+        Value::Number(n) => n.written().to_owned(),
         Value::Bool(b) => b.to_string(),
     }
 }

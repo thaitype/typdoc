@@ -545,23 +545,159 @@ fn a_path_matching_a_coded_collection_names_the_coded_form_instead() {
     );
 }
 
-// --- round trip: the key printed can be captured and fed back to `get` (done-when (d)) ---
+// --- text-mode output (ticket 16): the shared labeled block, and the error-path fix ---
 
+/// The hand-written golden for `new <path>`'s text-mode shape (contract, text-output shapes: the
+/// same labeled block `get` prints, for the newly created document). No `key` line, since a
+/// path-identified document has none; fields print in the order `--set` gave them, the order the
+/// write path wrote them in.
 #[test]
-fn the_key_new_prints_bare_can_be_captured_and_fed_back_to_get() {
+fn new_path_without_json_prints_the_labeled_block() {
+    let project = Scratch::project(&NOTES);
+
+    let ran = run(
+        project.path(),
+        &[
+            "new",
+            "a-new-note.md",
+            "--set",
+            "title=A new note",
+            "--set",
+            "tags=a,b",
+        ],
+    );
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stderr, "");
+    assert_eq!(
+        ran.stdout,
+        "path: a-new-note.md\n\
+         collection: notes\n\
+         schema: note\n\
+         namespace: default\n\
+         title: A new note\n\
+         tags: a,b\n"
+    );
+}
+
+/// The hand-written golden for `new <CODE>`'s text-mode shape — **the deliberate, accepted
+/// replacement (M-10(f)) of today's bare-key output**: the same labeled block, `key` included.
+/// `WF_SCHEMA`'s only field with a default (`status`) is written first (`new_block` fills
+/// defaults before `--set`), then `title` and `kind` in the order `new`'s own `--set` list (title
+/// first, always; `kind` from `--set kind=task`) adds them — the same field order the existing
+/// `--json` golden (`fixtures/output/new/coded/golden/stdout.json`) already pins for this exact
+/// case.
+#[test]
+fn new_coded_without_json_prints_the_labeled_block_not_the_bare_key() {
+    let project = wf_project(Some(1), &["tickets/WF-1.md"]);
+
+    let ran = run(
+        project.path(),
+        &["new", "WF", "Second ticket", "--set", "kind=task"],
+    );
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stderr, "");
+    assert_eq!(
+        ran.stdout,
+        "path: tickets/WF-2.md\n\
+         collection: tickets\n\
+         schema: ticket\n\
+         namespace: default\n\
+         key: WF-2\n\
+         status: open\n\
+         title: Second ticket\n\
+         kind: task\n"
+    );
+}
+
+/// The bug this ticket fixes, kept as the regression it was found as (testing-decisions, "Text
+/// output"): before this ticket, `typdoc new` with a target that is neither a code nor a path
+/// printed the raw `--json` error object on stderr even without `--json`, because
+/// `parse_new_target`'s error (`cli.rs`, around line 200) called `failure` with a hard-coded
+/// `true`. Now it prints plain text.
+#[test]
+fn a_bad_target_without_json_prints_a_plain_text_error_not_the_json_object() {
+    let project = Scratch::project(&NOTES);
+
+    let ran = run(project.path(), &["new", "not a code and not a path"]);
+
+    assert_eq!(ran.code, 1, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
+    assert_eq!(ran.stdout, "");
+    assert_eq!(
+        ran.stderr,
+        "typdoc: `not a code and not a path` is neither a schema's code (`[A-Z][A-Z0-9]*`) nor a \
+         path, which ends in `.md`\n"
+    );
+}
+
+/// The other pre-flag-check parse error in `new` (`cli.rs`, around line 220: a malformed `--set`
+/// argument) also prints plain text without `--json`, not the `--json` error object.
+#[test]
+fn a_malformed_set_argument_without_json_prints_a_plain_text_error() {
     let project = wf_project(Some(0), &[]);
 
     let ran = run(
         project.path(),
-        &["new", "WF", "Round trip", "--set", "kind=task"],
+        &["new", "WF", "A ticket", "--set", "no-equals-sign"],
     );
 
-    assert_eq!(ran.code, 0, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
-    assert_eq!(ran.stderr, "");
-    assert_eq!(ran.stdout, "WF-1\n", "the bare key and nothing else");
-    let key = ran.stdout.trim_end();
+    assert_eq!(ran.code, 1, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
+    assert_eq!(ran.stdout, "");
+    assert!(
+        ran.stderr.starts_with("typdoc: ") && !ran.stderr.starts_with("typdoc: {"),
+        "{}",
+        ran.stderr
+    );
+}
 
-    let got = run(project.path(), &["get", key, "--json"]);
+/// `new`'s own "duplicate-target refusal" (ticket 16's own example), without `--json`: exit 7,
+/// plain text on stderr, and the file that was already there untouched.
+#[test]
+fn a_duplicate_target_without_json_prints_a_plain_text_error() {
+    let project = Scratch::project(&NOTES);
+    project.file("a.md", "---\ntitle: Already here\n---\n");
+    let before = std::fs::read(project.path().join("a.md")).unwrap();
+
+    let ran = run(
+        project.path(),
+        &["new", "a.md", "--set", "title=Trying to overwrite"],
+    );
+
+    assert_eq!(ran.code, 7, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
+    assert_eq!(ran.stdout, "");
+    assert!(
+        ran.stderr.starts_with("typdoc: ") && !ran.stderr.starts_with("typdoc: {"),
+        "{}",
+        ran.stderr
+    );
+
+    let after = std::fs::read(project.path().join("a.md")).unwrap();
+    assert_eq!(before, after);
+}
+
+// --- round trip: the key can be read out of `--json` and fed back to `get` ---
+//
+// Before ticket 16, `new <CODE>` without `--json` printed the bare key and nothing else, and
+// this round trip captured that bare key straight off stdout. The contract's text-output table
+// (M-10(f)) deliberately replaces that with the same labeled block `get` prints — "a caller that
+// wants just the key uses `--json`" — so the round trip below reads `--json`'s own `key` field
+// instead. `new_coded_without_json_prints_the_labeled_block_not_the_bare_key`, above, is what
+// pins the replacement itself.
+
+#[test]
+fn the_key_from_json_can_be_captured_and_fed_back_to_get() {
+    let project = wf_project(Some(0), &[]);
+
+    let ran = run(
+        project.path(),
+        &["new", "WF", "Round trip", "--set", "kind=task", "--json"],
+    );
+
+    let out = ok_json(&ran);
+    let key = out["document"]["key"].as_str().expect("a key").to_owned();
+
+    let got = run(project.path(), &["get", &key, "--json"]);
     let out = ok_json(&got);
     assert_eq!(out["document"]["key"], json!(key));
     assert_eq!(out["document"]["fields"]["title"], json!("Round trip"));
