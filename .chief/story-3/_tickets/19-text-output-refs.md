@@ -1,7 +1,7 @@
 # 19: Text output for `refs`
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None (can start immediately)
 
 `design.md` already gives the shape (§`typdoc refs`); this ticket implements it. No design
