@@ -1,7 +1,7 @@
 # 14: Pin the toolchain and wire up CI
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None (can start immediately)
 
 Ticket 4's answer, built: three gates, not four.
