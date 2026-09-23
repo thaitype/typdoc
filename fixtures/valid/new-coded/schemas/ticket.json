@@ -1,0 +1,9 @@
+{
+  "name": "ticket",
+  "code": "WF",
+  "fields": {
+    "title": { "type": "string", "required": true },
+    "status": { "type": "enum", "values": ["open", "claimed", "resolved", "closed"], "default": "open" },
+    "kind": { "type": "enum", "values": ["research", "task"], "required": true }
+  }
+}

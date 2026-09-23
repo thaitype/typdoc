@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 
 use typdoc_core::{
-    Condition, Dir, Document, Field, FieldRef, FieldType, Item, Op, PlainCondition, Quant,
+    Condition, Dir, Document, Field, FieldRef, FieldType, Item, Number, Op, PlainCondition, Quant,
     QueryError, RefField, Resolved, Value, evaluate, parse_query as parse,
 };
 
@@ -54,7 +54,7 @@ fn schema(fields: &[(&str, Field)]) -> Resolved {
 }
 
 fn number(n: i64) -> Value {
-    Value::Number(serde_json::Number::from(n))
+    Value::Number(Number::read(&n.to_string()).expect("a JSON number"))
 }
 
 /// A document with no code and no key, in a namespace of one, holding `fields`. Individual

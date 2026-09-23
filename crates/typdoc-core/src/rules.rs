@@ -12,6 +12,9 @@ pub const ALWAYS_ON: &[&str] = &[
     "keys.unique",
     "collections.overlap",
     "state.missing",
+    "state.malformed",
+    "state.behind",
+    "state.retired",
     "files.unreadable",
 ];
 
@@ -58,6 +61,10 @@ pub const RULES: &[&str] = &[
     "collections.overlap",
     "filename.pattern",
     "state.missing",
+    "state.malformed",
+    "state.behind",
+    "state.retired",
+    "frontmatter.transitions",
     "refs.resolve",
     "refs.target",
     "refs.acyclic",
@@ -74,6 +81,4 @@ pub const RULES: &[&str] = &[
 /// Ids the design names and the binary does not report yet. Each is a difference between
 /// the design and the binary, with the story expected to deliver it as a comment. The list only shrinks: an id leaves it
 /// when it enters `RULES`, and it is empty when v1 is finished.
-pub const UNIMPLEMENTED_RULES: &[&str] = &[
-    "frontmatter.transitions", // story 2
-];
+pub const UNIMPLEMENTED_RULES: &[&str] = &[];

@@ -4,18 +4,43 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 clap = { version = "4.6.7", features = ["derive"] }
-serde_json = { version = "1.0.151", features = ["preserve_order"] }
+# `raw_value` is how `--json` prints a `number` with the digits written in the document: a
+# `serde_json::Number` holds a `u64`, an `i64` or an `f64` and nothing else, so `1e3` cannot
+# survive one, and a document is assembled as JSON text instead. `preserve_order` keeps the
+# fields of a document in the order of the file.
+serde_json = { version = "1.0.151", features = ["preserve_order", "raw_value"] }
+# Catches SIGINT and SIGTERM, moves the cleanup they need off the handler onto an ordinary
+# thread, and re-raises so the process ends by the signal rather than with an exit code of its
+# own, all in one dependency (decisions 5 and 6).
+signal-hook = "0.4.4"
 typdoc-core = { version = "0.1.0", path = "../typdoc-core" }
+typdoc-fs = { version = "0.1.0", path = "../typdoc-fs" }
 
 [dev-dependencies]
+# `kill(2)`, for the CLI spawn helper's own `RunningChild::signal`: sending a real `SIGINT` or
+# `SIGTERM` to a spawned child is past what `std::process::Child` reaches (it has `kill`, which
+# is `SIGKILL` alone), and this is already an indirect dependency through `signal-hook`.
+libc = "0.2.189"
 tempfile = "3.27.0"
 typdoc-testkit = { path = "../typdoc-testkit" }
+
+# Off by default so that `cargo install` does not put the stand-in below on a caller's `PATH`.
+# `cargo install` builds every binary a package declares unless it is told otherwise, and a
+# `required-features` that nothing turns on by default is the only way a package can decline
+# to offer one for installation.
+[features]
+test-stand-in = []
 
 # A stand-in for `typdoc` that the shell examples harness places on `PATH`, so its tests can
 # find it through `env!("CARGO_BIN_EXE_typdoc_stand_in")`: only guaranteed for a binary of
 # the same package as the test that looks it up. It lives beside the tests that use it and
 # not under `src/`, since it ships no behavior of the CLI itself.
+#
+# `scripts/test.sh` turns `test-stand-in` on. A `cargo test` run by hand without it leaves
+# this binary unbuilt, and the four tests that reach for it fail on a path that is not there.
 [[bin]]
 name = "typdoc_stand_in"
 path = "tests/support/typdoc_stand_in.rs"
+required-features = ["test-stand-in"]

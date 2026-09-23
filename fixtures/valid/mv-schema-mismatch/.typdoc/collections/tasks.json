@@ -1,0 +1,1 @@
+{ "match": "tasks/*.md", "schema": "task.json" }

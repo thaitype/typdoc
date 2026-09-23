@@ -18,23 +18,28 @@ fn fields_of(path: &str) -> Value {
     ran.stdout_json()["document"]["fields"].clone()
 }
 
+/// Written out as JSON text rather than with `json!`, so that `ratio` reads as the document
+/// writes it and as `--json` prints it, `1e3`. The comparison below is of parsed JSON, which
+/// turns both `1e3` and `1000.0` into one value, so the digits themselves are pinned against
+/// the bytes on standard output in `frontmatter_scalars.rs` rather than here.
+const TYPED_FIELDS: &str = r#"{
+    "title": "Typed",
+    "count": 3,
+    "ratio": 1e3,
+    "done": true,
+    "due": "2026-09-19",
+    "at": "2026-09-19T14:30:00+07:00",
+    "kind": "b",
+    "tags": ["x", "y"],
+    "parent": "WF-1",
+    "blockers": ["WF-1", "WF-2"]
+}"#;
+
 #[test]
 fn each_field_type_gives_its_value_the_type_the_schema_names() {
-    assert_eq!(
-        fields_of("records/typed.md"),
-        json!({
-            "title": "Typed",
-            "count": 3,
-            "ratio": 1000.0,
-            "done": true,
-            "due": "2026-09-19",
-            "at": "2026-09-19T14:30:00+07:00",
-            "kind": "b",
-            "tags": ["x", "y"],
-            "parent": "WF-1",
-            "blockers": ["WF-1", "WF-2"]
-        })
-    );
+    let expected: Value = serde_json::from_str(TYPED_FIELDS).expect("the fields, by hand");
+
+    assert_eq!(fields_of("records/typed.md"), expected);
 }
 
 #[test]
@@ -95,10 +100,49 @@ fn a_field_the_schema_does_not_name_keeps_the_text_as_written() {
             "extra": "1e3",
             "flag": "true",
             "year": "2026",
-            "empty": "",
+            // Written with no value at all, unlike an empty string: `null`, not `""`
+            // (`docs/design.md`, "Document files"; decision 21).
+            "empty": null,
             "nothing": "~",
             "items": ["1", "2.50"]
         })
+    );
+}
+
+/// `records/unknown.md` (fixture `valid/field-types`) holds a field written with no value at
+/// all (`empty:`), not in the schema. It validates as every field the schema does not name
+/// does, unmoved by the form it was written in: `frontmatter.unknown` at `warn`, naming the
+/// field, and nothing else — a required field written with no value being present rather than
+/// missing, and a `number` written with no value failing its type, are shown against a
+/// synthetic project in `frontmatter_scalars.rs`, where a schema can be built to ask for both.
+#[test]
+fn a_bare_field_in_the_fixtures_validates_as_it_did() {
+    let ran = Spawn::args(["validate", "--json"])
+        .cwd(fixture("valid/field-types"))
+        .run();
+
+    let findings = ran.stdout_json()["findings"].clone();
+    let findings: Vec<Value> = findings
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|finding| {
+            finding["path"] == json!("records/unknown.md") && finding["field"] == json!("empty")
+        })
+        .cloned()
+        .collect();
+
+    assert_eq!(
+        findings,
+        vec![json!({
+            "path": "records/unknown.md",
+            "namespace": "default",
+            "collection": "records",
+            "field": "empty",
+            "rule": "frontmatter.unknown",
+            "level": "warn",
+            "message": "the field `empty` is not a field of the schema"
+        })]
     );
 }
 

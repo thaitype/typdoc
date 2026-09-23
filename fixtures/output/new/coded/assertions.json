@@ -1,0 +1,11 @@
+{
+  "/document/path": "tickets/WF-2.md",
+  "/document/namespace": "default",
+  "/document/key": "WF-2",
+  "/document/code": "WF",
+  "/document/collection": "tickets",
+  "/document/schema": "ticket",
+  "/document/fields/title": "Second ticket",
+  "/document/fields/status": "open",
+  "/document/fields/kind": "task"
+}

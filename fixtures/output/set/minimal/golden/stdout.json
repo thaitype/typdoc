@@ -1,0 +1,16 @@
+{
+  "document": {
+    "path": "note.md",
+    "namespace": "default",
+    "code": null,
+    "collection": "notes",
+    "schema": "note",
+    "fields": {
+      "title": "A changed note",
+      "tags": [
+        "alpha",
+        "beta"
+      ]
+    }
+  }
+}

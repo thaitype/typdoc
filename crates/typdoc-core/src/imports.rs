@@ -196,6 +196,10 @@ mod tests {
         fn current_dir(&self) -> io::Result<PathBuf> {
             Ok(PathBuf::from("."))
         }
+
+        fn hostname(&self) -> String {
+            "fake-host".to_owned()
+        }
     }
 
     fn env(vars: &[(&'static str, &str)]) -> FakeEnv {

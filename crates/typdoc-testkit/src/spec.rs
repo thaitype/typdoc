@@ -5,6 +5,9 @@
 //! setting a variable on purpose, such as `config.config-dir`'s `TYPDOC_CONFIG_DIR`, is the
 //! exception `env` exists for). The set of rules is written by hand from the design and never
 //! taken from a run of the tool.
+//!
+//! Also whether the declared command is one that writes (`is_write`); where such a fixture then
+//! runs is `crate::staging`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -46,6 +49,26 @@ impl FixtureSpec {
             std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
         FixtureSpec::parse(rule, &text).map_err(|e| format!("{}: {e}", file.display()))
     }
+
+    /// Whether the declared command changes a project's files. The first word of `command`
+    /// names the command; a write is one of the three story 2 builds.
+    pub fn is_write(&self) -> bool {
+        is_write_command(&self.command)
+    }
+}
+
+/// The commands whose run changes a project's files. Every other command reads. Kept here
+/// rather than derived from the registry: `golden::Case`'s own `command` (`crates/typdoc-testkit/
+/// src/golden.rs`) is a plain `Vec<String>` with no `FixtureSpec` of its own, and shares this
+/// check through here rather than each keeping a second copy of the list.
+const WRITE_COMMANDS: &[&str] = &["new", "set", "mv"];
+
+/// Whether `command`'s first word (the command name) is one that writes, the same reading
+/// [`FixtureSpec::is_write`] gives its own `command`.
+pub fn is_write_command(command: &[String]) -> bool {
+    command
+        .first()
+        .is_some_and(|first| WRITE_COMMANDS.contains(&first.as_str()))
 }
 
 #[cfg(test)]
@@ -98,5 +121,31 @@ mod tests {
         let error = FixtureSpec::load(dir.path(), "a.b").unwrap_err();
 
         assert!(error.contains("fixture.json"), "{error}");
+    }
+
+    #[test]
+    fn a_spec_whose_command_starts_with_new_set_or_mv_is_a_write() {
+        for command in ["new", "set", "mv"] {
+            let spec = FixtureSpec::parse(
+                "a.b",
+                &format!(r#"{{ "command": ["{command}", "x"], "trips": ["a.b"] }}"#),
+            )
+            .unwrap();
+
+            assert!(spec.is_write(), "{command} is a write");
+        }
+    }
+
+    #[test]
+    fn a_spec_whose_command_starts_with_a_read_command_is_not_a_write() {
+        for command in ["get", "list", "refs", "toc", "validate"] {
+            let spec = FixtureSpec::parse(
+                "a.b",
+                &format!(r#"{{ "command": ["{command}"], "trips": ["a.b"] }}"#),
+            )
+            .unwrap();
+
+            assert!(!spec.is_write(), "{command} is not a write");
+        }
     }
 }

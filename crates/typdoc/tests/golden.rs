@@ -9,8 +9,18 @@ use serde_json::{Value, json};
 use typdoc_testkit::fixtures;
 use typdoc_testkit::golden::{self, Case, REGENERATE_VAR};
 
+/// Stages the case's project the same way a write fixture is staged elsewhere
+/// (`typdoc_testkit::staging`): unchanged for a read, copied to a fresh temporary folder for a
+/// write, so a golden of `new`, `set` or `mv` never runs against the repository's own committed
+/// fixture tree.
 fn run(case: &Case) -> Ran {
-    Spawn::args(&case.command).cwd(fixture(&case.project)).run()
+    let staged = typdoc_testkit::staging::stage_command(&fixture(&case.project), &case.command)
+        .unwrap_or_else(|e| panic!("{}: {e}", case.id));
+    let mut spawn = Spawn::args(&case.command).cwd(staged.dir());
+    for (name, value) in &case.env {
+        spawn = spawn.var(name, value);
+    }
+    spawn.run()
 }
 
 /// The output of the case's run as JSON, when the run ended with 0 and printed nothing on

@@ -46,6 +46,14 @@ pub(crate) const SYMBOLIC_LINK: &str = "a symbolic link is not read: a run does 
 pub(crate) const NAME_NOT_UTF8: &str = "the name is not valid UTF-8, so no path can name it; it is written here \
                         with a replacement character for each byte that cannot be read";
 
+/// Why a walk skips a file of the reserved temp-file shape: it is a leftover of a write that
+/// did not finish (decision: "a file whose name has that shape is never a document, whatever
+/// any `match` says"), so it is never taken as one, whatever glob reaches it. Reported at
+/// `warn` rather than at the `error` `files.unreadable` carries, and so a rule of its own: one
+/// rule has one level.
+pub(crate) const LEFTOVER_TEMP_FILE: &str = "this is a leftover of a write that did not finish, in the reserved shape typdoc's own temp \
+     files use; it is never a document, whatever the collection's match says";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
     Off,
@@ -68,6 +76,15 @@ pub type Rules = BTreeMap<String, RuleSetting>;
 pub enum RefBase {
     File,
     Namespace,
+}
+
+/// `lock` in `config.json` (design, Model: "`local` (default) or `git-common`. See
+/// Concurrency."): which lock table a write command reads a namespace's lock path from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LockMode {
+    #[default]
+    Local,
+    GitCommon,
 }
 
 #[derive(Debug)]
@@ -99,6 +116,8 @@ pub struct Config {
     /// machine file merged in, `${NAME}` substituted, the project loaded) by `Project::load`,
     /// which is the one place that has `Env`.
     pub imports: BTreeMap<String, String>,
+    /// `lock`, absent meaning `Local` (design, Model: "`local` (default)").
+    pub lock: LockMode,
 }
 
 /// The config errors found so far.
@@ -165,13 +184,14 @@ impl Config {
         let mut validation = Rules::new();
         let mut entries = None;
         let mut imports = BTreeMap::new();
+        let mut lock = LockMode::default();
         for (key, value) in &top {
             match key.as_str() {
                 "version" => {}
                 "namespaces" => entries = Some(namespace_entries(value, report)),
                 "validation" => validation = global_rules(value, report)?,
                 "imports" => imports = parse_imports(value, report)?,
-                "lock" => check_lock(value, report)?,
+                "lock" => lock = check_lock(value, report)?,
                 other => report.add(
                     "config.unknown-key",
                     CONFIG_FILE,
@@ -190,6 +210,7 @@ impl Config {
             validation,
             collections,
             imports,
+            lock,
         })
     }
 }
@@ -291,12 +312,15 @@ fn global_rules(value: &Value, report: &mut Report) -> Result<Rules, Error> {
     Ok(global)
 }
 
-fn check_lock(value: &Value, report: &mut Report) -> Result<(), Error> {
-    if matches!(value.as_str(), Some("local" | "git-common")) {
-        return Ok(());
+fn check_lock(value: &Value, report: &mut Report) -> Result<LockMode, Error> {
+    match value.as_str() {
+        Some("local") => Ok(LockMode::Local),
+        Some("git-common") => Ok(LockMode::GitCommon),
+        _ => {
+            let message = format!("`lock` is {value}: it is `local` or `git-common`");
+            Err(report.stop("config.parse", CONFIG_FILE, message))
+        }
     }
-    let message = format!("`lock` is {value}: it is `local` or `git-common`");
-    Err(report.stop("config.parse", CONFIG_FILE, message))
 }
 
 /// The rule settings of a `validation` object. A setting that names an unknown rule or option
@@ -498,4 +522,28 @@ fn read_collection(
         file,
         path: path.to_owned(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lock_reads_local_and_git_common_and_refuses_anything_else() {
+        let mut report = Report::default();
+        assert_eq!(
+            check_lock(&Value::String("local".to_owned()), &mut report).unwrap(),
+            LockMode::Local
+        );
+        assert_eq!(
+            check_lock(&Value::String("git-common".to_owned()), &mut report).unwrap(),
+            LockMode::GitCommon
+        );
+        assert!(check_lock(&Value::String("other".to_owned()), &mut report).is_err());
+    }
+
+    #[test]
+    fn lock_mode_defaults_to_local() {
+        assert_eq!(LockMode::default(), LockMode::Local);
+    }
 }

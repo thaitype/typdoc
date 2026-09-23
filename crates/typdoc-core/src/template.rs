@@ -97,6 +97,23 @@ impl Segment {
             _ => None,
         }
     }
+
+    /// This segment rendered as a literal name, with `key` standing in for `{key}`: the inverse
+    /// of `capture_key`, for `typdoc new` to name the file it allocated a key for. `None` for a
+    /// segment holding `*` or an unbound `{key}`, neither of which a coded, bound template ever
+    /// has (`Template::bind` refuses a wildcard once a code is given, and binds every `{key}` to
+    /// it).
+    fn render(&self, key: &str) -> Option<String> {
+        let mut out = String::new();
+        for part in &self.parts {
+            match part {
+                Part::Literal(text) => out.push_str(text),
+                Part::Star | Part::Key(None) => return None,
+                Part::Key(Some(_)) => out.push_str(key),
+            }
+        }
+        Some(out)
+    }
 }
 
 fn push_literal(parts: &mut Vec<Part>, literal: &mut String) {
@@ -272,6 +289,63 @@ impl Template {
                 Step::Name(segment) => segment.capture_key(name),
                 Step::Folders => None,
             })
+    }
+
+    /// Whether `below`, a path counted from the namespace folder, fits this template as a whole
+    /// — every step matched, in order, with nothing left over on either side. Reads the template
+    /// the same way [`crate::index::Index::build`]'s own walk does (a name before the last step
+    /// is asked with [`Segment::matches_folder`], the last with [`Segment::matches`], and `**`
+    /// consumes any number of components, none included), but against a path already in hand
+    /// rather than by reading a directory: `mv`'s destination may not exist on disk yet, so there
+    /// is nothing there for a walk to find.
+    pub(crate) fn matches_path(&self, below: &str) -> bool {
+        let components: Vec<&str> = if below.is_empty() {
+            Vec::new()
+        } else {
+            below.split('/').collect()
+        };
+        fits_steps(&self.steps, &components)
+    }
+
+    /// The path this template names for `key`, counted from the namespace folder: every step
+    /// rendered as a literal name, `{key}` replaced by `key` wherever it occurs, joined by `/`
+    /// (the inverse of [`Template::key`], for `typdoc new` to name the file a coded schema's
+    /// allocated key belongs at). `None` for a template holding `**`, `*` or an unbound `{key}`,
+    /// none of which a coded, bound template ever has.
+    pub fn render(&self, key: &str) -> Option<String> {
+        let mut parts = Vec::with_capacity(self.steps.len());
+        for step in &self.steps {
+            match step {
+                Step::Folders => return None,
+                Step::Name(segment) => parts.push(segment.render(key)?),
+            }
+        }
+        Some(parts.join("/"))
+    }
+}
+
+/// The recursive half of [`Template::matches_path`], split out so `**` can backtrack over how
+/// many components it consumes, the same shape [`fits_capture`] already uses for `*` within one
+/// segment.
+fn fits_steps(steps: &[Step], components: &[&str]) -> bool {
+    let Some((step, rest_steps)) = steps.split_first() else {
+        return components.is_empty();
+    };
+    match step {
+        Step::Folders => {
+            (0..=components.len()).any(|taken| fits_steps(rest_steps, &components[taken..]))
+        }
+        Step::Name(segment) => match components.split_first() {
+            None => false,
+            Some((first, rest_components)) => {
+                let fits = if rest_steps.is_empty() {
+                    segment.matches(first)
+                } else {
+                    segment.matches_folder(first)
+                };
+                fits && fits_steps(rest_steps, rest_components)
+            }
+        },
     }
 }
 
@@ -490,6 +564,37 @@ mod tests {
     }
 
     #[test]
+    fn render_names_the_file_a_key_belongs_at_and_is_the_inverse_of_key() {
+        for (text, key) in [
+            ("tickets/{key}.md", "WF-3"),
+            ("{key}.md", "WF-30"),
+            ("{key}/index.md", "WF-3"),
+        ] {
+            let template = coded(text);
+            let rendered = template.render(key).unwrap();
+
+            assert_eq!(template.key(&rendered).as_deref(), Some(key), "{text}");
+        }
+
+        assert_eq!(
+            coded("tickets/{key}.md").render("WF-3"),
+            Some("tickets/WF-3.md".to_owned())
+        );
+    }
+
+    #[test]
+    fn render_is_none_for_a_wildcard_or_a_folders_step() {
+        let uncoded = Template::parse("notes/*.md")
+            .unwrap()
+            .bind("notes/*.md", None)
+            .unwrap();
+        assert_eq!(uncoded.render("anything"), None);
+
+        let with_folders = Template::parse("**/{key}.md").unwrap();
+        assert_eq!(with_folders.render("WF-3"), None);
+    }
+
+    #[test]
     fn the_literal_folder_is_every_step_before_the_last_as_plain_text() {
         assert_eq!(
             coded("tickets/{key}.md").literal_folder(),
@@ -532,5 +637,38 @@ mod tests {
             .unwrap();
 
         assert_eq!(uncoded.key("notes/a.md"), None);
+    }
+
+    fn uncoded(text: &str) -> Template {
+        Template::parse(text).unwrap().bind(text, None).unwrap()
+    }
+
+    #[test]
+    fn matches_path_fits_a_plain_glob_and_refuses_a_different_folder_or_extension() {
+        let t = uncoded("notes/*.md");
+
+        assert!(t.matches_path("notes/a.md"));
+        assert!(!t.matches_path("other/a.md"), "wrong folder");
+        assert!(!t.matches_path("notes/a.txt"), "wrong extension");
+        assert!(!t.matches_path("a.md"), "missing the literal folder");
+        assert!(!t.matches_path("notes/sub/a.md"), "one step too many");
+    }
+
+    #[test]
+    fn matches_path_lets_double_star_consume_any_number_of_folders_including_none() {
+        let t = uncoded("**/*.md");
+
+        assert!(t.matches_path("a.md"), "zero folders");
+        assert!(t.matches_path("x/a.md"), "one folder");
+        assert!(t.matches_path("x/y/a.md"), "several folders");
+    }
+
+    #[test]
+    fn matches_path_of_a_coded_template_fits_only_its_own_key() {
+        let t = coded("tickets/{key}.md");
+
+        assert!(t.matches_path("tickets/WF-3.md"));
+        assert!(!t.matches_path("tickets/WF-3.txt"));
+        assert!(!t.matches_path("tickets/other/WF-3.md"));
     }
 }

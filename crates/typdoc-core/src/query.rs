@@ -722,18 +722,22 @@ fn glob_matches(segments: &[String], text: &str) -> bool {
 fn value_is_empty(value: &Value) -> bool {
     match value {
         Value::Text(text) => text.is_empty(),
+        // A field written with no value reads as text with none in it here as everywhere else.
+        Value::Empty => true,
         Value::List(items) => items.is_empty(),
         Value::Number(_) | Value::Bool(_) | Value::Date(_) | Value::Datetime(_) => false,
     }
 }
 
 /// `value` rendered the way it was written, for a glob or a bare `*` to match against: `Date`
-/// and `Datetime` already hold their original text, `Number` and `Bool` render canonically
-/// (which, for a number written in scientific notation, may not equal what was written).
+/// and `Datetime` already hold their original text, and `Number` and `Bool` render the value
+/// they convert to (which, for a number written in scientific notation, may not equal what was
+/// written, and which two numbers past what a primitive holds can share).
 fn value_as_text(value: &Value) -> Option<String> {
     match value {
         Value::Text(text) | Value::Date(text) | Value::Datetime(text) => Some(text.clone()),
-        Value::Number(n) => Some(n.to_string()),
+        Value::Empty => Some(String::new()),
+        Value::Number(n) => Some(n.converted()),
         Value::Bool(b) => Some(b.to_string()),
         Value::List(_) => None,
     }
@@ -788,7 +792,7 @@ fn ordering_matches(
                 clippy::unreachable,
                 reason = "`coerce` with `FieldType::Number` and a `Value::Text` takes its \
                           `(FieldType::Number, Value::Text(text))` arm, which returns \
-                          `text.parse().ok().map(Value::Number)`, so the `Some` it gave is a \
+                          `Number::read(text).map(Value::Number)`, so the `Some` it gave is a \
                           `Value::Number`"
             )]
             let Value::Number(want) = want else {

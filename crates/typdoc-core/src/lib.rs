@@ -15,17 +15,21 @@
 
 mod argument;
 mod body;
+mod clock;
 mod coerce;
 mod config;
 mod document;
 mod env;
 mod error;
 mod frontmatter;
+mod fs;
 mod imports;
 mod index;
 mod lines;
 mod links;
 mod lock;
+mod mv;
+mod namespace_lock;
 mod namespaces;
 mod project;
 mod query;
@@ -40,18 +44,31 @@ mod validate;
 
 pub use argument::{Argument, DocumentArg, discover_for, resolve_on_disk};
 pub use body::{Heading, headings};
+pub use clock::{Clock, at_one_second};
 pub use coerce::{coerce, fits};
-pub use config::{Collection, Config, Level, Namespace, RefBase, RuleSetting, Rules};
-pub use document::{Document, Value};
+pub use config::{Collection, Config, Level, LockMode, Namespace, RefBase, RuleSetting, Rules};
+pub use document::{Document, Number, Value};
 pub use env::{Deps, Env};
 pub use error::{ConfigError, Error, ErrorKind};
+pub use frontmatter::{FrontmatterWriter, YamlSerdeWriter};
+pub use fs::{
+    FileId, Fs, Mode, TEMP_PREFIX, WriteHandle, create_exclusively, find_leftovers, is_temp_name,
+    prepare_replacement, remove_leftovers, write_atomically,
+};
 pub use lines::{LineMap, Position};
 pub use links::{
     BodyLink, BodyLinks, Definition, DuplicateDefinition, Mention, Suspect, mentions, scan,
 };
+pub use mv::{ContentChange, MvReport, UnrewrittenReason, UnrewrittenRef, commit};
+pub use namespace_lock::{
+    NamespaceLock, Released, acquire, git_common_namespace_lock_path, git_common_project_lock_path,
+    local_namespace_lock_path, local_project_lock_path, order_locks, project_hash, project_hash_of,
+    release, release_all_for_signal,
+};
 pub use project::{
-    AuditCollection, AuditOverlap, AuditReport, ListFilter, ListResult, Project, RefName,
-    RefOutcome, RefsDirection, RefsReference, RefsReport, SortKey, Toc, ValidateReport, discover,
+    AuditCollection, AuditNotRead, AuditOverlap, AuditReport, ListFilter, ListResult, NewTarget,
+    Project, RefName, RefOutcome, RefsDirection, RefsReference, RefsReport, SetOp, SortKey, Toc,
+    ValidateReport, discover,
 };
 pub use query::{
     Condition, Dir, FieldRef, Item, Op, PlainCondition, Quant, QueryError, RefCondition, RefField,
@@ -59,4 +76,5 @@ pub use query::{
 };
 pub use schema::{Auto, Field, FieldType, OptBool, Resolved, Schema, Target};
 pub use scope::{Scope, Source};
+pub use state::write as write_state;
 pub use validate::{Finding, Severity, ValidateScope};

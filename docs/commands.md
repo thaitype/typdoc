@@ -1,8 +1,8 @@
 # Commands
 
-Five commands, all of which read and none of which write. `design.md` is the source of truth; this page is the working reference.
+Eight commands: `get`, `list`, `refs`, `toc` and `validate` read a project; `new`, `set` and `mv` write one. The [design](design/design.md) is the source of truth; this page is the working reference.
 
-Every command takes `--namespace <list>` to choose which namespaces it reads, and `--json`. Today `list` and `validate --audit` also print plain text; `get`, `toc`, `refs` and plain `validate` need `--json` and exit 1 without it.
+Every command takes `--namespace <list>` to choose which namespaces it reaches, and `--json`. Today `list` and `validate --audit` also print plain text, as do `new`'s coded form and `mv --renumber` (the bare key); every other command needs `--json` and exit 1 without it. A write command also takes `--lock-timeout <seconds>` (default 5), how long to wait for the namespace's lock before giving up at exit 4.
 
 A document is named by its key (`WF-2`) or by its path from the project folder (`tickets/WF-2.md`), told apart by form: a key never ends in `.md`. A prefix reaches further: `story-2:WF-5` a sibling namespace, `memory::LRN-1` an imported project. A path that really begins with a name and a colon is written `./name:file.md`.
 
@@ -57,7 +57,7 @@ What a document points at, or what points at it.
 
 Each reference carries either the document it resolved to, named by its `path` and `namespace` (and its `key` and `project` where it has them), or an `unresolved` reason. Never both, and never neither. The reasons are `not-found`, `bad-prefix` and `import-absent`.
 
-A reverse lookup scans this project's namespaces. It does not enter an imported project, which the design says it should; that difference is listed in `crates/typdoc/src/registry.rs`.
+A reverse lookup scans this project's namespaces. It does not enter an imported project, which the design says it should; the difference is deliberate and is held in place by a test.
 
 ## `typdoc toc <key|path>`
 
@@ -81,14 +81,71 @@ The report is a summary and a list of findings. The summary says what was covere
 
 Rule levels come from typdoc's defaults, then `validation.global`, then the collection's own `validation`, each merging over the last key by key.
 
+## `typdoc new <CODE|path> [title]`
+
+Create a document. A coded schema's target is its code, and the key is allocated for you; an uncoded schema's target is the path to create.
+
+```console
+$ typdoc new WF "Decide the numbering scheme"
+WF-2
+
+$ typdoc new notes/second-note.md --set title="A second note" --json
+{"document":{"path":"notes/second-note.md","namespace":"default","code":null,"collection":"notes","schema":"note","fields":{"title":"A second note"}}}
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--set <k=v>` | A field to set on the new document; may repeat |
+
+`--json` prints the whole document, defaults and `auto` fields included, because those are exactly what the caller could not work out for itself. A coded form's `title` is required; an uncoded form takes none, and any field goes through `--set`. Allocation happens under the namespace's lock: the next number is the larger of the highest key that exists and the collection's own recorded `last`, so a deleted document's number is never reissued. The file is created with no temp file and no replace — a destination that already exists, coded or not, is refused at exit 7 with nothing written and no number burned.
+
+## `typdoc set <key|path> <field=value>...`
+
+Change fields on one document. `field=value` sets a field; `field=` removes it.
+
+```console
+$ typdoc set WF-2 status=claimed --json
+{"document":{"path":"tickets/WF-2.md","namespace":"default","key":"WF-2","code":"WF","collection":"wayfinder","schema":"wayfinder","fields":{"title":"Decide the numbering scheme","status":"claimed", ...}}}
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--if <expr>` | A condition, in `list`'s own `--where` syntax, checked under the same lock as the write; may repeat, ANDed |
+
+```console
+$ typdoc set WF-2 status=done --if status=done --json
+{"error":"`status=done` is false","code":3,"details":[{"path":"tickets/WF-2.md","namespace":"default","collection":"tickets","key":"WF-2","rule":"set.if","level":"error","message":"`status=done` is false"}]}
+```
+
+A false `--if` writes nothing and exits 3; the condition and the write happen under one lock, so nothing can change the field between the check and the write. Writing a field the schema marks `auto` directly is refused; `auto: update` is stamped on its own when a value actually changes. A field the schema does not name is written anyway, as plain text, and reported afterward by `frontmatter.unknown` — `set` never refuses an unknown field. Only the fields named change: every other value, and everything about the file that is not frontmatter, is carried across exactly (the [design](design/design.md)'s table of what a write's formatting may lose is the complete list of what is not promised).
+
+## `typdoc mv <from> [to]` / `typdoc mv <from> --renumber <namespace>`
+
+Move a document, or renumber a coded one into another namespace. Rewrites every ref this project holds to it — in frontmatter and in body links, in every namespace — keeping each ref's own written form.
+
+```console
+$ typdoc mv notes/first.md notes/renamed.md --json
+{"document":{"path":"notes/renamed.md","namespace":"default","code":null,"collection":"notes","schema":"note","fields":{"title":"A note"}},"unrewritten":[],"findings":[]}
+
+$ typdoc mv WF-1 --renumber archive --json
+{"document":{"path":"archive/tickets/WF-1.md","namespace":"archive","key":"WF-1","code":"WF","collection":"tickets","schema":"ticket","fields":{"title":"Filed by team A"}},"unrewritten":[],"findings":[]}
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--renumber <namespace>` | Move a coded document to this namespace under a new key, instead of giving a destination path |
+
+A coded document keeps its key within its own namespace and cannot be moved to another path there — `--renumber` is the way to change its namespace, and it takes one positional argument instead of two. `unrewritten` lists, in `refs --reverse`'s own shape, the refs this run could not rewrite (a ref in an imported project, a mention of a coded key, or a body link with `body.links` switched off) with a `reason` for each; `findings`, in `validate`'s own shape, reports what the destination's schema rejects — a move onto a schema the document fails still exits 0, because the move happened and `findings` is what a caller reads instead. A destination that already exists, or that names the same file as the source (by file identity, not by spelling), is refused at exit 7 with nothing written. Renumbering into the document's own namespace, or into another project, is refused at exit 1: the first would retire the key while the document never moved, and the second is never allowed at all. Every temp file `mv` needs is prepared first, then every rename happens in one run with the document moved last, so a run that stops partway can be finished by running the exact same command again.
+
 ## Exit codes
 
 | Code | Meaning |
 | --- | --- |
 | 0 | Success, including a query that matches nothing |
-| 1 | Bad arguments: a malformed option or expression, or a key that is ambiguous across namespaces |
+| 1 | Bad arguments: a malformed option or expression, a key or write that is ambiguous across namespaces, or a write the design refuses outright (renumbering into the same namespace, moving a coded document by path) |
 | 2 | Validation failed, or the config could not be read |
+| 3 | A `set --if` condition was false; nothing written |
+| 4 | The namespace's lock was not acquired within `--lock-timeout` |
 | 5 | The key, path or file asked for does not exist |
-| 6 | A file or directory cannot be read |
-
-Codes 3 and 4 belong to commands that write, which this version does not have.
+| 6 | A file or directory cannot be read or written |
+| 7 | The destination of a write already exists; nothing was written |

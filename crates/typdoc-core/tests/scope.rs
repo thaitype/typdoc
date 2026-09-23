@@ -22,6 +22,10 @@ impl Env for FakeEnv {
     fn current_dir(&self) -> io::Result<PathBuf> {
         Ok(self.cwd.clone())
     }
+
+    fn hostname(&self) -> String {
+        "fake-host".to_owned()
+    }
 }
 
 fn env(cwd: &str, vars: &[(&'static str, &str)]) -> FakeEnv {

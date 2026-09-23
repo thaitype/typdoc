@@ -1,0 +1,16 @@
+[package]
+name = "typdoc-fs"
+version = "0.1.0"
+edition.workspace = true
+
+# The only crate that may change a file. Every other crate reaches a file system through
+# `typdoc_core::Fs`, and `crates/typdoc-core/clippy.toml` refuses the calls that would go
+# round it. That refusal has no exception anywhere: what may write is settled by which crate
+# a call lives in, which a manifest declares and a reader can grep for, rather than by an
+# attribute that a later one could quietly add beside it.
+[dependencies]
+typdoc-core = { version = "0.1.0", path = "../typdoc-core" }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+typdoc-testkit = { path = "../typdoc-testkit" }

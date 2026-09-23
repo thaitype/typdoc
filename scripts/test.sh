@@ -22,6 +22,14 @@
 #   scripts/test.sh                 cargo test --workspace, under the ceiling
 #   scripts/test.sh ARGS...         the same, with these arguments instead
 #   scripts/test.sh --self-test     prove the ceiling stops a runaway
+#
+# The workspace run turns on `typdoc/test-stand-in`, without which the shell
+# examples harness has no stand-in binary to put on `PATH` and its tests fail.
+# The feature is off by default so that `cargo install` does not offer that
+# binary to a caller. A passthrough run that reaches those tests has to ask for
+# the feature itself; it is not added here, because a run that selects another
+# package alone is refused outright for naming a feature that package has not
+# got.
 set -u
 
 CEILING_MB=6144
@@ -73,5 +81,5 @@ cd "$(git rev-parse --show-toplevel)" || exit 2
 if [ $# -gt 0 ]; then
   capped "$CEILING_MB" cargo test "$@"
 else
-  capped "$CEILING_MB" cargo test --workspace
+  capped "$CEILING_MB" cargo test --workspace --features typdoc/test-stand-in
 fi

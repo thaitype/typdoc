@@ -13,6 +13,12 @@
 //! assertions are checked against the output itself, not against the golden, so a golden that
 //! was regenerated wrongly is still caught by them.
 //!
+//! One thing this comparison cannot see. A `number` is printed with the digits written in the
+//! document, and reading JSON turns a number into a primitive, so `1e3` and `1000.0` are one
+//! value here and a golden records whichever form that primitive prints in. The digits
+//! themselves are pinned where they can be seen, against the bytes on standard output, in
+//! `crates/typdoc/tests/frontmatter_scalars.rs`.
+//!
 //! The generator writes one golden, named by `<command>/<case>`, and never a file whose parent
 //! folder is not named `golden` or whose name is not `stdout.json`. It has no mode that writes
 //! every golden, and no path by which it writes an assertion file.
@@ -20,6 +26,7 @@
 //! To regenerate one: `TYPDOC_REGENERATE_GOLDEN=<command>/<case> cargo test -p typdoc --test
 //! golden regenerate -- --ignored`. The assertions of a case are written first.
 
+use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 use serde::Deserialize;
@@ -40,6 +47,13 @@ const ASSERTIONS_FILE: &str = "assertions.json";
 struct CaseSpec {
     project: String,
     command: Vec<String>,
+    /// A variable the case's run needs set, by name — empty for the ordinary case (most cases
+    /// need none). A case whose command stamps an `auto: create`/`auto: update` field is the
+    /// exception this exists for: it names the one instant the shipped binary's clock should
+    /// report instead of the machine's own (`typdoc::clock::FIXED_CLOCK_VAR`), the same shape
+    /// `crate::spec::FixtureSpec::env` already uses for a broken fixture.
+    #[serde(default)]
+    env: BTreeMap<String, String>,
 }
 
 /// One golden case: what to run, and where its files are.
@@ -52,6 +66,8 @@ pub struct Case {
     pub project: String,
     /// The arguments of the run, after the program name.
     pub command: Vec<String>,
+    /// A variable the run needs set, by name; empty when the case needs none (`CaseSpec::env`).
+    pub env: BTreeMap<String, String>,
 }
 
 impl Case {
@@ -70,6 +86,7 @@ impl Case {
             dir,
             project: spec.project,
             command: spec.command,
+            env: spec.env,
         })
     }
 

@@ -1,0 +1,55 @@
+{
+  "document": {
+    "path": "tasks/plain.md",
+    "namespace": "default",
+    "code": null,
+    "collection": "tasks",
+    "schema": "task",
+    "fields": {
+      "title": "Plain note",
+      "moved_from": [
+        "plain.md"
+      ]
+    }
+  },
+  "unrewritten": [
+    {
+      "path": "holder-a.md",
+      "namespace": "default",
+      "field": "$body",
+      "written": "plain.md",
+      "line": 5,
+      "col": 5,
+      "reason": "links-rule-off"
+    },
+    {
+      "path": "holder-b.md",
+      "namespace": "default",
+      "field": "$body",
+      "written": "plain.md",
+      "line": 5,
+      "col": 5,
+      "reason": "links-rule-off"
+    }
+  ],
+  "findings": [
+    {
+      "path": "tasks/plain.md",
+      "namespace": "default",
+      "collection": "tasks",
+      "field": "owner",
+      "rule": "frontmatter.types",
+      "level": "error",
+      "message": "the field `owner` is required and is missing"
+    },
+    {
+      "path": "tasks/plain.md",
+      "namespace": "default",
+      "collection": "tasks",
+      "field": "status",
+      "rule": "frontmatter.types",
+      "level": "error",
+      "message": "the field `status` is required and is missing"
+    }
+  ]
+}

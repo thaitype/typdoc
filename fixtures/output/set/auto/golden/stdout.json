@@ -1,0 +1,13 @@
+{
+  "document": {
+    "path": "note.md",
+    "namespace": "default",
+    "code": null,
+    "collection": "notes",
+    "schema": "note",
+    "fields": {
+      "title": "After the clock",
+      "updated_at": "2001-02-03T04:05:06+07:00"
+    }
+  }
+}

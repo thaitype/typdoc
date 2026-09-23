@@ -1,14 +1,14 @@
 //! A value read by the type its schema gives it. Each expectation is written by hand from the
 //! design's field types.
 
-use typdoc_core::{FieldType, Value, coerce};
+use typdoc_core::{FieldType, Number, Value, coerce};
 
 fn text(written: &str) -> Value {
     Value::Text(written.to_owned())
 }
 
 fn number(written: &str) -> Value {
-    Value::Number(written.parse().expect("a JSON number"))
+    Value::Number(Number::read(written).expect("a JSON number"))
 }
 
 fn coerced(kind: &FieldType, written: &str) -> Option<Value> {
@@ -67,9 +67,11 @@ fn a_number_keeps_the_kind_of_number_it_was_written_as() {
         panic!("1e3 is a number");
     };
 
-    assert_eq!(three.as_i64(), Some(3));
+    assert_eq!(three.as_u64(), Some(3));
+    assert_eq!(three.converted(), "3");
     assert_eq!(ratio.as_f64(), Some(1000.0));
-    assert_eq!(ratio.as_i64(), None);
+    assert_eq!(ratio.as_u64(), None);
+    assert_eq!(ratio.converted(), "1000.0");
 }
 
 #[test]
@@ -193,10 +195,26 @@ fn a_type_the_format_does_not_name_leaves_a_value_as_written() {
     assert_eq!(coerce(&kind, &items), Some(items));
 }
 
+/// Equality is on the converted value and not on the digits, which is what a `--where num=v`
+/// has always matched on. Telling two numbers apart that convert to one value is the
+/// comparison question, and printing the digits does not answer it.
 #[test]
-fn a_number_written_past_64_bits_is_a_float_and_keeps_no_text() {
-    // Nothing holds 123456789012345678901 exactly, so the value is a float to the precision a
-    // float has (the last digit or two are the reader's), not the text.
+fn two_numbers_are_equal_when_the_values_they_convert_to_are() {
+    assert_eq!(number("1e3"), number("1000.0"));
+    assert_eq!(number("1.10"), number("1.1"));
+    assert_eq!(
+        number("99999999999999999999"),
+        number("99999999999999999998")
+    );
+    assert_ne!(number("3"), number("3.0"));
+    assert_ne!(number("3"), number("4"));
+}
+
+#[test]
+fn a_number_keeps_the_digits_written_and_converts_out_of_them() {
+    // Nothing holds 123456789012345678901 exactly. The digits are kept whole all the same, and
+    // the value converted out of them is a float to the precision a float has (the last digit
+    // or two are the reader's).
     for (written, nearest) in [
         ("123456789012345678901", 1.2345678901234568e20),
         ("-9223372036854775809", -9.223372036854776e18),
@@ -204,15 +222,34 @@ fn a_number_written_past_64_bits_is_a_float_and_keeps_no_text() {
         let Some(Value::Number(read)) = coerced(&FieldType::Number, written) else {
             panic!("{written} is a number");
         };
-        assert!(read.is_f64(), "{written}");
+        assert_eq!(read.written(), written);
         assert!(
             (read.as_f64().unwrap() / nearest - 1.0).abs() < 1e-15,
             "{written}"
         );
     }
-    // Up to `u64::MAX` it is an integer, exactly.
-    assert_eq!(
-        coerced(&FieldType::Number, "18446744073709551615"),
-        Some(Value::Number(serde_json::Number::from(u64::MAX)))
-    );
+
+    // Up to `u64::MAX` the converted value is an integer, exactly.
+    let Some(Value::Number(max)) = coerced(&FieldType::Number, "18446744073709551615") else {
+        panic!("u64::MAX is a number");
+    };
+    assert_eq!(max.written(), "18446744073709551615");
+    assert_eq!(max.as_u64(), Some(u64::MAX));
+
+    // The converted value is what a comparison, a sort and a table cell go on using, and it is
+    // where two documents whose digits differ by one meet. Each expectation is written out by
+    // hand from the pairs the decision behind this measured.
+    for (written, converted) in [
+        ("3", "3"),
+        ("1.10", "1.1"),
+        ("1e3", "1000.0"),
+        ("99999999999999999999", "1e+20"),
+        ("99999999999999999998", "1e+20"),
+    ] {
+        let Some(Value::Number(read)) = coerced(&FieldType::Number, written) else {
+            panic!("{written} is a number");
+        };
+        assert_eq!(read.written(), written, "{written}");
+        assert_eq!(read.converted(), converted, "{written}");
+    }
 }

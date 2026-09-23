@@ -1,16 +1,23 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::error::ErrorKind as ClapKind;
 use clap::{Parser, Subcommand};
+use serde_json::value::RawValue;
 use serde_json::{Map, Value as Json, json};
 use typdoc_core::{
     Argument, AuditReport, Condition, Deps, Document, DocumentArg, Env, Error, ErrorKind, FieldRef,
-    Finding, ListFilter, ListResult, Project, RefField, RefOutcome, RefsDirection, RefsReference,
-    RefsReport, Scope, Severity, SortKey, Source, Toc, ValidateReport, ValidateScope, Value,
-    discover, discover_for, parse_field, parse_query, resolve_on_disk,
+    Finding, ListFilter, ListResult, MvReport, NewTarget, Project, RefField, RefOutcome,
+    RefsDirection, RefsReference, RefsReport, Scope, SetOp, Severity, SortKey, Source, Toc,
+    UnrewrittenReason, UnrewrittenRef, ValidateReport, ValidateScope, Value, discover,
+    discover_for, parse_field, parse_query, resolve_on_disk,
 };
+
+/// `--lock-timeout`'s default (design, Concurrency: "Retries with backoff until a timeout
+/// (default 5 s, `--lock-timeout`)").
+const DEFAULT_LOCK_TIMEOUT_SECS: u64 = 5;
 
 #[derive(Parser)]
 #[command(name = "typdoc", version)]
@@ -25,6 +32,22 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Create a document; allocate a key for a coded schema
+    New {
+        /// The code of a coded schema (`[A-Z][A-Z0-9]*`), or the path to create, which ends in
+        /// `.md`
+        target: OsString,
+        /// The title to give the document; required for a coded schema, and not taken for a path
+        title: Option<String>,
+        /// `field=value` to set; may repeat
+        #[arg(long = "set", value_name = "K=V")]
+        set: Vec<String>,
+        /// How long to wait for the namespace's lock before giving up
+        #[arg(long, value_name = "SECONDS", default_value_t = 5)]
+        lock_timeout: u64,
+        #[arg(long)]
+        json: bool,
+    },
     /// Read one document's frontmatter
     Get {
         /// The key or path of the document, from the project folder
@@ -82,6 +105,22 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Update fields, optionally compare-and-set
+    Set {
+        /// The key or path of the document, from the project folder
+        document: OsString,
+        /// `field=value` to set, or `field=` to remove it; at least one is required
+        fields: Vec<String>,
+        /// A condition checked under the same lock as the write; may repeat, ANDed. If any is
+        /// false, nothing is written
+        #[arg(long = "if", value_name = "EXPR")]
+        if_: Vec<String>,
+        /// How long to wait for the namespace's lock before giving up
+        #[arg(long, value_name = "SECONDS", default_value_t = 5)]
+        lock_timeout: u64,
+        #[arg(long)]
+        json: bool,
+    },
     /// Check the project, or named documents, against its schemas and rules
     Validate {
         /// The keys or paths of the documents to check; the whole project when none is given
@@ -95,6 +134,24 @@ enum Command {
         /// What has to be fixed before typdoc can be adopted
         #[arg(long)]
         audit: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Move a document within this project, rewriting every ref this project holds to it
+    Mv {
+        /// The key or path of the document to move, from the project folder
+        from: OsString,
+        /// The path it moves to; not given with `--renumber`, which takes one positional
+        /// instead of two. A `mv` whose destination already exists writes nothing
+        to: Option<OsString>,
+        /// Moves a coded document to another namespace of this project under a new key, instead
+        /// of the plain, two-positional form; requires a namespace, and cannot name another
+        /// project
+        #[arg(long, value_name = "NAMESPACE")]
+        renumber: Option<OsString>,
+        /// How long to wait for a namespace lock before giving up
+        #[arg(long, value_name = "SECONDS", default_value_t = DEFAULT_LOCK_TIMEOUT_SECS)]
+        lock_timeout: u64,
         #[arg(long)]
         json: bool,
     },
@@ -121,12 +178,118 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
         Err(e) => return failure_text(json, 1, e.to_string().trim_end()),
     };
     match cli.command {
+        Command::New {
+            target,
+            title,
+            set,
+            lock_timeout,
+            json,
+        } => {
+            let target_text = match target.to_str() {
+                Some(text) => text,
+                None => {
+                    return failure_text(
+                        json,
+                        1,
+                        &format!("{target:?} is not valid UTF-8, so it names no schema or path"),
+                    );
+                }
+            };
+            let parsed = match parse_new_target(target_text, title.as_deref()) {
+                Ok(parsed) => parsed,
+                Err(e) => return failure(true, exit_code(e.kind()), &e),
+            };
+            // Unlike every other command, `--json` is not checked first: which text form (if
+            // any) is built depends on the parsed target (the bare-key form the design shows for
+            // a coded schema, design `typdoc new`: "stdout: WF-3"; nothing yet for a path), and
+            // parsing is pure, so deciding this after it costs nothing and does not risk a write
+            // whose report is then refused.
+            if !json && matches!(parsed, NewTarget::Path { .. }) {
+                return failure_text(
+                    false,
+                    1,
+                    "the output without --json is not built yet for a path-identified document",
+                );
+            }
+            let sets = match set
+                .iter()
+                .map(|raw| parse_set_op(raw))
+                .collect::<Result<Vec<SetOp>, Error>>()
+            {
+                Ok(sets) => sets,
+                Err(e) => return failure(true, exit_code(e.kind()), &e),
+            };
+            match new_document(
+                deps,
+                &parsed,
+                &sets,
+                Duration::from_secs(lock_timeout),
+                cli.namespace.as_deref(),
+            ) {
+                Ok(document) if json => {
+                    success_raw(&raw_object(&[("document", document_json(&document))]))
+                }
+                Ok(document) => {
+                    // `parsed` was refused above unless it is `NewTarget::Coded`, which
+                    // `Project::new_document` always answers with a `key` (design, `typdoc new`:
+                    // "It prints the new key, and nothing else, on standard output").
+                    let key = document.key.as_deref().unwrap_or_default();
+                    Outcome {
+                        code: 0,
+                        stdout: format!("{key}\n"),
+                        stderr: String::new(),
+                    }
+                }
+                Err(e) => failure(true, exit_code(e.kind()), &e),
+            }
+        }
         Command::Get { document, json } => {
             if !json {
                 return failure_text(false, 1, "the output without --json is not built yet");
             }
             match get(deps, &document, cli.namespace.as_deref()) {
-                Ok(document) => success(json!({ "document": document_json(&document) })),
+                Ok(document) => success_raw(&raw_object(&[("document", document_json(&document))])),
+                Err(e) => failure(true, exit_code(e.kind()), &e),
+            }
+        }
+        Command::Set {
+            document,
+            fields,
+            if_,
+            lock_timeout,
+            json,
+        } => {
+            if !json {
+                return failure_text(false, 1, "the output without --json is not built yet");
+            }
+            if fields.is_empty() {
+                return failure_text(
+                    true,
+                    1,
+                    "set needs at least one `field=value` or `field=` argument",
+                );
+            }
+            let sets = match fields
+                .iter()
+                .map(|raw| parse_set_op(raw))
+                .collect::<Result<Vec<SetOp>, Error>>()
+            {
+                Ok(sets) => sets,
+                Err(e) => return failure(true, exit_code(e.kind()), &e),
+            };
+            let ifs = match parse_ifs(&if_) {
+                Ok(ifs) => ifs,
+                Err(e) => return failure(true, exit_code(e.kind()), &e),
+            };
+            match set(
+                deps,
+                &document,
+                &sets,
+                &ifs,
+                Duration::from_secs(lock_timeout),
+                cli.namespace.as_deref(),
+            ) {
+                Ok(document) => success_raw(&raw_object(&[("document", document_json(&document))])),
                 Err(e) => failure(true, exit_code(e.kind()), &e),
             }
         }
@@ -242,13 +405,77 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 Err(e) => failure(json, exit_code(e.kind()), &e),
             }
         }
+        Command::Mv {
+            from,
+            to,
+            renumber,
+            lock_timeout,
+            json,
+        } => match (to, renumber) {
+            (Some(_), Some(_)) => failure_text(
+                json,
+                1,
+                "mv takes a destination path, or --renumber <namespace>, not both: --renumber \
+                 reads one positional argument, not two",
+            ),
+            (None, None) => failure_text(
+                json,
+                1,
+                "mv needs a destination: a path to move to, or --renumber <namespace>",
+            ),
+            (Some(to), None) => {
+                if !json {
+                    return failure_text(false, 1, "the output without --json is not built yet");
+                }
+                match mv(
+                    deps,
+                    &from,
+                    &to,
+                    Duration::from_secs(lock_timeout),
+                    cli.namespace.as_deref(),
+                ) {
+                    Ok(report) => success_raw(&mv_json(&report)),
+                    Err(e) => failure(true, exit_code(e.kind()), &e),
+                }
+            }
+            (None, Some(namespace)) => {
+                match mv_renumber(
+                    deps,
+                    &from,
+                    &namespace,
+                    Duration::from_secs(lock_timeout),
+                    cli.namespace.as_deref(),
+                ) {
+                    Ok(report) if json => success_raw(&mv_json(&report)),
+                    Ok(report) => {
+                        // `Project::mv_renumber` only ever succeeds with a coded document, which
+                        // always carries a key (design, `typdoc mv`: "it prints the new key, and
+                        // nothing else, on standard output", the same shape `typdoc new` prints
+                        // for a coded target).
+                        let key = report.document.key.as_deref().unwrap_or_default();
+                        Outcome {
+                            code: 0,
+                            stdout: format!("{key}\n"),
+                            stderr: String::new(),
+                        }
+                    }
+                    Err(e) => failure(true, exit_code(e.kind()), &e),
+                }
+            }
+        },
     }
 }
 
+/// A run that ends with 0 and prints `result` on standard output. A command whose result
+/// holds a document has already built its JSON text and calls `success_raw` instead.
 fn success(result: Json) -> Outcome {
+    success_raw(&raw(&result))
+}
+
+fn success_raw(result: &RawValue) -> Outcome {
     Outcome {
         code: 0,
-        stdout: format!("{result}\n"),
+        stdout: format!("{}\n", result.get()),
         stderr: String::new(),
     }
 }
@@ -286,6 +513,116 @@ fn get(
     let project = Project::load(&root, deps.env)?;
     let scope = scope_for(&project, &arg, namespace, deps.env)?;
     project.get(&arg, &scope, deps.env)
+}
+
+/// `new`'s one argument, once its shape is known: `[A-Z][A-Z0-9]*` is a coded schema's code and
+/// needs `title`; anything ending in `.md` is a path and takes none (design, `typdoc new`: two
+/// forms, told apart by shape, the same way every argument that could be either always is in
+/// this design). Anything else, or a form given the title shape it does not take, is bad
+/// arguments.
+fn parse_new_target(target: &str, title: Option<&str>) -> Result<NewTarget, Error> {
+    if target.ends_with(".md") {
+        if title.is_some() {
+            return Err(Error::BadArgument(format!(
+                "`{target}` is a path, and `new` takes no title after one: `typdoc new <path> \
+                 [--set k=v ...]`"
+            )));
+        }
+        return Ok(NewTarget::Path {
+            path: target.to_owned(),
+        });
+    }
+    if looks_like_code(target) {
+        let Some(title) = title else {
+            return Err(Error::BadArgument(format!(
+                "`{target}` is a schema's code, and `new` needs a title: `typdoc new {target} \
+                 \"<title>\"`"
+            )));
+        };
+        return Ok(NewTarget::Coded {
+            code: target.to_owned(),
+            title: title.to_owned(),
+        });
+    }
+    Err(Error::BadArgument(format!(
+        "`{target}` is neither a schema's code (`[A-Z][A-Z0-9]*`) nor a path, which ends in `.md`"
+    )))
+}
+
+/// `[A-Z][A-Z0-9]*`, the shape of a schema's own `code` (design, Schema format).
+fn looks_like_code(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars.next().is_some_and(|c| c.is_ascii_uppercase())
+        && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+}
+
+fn new_document(
+    deps: &Deps,
+    target: &NewTarget,
+    sets: &[SetOp],
+    lock_timeout: Duration,
+    namespace: Option<&str>,
+) -> Result<Document, Error> {
+    let root = discover(deps.env)?;
+    let project = Project::load(&root, deps.env)?;
+    project.new_document(target, deps, sets, lock_timeout, namespace)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each is a distinct argument set's own value"
+)]
+fn set(
+    deps: &Deps,
+    document: &std::ffi::OsStr,
+    sets: &[SetOp],
+    ifs: &[(String, Condition)],
+    lock_timeout: Duration,
+    namespace: Option<&str>,
+) -> Result<Document, Error> {
+    let (root, arg) = discover_for(Argument::parse(document)?, deps.env)?;
+    let project = Project::load(&root, deps.env)?;
+    let scope = scope_for(&project, &arg, namespace, deps.env)?;
+    project.set(&arg, &scope, deps, sets, ifs, lock_timeout)
+}
+
+/// One `set` argument as the design's grammar reads it: `field=value` sets it, `field=` (nothing
+/// after the `=`) removes it (design, `typdoc set`: "`k=` removes a field"). An argument with no
+/// `=` at all, or with nothing before it, is bad arguments: `=v` and `v` alike name no field.
+fn parse_set_op(raw: &str) -> Result<SetOp, Error> {
+    let Some((field, value)) = raw.split_once('=') else {
+        return Err(Error::BadArgument(format!(
+            "`{raw}` is not `field=value` or `field=`: a `set` argument needs an `=`"
+        )));
+    };
+    if field.is_empty() {
+        return Err(Error::BadArgument(format!(
+            "`{raw}` names no field before `=`"
+        )));
+    }
+    if value.is_empty() {
+        Ok(SetOp::Remove {
+            field: field.to_owned(),
+        })
+    } else {
+        Ok(SetOp::Set {
+            field: field.to_owned(),
+            raw: value.to_owned(),
+        })
+    }
+}
+
+/// Every `--if` expression, parsed by the same grammar `--where` uses (design, `typdoc set`:
+/// "`--if` uses `--where` expressions"), kept beside its own original text so a false condition's
+/// message can quote exactly what the caller wrote.
+fn parse_ifs(raw: &[String]) -> Result<Vec<(String, Condition)>, Error> {
+    raw.iter()
+        .map(|expr| {
+            parse_query(expr)
+                .map(|condition| (expr.clone(), condition))
+                .map_err(|e| Error::BadArgument(e.to_string()))
+        })
+        .collect()
 }
 
 fn toc(deps: &Deps, document: &std::ffi::OsStr, namespace: Option<&str>) -> Result<Toc, Error> {
@@ -384,7 +721,7 @@ fn list_outcome(
     if json {
         return Outcome {
             stderr,
-            ..success(list_json(listed, total, truncated))
+            ..success_raw(&list_json(listed, total, truncated))
         };
     }
     if ids {
@@ -419,9 +756,13 @@ fn dangling_refs_stderr(dangling_refs: &[String]) -> String {
     text
 }
 
-fn list_json(documents: &[Document], total: usize, truncated: bool) -> Json {
-    let documents: Vec<Json> = documents.iter().map(document_json).collect();
-    json!({ "documents": documents, "total": total, "truncated": truncated })
+fn list_json(documents: &[Document], total: usize, truncated: bool) -> Box<RawValue> {
+    let documents: Vec<Box<RawValue>> = documents.iter().map(document_json).collect();
+    raw_object(&[
+        ("documents", raw_array(&documents)),
+        ("total", raw(&json!(total))),
+        ("truncated", raw(&json!(truncated))),
+    ])
 }
 
 /// The default table's extra columns (beyond the key-or-path identity and `title`): `--fields`
@@ -538,14 +879,15 @@ fn cell_value(doc: &Document, field: &str) -> String {
     }
 }
 
-/// A field's value as the table prints it: as written for text-shaped values, canonical for a
-/// number or a bool, and comma-joined for a list (the table has one cell per document, not one
-/// per element).
+/// A field's value as the table prints it: as written for text-shaped values, the value a
+/// number or a bool converts to, and comma-joined for a list (the table has one cell per
+/// document, not one per element). `--json` is where a number's own digits are printed.
 fn render_cell(value: &Value) -> String {
     match value {
         Value::Text(text) | Value::Date(text) | Value::Datetime(text) => text.clone(),
+        Value::Empty => String::new(),
         Value::List(items) => items.join(","),
-        Value::Number(n) => n.to_string(),
+        Value::Number(n) => n.converted(),
         Value::Bool(b) => b.to_string(),
     }
 }
@@ -561,6 +903,53 @@ fn refs(
     let project = Project::load(&root, deps.env)?;
     let scope = scope_for(&project, &arg, namespace, deps.env)?;
     project.refs(&arg, &scope, reverse, field, deps.env)
+}
+
+/// `mv`: `to` is read the same way `from` is (design.md, Arguments that name a document: "`mv`
+/// reads both its arguments in this way"), resolved against the project `from` already found —
+/// an on-disk `to` is read against that same root, the same way a second `validate` argument is
+/// (`validate_args`), since a destination on disk in a different project names no document `mv`
+/// could ever reach.
+fn mv(
+    deps: &Deps,
+    from: &std::ffi::OsStr,
+    to: &std::ffi::OsStr,
+    lock_timeout: Duration,
+    namespace: Option<&str>,
+) -> Result<MvReport, Error> {
+    let (root, from_arg) = discover_for(Argument::parse(from)?, deps.env)?;
+    let project = Project::load(&root, deps.env)?;
+    let to_arg = match Argument::parse(to)? {
+        Argument::Named(document) => document,
+        Argument::OnDisk(path) => resolve_on_disk(&root, &path, deps.env)?,
+    };
+    let scope = scope_for(&project, &from_arg, namespace, deps.env)?;
+    project.mv(&from_arg, &to_arg, &scope, lock_timeout, deps)
+}
+
+/// `mv --renumber`: `namespace` is a bare namespace name, never a document argument, so it is
+/// read as plain text rather than through `Argument::parse`/`DocumentArg` the way `from` and
+/// `to` are — decision 11's own shape, `typdoc mv WF-2 --renumber story-3`, where the value
+/// after the flag names a namespace, not a document.
+fn mv_renumber(
+    deps: &Deps,
+    from: &std::ffi::OsStr,
+    namespace: &std::ffi::OsStr,
+    lock_timeout: Duration,
+    namespace_flag: Option<&str>,
+) -> Result<MvReport, Error> {
+    let (root, from_arg) = discover_for(Argument::parse(from)?, deps.env)?;
+    let project = Project::load(&root, deps.env)?;
+    let namespace_text = match namespace.to_str() {
+        Some(text) => text,
+        None => {
+            return Err(Error::BadArgument(format!(
+                "{namespace:?} is not valid UTF-8, so it names no namespace"
+            )));
+        }
+    };
+    let scope = scope_for(&project, &from_arg, namespace_flag, deps.env)?;
+    project.mv_renumber(&from_arg, namespace_text, &scope, lock_timeout, deps)
 }
 
 fn validate(
@@ -666,6 +1055,12 @@ fn validate_json(report: &ValidateReport) -> Json {
         // accounting equation reads `summary.overlapping` directly, so this is the number a
         // caller who only reads the summary needs to reconcile the run.
         summary.insert("overlapping".to_owned(), json!(audit.overlapping.len()));
+        // Beside `unreported` and `overlapping` for the same reason as `overlapping` itself:
+        // every one of these is already reported in `findings` (`files.unreadable` or
+        // `files.leftover`), so it is not `unreported`. Without it the account a reader takes
+        // from the summary would be short by every entry the run skipped (design, the
+        // paragraph on `not_read`).
+        summary.insert("not_read".to_owned(), json!(audit.not_read.len()));
     }
     let findings: Vec<Json> = report.findings.iter().map(finding_json).collect();
     let mut object = Map::new();
@@ -680,7 +1075,9 @@ fn validate_json(report: &ValidateReport) -> Json {
 /// The `audit` object of `--json`'s report (design, JSON output, "Audit"): `collections`, one
 /// `{ "name", "documents" }` per collection of the project, sorted by name (already sorted by
 /// `AuditReport::collections`); `uncollected` and `no_frontmatter`, the sorted `path` of every file
-/// the design names; and `overlapping`, one `{ "path", "collections" }` per file, sorted by path.
+/// the design names; `overlapping`, one `{ "path", "collections" }` per file, sorted by path; and
+/// `not_read`, one `{ "path", "reason" }` per directory entry the run met and did not read,
+/// sorted by path.
 fn audit_json(audit: &AuditReport) -> Json {
     let collections: Vec<Json> = audit
         .collections
@@ -692,11 +1089,17 @@ fn audit_json(audit: &AuditReport) -> Json {
         .iter()
         .map(|overlap| json!({ "path": overlap.path, "collections": overlap.collections }))
         .collect();
+    let not_read: Vec<Json> = audit
+        .not_read
+        .iter()
+        .map(|entry| json!({ "path": entry.path, "reason": entry.reason }))
+        .collect();
     json!({
         "collections": collections,
         "uncollected": audit.uncollected,
         "no_frontmatter": audit.no_frontmatter,
         "overlapping": overlapping,
+        "not_read": not_read,
     })
 }
 
@@ -739,13 +1142,14 @@ fn audit_text(report: &ValidateReport) -> String {
         return String::new();
     };
     // Contract item 8's equation, in text form: `checked.documents` plus every count of what was
-    // not checked, `uncollected`, `no_frontmatter` and `overlapping`, is the number of files the
-    // run read. Leaving `overlapping` out of `total` would make a reader of the text see fewer
-    // files than a reader of the JSON's `summary` does.
+    // not checked, `uncollected`, `no_frontmatter`, `overlapping` and `not_read`, is the number
+    // of directory entries the run met. Leaving any one of them out of `total` would make a
+    // reader of the text see fewer entries than a reader of the JSON's `summary` does.
     let total = report.documents
         + audit.uncollected.len()
         + audit.no_frontmatter.len()
-        + audit.overlapping.len();
+        + audit.overlapping.len()
+        + audit.not_read.len();
     let mut out = format!(
         "typdoc audit: {} collections, {total} files ({} in no collection)\n\n",
         audit.collections.len(),
@@ -791,6 +1195,19 @@ fn audit_text(report: &ValidateReport) -> String {
             "matched by more than one collection: {} ({})\n",
             overlapping.join(", "),
             audit.overlapping.len()
+        ));
+    }
+    if !audit.not_read.is_empty() {
+        out.push('\n');
+        let not_read: Vec<String> = audit
+            .not_read
+            .iter()
+            .map(|entry| format!("{} ({})", entry.path, entry.reason))
+            .collect();
+        out.push_str(&format!(
+            "not read: {} ({})\n",
+            not_read.join(", "),
+            audit.not_read.len()
         ));
     }
     out
@@ -862,8 +1279,11 @@ fn exit_code(kind: ErrorKind) -> u8 {
     match kind {
         ErrorKind::BadArguments => 1,
         ErrorKind::Validation => 2,
+        ErrorKind::IfFalse => 3,
+        ErrorKind::LockTimeout => 4,
         ErrorKind::NotFound => 5,
         ErrorKind::Io => 6,
+        ErrorKind::AlreadyExists => 7,
     }
 }
 
@@ -906,8 +1326,12 @@ fn failure(json: bool, code: u8, error: &Error) -> Outcome {
             object.insert("details".to_owned(), json!(details));
             object.insert("complete".to_owned(), json!(complete));
         }
-        Error::AmbiguousKey { candidates, .. } => {
+        Error::AmbiguousKey { candidates, .. } | Error::AmbiguousScope { candidates } => {
             object.insert("candidates".to_owned(), json!(candidates));
+        }
+        Error::Invalid { findings } | Error::IfFalse { findings } => {
+            let details: Vec<Json> = findings.iter().map(finding_json).collect();
+            object.insert("details".to_owned(), json!(details));
         }
         _ => return failure_text(json, code, &error.to_string()),
     }
@@ -952,7 +1376,11 @@ fn toc_json(toc: &Toc, depth: Option<u8>) -> Json {
 /// `refs`' report: the document asked about, `direction`, and its references in the order
 /// `Project::refs` already gives them.
 fn refs_json(report: &RefsReport) -> Json {
-    let refs: Vec<Json> = report.refs.iter().map(reference_json).collect();
+    let refs: Vec<Json> = report
+        .refs
+        .iter()
+        .map(|reference| Json::Object(reference_json(reference)))
+        .collect();
     json!({
         "document": Json::Object(document_name(
             &report.document.path,
@@ -974,8 +1402,10 @@ fn direction_name(direction: RefsDirection) -> &'static str {
 
 /// One reference: the name of the document at the other end when it resolved, `unresolved`
 /// otherwise (never both — the ticket's own guarantee), plus `field`, `written` and, for a body
-/// link, `line` and `col`.
-fn reference_json(reference: &RefsReference) -> Json {
+/// link, `line` and `col`. Returns the object's own fields rather than `Json::Object` of them,
+/// so `mv`'s `unrewritten` (decision 17) can add `reason` to the same object instead of nesting
+/// one inside another.
+fn reference_json(reference: &RefsReference) -> Map<String, Json> {
     let mut object = Map::new();
     match &reference.other {
         RefOutcome::Resolved(name) => {
@@ -1000,7 +1430,42 @@ fn reference_json(reference: &RefsReference) -> Json {
         object.insert("line".to_owned(), json!(position.line));
         object.insert("col".to_owned(), json!(position.col));
     }
-    Json::Object(object)
+    object
+}
+
+/// `mv`'s own shape (decision 17): the document under its new name, in the same object `get`
+/// prints; `unrewritten`, the reference object `refs --reverse` uses (`reference_json`) with
+/// `reason` added; and `findings`, the finding object `validate` already prints. Built as JSON
+/// text rather than `serde_json::Value`, the same reason `document_json` is: `document` may hold
+/// a `number` whose digits `serde_json::Number` cannot carry unchanged.
+fn mv_json(report: &MvReport) -> Box<RawValue> {
+    let unrewritten: Vec<Box<RawValue>> = report.unrewritten.iter().map(unrewritten_json).collect();
+    let findings: Vec<Box<RawValue>> = report
+        .findings
+        .iter()
+        .map(|finding| raw(&finding_json(finding)))
+        .collect();
+    raw_object(&[
+        ("document", document_json(&report.document)),
+        ("unrewritten", raw_array(&unrewritten)),
+        ("findings", raw_array(&findings)),
+    ])
+}
+
+/// One entry of `mv`'s `unrewritten`: the reference object plus `reason`, one of the three
+/// decision 17 names.
+fn unrewritten_json(item: &UnrewrittenRef) -> Box<RawValue> {
+    let mut object = reference_json(&item.reference);
+    object.insert("reason".to_owned(), json!(reason_name(item.reason)));
+    raw(&Json::Object(object))
+}
+
+fn reason_name(reason: UnrewrittenReason) -> &'static str {
+    match reason {
+        UnrewrittenReason::ImportedProject => "imported-project",
+        UnrewrittenReason::Mention => "mention",
+        UnrewrittenReason::LinksRuleOff => "links-rule-off",
+    }
 }
 
 /// The name of a document: `path` always, `namespace` unless the file is outside every
@@ -1026,33 +1491,95 @@ fn document_name(
     object
 }
 
-fn document_json(document: &Document) -> Json {
-    let mut object = document_name(
+/// A document as the design's JSON output has it. It is built as JSON text rather than as a
+/// `serde_json::Value` for one reason: a `number` is printed with the digits written in the
+/// document, and no `serde_json::Number` holds `1e3` as `1e3` — it is either converted to
+/// `1000.0` or, with the digits kept, written back with an exponent sign the file never had.
+/// Everything else here is an ordinary value turned into its JSON text first.
+fn document_json(document: &Document) -> Box<RawValue> {
+    let name = document_name(
         &document.path,
         document.namespace.as_deref(),
         document.key.as_deref(),
         document.project.as_deref(),
     );
-    object.insert("code".to_owned(), json!(document.code));
-    object.insert("collection".to_owned(), json!(document.collection));
-    object.insert("schema".to_owned(), json!(document.schema));
-    let fields: Map<String, Json> = document
+    let mut object: Vec<(&str, Box<RawValue>)> = name
+        .iter()
+        .map(|(key, value)| (&**key, raw(value)))
+        .collect();
+    let fields: Vec<(&str, Box<RawValue>)> = document
         .fields
         .iter()
-        .map(|(name, value)| (name.clone(), value_json(value)))
+        .map(|(name, value)| (&**name, value_json(value)))
         .collect();
-    object.insert("fields".to_owned(), Json::Object(fields));
-    Json::Object(object)
+    // A collection name is never empty (`config.rs`'s `plain_name` refuses one), so an empty
+    // string here can only mean `mv` moved the document out of every collection (decision 16,
+    // "Allowed, and said out loud"): there is then no schema and no code to report, and printing
+    // `""` for either would claim a collection that does not exist rather than say there is none.
+    if !document.collection.is_empty() {
+        object.push(("code", raw(&json!(document.code))));
+        object.push(("collection", raw(&json!(document.collection))));
+        object.push(("schema", raw(&json!(document.schema))));
+    }
+    object.push(("fields", raw_object(&fields)));
+    raw_object(&object)
 }
 
-fn value_json(value: &Value) -> Json {
+fn value_json(value: &Value) -> Box<RawValue> {
     match value {
-        Value::Text(text) => json!(text),
-        Value::List(items) => json!(items),
-        Value::Number(number) => Json::Number(number.clone()),
-        Value::Bool(flag) => json!(flag),
-        Value::Date(text) | Value::Datetime(text) => json!(text),
+        Value::Text(text) => raw(&json!(text)),
+        // A field written with no value at all, kept apart from one written as the empty
+        // string (design, "Document files" and "JSON output": "the first is `null`").
+        Value::Empty => raw(&json!(null)),
+        Value::List(items) => raw(&json!(items)),
+        // The one value that does not go through `serde_json::Value`: the digits as the
+        // document wrote them, which `Number::read` has already checked are a JSON number.
+        Value::Number(number) => raw_text(number.written().to_owned()),
+        Value::Bool(flag) => raw(&json!(flag)),
+        Value::Date(text) | Value::Datetime(text) => raw(&json!(text)),
     }
+}
+
+/// `value` as the JSON text that stands for it.
+fn raw(value: &Json) -> Box<RawValue> {
+    raw_text(value.to_string())
+}
+
+/// `text`, which is already JSON, as a value that can be put inside another.
+#[expect(
+    clippy::expect_used,
+    reason = "every caller passes either the printed form of a `serde_json::Value`, or an \
+              object or array `joined` has assembled from values that are themselves JSON \
+              text, or the digits `Number::read` has parsed as a JSON number"
+)]
+fn raw_text(text: String) -> Box<RawValue> {
+    RawValue::from_string(text).expect("assembled from JSON")
+}
+
+/// A JSON object of values that are already JSON text, in the order given.
+fn raw_object(entries: &[(&str, Box<RawValue>)]) -> Box<RawValue> {
+    let parts = entries
+        .iter()
+        .map(|(key, value)| format!("{}:{}", json!(key), value.get()));
+    joined('{', parts, '}')
+}
+
+/// A JSON array of values that are already JSON text, in the order given.
+fn raw_array(items: &[Box<RawValue>]) -> Box<RawValue> {
+    joined('[', items.iter().map(|item| item.get().to_owned()), ']')
+}
+
+/// `parts`, each of them JSON text, separated by commas and wrapped in `open` and `close`.
+fn joined(open: char, parts: impl Iterator<Item = String>, close: char) -> Box<RawValue> {
+    let mut text = String::from(open);
+    for (at, part) in parts.enumerate() {
+        if at > 0 {
+            text.push(',');
+        }
+        text.push_str(&part);
+    }
+    text.push(close);
+    raw_text(text)
 }
 
 #[cfg(test)]
@@ -1064,6 +1591,7 @@ mod tests {
 
     use serde_json::json;
     use typdoc_core::{Deps, Env};
+    use typdoc_testkit::fake::{FakeFs, FixedClock};
 
     use super::run;
 
@@ -1080,6 +1608,10 @@ mod tests {
         fn current_dir(&self) -> io::Result<PathBuf> {
             Ok(self.cwd.clone())
         }
+
+        fn hostname(&self) -> String {
+            "fake-host".to_owned()
+        }
     }
 
     fn fixtures() -> PathBuf {
@@ -1091,7 +1623,14 @@ mod tests {
             .iter()
             .map(OsString::from)
             .collect();
-        run(&args, &Deps { env })
+        run(
+            &args,
+            &Deps {
+                env,
+                fs: &FakeFs::new(),
+                clock: &FixedClock::new(),
+            },
+        )
     }
 
     #[test]

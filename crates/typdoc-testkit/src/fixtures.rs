@@ -12,7 +12,7 @@ pub fn locate(manifest_dir: &Path) -> Result<PathBuf, String> {
         .to_owned();
     for (what, missing) in [
         ("fixtures folder", root.join("fixtures")),
-        ("design", root.join("docs/design.md")),
+        ("design", root.join("docs/design/design.md")),
     ] {
         if !missing.exists() {
             return Err(format!(
@@ -40,9 +40,9 @@ pub fn path(relative: &str) -> PathBuf {
     found
 }
 
-/// The text of `docs/design.md`.
+/// The text of `docs/design/design.md`.
 pub fn design_text() -> String {
-    let file = root().join("docs/design.md");
+    let file = root().join("docs/design/design.md");
     std::fs::read_to_string(&file)
         .unwrap_or_else(|e| panic!("the design {} cannot be read: {e}", file.display()))
 }

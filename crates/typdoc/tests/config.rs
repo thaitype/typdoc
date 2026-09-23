@@ -600,12 +600,7 @@ fn broken_config_runs() -> Vec<(String, Ran)> {
     ids.into_iter()
         .map(|id| {
             let dir = fixture("broken").join(&id);
-            let spec = typdoc_testkit::spec::FixtureSpec::load(&dir, &id).expect("a spec");
-            let mut spawn = Spawn::args(&spec.command).cwd(&dir);
-            for (name, value) in &spec.env {
-                spawn = spawn.var(name, value);
-            }
-            let ran = spawn.run();
+            let (_spec, ran) = common::spawn_fixture(&dir, &id).expect("the fixture runs");
             (id, ran)
         })
         .collect()

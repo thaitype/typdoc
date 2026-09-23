@@ -3,8 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::config::{NAME_NOT_UTF8, Namespace, SYMBOLIC_LINK, config_file};
+use crate::config::{LEFTOVER_TEMP_FILE, NAME_NOT_UTF8, Namespace, SYMBOLIC_LINK, config_file};
 use crate::error::Error;
+use crate::fs::is_temp_name;
 use crate::template::{Segment, Step, Template};
 
 /// A collection as the index reads it.
@@ -227,6 +228,11 @@ pub(crate) fn stray_files(
                 let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
                     continue;
                 };
+                // A leftover is never a document and never a stray file either: it is a file
+                // the user did not write, not one that fits no template (decision 4).
+                if is_temp_name(&name) {
+                    continue;
+                }
                 // A file name that begins with `.` is not passed over: the leading-dot rule is
                 // about the folders a walk enters, and a `*` in a template matches such a name.
                 if segments.iter().any(|segment| segment.matches(&name)) {
@@ -258,11 +264,12 @@ pub(crate) fn stray_files(
 /// only where a `match` writes that name out as plain text (`literal_folder_names`, gathered
 /// from `members` here), a file whose name begins with `.` is listed like any other, a symbolic
 /// link is neither
-/// followed nor listed, a name that is not valid UTF-8 is skipped, and a folder that holds its
-/// own `.typdoc/config.json` is a separate project and is never entered. A symbolic link and a
-/// name that is not UTF-8 are skipped silently here and reported only where a `match` reaches
-/// them (`files.unreadable`, whose row in the design's table is about an entry a `match`
-/// reaches), so this walk adds no finding of its own.
+/// followed nor listed, a name that is not valid UTF-8 is skipped, a name of the reserved
+/// temp-file shape is skipped, and a folder that holds its own `.typdoc/config.json` is a
+/// separate project and is never entered. A symbolic link, a name that is not UTF-8 and a
+/// leftover temp file are skipped silently here and reported only where a `match` reaches them
+/// (`files.unreadable` or the leftover's own rule, whose row in the design's table is about an
+/// entry a `match` reaches), so this walk adds no finding of its own.
 pub(crate) fn all_markdown_files(
     root: &Path,
     namespaces: &[Namespace],
@@ -317,7 +324,7 @@ fn walk_every_file(
                 continue;
             }
             walk_every_file(&entry.path, &here, namespace, found)?;
-        } else if entry.file && entry.name.ends_with(".md") {
+        } else if entry.file && entry.name.ends_with(".md") && !is_temp_name(&entry.name) {
             let path = if namespace.folder.is_empty() {
                 here
             } else {
@@ -427,9 +434,14 @@ fn skip(entry: &Listed, prefix: &str, why: &'static str, found: &mut Found) {
     found.unreadable.insert(below(prefix, entry), why);
 }
 
-/// A file that the last step of a template matched. A folder is not a document.
+/// A file that the last step of a template matched. A folder is not a document. The reserved
+/// temp-file shape is checked first and does not depend on what the step's own glob would have
+/// matched on its own: `*` matches a leading dot, and a leftover is never a document whatever a
+/// project's `match` says (decision 4).
 fn take(entry: &Listed, prefix: &str, found: &mut Found) {
-    if entry.symlink {
+    if entry.file && is_temp_name(&entry.name) {
+        skip(entry, prefix, LEFTOVER_TEMP_FILE, found);
+    } else if entry.symlink {
         skip(entry, prefix, SYMBOLIC_LINK, found);
     } else if !entry.utf8 {
         skip(entry, prefix, NAME_NOT_UTF8, found);

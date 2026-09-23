@@ -3,17 +3,17 @@
 
 use chrono::{DateTime, NaiveDate};
 
-use crate::document::Value;
+use crate::document::{Number, Value};
 use crate::schema::FieldType;
 
-/// `written`, a `Text` or a `List`, as a value of `kind`, or `None` when it does not fit. A
-/// value that is already typed fits nothing.
+/// `written`, a `Text`, an `Empty` or a `List`, as a value of `kind`, or `None` when it does not
+/// fit. A value that is already typed fits nothing.
 pub fn coerce(kind: &FieldType, written: &Value) -> Option<Value> {
     match (kind, written) {
-        (FieldType::Other(_), Value::Text(_) | Value::List(_))
-        | (FieldType::String | FieldType::Enum | FieldType::Ref, Value::Text(_))
+        (FieldType::Other(_), Value::Text(_) | Value::List(_) | Value::Empty)
+        | (FieldType::String | FieldType::Enum | FieldType::Ref, Value::Text(_) | Value::Empty)
         | (FieldType::List | FieldType::RefList, Value::List(_)) => Some(written.clone()),
-        (FieldType::Number, Value::Text(text)) => text.parse().ok().map(Value::Number),
+        (FieldType::Number, Value::Text(text)) => Number::read(text).map(Value::Number),
         (FieldType::Bool, Value::Text(text)) => match text.as_str() {
             "true" => Some(Value::Bool(true)),
             "false" => Some(Value::Bool(false)),
@@ -35,12 +35,13 @@ pub fn coerce(kind: &FieldType, written: &Value) -> Option<Value> {
 pub fn fits(kind: &FieldType, value: &Value) -> bool {
     matches!(
         (kind, value),
-        (FieldType::Other(_), Value::Text(_) | Value::List(_))
-            | (
-                FieldType::String | FieldType::Enum | FieldType::Ref,
-                Value::Text(_)
-            )
-            | (FieldType::List | FieldType::RefList, Value::List(_))
+        (
+            FieldType::Other(_),
+            Value::Text(_) | Value::List(_) | Value::Empty
+        ) | (
+            FieldType::String | FieldType::Enum | FieldType::Ref,
+            Value::Text(_) | Value::Empty
+        ) | (FieldType::List | FieldType::RefList, Value::List(_))
             | (FieldType::Number, Value::Number(_))
             | (FieldType::Bool, Value::Bool(_))
             | (FieldType::Date, Value::Date(_))

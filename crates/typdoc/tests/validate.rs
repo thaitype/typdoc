@@ -8,6 +8,7 @@ mod common;
 
 use common::{Ran, Scratch, Spawn, fixture};
 use serde_json::{Value, json};
+use typdoc_core::{TEMP_PREFIX, is_temp_name};
 
 fn validate(args: &[&str], cwd: &std::path::Path) -> Ran {
     let mut all = vec!["validate"];
@@ -1766,6 +1767,197 @@ fn a_folder_name_that_is_not_valid_utf8_is_files_unreadable_and_the_rest_is_stil
     );
 }
 
+// Ticket 13: temp files and leftovers (decision 4). The reserved shape and the rule that skips
+// it live in `typdoc-core` (`is_temp_name`, `take` in `index.rs`); these go through the built
+// binary, the same as the `files.unreadable` tests above.
+
+/// A project with one collection of `match: "*"`: the broadest glob there is, so a leftover is
+/// reached whatever its name, `.md` suffix or not.
+const MATCH_STAR: [(&str, &str); 2] = [
+    (
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "*", "schema": "note.json" }"#,
+    ),
+    ("note.json", r#"{ "name": "note", "fields": {} }"#),
+];
+
+/// A project with one collection of `match: "*.md"`: the glob a leftover ending in `.md` would
+/// otherwise fit, which is exactly decision 4's own worked concern.
+const MATCH_MD: [(&str, &str); 2] = [
+    (
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "*.md", "schema": "note.json" }"#,
+    ),
+    ("note.json", r#"{ "name": "note", "fields": {} }"#),
+];
+
+#[test]
+fn a_leftover_a_match_of_star_reaches_is_files_leftover_and_counted_in_not_read() {
+    let project = Scratch::project(&MATCH_STAR);
+    project.file("a.md", "---\n---\n");
+    let leftover = format!("{}12345-cafef00d1", TEMP_PREFIX);
+    assert!(
+        is_temp_name(&leftover),
+        "the fixture's own name must have the reserved shape: {leftover}"
+    );
+    project.file(&leftover, "");
+
+    let ran = validate(&["--audit"], project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    let findings = object["findings"].as_array().unwrap().clone();
+    assert_eq!(findings.len(), 1, "{object}");
+    assert_eq!(findings[0]["rule"], json!("files.leftover"), "{object}");
+    assert_eq!(findings[0]["level"], json!("warn"), "{object}");
+    assert_eq!(findings[0]["path"], json!(leftover), "{object}");
+    assert_eq!(findings[0]["namespace"], json!("default"), "{object}");
+    assert_eq!(findings[0]["collection"], Value::Null, "{object}");
+    assert_eq!(findings[0]["key"], Value::Null, "{object}");
+    assert_eq!(
+        object["summary"]["checked"]["documents"],
+        json!(1),
+        "{object}: the leftover must never be a document"
+    );
+    assert_eq!(object["summary"]["not_read"], json!(1), "{object}");
+    assert_eq!(
+        object["audit"]["uncollected"],
+        json!([]),
+        "{object}: a leftover is not uncollected either"
+    );
+    let not_read = object["audit"]["not_read"].as_array().unwrap();
+    assert_eq!(not_read.len(), 1, "{object}");
+    assert_eq!(not_read[0]["path"], json!(leftover), "{object}");
+    assert!(
+        not_read[0]["reason"].as_str().unwrap().contains("leftover"),
+        "{object}"
+    );
+}
+
+/// The `.md`-suffixed case decision 4 itself worked through: a glob of `*.md` would claim the
+/// name on its own, so the walker's rule has to run whether or not the glob would have excluded
+/// it. `--strict` is also checked here: `files.leftover` stays `warn`, the same as
+/// `files.unreadable` stays `error` under `--strict` (an always-on rule's level is fixed, never
+/// merged or raised).
+#[test]
+fn a_leftover_a_match_of_star_dot_md_reaches_is_files_leftover_at_warn_even_under_strict() {
+    let project = Scratch::project(&MATCH_MD);
+    project.file("a.md", "---\n---\n");
+    let leftover = format!("{}54321-deadbeef2.md", TEMP_PREFIX);
+    assert!(
+        is_temp_name(&leftover),
+        "the fixture's own name must have the reserved shape: {leftover}"
+    );
+    project.file(&leftover, "");
+
+    let ran = validate(&["--strict"], project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    let findings = object["findings"].as_array().unwrap().clone();
+    assert_eq!(findings.len(), 1, "{object}");
+    assert_eq!(findings[0]["rule"], json!("files.leftover"), "{object}");
+    assert_eq!(findings[0]["level"], json!("warn"), "{object}");
+    assert_eq!(findings[0]["path"], json!(leftover), "{object}");
+    assert_eq!(
+        object["summary"]["checked"]["documents"],
+        json!(1),
+        "{object}"
+    );
+}
+
+/// A leftover inside a coded collection's folder is never `filename.pattern` either (decision
+/// 4: "a finding about a file the user did not write"), the twin of
+/// `a_dotted_file_name_in_a_coded_collections_folder_is_a_stray` above but with a leftover
+/// instead of a plain dotted name: this one fits no `match` at all (`{key}` needs the code and a
+/// number), so it is invisible to both mechanisms rather than caught by either.
+#[test]
+fn a_leftover_in_a_coded_collections_folder_is_not_a_stray_or_anything_else() {
+    let project = Scratch::project(&[]);
+    project.file(
+        ".typdoc/collections/tickets.json",
+        r#"{ "match": "tickets/{key}.md", "schema": "ticket.json" }"#,
+    );
+    project.file(
+        "ticket.json",
+        r#"{ "name": "ticket", "code": "WF", "fields": {} }"#,
+    );
+    project.file(
+        ".typdoc/state/default.json",
+        r#"{ "tickets": { "last": 1 } }"#,
+    );
+    project.file("tickets/WF-1.md", "---\n---\n");
+    let leftover = format!("tickets/{}1-abc", TEMP_PREFIX);
+    project.file(&leftover, "");
+
+    let ran = validate(&[], project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    assert_eq!(object["findings"], json!([]), "{object}");
+}
+
+/// A leftover left by a stopped run is reported once by `validate --audit`, then removed by the
+/// next command that holds the lock (done-when (c)). No command ships yet that writes, and the
+/// signal handler that would stop one mid-write is ticket 4, built after ticket 9 — so there is
+/// no real interrupted run to produce one from. The leftover is manufactured directly instead:
+/// a file of the reserved shape is placed on disk (`project.file`, an ordinary write outside
+/// typdoc entirely) exactly where `write_atomically` would have left one, and "the next command
+/// that holds the lock" is played by hand, acquiring a real lock and calling
+/// `find_leftovers`/`remove_leftovers` the way ticket 9, 10 or 11 will.
+#[test]
+fn a_leftover_left_by_a_stopped_run_is_reported_once_then_removed_by_the_next_command_that_holds_the_lock()
+ {
+    let project = Scratch::project(&MATCH_MD);
+    project.file("a.md", "---\n---\n");
+    let leftover = format!("{}77777-1234abcd.md", TEMP_PREFIX);
+    project.file(&leftover, "");
+    let leftover_path = project.path().join(&leftover);
+    assert!(
+        leftover_path.is_file(),
+        "the leftover must be manufactured on disk first"
+    );
+
+    // Reported once.
+    let ran = validate(&["--audit"], project.path());
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let before = ran.stdout_json();
+    assert_eq!(before["summary"]["not_read"], json!(1), "{before}");
+    assert_eq!(
+        before["findings"][0]["rule"],
+        json!("files.leftover"),
+        "{before}"
+    );
+
+    // The next command that holds the lock removes it.
+    let fs = typdoc_fs::SystemFs;
+    let lock_path = project.path().join(".typdoc/locks/default.lock");
+    let lock = typdoc_core::acquire(
+        &fs,
+        &typdoc_testkit::fake::FixedClock::new(),
+        lock_path,
+        "leftover-test-host",
+        std::time::Duration::from_secs(5),
+    )
+    .expect("the lock is acquired");
+    let found = typdoc_core::find_leftovers(project.path());
+    assert_eq!(found, vec![leftover_path.clone()], "{found:?}");
+    let removed = typdoc_core::remove_leftovers(&fs, &lock, &found);
+    assert_eq!(removed, 1, "the leftover must actually be removed");
+    assert!(
+        !leftover_path.exists(),
+        "the leftover must be gone from disk"
+    );
+    typdoc_core::release(lock).expect("the lock releases");
+
+    // Removed: a second audit no longer reports it.
+    let ran = validate(&["--audit"], project.path());
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let after = ran.stdout_json();
+    assert_eq!(after["summary"]["not_read"], json!(0), "{after}");
+    assert_eq!(after["findings"], json!([]), "{after}");
+}
+
 /// A project that keeps its documents under a folder whose name begins with a dot: naming the
 /// folder in `match` is what makes the run read it, and the audit then answers about every file
 /// the run reaches there, the one no collection covers included. The list holds a file whose own
@@ -1878,21 +2070,24 @@ fn folders_a_match_names(project: &std::path::Path) -> std::collections::BTreeSe
     named
 }
 
-/// Every `.md` file below `dir` that a run reads, walked here rather than through
-/// `typdoc_core::index`, so the count owes nothing to typdoc's own idea of which files it reads.
-/// The rules, written out from the design: a folder whose name begins with `.` is entered only
-/// where a `match` writes that name out as plain text (`named`); a file whose name begins with
-/// `.` is counted like any other, since the leading-dot rule is about folders; a symbolic link
-/// is neither entered nor counted; and a folder holding its own `.typdoc/config.json` is a
-/// separate project and is not entered.
+/// Every `.md` file below `dir` that a run reads, and every one of those that the run meets and
+/// does not read because it is a symbolic link or a leftover temp file (ticket 13; no fixture
+/// used here carries a name that is not valid UTF-8, so that third reason is not modelled),
+/// walked here rather than through `typdoc_core::index`, so the count owes nothing to typdoc's
+/// own idea of which files it reads. The rules, written out from the design: a folder whose name
+/// begins with `.` is entered only where a `match` writes that name out as plain text (`named`);
+/// a file whose name begins with `.` is counted like any other, since the leading-dot rule is
+/// about folders; a symbolic link is never entered, and a leftover is never a document, whatever
+/// either looks like otherwise; and a folder holding its own `.typdoc/config.json` is a separate
+/// project and is not entered. Returns `(documents, not_read)`.
 fn count_markdown_files(
     dir: &std::path::Path,
     named: &std::collections::BTreeSet<String>,
-) -> usize {
+) -> (usize, usize) {
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return 0;
+        return (0, 0);
     };
-    let mut count = 0;
+    let (mut documents, mut not_read) = (0, 0);
     for entry in entries {
         let entry = entry.unwrap();
         let name = entry.file_name();
@@ -1902,6 +2097,9 @@ fn count_markdown_files(
         let path = entry.path();
         let file_type = entry.file_type().unwrap();
         if file_type.is_symlink() {
+            if name.ends_with(".md") {
+                not_read += 1;
+            }
             continue;
         }
         if file_type.is_dir() {
@@ -1909,20 +2107,27 @@ fn count_markdown_files(
             if !reached || path.join(".typdoc/config.json").is_file() {
                 continue;
             }
-            count += count_markdown_files(&path, named);
+            let (sub_documents, sub_not_read) = count_markdown_files(&path, named);
+            documents += sub_documents;
+            not_read += sub_not_read;
         } else if file_type.is_file() && name.ends_with(".md") {
-            count += 1;
+            if is_temp_name(name) {
+                not_read += 1;
+            } else {
+                documents += 1;
+            }
         }
     }
-    count
+    (documents, not_read)
 }
 
-/// The `.md` files of every namespace named in `namespaces`: `default`'s folder is the project
-/// root itself, and any other namespace's folder is its own name directly below the project root
-/// (design, Namespaces: "each matching child folder is one, named by its folder" — the same
-/// fact `--audit`'s own report already relies on to answer `checked.namespaces` by name; only the
-/// folder each name maps to is read here, never how the name was matched).
-fn independent_document_count(project: &std::path::Path, namespaces: &[&str]) -> usize {
+/// The `.md` files of every namespace named in `namespaces`, and the ones among them the run
+/// meets and does not read: `default`'s folder is the project root itself, and any other
+/// namespace's folder is its own name directly below the project root (design, Namespaces: "each
+/// matching child folder is one, named by its folder" — the same fact `--audit`'s own report
+/// already relies on to answer `checked.namespaces` by name; only the folder each name maps to
+/// is read here, never how the name was matched). Returns `(documents, not_read)`.
+fn independent_document_count(project: &std::path::Path, namespaces: &[&str]) -> (usize, usize) {
     let named = folders_a_match_names(project);
     namespaces
         .iter()
@@ -1934,16 +2139,19 @@ fn independent_document_count(project: &std::path::Path, namespaces: &[&str]) ->
             };
             count_markdown_files(&folder, &named)
         })
-        .sum()
+        .fold((0, 0), |(documents, not_read), (d, n)| {
+            (documents + d, not_read + n)
+        })
 }
 
-/// The accounting invariant (contract item 8): in `--audit --json`, `summary.checked.documents`
-/// plus every count of what was not checked — `summary.unreported.uncollected`,
-/// `summary.unreported.no_frontmatter` and `summary.overlapping` — equals the number of `.md`
-/// files the run reads, counted independently of typdoc (`count_markdown_files`, a plain walk of
-/// the folder, never `typdoc_core::index`). Checked on every project fixture that loads: a
-/// `broken/config.*` fixture never reaches a report at all (ticket 8: every gathered config error
-/// today turns the whole load into a failure), so it is asserted to fail rather than skipped.
+/// The accounting invariant (contract item 8, extended by ticket 13's `not_read`): in
+/// `--audit --json`, `summary.checked.documents` plus every count of what was not checked —
+/// `summary.unreported.uncollected`, `summary.unreported.no_frontmatter`, `summary.overlapping`
+/// and `summary.not_read` — equals the number of `.md` files and not-read entries the run meets,
+/// counted independently of typdoc (`count_markdown_files`, a plain walk of the folder, never
+/// `typdoc_core::index`). Checked on every project fixture that loads: a `broken/config.*`
+/// fixture never reaches a report at all (ticket 8: every gathered config error today turns the
+/// whole load into a failure), so it is asserted to fail rather than skipped.
 ///
 /// `summary.overlapping` is read from the tool's own output, not counted here from `findings`: a
 /// test that counted `collections.overlap` findings itself would check that overlap produces a
@@ -2003,7 +2211,8 @@ fn the_accounting_invariant_holds_on_every_fixture_project() {
                 .iter()
                 .map(|v| v.as_str().unwrap())
                 .collect();
-            let independent = independent_document_count(&project, &namespaces);
+            let (independent_documents, independent_not_read) =
+                independent_document_count(&project, &namespaces);
             let checked = object["summary"]["checked"]["documents"].as_u64().unwrap() as usize;
             let uncollected = object["summary"]["unreported"]["uncollected"]
                 .as_u64()
@@ -2016,13 +2225,41 @@ fn the_accounting_invariant_holds_on_every_fixture_project() {
                 .as_u64()
                 .unwrap_or_else(|| panic!("{group}/{name}: {object}"))
                 as usize;
+            let not_read = object["summary"]["not_read"]
+                .as_u64()
+                .unwrap_or_else(|| panic!("{group}/{name}: {object}"))
+                as usize;
             assert_eq!(
-                independent,
+                independent_documents,
                 checked + uncollected + no_frontmatter + overlapping,
-                "{group}/{name}: independently counted {independent} .md files, typdoc \
+                "{group}/{name}: independently counted {independent_documents} .md files, typdoc \
                  reports checked={checked} uncollected={uncollected} \
                  no_frontmatter={no_frontmatter} overlapping={overlapping}: {object}"
             );
+            // Ticket 13: the entries the run met and did not read (a symbolic link or a
+            // leftover temp file, among these fixtures) are counted independently the same way,
+            // and must equal `summary.not_read`, which closes the account contract item 8's own
+            // equation would otherwise leave short.
+            assert_eq!(
+                independent_not_read, not_read,
+                "{group}/{name}: independently counted {independent_not_read} not-read entries, \
+                 typdoc reports not_read={not_read}: {object}"
+            );
+            let not_read_listed = object["audit"]["not_read"].as_array().unwrap();
+            assert_eq!(not_read_listed.len(), not_read, "{group}/{name}: {object}");
+            for entry in not_read_listed {
+                let path = entry["path"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{group}/{name}: {entry}"));
+                assert!(
+                    !entry["reason"].as_str().unwrap_or_default().is_empty(),
+                    "{group}/{name}: {entry}"
+                );
+                assert!(
+                    project.join(path).symlink_metadata().is_ok(),
+                    "{group}/{name}: {path}"
+                );
+            }
             // The list behind `summary.overlapping`: one `{ "path", "collections" }` for each
             // file, every path a file that is on disk, each naming at least the two collections
             // that make it an overlap.
