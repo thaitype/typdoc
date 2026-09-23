@@ -1,0 +1,1 @@
+{ "match": "docs/design/spec/{key}.md", "schema": "schemas/spec.json" }
