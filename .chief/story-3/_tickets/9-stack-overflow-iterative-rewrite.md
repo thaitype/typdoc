@@ -1,7 +1,7 @@
 # 9: Rewrite `cyclic_nodes`'s `visit` as an iterative walk
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None (can start immediately)
 
 Ticket 1 (wayfinder research) found the root cause and reproduction; this ticket builds the fix
