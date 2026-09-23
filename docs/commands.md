@@ -2,7 +2,7 @@
 
 Eight commands: `get`, `list`, `refs`, `toc` and `validate` read a project; `new`, `set` and `mv` write one. The [design](design/design.md) is the source of truth; this page is the working reference.
 
-Every command takes `--namespace <list>` to choose which namespaces it reaches, and `--json`. Today `list` and `validate --audit` also print plain text, as do `new`'s coded form and `mv --renumber` (the bare key); every other command needs `--json` and exit 1 without it. A write command also takes `--lock-timeout <seconds>` (default 5), how long to wait for the namespace's lock before giving up at exit 4.
+Every command takes `--namespace <list>` to choose which namespaces it reaches, and `--json`. Every command below prints readable text without `--json`: a labeled block, one `name: value` line per field, for `get`, `set`, `new` and both forms of `mv`; a table with a header row for `list` and `toc`; one line per ref for `refs`; one line per finding for `validate`. `--json` prints the same information as a single machine-readable document instead. A write command also takes `--lock-timeout <seconds>` (default 5), how long to wait for the namespace's lock before giving up at exit 4.
 
 A document is named by its key (`WF-2`) or by its path from the project folder (`tickets/WF-2.md`), told apart by form: a key never ends in `.md`. A prefix reaches further: `story-2:WF-5` a sibling namespace, `memory::LRN-1` an imported project. A path that really begins with a name and a colon is written `./name:file.md`.
 
@@ -33,6 +33,8 @@ The documents that match a query.
 | `--ids` | One key or path per line instead of the table |
 
 A condition is `field=value`, `field!=value`, or an ordering comparison (`<`, `<=`, `>`, `>=`) on a number, date or datetime. `*` is a glob and a bare `field=*` asks whether the field is present at all. A list of alternatives is written `status=open,claimed`.
+
+A `number` past what an `f64` holds exactly (past about the eighteenth digit) compares by the value it converts to, not by the digits written, so two values that differ only past that point can compare equal instead of greater or less. Measured on this codebase: `typdoc list --where 'count>99999999999999999998'` returns nothing even when a document holds `count: 99999999999999999999`, because both convert to the same `f64` value and neither compares greater than the other. Whether `date` and `datetime` — which also compare as instants — are affected the same way is not measured.
 
 Absence has a rule worth knowing: a document without the field fails every positive condition and satisfies every negated one, so `status=open` and `status!=open` divide a set with nothing left over. The ordering comparisons are the exception, and a document without the field fails those too.
 
@@ -87,7 +89,12 @@ Create a document. A coded schema's target is its code, and the key is allocated
 
 ```console
 $ typdoc new WF "Decide the numbering scheme"
-WF-2
+path: tickets/WF-2.md
+collection: wayfinder
+schema: wayfinder
+namespace: default
+key: WF-2
+title: Decide the numbering scheme
 
 $ typdoc new notes/second-note.md --set title="A second note" --json
 {"document":{"path":"notes/second-note.md","namespace":"default","code":null,"collection":"notes","schema":"note","fields":{"title":"A second note"}}}
@@ -97,7 +104,7 @@ $ typdoc new notes/second-note.md --set title="A second note" --json
 | --- | --- |
 | `--set <k=v>` | A field to set on the new document; may repeat |
 
-`--json` prints the whole document, defaults and `auto` fields included, because those are exactly what the caller could not work out for itself. A coded form's `title` is required; an uncoded form takes none, and any field goes through `--set`. Allocation happens under the namespace's lock: the next number is the larger of the highest key that exists and the collection's own recorded `last`, so a deleted document's number is never reissued. The file is created with no temp file and no replace — a destination that already exists, coded or not, is refused at exit 7 with nothing written and no number burned.
+Without `--json`, both forms print the same labeled block `get` prints for the new document — a deliberate change for the coded form, which used to print only the bare key on stdout; a caller that wants just the key now reads it out of `--json` instead. `--json` prints the whole document, defaults and `auto` fields included, because those are exactly what the caller could not work out for itself. A coded form's `title` is required; an uncoded form takes none, and any field goes through `--set`. Allocation happens under the namespace's lock: the next number is the larger of the highest key that exists and the collection's own recorded `last`, so a deleted document's number is never reissued. The file is created with no temp file and no replace — a destination that already exists, coded or not, is refused at exit 7 with nothing written and no number burned.
 
 ## `typdoc set <key|path> <field=value>...`
 
@@ -125,11 +132,27 @@ Move a document, or renumber a coded one into another namespace. Rewrites every 
 
 ```console
 $ typdoc mv notes/first.md notes/renamed.md --json
-{"document":{"path":"notes/renamed.md","namespace":"default","code":null,"collection":"notes","schema":"note","fields":{"title":"A note"}},"unrewritten":[],"findings":[]}
+{"document":{"path":"notes/renamed.md","namespace":"default","code":null,"collection":"notes","schema":"note","fields":{"title":"A note"}},"rewritten":[],"unrewritten":[],"findings":[]}
 
 $ typdoc mv WF-1 --renumber archive --json
-{"document":{"path":"archive/tickets/WF-1.md","namespace":"archive","key":"WF-1","code":"WF","collection":"tickets","schema":"ticket","fields":{"title":"Filed by team A"}},"unrewritten":[],"findings":[]}
+{"document":{"path":"archive/tickets/WF-1.md","namespace":"archive","key":"WF-1","code":"WF","collection":"tickets","schema":"ticket","fields":{"title":"Filed by team A"}},"rewritten":[],"unrewritten":[],"findings":[]}
 ```
+
+Without `--json`, both forms print the destination's `get`-shaped block, then three lines always present — `rewritten:`, `unrewritten:`, `findings:` — even for a clean move:
+
+```console
+$ typdoc mv a.md renamed.md
+path: renamed.md
+collection: notes
+schema: note
+namespace: default
+title: A
+rewritten: 2 refs in 1 documents
+unrewritten: none
+findings: none
+```
+
+This replaces `mv --renumber`'s old behavior of printing only the bare new key on stdout, the same change `new`'s coded form made above; a caller that wants just the key reads it out of `--json` instead. `mv --json` additionally carries the full `rewritten` list behind the text summary's count — one entry per rewritten ref, each naming the document, field, and value before and after — additive to every field `mv --json` already printed. There is no `--verbose` flag: the detail lives in `--json`, and `git diff` already shows it for a human at the terminal.
 
 | Option | Meaning |
 | --- | --- |

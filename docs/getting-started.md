@@ -139,7 +139,7 @@ $ typdoc new WF "Second ticket" --set status=open --set blocked_by=WF-1 --json
 {"document":{"path":"tickets/WF-2.md","namespace":"default","key":"WF-2","code":"WF","collection":"tickets","schema":"ticket","fields":{"title":"Second ticket","status":"open","blocked_by":["WF-1"]}}}
 ```
 
-The coded form of `new` takes a title and prints the bare key without `--json`; every other field goes through `--set`, the same `field=value` syntax `set` takes below. `new` validates the candidate before it allocates anything, so a `--set` that fails never burns a number, and it creates the file with no replace: a destination that already exists is refused, nothing written.
+The coded form of `new` takes a title and prints the new document's labeled block without `--json` — `path`, `collection`, `schema`, `namespace`, `key`, then its fields, one `name: value` line each; every other field goes through `--set`, the same `field=value` syntax `set` takes below. `new` validates the candidate before it allocates anything, so a `--set` that fails never burns a number, and it creates the file with no replace: a destination that already exists is refused, nothing written.
 
 `typdoc set` changes fields on a document that already exists, under the same lock as the write:
 
@@ -168,7 +168,8 @@ A ref that points at nothing is reported by `validate`, which is the thing that 
 
 ```console
 $ typdoc list --collection tickets --where status=open --where 'ref.all(blocked_by).status=done'
-WF-2  Second ticket  open  WF-1
+key   title          status  blocked_by
+WF-2  Second ticket  open    WF-1
 ```
 
 That is the question worth asking a folder of tickets: what is open and not waiting on anything unfinished. `--where` may repeat, and every condition must hold. A condition can follow a ref, as `ref.all(blocked_by).status=done` does, and `all` is true for a document with no blockers at all.

@@ -6,7 +6,8 @@ typdoc is a lens over files, not a format for them. Adopting it means adding a c
 
 ```console
 $ typdoc list --where status=open --where 'ref.all(blocked_by).status=resolved'
-WF-2  Decide the numbering scheme  open  WF-1
+key   title                        status  blocked_by
+WF-2  Decide the numbering scheme  open    WF-1
 ```
 
 That asks a folder of tickets which of them are open and waiting on nothing unfinished. Every part of it is explained in the [getting started guide](docs/getting-started.md); nothing here is a language you have to learn before the tool is useful.
@@ -19,12 +20,12 @@ Version 0.2.0. Not released, and not finished: `pull` and remote schemas are not
 
 - `get`, `list`, `refs`, `toc` and `validate` read a project; `new`, `set` and `mv` (including `mv --renumber`, which moves a coded document to another namespace under a new key) write one. A ref may point into another project on this machine that yours imports, and is followed there, though a few checks stop at that edge; see below.
 - Schemas with types, enums, refs and inheritance; rules over frontmatter, schemas, keys, file names, refs and body links; a query language for `list`, including conditions that follow refs.
+- Every command prints readable text without `--json`: a labeled block for `get`, `set`, `new` and both forms of `mv`; a table with a header row for `list` and `toc`; one line per ref for `refs`; one line per finding for `validate`. `--json` prints the same information as a single machine-readable document instead.
 - **A write changes only the values of the fields it is given, and never the body.** Every write is atomic — a temp file, then a rename — takes the namespace's lock, and is safe to interrupt: `SIGINT` and `SIGTERM` are caught, the lock is released, and two writers racing the same lock never issue the same key. Nothing outside the project is written, and no command deletes a document.
 
 **What is not built yet**
 
 - `pull`, remote schemas, and the project lock they need. The design describes them; the binary does not have them, and says so if you ask.
-- Plain text output for most commands. `list` prints a table, `validate --audit` prints a summary, and `new`'s coded form and `mv --renumber` print the bare key; every other command needs `--json` and exit 1 without it.
 - Some checks stop at the edge of an imported project: a reverse lookup does not enter one, and a `#heading` anchor across an import is not checked. Both are deliberate, and each is held in place by a test.
 
 Linux is the platform this is run and tested on. Nothing else is claimed.
@@ -130,10 +131,11 @@ story-2/_notes/kickoff.md            a note in story-2
 
 ```console
 $ typdoc list --fields namespace,collection,key,path
-WF-1                       Set up the folder         story-1  _tickets  WF-1  story-1/_tickets/WF-1.md
-WF-1                       Choose the folder layout  story-2  _tickets  WF-1  story-2/_tickets/WF-1.md
-story-1/_notes/kickoff.md  Kickoff notes             story-1  _notes          story-1/_notes/kickoff.md
-story-2/_notes/kickoff.md  Kickoff notes             story-2  _notes          story-2/_notes/kickoff.md
+key                        title                     namespace  collection  key   path
+WF-1                       Set up the folder         story-1    _tickets    WF-1  story-1/_tickets/WF-1.md
+WF-1                       Choose the folder layout  story-2    _tickets    WF-1  story-2/_tickets/WF-1.md
+story-1/_notes/kickoff.md  Kickoff notes             story-1    _notes            story-1/_notes/kickoff.md
+story-2/_notes/kickoff.md  Kickoff notes             story-2    _notes            story-2/_notes/kickoff.md
 ```
 
 `WF-1` appears twice, once per namespace: the same key, two different documents, no conflict,
