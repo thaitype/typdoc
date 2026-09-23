@@ -1,7 +1,7 @@
 # 16: Text output for `get`, `set`, and both forms of `new`
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None (can start immediately)
 
 Shape is fixed by the contract's text-output table (M-10(a,b,d,f)). This ticket introduces the
