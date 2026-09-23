@@ -1,7 +1,7 @@
 # 18: `list`'s header row
 
 Type: implementation
-Status: open
+Status: claimed
 Blocked by: None (can start immediately)
 
 M-10g's answer, built. `list` already produces text output (`list_outcome`); this ticket adds
