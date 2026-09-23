@@ -1,7 +1,7 @@
 # 20: Text output for plain and `--schemas` `validate`
 
 Type: implementation
-Status: open
+Status: claimed
 Blocked by: None (can start immediately)
 
 `--audit`'s text form is already built; this ticket builds the other two, from the same finding
