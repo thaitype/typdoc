@@ -1,7 +1,7 @@
 # 22: Record every changed shape in `docs/design/spec/` and the user docs
 
 Type: implementation
-Status: open
+Status: claimed
 Blocked by: 10, 16, 17, 18, 19, 20, 21
 
 Contract decision 5 and M-2b, built. `docs/design/design.md` is archived and frozen (ticket 13);
