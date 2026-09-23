@@ -57,7 +57,7 @@ What a document points at, or what points at it.
 
 Each reference carries either the document it resolved to, named by its `path` and `namespace` (and its `key` and `project` where it has them), or an `unresolved` reason. Never both, and never neither. The reasons are `not-found`, `bad-prefix` and `import-absent`.
 
-A reverse lookup scans this project's namespaces. It does not enter an imported project, which the design says it should; that difference is listed in `crates/typdoc/src/registry.rs`.
+A reverse lookup scans this project's namespaces. It does not enter an imported project, which the design says it should; the difference is deliberate and is held in place by a test.
 
 ## `typdoc toc <key|path>`
 

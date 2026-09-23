@@ -2,14 +2,14 @@
 
 This walks through building a typdoc project from an empty folder. Every command below was run as it is written; the outputs are the real ones.
 
-You need a recent Rust toolchain to build the tool, and nothing else.
+You need a recent Rust toolchain to install the tool, and nothing else.
 
 ```console
 $ git clone https://github.com/thaitype/typdoc
-$ cd typdoc && cargo build
+$ cd typdoc && cargo install --path crates/typdoc --bin typdoc
 ```
 
-The binary lands in `target/debug/typdoc`. Put it on your `PATH`, or write the path out in full as this page does.
+That puts `typdoc` in `~/.cargo/bin`, and this page calls it by that name throughout.
 
 ## A project is a folder with a `.typdoc` folder in it
 
