@@ -44,7 +44,7 @@ That puts `typdoc` in `~/.cargo/bin`, which is where the rest of this page and
 `docs/getting-started.md` expect to find it.
 
 To work on typdoc rather than with it, `cargo build` leaves the binary at `target/debug/typdoc`
-instead.
+instead, and `docs/development.md` has the rest: the workspace, the tests and the lints.
 
 ## Quick start
 
@@ -171,8 +171,9 @@ Every command takes `--json`. `docs/commands.md` has the options, the exit codes
 - `docs/projects.md` — config, collections, schemas, namespaces, imports.
 - `docs/commands.md` — the eight commands, their options and their output.
 
-The design is the source of truth for behaviour, and the two documents below are written for whoever works on typdoc rather than for whoever uses it:
+The design is the source of truth for behaviour, and the documents below are written for whoever works on typdoc rather than for whoever uses it:
 
+- `docs/development.md` — the workspace, how to build, how to run the tests, and what the lints hold in place.
 - `docs/design/design.md` — what typdoc does and why, in full. Where this README and the docs above disagree with it, it wins.
 - `docs/design/design-decision-phase-1/` and `docs/design/design-decision-phase-2/` — the decisions behind the design, with the research they rest on.
 
