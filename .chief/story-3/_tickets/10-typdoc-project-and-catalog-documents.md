@@ -1,7 +1,7 @@
 # 10: Set up this repo's `.typdoc/` project and author the four catalog documents
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: None (M-11 landed 2026-09-23 — see ticket 23's Answer for the full decision)
 
 **Unblocked 2026-09-23.** M-11's actual answer differs from Aria's proposal in two ways this
