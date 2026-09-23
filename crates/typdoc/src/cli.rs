@@ -9,7 +9,7 @@ use serde_json::value::RawValue;
 use serde_json::{Map, Value as Json, json};
 use typdoc_core::{
     Argument, AuditReport, Condition, Deps, Document, DocumentArg, Env, Error, ErrorKind, FieldRef,
-    Finding, ListFilter, ListResult, MvReport, NewTarget, Project, RefField, RefOutcome,
+    Finding, Heading, ListFilter, ListResult, MvReport, NewTarget, Project, RefField, RefOutcome,
     RefsDirection, RefsReference, RefsReport, Scope, SetOp, Severity, SortKey, Source, Toc,
     UnrewrittenReason, UnrewrittenRef, ValidateReport, ValidateScope, Value, discover,
     discover_for, parse_field, parse_query, resolve_on_disk,
@@ -334,15 +334,11 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
             document,
             depth,
             json,
-        } => {
-            if !json {
-                return failure_text(false, 1, "the output without --json is not built yet");
-            }
-            match toc(deps, &document, cli.namespace.as_deref()) {
-                Ok(toc) => success(toc_json(&toc, depth)),
-                Err(e) => failure(true, exit_code(e.kind()), &e),
-            }
-        }
+        } => match toc(deps, &document, cli.namespace.as_deref()) {
+            Ok(toc) if json => success(toc_json(&toc, depth)),
+            Ok(toc) => toc_outcome(&toc, depth),
+            Err(e) => failure(json, exit_code(e.kind()), &e),
+        },
         Command::Validate {
             documents,
             schemas,
@@ -1392,12 +1388,19 @@ fn failure(json: bool, code: u8, error: &Error) -> Outcome {
     }
 }
 
+/// Whether a heading at `level` belongs in a result cut off at `depth`: every heading when
+/// `depth` is absent, or only those no deeper than it. Shared by `toc_json` and `toc_outcome` so
+/// the two shapes cannot silently drift onto different headings from a copy of the same filter.
+fn within_depth(level: u8, depth: Option<u8>) -> bool {
+    depth.is_none_or(|depth| level <= depth)
+}
+
 /// The headings down to `depth`, each with the `end` it has in the whole document.
 fn toc_json(toc: &Toc, depth: Option<u8>) -> Json {
     let headings: Vec<Json> = toc
         .headings
         .iter()
-        .filter(|heading| depth.is_none_or(|depth| heading.level <= depth))
+        .filter(|heading| within_depth(heading.level, depth))
         .map(|heading| {
             json!({
                 "level": heading.level,
@@ -1417,6 +1420,75 @@ fn toc_json(toc: &Toc, depth: Option<u8>) -> Json {
         )),
         "headings": headings,
     })
+}
+
+/// `toc`'s text-mode table: a header row (`line`, `end`, `level`, `heading`), then one row per
+/// heading down to `depth` — the same filter `toc_json` applies, so both shapes agree on which
+/// headings are listed. No header when the filtered result is empty (`list`'s own precedent,
+/// decided by Aria, 2026-09-23): the exit code alone carries an empty result.
+fn toc_outcome(toc: &Toc, depth: Option<u8>) -> Outcome {
+    let headings: Vec<&Heading> = toc
+        .headings
+        .iter()
+        .filter(|heading| within_depth(heading.level, depth))
+        .collect();
+    Outcome {
+        code: 0,
+        stdout: toc_table(&headings),
+        stderr: String::new(),
+    }
+}
+
+/// Renders `headings` as a table with a header row, columns padded to the width their longest
+/// value takes (header included), the same two-space-separated, last-column-unpadded convention
+/// `list_table` uses for its own table. Empty when `headings` is empty: no header line for a
+/// document (or `--depth`) with nothing to show.
+fn toc_table(headings: &[&Heading]) -> String {
+    if headings.is_empty() {
+        return String::new();
+    }
+    const HEADER: [&str; 4] = ["line", "end", "level", "heading"];
+    let rows: Vec<[String; 4]> = headings
+        .iter()
+        .map(|heading| {
+            [
+                heading.line.to_string(),
+                heading.end.to_string(),
+                heading.level.to_string(),
+                heading.text.clone(),
+            ]
+        })
+        .collect();
+    let mut widths = HEADER.map(str::len);
+    for row in &rows {
+        for (i, cell) in row.iter().enumerate() {
+            widths[i] = widths[i].max(cell.chars().count());
+        }
+    }
+    let mut out = String::new();
+    push_toc_row(&mut out, &HEADER.map(str::to_owned), &widths);
+    for row in &rows {
+        push_toc_row(&mut out, row, &widths);
+    }
+    out
+}
+
+/// One padded, trimmed row of `toc_table`: cells separated by two spaces, each padded to its
+/// column's width except the last, which is never padded (so a trailing `heading` column carries
+/// no dangling whitespace).
+fn push_toc_row(out: &mut String, cells: &[String; 4], widths: &[usize; 4]) {
+    let mut line = String::new();
+    for (i, cell) in cells.iter().enumerate() {
+        if i > 0 {
+            line.push_str("  ");
+        }
+        line.push_str(cell);
+        if i + 1 < cells.len() {
+            line.push_str(&" ".repeat(widths[i] - cell.chars().count()));
+        }
+    }
+    out.push_str(line.trim_end());
+    out.push('\n');
 }
 
 /// `refs`' report: the document asked about, `direction`, and its references in the order
