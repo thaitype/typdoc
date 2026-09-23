@@ -22,7 +22,7 @@ use crate::fs::{Fs, create_exclusively, write_atomically};
 use crate::index::{Entry as Indexed, Index, Member};
 use crate::lines::Position;
 use crate::links::{self, BodyLink, BodyLinks};
-use crate::mv::{self, ContentChange, MvReport, UnrewrittenReason, UnrewrittenRef};
+use crate::mv::{self, ContentChange, MvReport, RewrittenRef, UnrewrittenReason, UnrewrittenRef};
 use crate::namespace_lock::{
     self, NamespaceLock, acquire, local_namespace_lock_path, order_locks, release,
 };
@@ -4021,7 +4021,8 @@ impl Project {
             });
         }
 
-        let mut changes = self.mv_rewrite_changes(&rewrite_by_holder, &to_path, None)?;
+        let (mut changes, rewritten) =
+            self.mv_rewrite_changes(&rewrite_by_holder, &to_path, None)?;
         if let Some(change) = self.mv_document_change(
             &from_path,
             from_collection,
@@ -4038,6 +4039,7 @@ impl Project {
             self.mv_result(&to_path, to_namespace, to_collection, &to_full)?;
         Ok(MvReport {
             document,
+            rewritten,
             unrewritten,
             findings,
         })
@@ -4155,7 +4157,7 @@ impl Project {
             });
         }
 
-        let mut changes =
+        let (mut changes, rewritten) =
             self.mv_rewrite_changes(&rewrite_by_holder, &to_path, Some((&from_key, &new_key)))?;
         // The value `auto: moves` records for a coded document: its previous key, with its own
         // namespace's prefix, since a bare key alone would not say which namespace it belonged
@@ -4196,6 +4198,7 @@ impl Project {
         )?;
         Ok(MvReport {
             document,
+            rewritten,
             unrewritten,
             findings,
         })
@@ -4287,14 +4290,19 @@ impl Project {
 
     /// One [`ContentChange`] for every holder in `rewrite_by_holder` whose rewritten text
     /// actually differs from what is on disk now: every ref recomputed to name `to_path`,
-    /// keeping its own written form (`rewrite_holder`).
+    /// keeping its own written form (`rewrite_holder`); alongside it, the full list of every ref
+    /// that rewrite actually applied (ticket 21, `mv --json`'s new `rewritten`), gathered only
+    /// from a holder whose text did change — the same condition that decides whether a
+    /// [`ContentChange`] is queued for it, since `rewrite_holder` only ever changes `text` by
+    /// applying one of the refs this returns.
     fn mv_rewrite_changes(
         &self,
         rewrite_by_holder: &RewriteByHolder,
         to_path: &str,
         key_rewrite: Option<(&str, &str)>,
-    ) -> Result<Vec<ContentChange>, Error> {
+    ) -> Result<(Vec<ContentChange>, Vec<RewrittenRef>), Error> {
         let mut changes = Vec::new();
+        let mut rewritten = Vec::new();
         for (holder_path, refs) in rewrite_by_holder {
             #[expect(
                 clippy::expect_used,
@@ -4306,16 +4314,17 @@ impl Project {
                 .get(holder_path)
                 .expect("holder paths in this map were already looked up above");
             let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
-            let new_text =
+            let (new_text, holder_rewritten) =
                 self.rewrite_holder(holder_path, entry, &text, refs, to_path, key_rewrite)?;
             if new_text != text {
                 changes.push(ContentChange {
                     path: entry.file.clone(),
                     bytes: new_text.into_bytes(),
                 });
+                rewritten.extend(holder_rewritten);
             }
         }
-        Ok(changes)
+        Ok((changes, rewritten))
     }
 
     /// `mv` and `mv_renumber`'s shared tail, once each has its own `changes` and `to_full`
@@ -4375,8 +4384,11 @@ impl Project {
     /// keeping its own written form (`mv::rewritten_path_ref`), applied to a frontmatter field
     /// through the writer and to a body link by splicing the one line it sits on. Returns `text`
     /// unchanged when `refs` is empty, so a caller can compare before and after to know whether
-    /// anything actually needs preparing. `key_rewrite` is `Some((old_key, new_key))` only from
-    /// `mv --renumber`, and is passed straight through to `mv::rewritten_path_ref`, the one place
+    /// anything actually needs preparing, alongside one [`RewrittenRef`] per ref this actually
+    /// applied (ticket 21) — never one for a ref this function defensively left alone (a body
+    /// link whose position or line no longer matches what was expected), since that ref did not
+    /// in fact get rewritten. `key_rewrite` is `Some((old_key, new_key))` only from `mv
+    /// --renumber`, and is passed straight through to `mv::rewritten_path_ref`, the one place
     /// that reads it.
     fn rewrite_holder(
         &self,
@@ -4386,7 +4398,7 @@ impl Project {
         refs: &[RefsReference],
         new_target: &str,
         key_rewrite: Option<(&str, &str)>,
-    ) -> Result<String, Error> {
+    ) -> Result<(String, Vec<RewrittenRef>), Error> {
         let collection = &self.collections[entry.collection];
         let bad = |message| Error::Frontmatter {
             file: entry.file.clone(),
@@ -4401,6 +4413,7 @@ impl Project {
         let mut frontmatter_touched = false;
         let mut body = text.to_owned();
         let mut body_touched = false;
+        let mut rewritten = Vec::new();
 
         for reference in refs {
             let new_written = mv::rewritten_path_ref(
@@ -4412,6 +4425,7 @@ impl Project {
                 new_target,
                 key_rewrite,
             );
+            let after = new_written.clone();
             if reference.field == "$body" {
                 let Some(position) = reference.position else {
                     continue;
@@ -4441,23 +4455,30 @@ impl Project {
                 }
                 frontmatter_touched = true;
             }
+            rewritten.push(RewrittenRef {
+                document: holder_path.to_owned(),
+                field: reference.field.clone(),
+                before: reference.written.clone(),
+                after,
+            });
         }
 
         if !frontmatter_touched && !body_touched {
-            return Ok(text.to_owned());
+            // `rewritten` is empty here: every push above happens in the same iteration that
+            // sets one of these two flags, so neither being set means nothing was pushed.
+            return Ok((text.to_owned(), rewritten));
         }
         if !frontmatter_touched {
-            return Ok(body);
+            return Ok((body, rewritten));
         }
         let new_block = writer.finish().map_err(bad)?;
         // The body may have been spliced above; re-split it fresh (frontmatter edits never move
         // where the body begins, since they replace the block in place) so the reassembly uses
         // whichever of the two changed.
         let body_split = frontmatter::split(&body).map_err(bad)?;
-        Ok(assemble_frontmatter(
-            split.block.is_some(),
-            &new_block,
-            &body[body_split.body..],
+        Ok((
+            assemble_frontmatter(split.block.is_some(), &new_block, &body[body_split.body..]),
+            rewritten,
         ))
     }
 

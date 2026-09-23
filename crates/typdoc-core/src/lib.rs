@@ -59,7 +59,7 @@ pub use lines::{LineMap, Position};
 pub use links::{
     BodyLink, BodyLinks, Definition, DuplicateDefinition, Mention, Suspect, mentions, scan,
 };
-pub use mv::{ContentChange, MvReport, UnrewrittenReason, UnrewrittenRef, commit};
+pub use mv::{ContentChange, MvReport, RewrittenRef, UnrewrittenReason, UnrewrittenRef, commit};
 pub use namespace_lock::{
     NamespaceLock, Released, acquire, git_common_namespace_lock_path, git_common_project_lock_path,
     local_namespace_lock_path, local_project_lock_path, order_locks, project_hash, project_hash_of,

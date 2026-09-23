@@ -9,6 +9,20 @@
       "title": "A"
     }
   },
+  "rewritten": [
+    {
+      "document": "b.md",
+      "field": "see",
+      "before": "a.md",
+      "after": "renamed.md"
+    },
+    {
+      "document": "b.md",
+      "field": "$body",
+      "before": "a.md",
+      "after": "renamed.md"
+    }
+  ],
   "unrewritten": [],
   "findings": []
 }

@@ -77,13 +77,16 @@ fn read_bytes(project: &Scratch, path: &str) -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The bare stdout shape, allocation, the move, and the ref rewrite.
+// The allocation, the move, and the ref rewrite; ticket 21's text-mode shape without `--json`.
 // ---------------------------------------------------------------------------------------------
 
-/// The new key is printed bare on standard output, exactly as `typdoc new` prints one, and
-/// `--json` reports the document under that key in the field every other shape carries a key in.
+/// **Changed (M-10h, ticket 21), deliberate:** without `--json`, `--renumber` no longer prints
+/// the new key bare — it prints the same `get`-shaped labeled block every other write command
+/// prints, plus `rewritten:`/`unrewritten:`/`findings:`. A caller that only wants the bare key
+/// reads it out of `--json`'s `document.key` instead (`renumber_json_reports_the_document_under_its_new_key`,
+/// below, already covers that).
 #[test]
-fn renumber_allocates_the_next_key_from_the_destination_and_prints_it_bare() {
+fn renumber_allocates_the_next_key_from_the_destination_and_prints_the_labeled_block() {
     let project = project();
     project.file("story-1/tickets/WF-5.md", "---\ntitle: One\n---\n");
     // Seeds the destination so the allocated key differs, in text, from the source's: this
@@ -97,7 +100,18 @@ fn renumber_allocates_the_next_key_from_the_destination_and_prints_it_bare() {
 
     let bare = renumber_bare(&project, "WF-5", "story-3");
     assert_eq!(bare.code, 0, "{}", bare.stderr);
-    assert_eq!(bare.stdout, "WF-2\n");
+    assert_eq!(
+        bare.stdout,
+        "path: story-3/tickets/WF-2.md\n\
+         collection: tickets\n\
+         schema: ticket\n\
+         namespace: story-3\n\
+         key: WF-2\n\
+         title: One\n\
+         rewritten: 0 refs in 0 documents\n\
+         unrewritten: none\n\
+         findings: none\n"
+    );
     assert!(!project.path().join("story-1/tickets/WF-5.md").exists());
     assert!(project.path().join("story-3/tickets/WF-2.md").exists());
     assert_eq!(
@@ -106,6 +120,10 @@ fn renumber_allocates_the_next_key_from_the_destination_and_prints_it_bare() {
     );
 }
 
+/// Also the hand-written golden for a clean `--renumber`'s `--json` `rewritten` (ticket 21,
+/// testing-decisions.md, "Text output": the clean-move case, the third of the three `mv --json`
+/// is asked to cover for `rewritten` — the rewrite and unrewritten cases are covered by
+/// `renumber_json_carries_the_full_rewritten_list_behind_the_text_count` below).
 #[test]
 fn renumber_json_reports_the_document_under_its_new_key() {
     let project = project();
@@ -120,6 +138,7 @@ fn renumber_json_reports_the_document_under_its_new_key() {
     assert_eq!(out["document"]["key"], json!("WF-1"));
     assert_eq!(out["document"]["code"], json!("WF"));
     assert_eq!(out["document"]["collection"], json!("tickets"));
+    assert_eq!(out["rewritten"], json!([]));
     assert_eq!(out["unrewritten"], json!([]));
     assert_eq!(out["findings"], json!([]));
 }
@@ -506,6 +525,163 @@ fn an_unknown_destination_namespace_is_exit_1() {
     let ran = renumber(&project, "WF-5", "nowhere");
 
     assert_eq!(ran.code, 1, "{}", ran.stderr);
+    assert_eq!(
+        project.read("story-1/tickets/WF-5.md"),
+        "---\ntitle: One\n---\n"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Ticket 21: `--renumber`'s text output without `--json`, and `--json`'s new `rewritten` list —
+// the same shape plain `mv` gets, built from the same `typdoc-core` data (`mv.rs`'s own "Ticket
+// 21" section covers the plain-`mv` half of this).
+// ---------------------------------------------------------------------------------------------
+
+/// A `notes` collection, added to [`project`], with a `see` ref field — for the tests below that
+/// need a holder somewhere other than `tickets/` to point back at the renumbered document.
+fn project_with_notes() -> Scratch {
+    let project = project();
+    project.file(
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "notes/*.md", "schema": "note.json" }"#,
+    );
+    project.file(
+        "note.json",
+        r#"{ "name": "note", "fields": {
+            "title": { "type": "string", "required": true },
+            "see": { "type": "ref", "target": "*" }
+        } }"#,
+    );
+    project
+}
+
+/// A move that rewrites at least one ref: the same fixture
+/// `renumber_rewrites_refs_held_by_other_documents_in_the_project` already proves the file
+/// content for, read here as the hand-written golden for `--renumber`'s text-mode shape
+/// (contract, text-output shapes, `mv --renumber`) — `rewritten: 2 refs in 1 documents` (the
+/// frontmatter `see` and the body link, both held by the one holder).
+#[test]
+fn a_renumber_that_rewrites_refs_prints_the_labeled_block_and_the_rewritten_count() {
+    let project = project_with_notes();
+    project.file("story-1/tickets/WF-5.md", "---\ntitle: One\n---\n");
+    project.file(
+        "story-1/notes/holder.md",
+        "---\ntitle: Holder\nsee: WF-5\n---\n\nSee [it](story-1:tickets/WF-5.md).\n",
+    );
+
+    let ran = renumber_bare(&project, "WF-5", "story-3");
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(
+        ran.stdout,
+        "path: story-3/tickets/WF-1.md\n\
+         collection: tickets\n\
+         schema: ticket\n\
+         namespace: story-3\n\
+         key: WF-1\n\
+         title: One\n\
+         rewritten: 2 refs in 1 documents\n\
+         unrewritten: none\n\
+         findings: none\n"
+    );
+}
+
+/// The same move's `--json`: `rewritten` carries one entry per ref actually rewritten, matching
+/// the new content `renumber_rewrites_refs_held_by_other_documents_in_the_project` already
+/// checks by reading the holder's file back.
+#[test]
+fn renumber_json_carries_the_full_rewritten_list_behind_the_text_count() {
+    let project = project_with_notes();
+    project.file("story-1/tickets/WF-5.md", "---\ntitle: One\n---\n");
+    project.file(
+        "story-1/notes/holder.md",
+        "---\ntitle: Holder\nsee: WF-5\n---\n\nSee [it](story-1:tickets/WF-5.md).\n",
+    );
+
+    let ran = renumber(&project, "WF-5", "story-3");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let out = ran.stdout_json();
+    let rewritten = out["rewritten"].as_array().expect("an array");
+    assert_eq!(rewritten.len(), 2, "{rewritten:?}");
+    assert!(
+        rewritten
+            .iter()
+            .any(|r| r["document"] == json!("story-1/notes/holder.md")
+                && r["field"] == json!("see")
+                && r["before"] == json!("WF-5")
+                && r["after"] == json!("story-3:WF-1")),
+        "{rewritten:?}"
+    );
+    assert!(
+        rewritten
+            .iter()
+            .any(|r| r["document"] == json!("story-1/notes/holder.md")
+                && r["field"] == json!("$body")
+                && r["before"] == json!("story-1:tickets/WF-5.md")
+                && r["after"] == json!("story-3:tickets/WF-1.md")),
+        "{rewritten:?}"
+    );
+}
+
+/// A `--renumber` that leaves a ref unrewritten (`body.links` off): the text-mode golden shows
+/// `unrewritten:`'s own count and one line naming the holder, `$body`, and the written form left
+/// untouched — the same reason plain `mv`'s own version of this test names
+/// (testing-decisions.md, "Text output").
+#[test]
+fn a_renumber_that_leaves_a_ref_unrewritten_prints_its_own_count_and_entry_line() {
+    let project = project();
+    project.file(
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "notes/*.md", "schema": "note.json", "validation": { "body.links": { "level": "off" } } }"#,
+    );
+    project.file(
+        "note.json",
+        r#"{ "name": "note", "fields": { "title": { "type": "string", "required": true } } }"#,
+    );
+    project.file("story-1/tickets/WF-5.md", "---\ntitle: One\n---\n");
+    project.file(
+        "story-1/notes/holder.md",
+        "---\ntitle: Holder\n---\n\nSee [it](../tickets/WF-5.md) for details.\n",
+    );
+
+    let ran = renumber_bare(&project, "WF-5", "story-3");
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(
+        ran.stdout,
+        "path: story-3/tickets/WF-1.md\n\
+         collection: tickets\n\
+         schema: ticket\n\
+         namespace: story-3\n\
+         key: WF-1\n\
+         title: One\n\
+         rewritten: 0 refs in 0 documents\n\
+         unrewritten: 1\n\
+         story-1/notes/holder.md  $body  ../tickets/WF-5.md\n\
+         findings: none\n"
+    );
+}
+
+/// The already-fixed error path (contract decision 4, ticket 21's own item 4): without `--json`,
+/// `--renumber`'s own refusal (renumbering into the document's own namespace) prints plain text
+/// on stderr, never the `--json` error object — the same case
+/// `renumbering_into_the_documents_own_namespace_is_refused_and_leaves_last_unchanged` already
+/// proves at exit 1 with `--json`, read here without it.
+#[test]
+fn renumber_without_json_prints_a_plain_text_error() {
+    let project = project();
+    project.file("story-1/tickets/WF-5.md", "---\ntitle: One\n---\n");
+
+    let ran = renumber_bare(&project, "WF-5", "story-1");
+
+    assert_eq!(ran.code, 1, "{}", ran.stderr);
+    assert_eq!(ran.stdout, "");
+    assert!(
+        ran.stderr.starts_with("typdoc: ") && !ran.stderr.starts_with("typdoc: {"),
+        "{}",
+        ran.stderr
+    );
     assert_eq!(
         project.read("story-1/tickets/WF-5.md"),
         "---\ntitle: One\n---\n"

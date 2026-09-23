@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -9,10 +9,10 @@ use serde_json::value::RawValue;
 use serde_json::{Map, Value as Json, json};
 use typdoc_core::{
     Argument, AuditReport, Condition, Deps, Document, DocumentArg, Env, Error, ErrorKind, FieldRef,
-    Finding, Heading, ListFilter, ListResult, MvReport, NewTarget, Project, RefField, RefOutcome,
-    RefsDirection, RefsReference, RefsReport, Scope, SetOp, Severity, SortKey, Source, Toc,
-    UnrewrittenReason, UnrewrittenRef, ValidateReport, ValidateScope, Value, discover,
-    discover_for, parse_field, parse_query, resolve_on_disk,
+    Finding, Heading, ListFilter, ListResult, MvReport, NewTarget, Project, RefField, RefName,
+    RefOutcome, RefsDirection, RefsReference, RefsReport, RewrittenRef, Scope, SetOp, Severity,
+    SortKey, Source, Toc, UnrewrittenReason, UnrewrittenRef, ValidateReport, ValidateScope, Value,
+    discover, discover_for, parse_field, parse_query, resolve_on_disk,
 };
 
 /// `--lock-timeout`'s default (design, Concurrency: "Retries with backoff until a timeout
@@ -403,21 +403,21 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 1,
                 "mv needs a destination: a path to move to, or --renumber <namespace>",
             ),
-            (Some(to), None) => {
-                if !json {
-                    return failure_text(false, 1, "the output without --json is not built yet");
-                }
-                match mv(
-                    deps,
-                    &from,
-                    &to,
-                    Duration::from_secs(lock_timeout),
-                    cli.namespace.as_deref(),
-                ) {
-                    Ok(report) => success_raw(&mv_json(&report)),
-                    Err(e) => failure(true, exit_code(e.kind()), &e),
-                }
-            }
+            (Some(to), None) => match mv(
+                deps,
+                &from,
+                &to,
+                Duration::from_secs(lock_timeout),
+                cli.namespace.as_deref(),
+            ) {
+                Ok(report) if json => success_raw(&mv_json(&report)),
+                Ok(report) => Outcome {
+                    code: 0,
+                    stdout: mv_text(&report),
+                    stderr: String::new(),
+                },
+                Err(e) => failure(json, exit_code(e.kind()), &e),
+            },
             (None, Some(namespace)) => {
                 match mv_renumber(
                     deps,
@@ -427,19 +427,17 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                     cli.namespace.as_deref(),
                 ) {
                     Ok(report) if json => success_raw(&mv_json(&report)),
-                    Ok(report) => {
-                        // `Project::mv_renumber` only ever succeeds with a coded document, which
-                        // always carries a key (design, `typdoc mv`: "it prints the new key, and
-                        // nothing else, on standard output", the same shape `typdoc new` prints
-                        // for a coded target).
-                        let key = report.document.key.as_deref().unwrap_or_default();
-                        Outcome {
-                            code: 0,
-                            stdout: format!("{key}\n"),
-                            stderr: String::new(),
-                        }
-                    }
-                    Err(e) => failure(true, exit_code(e.kind()), &e),
+                    // **Changed (M-10h), deliberate:** the same labeled block plus
+                    // `rewritten:`/`unrewritten:`/`findings:` every other write command's text
+                    // mode prints, replacing what used to be the bare new key on its own line —
+                    // a caller that only wants the key reads it out of `--json` instead, the same
+                    // as any other field (contract, text-output shapes, `mv --renumber`).
+                    Ok(report) => Outcome {
+                        code: 0,
+                        stdout: mv_text(&report),
+                        stderr: String::new(),
+                    },
+                    Err(e) => failure(json, exit_code(e.kind()), &e),
                 }
             }
         },
@@ -1021,6 +1019,119 @@ fn mv_renumber(
     };
     let scope = scope_for(&project, &from_arg, namespace_flag, deps.env)?;
     project.mv_renumber(&from_arg, namespace_text, &scope, lock_timeout, deps)
+}
+
+/// Both forms of `mv`'s text-mode shape (contract, text-output shapes, `mv`/`mv --renumber`;
+/// ticket 21): the destination's `get`-shaped block (`document_text`, ticket 16's shared
+/// renderer, reused rather than reimplemented), then three lines always present so a clean move
+/// is as loud as a busy one — nothing printed would look indistinguishable from "not built yet"
+/// — `rewritten:` (a count), `unrewritten:` (its own count plus one line per entry), and
+/// `findings:` (its entries or `none`).
+fn mv_text(report: &MvReport) -> String {
+    let mut out = document_text(&report.document);
+    push_line(&mut out, "rewritten", &rewritten_summary(&report.rewritten));
+    push_unrewritten_lines(&mut out, &report.unrewritten);
+    push_findings_lines(&mut out, &report.findings);
+    out
+}
+
+/// `rewritten: N refs in M documents`: `N` is `rewritten.len()`, but `M` is the number of
+/// *distinct* holders among them, not the same count — a holder rewritten in two fields (or in
+/// one field and its body) still counts as one document.
+fn rewritten_summary(rewritten: &[RewrittenRef]) -> String {
+    let documents: BTreeSet<&str> = rewritten.iter().map(|r| r.document.as_str()).collect();
+    format!("{} refs in {} documents", rewritten.len(), documents.len())
+}
+
+/// `unrewritten:`'s own count, then one line per entry naming the project, document, field and
+/// written form of the ref that was not rewritten (contract, `mv` (plain)); `none` in place of
+/// the count, with no entry lines, when there are none (testing-decisions.md, "Text output": a
+/// clean move's `unrewritten:` shows `none`).
+fn push_unrewritten_lines(out: &mut String, unrewritten: &[UnrewrittenRef]) {
+    if unrewritten.is_empty() {
+        push_line(out, "unrewritten", "none");
+        return;
+    }
+    push_line(out, "unrewritten", &unrewritten.len().to_string());
+    for item in unrewritten {
+        out.push_str(&unrewritten_text(item));
+        out.push('\n');
+    }
+}
+
+/// One `unrewritten` entry: the holder's identity (`ref_name_text`), the field it lives in
+/// (`"$body"` for a body link) and the written form `mv` left untouched. `item.reference.other`
+/// is always `Resolved` here — `mv_reverse_scan` (`typdoc-core`) only ever builds an
+/// `UnrewrittenRef` from a reference it has already destructured as `Resolved` — but this reads
+/// defensively rather than assuming it, since nothing here enforces that invariant across crates.
+fn unrewritten_text(item: &UnrewrittenRef) -> String {
+    let name = match &item.reference.other {
+        RefOutcome::Resolved(name) => ref_name_text(name),
+        RefOutcome::Unresolved(reason) => format!("(unresolved: {reason})"),
+    };
+    format!(
+        "{name}  {}  {}",
+        item.reference.field, item.reference.written
+    )
+}
+
+/// A document's identity, text-mode: the same category the design's own `refs` worked example
+/// already prints (a coded document as `namespace:key`, e.g. `chief:WF-7`; anything else as its
+/// bare path), with a `project::` prefix in front when the name is of another project's document
+/// (decision 2's `imported-project` reason — not reachable by any fixture yet, since it needs the
+/// reverse-into-imports scan a separate part of this story leaves as a known gap; see `mv.rs`'s
+/// own test file).
+fn ref_name_text(name: &RefName) -> String {
+    let mut out = String::new();
+    if let Some(project) = &name.project {
+        out.push_str(project);
+        out.push_str("::");
+    }
+    match (&name.namespace, &name.key) {
+        (Some(namespace), Some(key)) => {
+            out.push_str(namespace);
+            out.push(':');
+            out.push_str(key);
+        }
+        _ => out.push_str(&name.path),
+    }
+    out
+}
+
+/// `findings:`, listing its entries or the word `none` (contract, `mv` (plain)) — the same
+/// schema-satisfaction check `mv --json` already carries (`report.findings`), one line per
+/// finding rather than a count, since a caller reading the text at all is reading it to see what
+/// to go fix.
+fn push_findings_lines(out: &mut String, findings: &[Finding]) {
+    if findings.is_empty() {
+        push_line(out, "findings", "none");
+        return;
+    }
+    out.push_str("findings:\n");
+    for finding in findings {
+        out.push_str(&finding_text(finding));
+        out.push('\n');
+    }
+}
+
+/// One finding, text-mode, for `mv`'s own `findings:` block: `<path>[#field]: <rule> <level>:
+/// <message>`. No shared convention exists yet for a finding's text-mode line — plain/`--schemas`
+/// `validate`'s own text mode is a different ticket, not built on this branch — so this is `mv`'s
+/// own, deterministic rendering, built from the same [`Finding`] shape `--json` already exposes
+/// (`finding_json`).
+fn finding_text(finding: &Finding) -> String {
+    let mut out = finding.path.clone();
+    if let Some(field) = &finding.field {
+        out.push('#');
+        out.push_str(field);
+    }
+    out.push_str(": ");
+    out.push_str(finding.rule);
+    out.push(' ');
+    out.push_str(severity_name(finding.level));
+    out.push_str(": ");
+    out.push_str(&finding.message);
+    out
 }
 
 fn validate(
@@ -1611,11 +1722,14 @@ fn reference_json(reference: &RefsReference) -> Map<String, Json> {
 }
 
 /// `mv`'s own shape (decision 17): the document under its new name, in the same object `get`
-/// prints; `unrewritten`, the reference object `refs --reverse` uses (`reference_json`) with
-/// `reason` added; and `findings`, the finding object `validate` already prints. Built as JSON
-/// text rather than `serde_json::Value`, the same reason `document_json` is: `document` may hold
-/// a `number` whose digits `serde_json::Number` cannot carry unchanged.
+/// prints; `rewritten` (ticket 21, M-10h, additive to every field this already printed), one
+/// `{document, field, before, after}` per ref `mv` actually rewrote; `unrewritten`, the reference
+/// object `refs --reverse` uses (`reference_json`) with `reason` added; and `findings`, the
+/// finding object `validate` already prints. Built as JSON text rather than `serde_json::Value`,
+/// the same reason `document_json` is: `document` may hold a `number` whose digits
+/// `serde_json::Number` cannot carry unchanged.
 fn mv_json(report: &MvReport) -> Box<RawValue> {
+    let rewritten: Vec<Box<RawValue>> = report.rewritten.iter().map(rewritten_json).collect();
     let unrewritten: Vec<Box<RawValue>> = report.unrewritten.iter().map(unrewritten_json).collect();
     let findings: Vec<Box<RawValue>> = report
         .findings
@@ -1624,9 +1738,23 @@ fn mv_json(report: &MvReport) -> Box<RawValue> {
         .collect();
     raw_object(&[
         ("document", document_json(&report.document)),
+        ("rewritten", raw_array(&rewritten)),
         ("unrewritten", raw_array(&unrewritten)),
         ("findings", raw_array(&findings)),
     ])
+}
+
+/// One entry of `mv`'s `rewritten` (ticket 21): the holder's path, the field it lives in
+/// (`"$body"` for a body link), and its written form before and after — the full detail behind
+/// the text summary's count, per the contract's own reasoning for there being no `--verbose`
+/// flag (`git diff` or `--json` is where that detail lives).
+fn rewritten_json(item: &RewrittenRef) -> Box<RawValue> {
+    raw(&json!({
+        "document": item.document,
+        "field": item.field,
+        "before": item.before,
+        "after": item.after,
+    }))
 }
 
 /// One entry of `mv`'s `unrewritten`: the reference object plus `reason`, one of the three

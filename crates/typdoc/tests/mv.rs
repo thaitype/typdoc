@@ -25,6 +25,12 @@ fn mv(project: &Scratch, from: &str, to: &str) -> Ran {
         .run()
 }
 
+fn mv_text(project: &Scratch, from: &str, to: &str) -> Ran {
+    common::Spawn::args(["mv", from, to])
+        .cwd(project.path())
+        .run()
+}
+
 // ---------------------------------------------------------------------------------------------
 // Done when (a): a stopped run is its own way back.
 // ---------------------------------------------------------------------------------------------
@@ -422,4 +428,247 @@ fn the_mode_of_a_rewritten_holder_is_carried_across_its_own_content_replacement(
         .mode()
         & 0o777;
     assert_eq!(mode, 0o640);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Ticket 21: text output without `--json`, and `--json`'s new `rewritten` list (both additive
+// to everything `mv` already prints, and both built from the same data `typdoc-core`'s own
+// `rewrite_holder`/`mv_rewrite_changes` now track).
+// ---------------------------------------------------------------------------------------------
+
+/// A move that rewrites at least one ref: the hand-written golden for `mv`'s text-mode shape
+/// (contract, text-output shapes, `mv` (plain)) — the destination's `get`-shaped block, then
+/// `rewritten:` (one ref in frontmatter's `see`, one in the body link, both in the same holder,
+/// so `1 documents`), `unrewritten: none`, `findings: none`.
+#[test]
+fn a_move_that_rewrites_refs_prints_the_labeled_block_and_the_rewritten_count() {
+    let project = Scratch::project(&REF_NOTES);
+    project.file("old.md", "---\ntitle: A\n---\n");
+    project.file(
+        "holder.md",
+        "---\ntitle: B\nsee: old.md\n---\n\nSee [a](old.md).\n",
+    );
+
+    let ran = mv_text(&project, "old.md", "renamed.md");
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stderr, "");
+    assert_eq!(
+        ran.stdout,
+        "path: renamed.md\n\
+         collection: notes\n\
+         schema: note\n\
+         namespace: default\n\
+         title: A\n\
+         rewritten: 2 refs in 1 documents\n\
+         unrewritten: none\n\
+         findings: none\n"
+    );
+}
+
+/// The same move's `--json`: `rewritten` carries the full list behind that count, one entry per
+/// ref actually rewritten, and every field `mv --json` already printed (`document`, `unrewritten`,
+/// `findings`) is unaffected (contract, "`mv --json` gains `rewritten`... additive").
+#[test]
+fn mv_json_carries_the_full_rewritten_list_behind_the_text_count() {
+    let project = Scratch::project(&REF_NOTES);
+    project.file("old.md", "---\ntitle: A\n---\n");
+    project.file(
+        "holder.md",
+        "---\ntitle: B\nsee: old.md\n---\n\nSee [a](old.md).\n",
+    );
+
+    let ran = mv(&project, "old.md", "renamed.md");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let out = ran.stdout_json();
+    let rewritten = out["rewritten"].as_array().expect("an array");
+    assert_eq!(rewritten.len(), 2, "{rewritten:?}");
+    assert!(
+        rewritten.iter().any(|r| r["document"] == json!("holder.md")
+            && r["field"] == json!("see")
+            && r["before"] == json!("old.md")
+            && r["after"] == json!("renamed.md")),
+        "{rewritten:?}"
+    );
+    assert!(
+        rewritten.iter().any(|r| r["document"] == json!("holder.md")
+            && r["field"] == json!("$body")
+            && r["before"] == json!("old.md")
+            && r["after"] == json!("renamed.md")),
+        "{rewritten:?}"
+    );
+    // Additive: `document`, `unrewritten` and `findings` still print exactly as before.
+    assert_eq!(out["document"]["path"], json!("renamed.md"));
+    assert_eq!(out["unrewritten"], json!([]));
+    assert_eq!(out["findings"], json!([]));
+}
+
+/// A move that leaves a ref unrewritten (`body.links` off): the text-mode golden shows
+/// `unrewritten:`'s own count and one line naming the holder, the field (`$body`) and the
+/// written form left untouched, matching the actual case (testing-decisions.md, "Text output").
+#[test]
+fn a_move_that_leaves_a_ref_unrewritten_prints_its_own_count_and_entry_line() {
+    // `title` is declared on the schema (not left implicit, as `common::NOTES`'s empty-fields
+    // schema does) so the destination's schema-satisfaction check (`findings`) has nothing of
+    // its own to say here — this test is about `unrewritten`, not about a stray
+    // `frontmatter.unknown` warning on a field the schema never declared.
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "*.md", "schema": "note.json", "validation": { "body.links": { "level": "off" } } }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": { "title": { "type": "string", "required": true } } }"#,
+        ),
+    ]);
+    project.file("old.md", "---\ntitle: A\n---\n");
+    project.file(
+        "holder.md",
+        "---\ntitle: B\n---\n\nSee [a](old.md) for details.\n",
+    );
+
+    let ran = mv_text(&project, "old.md", "new.md");
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(
+        ran.stdout,
+        "path: new.md\n\
+         collection: notes\n\
+         schema: note\n\
+         namespace: default\n\
+         title: A\n\
+         rewritten: 0 refs in 0 documents\n\
+         unrewritten: 1\n\
+         holder.md  $body  old.md\n\
+         findings: none\n"
+    );
+}
+
+/// A clean move, nothing to rewrite and nothing left unrewritten: `rewritten: 0 refs in 0
+/// documents`, `unrewritten: none` (testing-decisions.md, "Text output", the clean-move case).
+/// Its own schema (not `common::NOTES`'s empty-fields one) declares `title`, for the same reason
+/// the test above does: a clean move should show a clean `findings:` too, not an incidental
+/// `frontmatter.unknown` this test is not about.
+#[test]
+fn a_clean_move_prints_zero_rewritten_and_none_unrewritten() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "*.md", "schema": "note.json" }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": { "title": { "type": "string", "required": true } } }"#,
+        ),
+    ]);
+    project.file("a.md", "---\ntitle: A\n---\n");
+
+    let ran = mv_text(&project, "a.md", "b.md");
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(
+        ran.stdout,
+        "path: b.md\n\
+         collection: notes\n\
+         schema: note\n\
+         namespace: default\n\
+         title: A\n\
+         rewritten: 0 refs in 0 documents\n\
+         unrewritten: none\n\
+         findings: none\n"
+    );
+}
+
+/// The same clean move's `--json`: `rewritten` is an empty array, the third of the three cases
+/// testing-decisions.md asks `mv --json`'s golden to cover for `rewritten` (rewrite / unrewritten
+/// / clean) — `mv.rs`'s other two ticket-21 `--json` tests already cover the first two.
+#[test]
+fn mv_json_reports_an_empty_rewritten_list_for_a_clean_move() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "*.md", "schema": "note.json" }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": { "title": { "type": "string", "required": true } } }"#,
+        ),
+    ]);
+    project.file("a.md", "---\ntitle: A\n---\n");
+
+    let ran = mv(&project, "a.md", "b.md");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let out = ran.stdout_json();
+    assert_eq!(out["rewritten"], json!([]));
+    assert_eq!(out["unrewritten"], json!([]));
+    assert_eq!(out["findings"], json!([]));
+}
+
+/// `findings:` lists an entry rather than `none` when the destination's schema rejects a field
+/// (decision 16: carried out and reported, not refused) — the same case
+/// `a_move_onto_a_schema_the_document_fails_is_carried_out_and_reported_not_refused` already
+/// proves in `--json`, read here in text mode.
+#[test]
+fn a_move_that_fails_the_destination_schema_lists_the_finding_in_text_mode() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "*.md", "schema": "note.json" }"#,
+        ),
+        (
+            ".typdoc/collections/tasks.json",
+            r#"{ "match": "tasks/*.md", "schema": "task.json" }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": { "title": { "type": "string", "required": true } } }"#,
+        ),
+        (
+            "task.json",
+            r#"{ "name": "task", "fields": { "title": { "type": "string", "required": true }, "status": { "type": "enum", "values": ["open", "done"], "required": true } } }"#,
+        ),
+    ]);
+    project.file("plain.md", "---\ntitle: Plain\n---\n");
+
+    let ran = mv_text(&project, "plain.md", "tasks/plain.md");
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(
+        ran.stdout,
+        "path: tasks/plain.md\n\
+         collection: tasks\n\
+         schema: task\n\
+         namespace: default\n\
+         title: Plain\n\
+         rewritten: 0 refs in 0 documents\n\
+         unrewritten: none\n\
+         findings:\n\
+         tasks/plain.md#status: frontmatter.types error: the field `status` is required and is missing\n"
+    );
+}
+
+/// The already-fixed error path (contract decision 4, ticket 21's own item 4): without `--json`,
+/// a destination that already exists prints plain text on stderr, never the `--json` error
+/// object — the same case `a_destination_that_already_exists_is_refused_at_exit_7_and_nothing_changes`
+/// already proves at exit 7 with `--json`, read here without it.
+#[test]
+fn mv_without_json_prints_a_plain_text_error() {
+    let project = Scratch::project(&NOTES);
+    project.file("a.md", "---\ntitle: A\n---\n");
+    project.file("b.md", "---\ntitle: B\n---\n");
+
+    let ran = mv_text(&project, "a.md", "b.md");
+
+    assert_eq!(ran.code, 7, "{}", ran.stderr);
+    assert_eq!(ran.stdout, "");
+    assert!(
+        ran.stderr.starts_with("typdoc: ") && !ran.stderr.starts_with("typdoc: {"),
+        "{}",
+        ran.stderr
+    );
+    assert_eq!(project.read("a.md"), "---\ntitle: A\n---\n");
+    assert_eq!(project.read("b.md"), "---\ntitle: B\n---\n");
 }
