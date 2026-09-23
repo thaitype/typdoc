@@ -1,7 +1,7 @@
 # 21: Text output for both forms of `mv`, and `mv --json`'s new `rewritten` field
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: 16
 
 M-10(e) and M-10h's answers, built together since both forms of `mv` get the identical new
