@@ -1,0 +1,7 @@
+{
+  "name": "note",
+  "fields": {
+    "title": { "type": "string" },
+    "context": { "type": "ref", "target": "*" }
+  }
+}

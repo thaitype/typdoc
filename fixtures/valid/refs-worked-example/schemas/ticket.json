@@ -1,0 +1,7 @@
+{
+  "name": "ticket",
+  "code": "WF",
+  "fields": {
+    "title": { "type": "string" }
+  }
+}

@@ -253,12 +253,64 @@ fn an_argument_that_is_neither_a_path_nor_a_key_exits_1() {
     error_of(&ran, 1);
 }
 
+/// The hand-written golden for `refs`'s text-mode shape (design.md, `typdoc refs`'s own worked
+/// example: `chief:WF-7   context` / `learnings/x.md   $body`). `fixtures/valid/refs-worked-example`
+/// is built to reproduce that exact example: `team/doc.md` holds one ref field, `context: chief:WF-7`
+/// (a sibling-namespace key), and one body link, `[x](learnings/x.md)`, so the two lines below are
+/// not a paraphrase of the design's example, they are it.
 #[test]
-fn without_json_the_output_is_not_built_yet_and_exits_1() {
-    let ran = refs(&fixture("valid/refs"), &["tickets/WF-1.md"]);
+fn refs_without_json_prints_the_designs_worked_example() {
+    let ran = refs(&fixture("valid/refs-worked-example"), &["team/doc.md"]);
 
-    assert_eq!(ran.code, 1, "stderr: {}", ran.stderr);
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stderr, "");
+    assert_eq!(ran.stdout, "chief:WF-7   context\nlearnings/x.md   $body\n");
+}
+
+/// `--reverse` in text mode: same `target   field` shape, for the refs that point at the document
+/// asked about rather than the ones it holds (`reverse_scans_every_namespace_and_orders_by_the_holders_path`'s
+/// `--json` case gives the same three references, in the same order, that this checks in text).
+#[test]
+fn refs_reverse_without_json_prints_target_and_field_per_line() {
+    let ran = refs(&fixture("valid/refs"), &["tickets/WF-2.md", "--reverse"]);
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stderr, "");
+    assert_eq!(
+        ran.stdout,
+        "../tickets/WF-2.md   $body\n\
+         WF-2   blocked_by\n\
+         WF-2   context\n"
+    );
+}
+
+/// `--field` in text mode: only the refs held in that field are printed, in either direction
+/// (`field_keeps_only_the_refs_held_in_that_field_in_either_direction`'s own `--json` case).
+#[test]
+fn refs_field_without_json_keeps_only_that_fields_refs() {
+    let ran = refs(
+        &fixture("valid/refs"),
+        &["tickets/WF-1.md", "--field", "blocked_by"],
+    );
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stderr, "");
+    assert_eq!(ran.stdout, "WF-2   blocked_by\nWF-99   blocked_by\n");
+}
+
+/// The already-fixed error path (contract decision 4): without `--json`, a failure prints plain
+/// text on stderr, never the `--json` error object — the hard-coded `true` this ticket removes.
+#[test]
+fn refs_without_json_prints_a_plain_text_error() {
+    let ran = refs(&fixture("valid/refs"), &["absent.md"]);
+
+    assert_eq!(ran.code, 5);
     assert_eq!(ran.stdout, "");
+    assert!(
+        ran.stderr.starts_with("typdoc: ") && !ran.stderr.starts_with("typdoc: {"),
+        "{}",
+        ran.stderr
+    );
 }
 
 #[test]

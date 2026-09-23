@@ -315,21 +315,17 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
             field,
             reverse,
             json,
-        } => {
-            if !json {
-                return failure_text(false, 1, "the output without --json is not built yet");
-            }
-            match refs(
-                deps,
-                &document,
-                reverse,
-                field.as_deref(),
-                cli.namespace.as_deref(),
-            ) {
-                Ok(report) => success(refs_json(&report)),
-                Err(e) => failure(true, exit_code(e.kind()), &e),
-            }
-        }
+        } => match refs(
+            deps,
+            &document,
+            reverse,
+            field.as_deref(),
+            cli.namespace.as_deref(),
+        ) {
+            Ok(report) if json => success(refs_json(&report)),
+            Ok(report) => refs_outcome(&report),
+            Err(e) => failure(json, exit_code(e.kind()), &e),
+        },
         Command::Toc {
             document,
             depth,
@@ -1522,6 +1518,36 @@ fn push_toc_row(out: &mut String, cells: &[String; 4], widths: &[usize; 4]) {
     }
     out.push_str(line.trim_end());
     out.push('\n');
+}
+
+/// `refs`'s text-mode shape (design.md, `typdoc refs`'s own worked example): one line per
+/// reference, the target as it is written (bare key, prefixed reference or path — `written`,
+/// which is exactly what the design's example shows: `chief:WF-7   context`) then the field it
+/// was found in, three spaces apart, in the order `Project::refs` already gives them (respecting
+/// `--reverse` and `--field`, both applied before this function ever sees the report). No header
+/// and no output at all when there are no refs, since `refs` names each one inline rather than
+/// building a table.
+fn refs_outcome(report: &RefsReport) -> Outcome {
+    Outcome {
+        code: 0,
+        stdout: refs_text(report),
+        stderr: String::new(),
+    }
+}
+
+/// Renders one `target   field` line per reference, three literal spaces apart (the design's own
+/// example, `chief:WF-7   context`), never padded or column-aligned: unlike `toc_table`'s header
+/// table, this is not a table, so a short target does not stretch to match a longer one on
+/// another line.
+fn refs_text(report: &RefsReport) -> String {
+    let mut out = String::new();
+    for reference in &report.refs {
+        out.push_str(&reference.written);
+        out.push_str("   ");
+        out.push_str(&reference.field);
+        out.push('\n');
+    }
+    out
 }
 
 /// `refs`' report: the document asked about, `direction`, and its references in the order
