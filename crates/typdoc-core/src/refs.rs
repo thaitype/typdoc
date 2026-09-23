@@ -483,32 +483,69 @@ pub(crate) fn cyclic_nodes(edges: &[(String, String)]) -> BTreeSet<String> {
         Black,
     }
 
+    // Explicit iterative DFS over a heap-allocated work stack (`frames`), one frame per node on
+    // the walk's current path, each tracking how far through that node's own child list it has
+    // got — the recursive version's call-stack frame and its position in `for &child in
+    // children`, made into data instead of a call. Same three-colour algorithm, same push/pop/
+    // colour order as the recursive form it replaces, so the four cycle-shape tests below (and
+    // ticket 9's long-chain regression test) see the same output either way; only the growth
+    // moves from the (fixed, small) thread stack to the heap, which is what removes the ceiling
+    // ticket 1 found (`refs.rs`, `cyclic_nodes`'s `visit`).
     fn visit<'a>(
-        node: &'a str,
+        start: &'a str,
         outgoing: &BTreeMap<&'a str, Vec<&'a str>>,
         color: &mut BTreeMap<&'a str, Color>,
         stack: &mut Vec<&'a str>,
         cyclic: &mut BTreeSet<String>,
     ) {
-        color.insert(node, Color::Gray);
-        stack.push(node);
-        if let Some(children) = outgoing.get(node) {
-            for &child in children {
-                match color.get(child).copied().unwrap_or(Color::White) {
-                    Color::White => visit(child, outgoing, color, stack, cyclic),
-                    Color::Gray => {
-                        if let Some(at) = stack.iter().position(|n| *n == child) {
-                            for n in &stack[at..] {
-                                cyclic.insert((*n).to_owned());
+        struct Frame<'a> {
+            node: &'a str,
+            /// How many of `node`'s outgoing edges this frame has already followed.
+            next_child: usize,
+        }
+
+        color.insert(start, Color::Gray);
+        stack.push(start);
+        let mut frames: Vec<Frame<'a>> = vec![Frame {
+            node: start,
+            next_child: 0,
+        }];
+
+        while let Some(frame) = frames.last_mut() {
+            let children: &[&str] = match outgoing.get(frame.node) {
+                Some(children) => children.as_slice(),
+                None => &[],
+            };
+            match children.get(frame.next_child) {
+                Some(&child) => {
+                    frame.next_child += 1;
+                    match color.get(child).copied().unwrap_or(Color::White) {
+                        Color::White => {
+                            color.insert(child, Color::Gray);
+                            stack.push(child);
+                            frames.push(Frame {
+                                node: child,
+                                next_child: 0,
+                            });
+                        }
+                        Color::Gray => {
+                            if let Some(at) = stack.iter().position(|n| *n == child) {
+                                for n in &stack[at..] {
+                                    cyclic.insert((*n).to_owned());
+                                }
                             }
                         }
+                        Color::Black => {}
                     }
-                    Color::Black => {}
+                }
+                None => {
+                    let finished = frame.node;
+                    frames.pop();
+                    stack.pop();
+                    color.insert(finished, Color::Black);
                 }
             }
         }
-        stack.pop();
-        color.insert(node, Color::Black);
     }
 
     let mut color: BTreeMap<&str, Color> = BTreeMap::new();
@@ -797,6 +834,43 @@ mod tests {
             found,
             set(&["a", "b"]),
             "c only receives an edge, it starts none"
+        );
+    }
+
+    /// Ticket 1's finding: a long **one-way** chain through one `acyclic` field recurses to depth
+    /// N with no cycle required at all. Run on a thread built with an explicitly small stack
+    /// (never this machine's own default, so the result does not depend on which machine runs
+    /// it): before the iterative rewrite, `visit` recurses once per node and overflows that
+    /// stack; after it, the walk grows on the heap instead, so it survives a chain far longer
+    /// than any call stack could hold. 200_000 nodes matches the floor ticket 1 and ticket 9 both
+    /// name; the existing four `cyclic_nodes` tests above already cover the two-node cycle,
+    /// self-loop, no-cycle-chain and cycle-with-a-tail shapes this rewrite must keep giving the
+    /// same answers for.
+    #[test]
+    fn a_very_long_one_way_chain_with_no_cycle_does_not_overflow_the_stack() {
+        const CHAIN_LENGTH: usize = 200_000;
+        // 1 MiB: far below this process's own default test-thread stack, chosen explicitly so
+        // the regression does not depend on which machine or harness runs it (testing-decisions.md,
+        // "The stack-overflow fix").
+        const SMALL_STACK_BYTES: usize = 1024 * 1024;
+
+        let edges: Vec<(String, String)> = (0..CHAIN_LENGTH)
+            .map(|i| (format!("n{i}"), format!("n{}", i + 1)))
+            .collect();
+
+        let handle = std::thread::Builder::new()
+            .stack_size(SMALL_STACK_BYTES)
+            .spawn(move || cyclic_nodes(&edges))
+            .expect("spawning a thread with an explicit stack size does not itself fail");
+
+        let found = handle
+            .join()
+            .expect("cyclic_nodes must not overflow the stack on a long acyclic chain");
+
+        assert_eq!(
+            found,
+            BTreeSet::new(),
+            "a one-way chain with no cycle reports no cyclic nodes, however long it is"
         );
     }
 
