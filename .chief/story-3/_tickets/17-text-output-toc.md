@@ -1,7 +1,7 @@
 # 17: Text output for `toc`
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None (can start immediately)
 
 ## The work
