@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+env:
+  # scripts/test.sh insists on TMPDIR pointed at a disk-backed directory (see
+  # the script's own header comment: on the machine story 2 ran on, /tmp was
+  # backed by memory and a runaway test took the whole box down with it).
+  # RUNNER_TEMP is GitHub Actions' own equivalent: a directory every runner
+  # guarantees exists, is backed by the runner's own disk, and is unique to
+  # and cleaned up with the job — the same shape of fix as story 2's, without
+  # hard-coding any one machine's path into the workflow.
+  TMPDIR: ${{ runner.temp }}
+
+jobs:
+  test:
+    name: scripts/test.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml at the repo root pins the toolchain (1.96.0) and
+      # its rustfmt/clippy components. rustup, preinstalled on GitHub-hosted
+      # runners, reads that file and installs the matching toolchain (and
+      # components) on first use, so no separate toolchain-install action is
+      # needed here.
+      - run: rustc --version
+      - run: scripts/test.sh
+
+  fmt:
+    name: cargo fmt --check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustc --version
+      - run: cargo fmt --check
+
+  clippy:
+    name: cargo clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustc --version
+      - run: cargo clippy --workspace --all-targets -- -D warnings
