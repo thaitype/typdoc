@@ -1,8 +1,8 @@
 # 11: The central helper for reading a typdoc document's JSON body
 
 Type: implementation
-Status: open
-Blocked by: 10
+Status: claimed
+Blocked by: None (can start immediately)
 
 Ticket 7 (M-9) fixed the scope: internal to `typdoc-core`, used by tests, not wired into
 `validate`/`get`.
