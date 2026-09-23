@@ -1,6 +1,6 @@
 # Development
 
-This page is for working on typdoc rather than with it. [docs/design/design.md](design/design.md) is the source of
+This page is for working on typdoc rather than with it. The [design](design/design.md) is the source of
 truth for what the tool does; where this page and the design disagree, the design wins.
 
 ## The workspace
@@ -26,7 +26,7 @@ Edition 2024, resolver 3.
 $ cargo build
 ```
 
-The binary lands in `target/debug/typdoc`. To install it for use instead, [README.md](../README.md) has the
+The binary lands in `target/debug/typdoc`. To install it for use instead, the [README](../README.md) has the
 command.
 
 ## Tests: run `scripts/test.sh`, not `cargo test`
@@ -86,12 +86,13 @@ decision record.
 
 ## Where the truth is
 
-- [docs/design/design.md](design/design.md) — what typdoc does and why, in full, and the arbiter when documents
+- [The design](design/design.md) — what typdoc does and why, in full, and the arbiter when documents
   disagree.
-- [docs/design/design-decision-phase-1/](design/design-decision-phase-1/) and `.../design-decision-phase-2/` — the decisions behind
+- The decision records for [phase 1](design/design-decision-phase-1/) and [phase 2](design/design-decision-phase-2/) — the decisions behind
   the design, each with the research or the measurement it rests on, and a map naming what is
   still open.
-- [README.md](../README.md), [docs/getting-started.md](getting-started.md), [docs/commands.md](commands.md), [docs/projects.md](projects.md) — written for
+- The [README](../README.md), [getting started](getting-started.md), [commands](commands.md) and
+  [projects](projects.md) — written for
   whoever uses the tool. An output printed in any of them is a real one, produced by running it.
 
 ## What is not set up
