@@ -384,17 +384,25 @@ fn a_value_the_default_table_prints_does_not_change_with_limit() {
 
     assert_eq!(full.code, 0, "stderr: {}", full.stderr);
     assert_eq!(cut.code, 0, "stderr: {}", cut.stderr);
-    let first_line_of_full = full.stdout.lines().next().unwrap();
-    assert_eq!(cut.stdout.trim_end(), first_line_of_full);
+    let full_lines: Vec<&str> = full.stdout.lines().collect();
+    let cut_lines: Vec<&str> = cut.stdout.lines().collect();
+    // The header (driven off the whole matched set, not the listed one) is identical either way.
+    assert_eq!(
+        cut_lines[0], full_lines[0],
+        "header must not depend on --limit"
+    );
+    // T-1's own row (the first row under the header) must also be identical either way.
+    let t1_line_of_full = full_lines[1];
+    assert_eq!(cut_lines.get(1), Some(&t1_line_of_full));
     // And, concretely, `title` is padded to fit T-2's ten-character title (9 padding spaces
     // after T-1's one-character title, plus the 2-space column separator) even though `--limit
     // 1` never prints T-2 at all: a width taken from the listed rows alone would pad `A` to only
     // its own width, giving 2 spaces before `open`, not 11.
-    let gap = first_line_of_full.split("A").nth(1).unwrap();
+    let gap = t1_line_of_full.split("A").nth(1).unwrap();
     let spaces_before_open = gap.len() - gap.trim_start_matches(' ').len();
     assert_eq!(
         spaces_before_open, 11,
-        "{first_line_of_full:?} is not padded to T-2's title width"
+        "{t1_line_of_full:?} is not padded to T-2's title width"
     );
 }
 
@@ -410,15 +418,59 @@ fn the_default_table_shows_identity_title_and_every_field_used_in_where() {
     );
 
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
-    // Only WF-1 and WF-3 carry `context`; the row must show the key, the title and the value of
-    // `context`, in that order, as columns.
+    // A header row names the key, the title and `context`, in that order, above the rows;
+    // only WF-1 and WF-3 carry `context`, so each row must show the key, the title and the
+    // value of `context`, in that same column order.
     let lines: Vec<&str> = ran.stdout.lines().collect();
-    assert_eq!(lines.len(), 2);
-    assert!(lines[0].starts_with("WF-1"), "{lines:?}");
-    assert!(lines[0].contains("Ticket one"), "{lines:?}");
-    assert!(lines[0].contains("chief::WF-5"), "{lines:?}");
-    assert!(lines[1].starts_with("WF-3"), "{lines:?}");
-    assert!(lines[1].contains("WF-2"), "{lines:?}");
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    assert_eq!(
+        lines[0].split_whitespace().collect::<Vec<_>>(),
+        ["key", "title", "context"],
+        "{lines:?}"
+    );
+    assert!(lines[1].starts_with("WF-1"), "{lines:?}");
+    assert!(lines[1].contains("Ticket one"), "{lines:?}");
+    assert!(lines[1].contains("chief::WF-5"), "{lines:?}");
+    assert!(lines[2].starts_with("WF-3"), "{lines:?}");
+    assert!(lines[2].contains("WF-2"), "{lines:?}");
+}
+
+#[test]
+fn the_header_row_names_path_for_a_path_identified_collection() {
+    let ran = list(&fixture("valid/refs"), &["--collection", "notes"]);
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    let lines: Vec<&str> = ran.stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(
+        lines[0].split_whitespace().collect::<Vec<_>>(),
+        ["path", "title"],
+        "{lines:?}"
+    );
+    assert!(lines[1].starts_with("notes/a.md"), "{lines:?}");
+}
+
+#[test]
+fn the_header_row_names_key_when_the_matched_set_mixes_coded_and_path_identified_documents() {
+    // No `--collection`/`--code`: `valid/refs` spans both `tickets` (coded) and `notes`
+    // (path-identified). At least one matched document has a key, so the identity column is
+    // labeled `key` for the whole table -- the same identity `table_row` already prints per row
+    // (`doc.key.unwrap_or(doc.path)`) -- even though `notes/a.md` itself has none and still
+    // prints its path in that column, unaffected by the header's label.
+    let ran = list(&fixture("valid/refs"), &[]);
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    let lines: Vec<&str> = ran.stdout.lines().collect();
+    assert_eq!(lines.len(), 5, "{lines:?}");
+    assert_eq!(
+        lines[0].split_whitespace().collect::<Vec<_>>(),
+        ["key", "title"],
+        "{lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.starts_with("notes/a.md")),
+        "{lines:?}"
+    );
 }
 
 #[test]
@@ -436,10 +488,38 @@ fn fields_overrides_the_where_derived_columns() {
     );
 
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
-    for line in ran.stdout.lines() {
+    let mut lines = ran.stdout.lines();
+    let header = lines.next().unwrap();
+    assert_eq!(
+        header.split_whitespace().collect::<Vec<_>>(),
+        ["key", "title", "collection"],
+        "{header:?}"
+    );
+    for line in lines {
         assert!(line.contains("tickets"), "{line:?}");
     }
     assert!(!ran.stdout.contains("chief::WF-5"), "{}", ran.stdout);
+}
+
+#[test]
+fn the_default_table_prints_nothing_for_an_empty_result_not_a_header_alone() {
+    let ran = list(&fixture("valid/refs"), &["--where", "title=NoSuchTitle"]);
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stdout, "", "no header when there is nothing under it");
+}
+
+#[test]
+fn limit_zero_leaves_no_header_with_zero_rows_under_it() {
+    let project = three_tickets();
+
+    let ran = list(project.path(), &["--limit", "0"]);
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(
+        ran.stdout, "",
+        "a header above zero listed rows is the same mistake as a header above an empty result"
+    );
 }
 
 #[test]

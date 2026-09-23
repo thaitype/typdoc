@@ -795,42 +795,75 @@ fn field_name(field: &FieldRef) -> String {
     }
 }
 
-/// The default text table: one row per document of `matched[..listed_len]`, columns padded to
-/// the width their longest value takes across the whole of `matched` (not only the rows
-/// printed), so that a value the table prints does not change with `--limit` (the ticket's own
-/// criterion: a column's width computed from the listed rows only would move when `--limit`
-/// changes which rows are listed, and this construction cannot do that, since every row's cells
-/// are measured before any row is left out). Columns are separated by two spaces; there is no
-/// header row, since the design gives none.
+/// The default text table: a header row (`path` or `key`, `title`, then `columns`, in that
+/// order), then one row per document of `matched[..listed_len]`, columns padded to the width
+/// their longest value takes across the whole of `matched` (not only the rows printed) *and* the
+/// header's own labels, so that a value the table prints does not change with `--limit` (the
+/// ticket's own criterion: a column's width computed from the listed rows only would move when
+/// `--limit` changes which rows are listed, and this construction cannot do that, since every
+/// row's cells are measured before any row is left out) and the header stays aligned with the
+/// rows under it. Columns are separated by two spaces.
+///
+/// No header, and nothing at all, when `listed_len` is 0 — whether because `matched` itself is
+/// empty (`list`'s empty-result case, unchanged from before this row existed) or because
+/// `--limit 0` leaves nothing to list: either way a header with no rows under it would be exactly
+/// the "header-with-no-rows" shape the ticket for this row rules out, so both cases are treated
+/// alike rather than only the first.
+///
+/// The identity column is labeled `key` when any document in `matched` has one (a coded
+/// collection), `path` otherwise — matching the identity `table_row` already prints per row
+/// (`doc.key.unwrap_or(doc.path)`), decided once for the whole table rather than per row so the
+/// header names a single column consistently.
 fn list_table(matched: &[Document], listed_len: usize, columns: &[String]) -> String {
+    if listed_len == 0 {
+        return String::new();
+    }
     let column_count = 2 + columns.len();
     let rows: Vec<Vec<String>> = matched.iter().map(|doc| table_row(doc, columns)).collect();
+    let identity_label = if matched.iter().any(|doc| doc.key.is_some()) {
+        "key"
+    } else {
+        "path"
+    };
+    let mut header = Vec::with_capacity(column_count);
+    header.push(identity_label.to_owned());
+    header.push("title".to_owned());
+    header.extend(columns.iter().cloned());
+
     let mut widths = vec![0usize; column_count];
-    for row in &rows {
+    for row in rows.iter().chain(std::iter::once(&header)) {
         for (i, cell) in row.iter().enumerate() {
             widths[i] = widths[i].max(cell.chars().count());
         }
     }
     let mut out = String::new();
+    render_row(&mut out, &header, &widths);
     for row in rows.iter().take(listed_len) {
-        let mut line = String::new();
-        for (i, cell) in row.iter().enumerate() {
-            if i > 0 {
-                line.push_str("  ");
-            }
-            line.push_str(cell);
-            if i + 1 < row.len() {
-                line.push_str(&" ".repeat(widths[i] - cell.chars().count()));
-            }
-        }
-        // The padding above never trails past a row's last non-empty cell except when that very
-        // last cell is itself empty (an unset field in the rightmost column): trimmed here so an
-        // empty trailing column leaves no trailing whitespace, without touching a column's own
-        // width (computed above, from `matched`, and untouched by this).
-        out.push_str(line.trim_end());
-        out.push('\n');
+        render_row(&mut out, row, &widths);
     }
     out
+}
+
+/// One line of `list_table` (the header or a data row): cells joined by two spaces, each padded
+/// to its column's width except the last, which is trimmed instead — see `list_table`'s own doc
+/// comment for why the last column is trimmed rather than padded.
+fn render_row(out: &mut String, row: &[String], widths: &[usize]) {
+    let mut line = String::new();
+    for (i, cell) in row.iter().enumerate() {
+        if i > 0 {
+            line.push_str("  ");
+        }
+        line.push_str(cell);
+        if i + 1 < row.len() {
+            line.push_str(&" ".repeat(widths[i] - cell.chars().count()));
+        }
+    }
+    // The padding above never trails past a row's last non-empty cell except when that very
+    // last cell is itself empty (an unset field in the rightmost column): trimmed here so an
+    // empty trailing column leaves no trailing whitespace, without touching a column's own
+    // width (computed above, from `matched` and the header, and untouched by this).
+    out.push_str(line.trim_end());
+    out.push('\n');
 }
 
 fn table_row(doc: &Document, columns: &[String]) -> Vec<String> {
