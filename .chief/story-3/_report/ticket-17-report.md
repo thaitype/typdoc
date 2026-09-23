@@ -25,6 +25,8 @@ done
   deciding a different behavior on its own, per the ticket's own instruction. Worth a real answer
   before `docs/design/spec/`/the user docs (ticket 22) describe this case, since right now
   neither shape distinguishes them.
+- **Routed 2026-09-23 (Aria):** taken to Mild as **M-14**. Ticket 22 does not describe the
+  `toc --depth`-filtered-to-empty case in the user docs until M-14 lands.
 
 ## Notes
 

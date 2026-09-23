@@ -116,3 +116,12 @@ Today every command without `--json` answers `the output without --json is not b
 **M-10 fully closed.** No questions open with Mild.
 - **M-10h decided** (Mild: *"ดีคับ"* / *"เห็นด้วยคับ"*, 2026-09-23): `mv --renumber` uses the same labeled block as the other write commands (not the bare key). Both `mv` forms also print a move summary: `rewritten: N refs in M documents` (count only in text), and `unrewritten:` with count and one line per entry (project, document, field, written form). `mv --json` gains `rewritten` as the **full list** (document, field, before, after) — text prints the count, JSON carries the detail. **No `--verbose` flag** (detail is in `--json`; `git diff` shows every changed line).
 - Field-names principle **confirmed by Mild** (2026-09-23): the inbox copy of that message reads "ไม่อยาก …", the chat reads "อยากให้ …" — Mild: *"อยากให้ เวลาที่ไม่ใช้ JSON แล้วยังเห็นชื่อ field — อันนี้ถูกครับ"*. The principle stands as built into the contract.
+
+**M-11 — frontmatter of spec/catalog (2026-09-23), decided.** Mild: *"งั้นเอา content_type ละกัน"* · *"เห็นด้วยคับ"*
+- a: `docs/design/spec/` is a **coded** collection, code `SPC`, files `spec/SPC-<n>.md`. `docs/design/catalog/` has **no code**; path-identified: `catalog/rules.md`, `commands.md`, `exit-codes.md`, `frontmatter-losses.md`. (A coded collection's `match` must be `{key}`, so `CAT` + named files was impossible — the contract's `CAT` is withdrawn.)
+- b: spec fields — `title` (string, required), `status` (enum `draft|active|superseded`), `superseded_by` (ref → SPC, only when superseded), `migrated_from` (string, source location in the archived docs). Catalog fields — `title` (required), `content_type` (enum `["json"]`, required), `explained_by` (ref → SPC, written as a key, e.g. `SPC-4` — not a path).
+- c: the body-type field is named **`content_type`** — replaces `body-type` everywhere in the contract and tickets.
+
+**M-12 — pushing (2026-09-23).** Mild: *"push ขึ้น branch ได้คับ"* — approved for **throwaway branches used to prove CI red-before-green**, deleted after. Not a release of the story branch, not a PR, not main.
+
+**CI runners (2026-09-23).** Mild: *"ให้ทำ github actions ที่ ubuntu กับ mac นะครับ"* — CI runs every gate on **both** `ubuntu-latest` and `macos-latest`. Windows not asked.

@@ -17,7 +17,7 @@ ticket named below is `.chief/story-3/_tickets/<N>`. How the story is tested is 
 | Part | Where it's specified | For this story |
 | --- | --- | --- |
 | Spec source | Was `docs/design/design.md`'s five tables, read by `crates/typdoc-testkit/src/design.rs` | `design.rs` removed entirely. Four `docs/design/catalog/*.md` documents (JSON-only body) replace it: `rules.md`, `commands.md`, `exit-codes.md`, `frontmatter-losses.md`. |
-| Central helper | New (ticket 5, M-6) | A `pub` function in `typdoc-core` that reads a typdoc document's JSON-only body into typed data, deciding whether/how to validate from a `body-type` frontmatter field, never from the document's path. Internal only (M-9): no `validate`/`get` behavior change. |
+| Central helper | New (ticket 5, M-6) | A `pub` function in `typdoc-core` that reads a typdoc document's JSON-only body into typed data, deciding whether/how to validate from a `content_type` frontmatter field, never from the document's path. Internal only (M-9): no `validate`/`get` behavior change. |
 | Old docs | `design.md`, `design-decision-phase-1/`, `design-decision-phase-2/` | Moved (`git mv`) whole to `docs/archived-design/`, frozen there. Separately copied to `docs/migrating-design/`, a working copy emptied as content moves to `docs/design/spec/` or `docs/design/catalog/`. Emptying it fully is not required this story (M-7). |
 | Stack overflow | `crates/typdoc-core/src/refs.rs`, `cyclic_nodes`'s `visit` | Rewritten as an explicit iterative DFS over a heap-allocated stack. Same output for a two-node cycle, a self-loop, a no-cycle chain, and a cycle-with-tail (ticket 1). |
 | Text output | `typdoc new/get/set/toc/refs/validate/mv`, JSON output | See the table below. Every command's error path passes its real `json` flag to `failure`/`failure_text` instead of a hard-coded `true`. |
@@ -67,7 +67,7 @@ and in `docs/commands.md`, not left implicit in this contract alone. `mv`'s exis
 | 3 | The catalog documents' body format is JSON |
 | 4 | Three CI gates, not four; push and PR triggers; `TMPDIR` from the runner; each gate proven red before green counts |
 | 5 | Four catalog documents split by concept, not by caller; the rules document is one list with a `configurable` field, not two lists; the helper is `pub`, not `pub(crate)` |
-| 6 (M-4) | `docs/design/spec/` (prose, `SPC`) and `docs/design/catalog/` (JSON-body, `CAT`); a catalog document's `body-type` field, not its path, drives validation |
+| 6 (M-4), amended by 23 (M-11) | `docs/design/spec/` (prose, coded `SPC`) and `docs/design/catalog/` (JSON-body, **no code** — `CAT` withdrawn); a catalog document's `content_type` field, not its path, drives validation |
 | 7 (M-9) | The central helper stays internal to the tests; `validate`/`get` do not learn body types this story |
 | 8 (M-8/M-10/M-10g/M-10h) | The field-names principle and every text-output shape above, including `mv --renumber`'s change and both `mv` forms' `rewritten:`/`unrewritten:` lines |
 
@@ -85,15 +85,24 @@ and in `docs/commands.md`, not left implicit in this contract alone. `mv`'s exis
    schema). Whichever the build ticket finds cleaner to consume from `serde_json`, it names
    consistently across all four documents rather than matching each to a different source's
    style.
-2. **The `body-type` frontmatter field.** Named `body-type` (matching typdoc's own kebab-case
-   config keys, e.g. `--lock-timeout`), value `"json"` today — the only value the central helper
-   recognizes in this story. A schema for catalog documents declares this field (type `enum`,
-   `values: ["json"]`, required); the four catalog documents are the schema's only members.
+2. **`docs/design/catalog/`'s and `docs/design/spec/`'s full schemas — decided by Mild directly
+   (M-11), superseding this contract's original, narrower draft.**
+   - **Catalog** (no code, per M-11a): `title` (required), `content_type` (enum `["json"]`,
+     required — Mild's own name, not `body-type`), `explained_by` (ref → `SPC`, written as a key
+     like `SPC-4`, not a path). `content_type` is the only value the central helper recognizes
+     this story; its dispatch is still on this field, never on the document's path.
+   - **Spec** (coded, `SPC`, files `spec/SPC-<n>.md`): `title` (required), `status` (enum
+     `draft|active|superseded`), `superseded_by` (ref → `SPC`, present only when superseded),
+     `migrated_from` (string, the source location in `docs/archived-design/`).
+   - Whether `explained_by` is required is ticket 10's call to make while building (M-11's answer
+     lists it without the "only when..." qualifier `superseded_by` gets, but doesn't say
+     "required" outright either) — if built as required, each of the four catalog documents needs
+     a real, short `SPC` entry to point at (ticket 10 authors these four; the rest of
+     `docs/design/spec/` stays later work, per M-7).
 3. **This repository needs a `.typdoc/` project (M-5).** One namespace covers `docs/design/spec/`
-   and `docs/design/catalog/` as two collections, each with its own schema (prose documents need
-   no fields beyond what typdoc itself requires; catalog documents need `body-type`). Managed with
-   the `v0.1.0` binary; if a bug in it blocks a step, that step is done by hand and the gap is
-   named in the closing report, per M-5.
+   and `docs/design/catalog/` as two collections, each with the schema above. Managed with the
+   `v0.1.0` binary; if a bug in it blocks a step, that step is done by hand and the gap is named
+   in the closing report, per M-5.
 4. **Which error call sites move off the hard-coded `true`.** Every `failure(true, ...)` /
    `failure_text(true, ...)` call site inside `new`, `get`, `set`, `refs`, `toc`, and `mv` (plain
    and `--renumber`'s own error path) is audited and changed to the command's real `json`
@@ -115,9 +124,10 @@ and in `docs/commands.md`, not left implicit in this contract alone. `mv`'s exis
 - **Whether `date`/`datetime` are affected by the same `f64`-exactness limit as `number`.**
   Ticket 22 left it unmeasured; this story measures it only if a ticket is built for it, and the
   doc line names only what's measured.
-- **The exact wording and placement of the `number`-comparison doc line and the `body-type`
-  schema/collection files** — left to the ticket that builds each, consistent with this
-  contract's shapes above.
+- **The exact wording and placement of the `number`-comparison doc line** — left to ticket 22,
+  consistent with this contract's shapes above.
+- **Whether `explained_by` is required** — see decision 2 above; ticket 10's own call while
+  building, with a documented fallback either way.
 
 ## Constraints
 

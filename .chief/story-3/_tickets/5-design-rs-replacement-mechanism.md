@@ -12,7 +12,8 @@ this ticket's own resolution.
 direction. The replacement, per Mild's decisions in `.chief/story-3/brief.md`:
 
 - The five sets `design.rs` currently extracts move into **four** `docs/design/catalog/*.md`
-  documents (`CAT`, folder resolved: ticket 6/M-4), one per domain concept, not per current
+  documents (uncoded, folder resolved: ticket 6/M-4, code withdrawn by ticket 23/M-11), one per
+  domain concept, not per current
   caller (Aria, 2026-09-23 — a caller reading two concepts today, like `coverage.rs` reading both
   commands and exit codes, is a fact about that test file, not about the domain):
   1. **rules** — see the reshaped shape below.
@@ -25,10 +26,11 @@ direction. The replacement, per Mild's decisions in `.chief/story-3/brief.md`:
   Two lists let the same id sit in both or in neither and still parse; one list with a field makes
   that state impossible to write.
   Each catalog document's body is JSON (format decided: ticket 3).
-- Every catalog document carries a frontmatter field declaring its body type (e.g. `json`) —
-  ticket 6/M-4's added requirement. The central helper validates the body according to that
-  field, **never by inferring anything from the path** (so `docs/design/catalog/` is a
-  human-organizing convention, not the thing that tells the helper what to do).
+- Every catalog document carries a frontmatter field declaring its body type — named
+  **`content_type`** (ticket 23/M-11's decision, not the `body-type` this ticket originally
+  drafted). The central helper validates the body according to that field, **never by inferring
+  anything from the path** (so `docs/design/catalog/` is a human-organizing convention, not the
+  thing that tells the helper what to do).
 - Production code (**not** just tests — M-6 says "a central helper *in typdoc*", i.e.
   `typdoc-core`, not `typdoc-testkit`) gains a central helper for "a typdoc document whose body
   is JSON", used to read these documents back into typed data. Supporting plain `.json` documents

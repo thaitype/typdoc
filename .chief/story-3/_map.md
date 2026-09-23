@@ -3,29 +3,44 @@
 Story 3 ships v0.2.0: remove `design.rs` and all markdown-reading from code in favor of
 typdoc-managed `docs/design/spec/` (prose) and `docs/design/catalog/` (JSON-body) documents,
 archive the old design docs, fix the release blockers (stack overflow, CI, toolchain pin,
-release mechanics), document the `number`-comparison limit, and **build text output (no
-`--json`) for every command, always showing field names (M-10's principle).** M-10(a-h) and
-M-10g are fully closed as of 2026-09-23 (ticket 8's Answer). Goal and contract are approved;
-tickets 9-22 are written (`.chief/story-3/_tickets/`); build is underway on `story-3-catalog-and-release`.
+release mechanics), document the `number`-comparison limit, and build text output (no `--json`)
+for every command, always showing field names (M-10's principle).
 
-**2026-09-23, two things surfaced once build was about to start, before any of the design.rs-adjacent
-tickets ran:**
-- **Ticket 23 (M-11), open with Mild:** ticket 6's `CAT` code for `docs/design/catalog/` conflicts
-  with a coded collection's own rule (`match` must take `{key}` exactly once) against the four
-  catalog documents needing fixed names. Aria's proposal to Mild: `catalog` uncoded, `spec` keeps
-  `SPC`, field renamed `body_type` (snake_case). **Holds tickets 10, 11, 12, 22** until answered.
-- **Ticket 24, open, no decider named yet:** a sweep for every reader of `design.md` (prompted by
-  Aria catching `fixtures.rs` as a fourth one) found a fifth and much larger one —
-  `crates/typdoc-testkit/src/shell_examples.rs` and `crates/typdoc/tests/shell_examples.rs` (831
-  lines together) extract and actually run every shell example in `design.md` against a real
-  binary. This is the same M-1 violation as `design.rs`, at a larger scale, not yet decided how to
-  handle (hand-list examples, a structured fifth catalog document, or something else). **Adds a
-  block on ticket 12** (12 can't honestly be "done" — nothing reads `design.md` — while this
-  stands) and, transitively, on 13 (13 is now `Blocked by: 12`, added for the same reason: moving
-  `design.md` away while any of these still read it turns them red, and a parallel build has no
-  other reason to sequence 13 after 12).
+**Build status, 2026-09-23:** tickets 9, 14, 15, 16, 17, 18, 19, 21 are **merged** into
+`story-3-catalog-and-release` (see `.chief/story-3/_report/`for each). Ticket 20 is in flight.
+Ticket 23 (M-11) is resolved — see below — which unblocks 10, 11, 22; none of those has started
+building yet. Ticket 12 remains blocked on ticket 24's HOW (routed as M-13, open — see below),
+and ticket 13 transitively on both 12 and 24. Ticket 14 has a **follow-up** (macOS in CI,
+M-12-adjacent, see below) not yet built.
 
-Unaffected and can build now: 9, 14, 15 (after 14), 16-21.
+**2026-09-23, M-11 resolved — ticket 23's Answer has the full quote.** Mild's actual decision
+differs from Aria's proposal in two ways: `spec` **keeps its code** (`SPC`, coded); the field is
+**`content_type`**, not `body_type`. Both schemas also gained fields neither ticket 6 nor the
+original contract draft had — see the contract's decision 2 (fully rewritten) and ticket 10
+(fully rewritten to match, now unblocked).
+
+**2026-09-23, M-12 resolved — pushing a throwaway branch to prove a CI gate red is approved,**
+deleted after (Mild: *"push ขึ้น branch ได้คับ"*). Not the story branch, no PR, nothing to `main`.
+This is how ticket 14's outstanding "live CI proof" item gets closed. **New follow-up before that
+push happens:** Mild also asked for CI to run on both `ubuntu` and `macOS`
+(*"ให้ทำ github actions ที่ ubuntu กับ mac นะครับ"*) — reopening ticket 14 rather than a new ticket,
+since it's the same deliverable (the workflow file), not new scope. The red-before-green proof
+push should cover both OSes once that lands, not just ubuntu.
+
+**2026-09-23, ticket 24's scope settled (Mild, via M-7's own words) — the HOW is M-13, open.**
+*"focus การอ่านจาก md ใน code ทั้งหมด"* (focus on all markdown-reading in code) already covered
+this: `crates/typdoc-testkit/src/shell_examples.rs` and `crates/typdoc/tests/shell_examples.rs`
+(831 lines, extract and run every shell example in `design.md` against a real binary — the same
+M-1 violation as `design.rs`, larger scale) belong in this story, not a maybe. Only which of
+ticket 24's options (1: hand-list, 2: a fifth structured catalog document, 3: something else) is
+still open, routed to Mild as **M-13**. Until answered: ticket 12 (`Blocked by: 11, 24`) must not
+remove `design_text()`, and ticket 13 (`Blocked by: 12, 24`, both explicit now) must not move
+`design.md` — both mechanisms still read it either way M-13 resolves.
+
+**2026-09-23, ticket 17's `toc --depth`-empty concern routed as M-14, open.** Ticket 22 writes
+every other changed shape normally; it leaves this one case (a document whose headings all filter
+out under `--depth`) unstated in the docs until M-14 lands, rather than asserting a behavior that
+might change.
 
 **2026-09-23, M-10 (Mild): every text-output shape is decided**, under the principle that text
 output always shows field names — no bare, unlabeled value:
@@ -111,10 +126,11 @@ final shape.
   either direction. Code stops referencing `design.md` as spec; `design.md` is allowed to go
   stale. Reshapes ticket 5's whole approach — see there for the replacement design.
 - [6: Folder names for the two new document kinds](../story-3/_tickets/6-new-doc-folder-names.md)
-  (M-4, Mild): prose → `docs/design/spec/` (`SPC`); structured/JSON-body → `docs/design/catalog/`
-  (`CAT`). Added requirement: a catalog document declares its body type in a frontmatter field
-  (e.g. `json`); the central helper (ticket 5) validates from that field, never from the path.
-  **`CAT` and the field's exact name are under revision — see ticket 23 (M-11), open.**
+  (M-4, Mild): prose → `docs/design/spec/` (`SPC`); structured/JSON-body → `docs/design/catalog/`.
+  **Superseded on the catalog code and the field name by ticket 23 (M-11), resolved:** `CAT` is
+  withdrawn (catalog is uncoded); the field is `content_type`, not `body-type`. Contract decision
+  2 and ticket 10 carry the current, full shape (both schemas gained fields too — see ticket 23's
+  Answer).
 - [1: Root cause and fix for the long-ref-chain stack overflow](../story-3/_tickets/1-stack-overflow-on-long-ref-chain.md):
   `cyclic_nodes`'s inner `visit` (`refs.rs`) is a plain recursive DFS with no depth limit, run
   project-wide on every `acyclic` field by every command that touches `ref_project()` — a long
@@ -159,14 +175,13 @@ final shape.
 
 ## Not yet specified
 
-- [23: Catalog's code, and the body-type field's name (M-11)](../story-3/_tickets/23-catalog-frontmatter-and-code-conflict.md) —
-  open with Mild. Every reference in ticket 5, ticket 6, the contract, and the goal to `CAT` or to
-  a `body-type` field is written against the *pre-M-11* assumption; once M-11 lands, a pass over
-  all of them applies whatever it actually decided rather than assuming Aria's proposal was
-  accepted as written.
 - [24: `shell_examples.rs` reads `design.md`](../story-3/_tickets/24-shell-examples-read-design-md.md) —
   open, no decider named. Whether this becomes a hand-written list, a fifth structured catalog
   document, or something else is not decided; raised to Aria, not yet routed further.
+- **Ticket 14, reopened (macOS in CI, M-12-adjacent)** — Mild wants CI on both `ubuntu` and
+  `macOS`; not yet built. See the Destination note above for the specific gates to add (the mac
+  job must actually run the suite, not just report green; check for GNU-only shell assumptions in
+  `scripts/test.sh`).
 
 ## Out of scope
 

@@ -29,3 +29,11 @@ validate หรือไม่"*
   declaring its body type (e.g. `json`). The central helper decides whether and how to validate
   the body **from that field, never from the path** — ticket 5 must design the helper around this
   field, not around a folder-name convention.
+
+**Amended 2026-09-23 by ticket 23 (M-11) — this answer's `CAT` code turned out impossible.** A
+coded collection's `match` must take `{key}` exactly once, which conflicts with catalog's four
+fixed, meaningful filenames. Catalog is uncoded; `spec` keeps `SPC` as answered here. The
+body-type field is named `content_type` (M-11), not `body-type`/`json` as sketched above — the
+requirement (validate from the field, never the path) stands unchanged, only the name changed.
+See ticket 23's own Answer for the full decision, including fields neither this ticket nor
+ticket 5 originally gave either schema.

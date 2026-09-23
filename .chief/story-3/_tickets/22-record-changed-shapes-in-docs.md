@@ -16,7 +16,11 @@ row —
 
 1. Add or update the relevant entry in `docs/design/spec/` (the prose collection, ticket 10),
    describing the current text-output shape the way `design.md` used to describe it, so a person
-   reading `docs/design/spec/` learns what's actually true today.
+   reading `docs/design/spec/` learns what's actually true today. **Exception: `toc --depth`
+   filtered to zero headings is not described either way (silent-empty vs. some other signal) —
+   ticket 17 flagged a real ambiguity there, routed to Mild as M-14, open. Write the rest of
+   `toc`'s shape normally; leave this one case unstated until M-14 lands rather than asserting a
+   behavior that might change.**
 2. Update every place the user docs (`docs/commands.md`, `docs/getting-started.md`, `README.md`)
    already show one of these commands' output, so no shown example is stale. Where a user doc
    doesn't yet show a command's output at all, this ticket doesn't invent new coverage beyond

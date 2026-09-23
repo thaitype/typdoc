@@ -2,7 +2,7 @@
 
 Type: implementation
 Status: open
-Blocked by: 12
+Blocked by: 12, 24
 
 **Blocked by 12, added 2026-09-23 (Aria caught this before build started):** moving
 `design.md` away while `design.rs`, `fixtures.rs`, and the shell-examples harness still read it

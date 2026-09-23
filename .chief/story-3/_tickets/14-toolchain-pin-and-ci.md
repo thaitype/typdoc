@@ -1,10 +1,45 @@
 # 14: Pin the toolchain and wire up CI
 
 Type: implementation
-Status: resolved
+Status: reopened 2026-09-23 — macOS follow-up (M-12-adjacent, see below); original scope resolved and merged
 Blocked by: None (can start immediately)
 
 Ticket 4's answer, built: three gates, not four.
+
+**Reopened 2026-09-23 (Aria, relaying Mild):** *"ให้ทำ github actions ที่ ubuntu กับ mac นะครับ"* —
+CI runs every gate on **both** `ubuntu-latest` and `macos-latest`. Windows not asked; don't add
+it. Reopening this ticket rather than filing a new one — same deliverable, `.github/workflows/ci.yml`,
+already built for ubuntu; this is that file's own follow-up, not new scope. The red-before-green
+proof (this ticket's own Tests section, still outstanding as of the ubuntu-only build — see the
+merged report) should be redone once macOS is added, so the proof covers both runners, not just
+the one already shown red. Pushing that proof is now approved (M-12): a throwaway branch, deleted
+after, as `mildronize` via the one-shot credential helper — not the story branch, no PR, nothing
+to `main`.
+
+**Extra care for the macOS leg, per Aria:**
+- **The mac job must actually run the suite**, not just report green because a step silently did
+  nothing or skipped. Compare the test count `scripts/test.sh` reports between the ubuntu and
+  macOS jobs' logs — they should match (same suite, same tests) unless there's a real, named
+  platform difference.
+- **macOS ships bash 3.2 and BSD `sed`/`mktemp`/`grep`, not GNU.** Read `scripts/test.sh` for
+  anything GNU-only before assuming it just works on macOS: `sed -i` with no suffix argument (BSD
+  requires one, even if empty), `grep -P`, `readlink -f`, `mapfile`, and similar. CI will surface
+  a real incompatibility, but check first rather than finding out only from a red run.
+- `TMPDIR` from the runner's own temp directory on both OSes — the existing `${{ runner.temp }}`
+  approach already used for ubuntu should work for macOS runners too (it's a GitHub Actions
+  built-in, not an ubuntu-specific variable), but confirm rather than assume.
+- **Confirmed, not just suspected (checked `scripts/test.sh` directly):** `require_scope()`
+  (lines 39-48) exits 2 immediately — before running a single test — if `systemd-run` isn't on
+  the machine: *"refusing to run the tests uncapped."* `systemd` is Linux-only; it deterministically
+  will not exist on `macos-latest`. This isn't a maybe the CI run might surface — `scripts/test.sh`
+  as it stands today cannot run on macOS at all, by its own explicit design ("fails loudly rather
+  than running uncapped: a safety net that disappears quietly is worse than none"). This ticket's
+  macOS work therefore isn't just a workflow-file addition — it needs a real change to
+  `scripts/test.sh` itself: a macOS-appropriate memory cap (e.g. `ulimit -v`, or a `launchctl`
+  equivalent) alongside the existing `systemd-run` path, keeping the same "fail loudly, never run
+  uncapped" principle rather than quietly dropping the cap on macOS. Decide and build that
+  change as part of this ticket — it's a real gap the CI addition surfaces, not a design question
+  to route elsewhere.
 
 ## The work
 

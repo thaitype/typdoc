@@ -55,11 +55,16 @@ something. Options, not decided here:
    the doc and the test finds it automatically").
 3. **Something else** not yet proposed.
 
-Also open: whether this belongs in this story at all, given its scale, or is worth carving out —
-raised here rather than assumed, since M-1 doesn't say "eventually," but this story's own goal
-(ticket 12's "done means design.rs is gone and nothing reads design.md as data") is not fully
-true while this stands, however it's resolved.
+**Settled 2026-09-23 (Aria) — this belongs in this story.** Mild's own words on M-7 already
+covered it: *"focus การอ่านจาก md ใน code ทั้งหมด"* (focus on all markdown-reading in code, not
+just the five sets). Scope is not open; only the HOW is — options 1/2 above, routed to Mild as
+**M-13**.
+
+**Until M-13 answers:** ticket 12 must not remove `design_text()` (already conditional there),
+and ticket 13 must not move `design.md` (`Blocked by: 12, 24` now, explicit rather than only
+transitive) — both `crates/typdoc-testkit/src/shell_examples.rs` and
+`crates/typdoc/tests/shell_examples.rs` still read it either way this resolves.
 
 ## Answer
 
-<filled in on resolve>
+<filled in on resolve — M-13, open with Mild>

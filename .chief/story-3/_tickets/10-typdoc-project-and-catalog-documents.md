@@ -2,16 +2,13 @@
 
 Type: implementation
 Status: open
-Blocked by: 23
+Blocked by: None (M-11 landed 2026-09-23 — see ticket 23's Answer for the full decision)
 
-**HOLD, 2026-09-23 (Aria):** waiting on M-11 from Mild — a real conflict found before this
-ticket started. A coded collection's `match` must contain `{key}` exactly once (design.md's own
-rule), which `CAT` (ticket 6's proposed code for `docs/design/catalog/`) can't satisfy alongside
-fixed, meaningful filenames like `rules.md`/`commands.md`. Aria's proposal to Mild: `catalog` has
-no code (path-identified, so filenames stay fixed); `spec` keeps `SPC`; the frontmatter field is
-`body_type` (snake_case, typdoc's own frontmatter convention, e.g. `blocked_by`), not
-`body-type`. **Do not start this ticket until M-11 lands** — see ticket 23. Tickets 11, 12, and
-22 are transitively blocked through this one.
+**Unblocked 2026-09-23.** M-11's actual answer differs from Aria's proposal in two ways this
+ticket must build to, not the original draft below: `spec` keeps a **code** (`SPC`), and the
+field is **`content_type`**, not `body_type`. Both schemas also gained fields neither ticket 6
+nor this ticket's first draft had. See "The work" below, already updated; ticket 23's Answer has
+the full quote and reasoning.
 
 Contract decision 3 and ticket 5/6's answers give the shape; this ticket builds it and fills it
 with today's real data (the same five sets `design.rs` extracts from `design.md` today, read by
@@ -22,13 +19,25 @@ which is a test double, not the source).
 
 1. **`.typdoc/config.json`** for this repository (none exists yet), one namespace, two
    collections:
-   - `docs/design/spec/` — prose, no fields beyond what typdoc requires of any document.
-   - `docs/design/catalog/` — one schema requiring a `body-type` frontmatter field (`enum`,
-     `values: ["json"]`, required). No other fields required; a catalog document's actual content
-     is its body, not its frontmatter.
+   - `docs/design/spec/` — **coded**, code `SPC`, files `spec/SPC-<n>.md`. Schema: `title`
+     (string, required), `status` (enum `draft|active|superseded`), `superseded_by` (ref → `SPC`,
+     present only when superseded), `migrated_from` (string, the source location in
+     `docs/archived-design/`).
+   - `docs/design/catalog/` — **no code**, path-identified: `catalog/rules.md`,
+     `catalog/commands.md`, `catalog/exit-codes.md`, `catalog/frontmatter-losses.md`. Schema:
+     `title` (required), `content_type` (enum `["json"]`, required), `explained_by` (ref → `SPC`,
+     written as a key like `SPC-4`, not a path).
+   - **`explained_by` is grouped with two required fields in M-11's answer with nothing marking
+     it optional (unlike `superseded_by`, explicitly "only when superseded") — treat it as
+     required unless building against it proves that reading unworkable.** If required, each of
+     the four catalog documents needs a real `SPC` document to point at: author four short `SPC`
+     entries (`status: active`) as part of this ticket, one per catalog document, each explaining
+     that document's rules/commands/exit-codes/losses in prose. This is a floor, not the full
+     `docs/design/spec/` migration (that stays ticket 22/later work) — four short entries, not a
+     comprehensive rewrite of everything `design.md` ever said.
 2. Managed with the `v0.1.0` binary (M-5). If a step is blocked by a bug in that binary, do the
    step by hand instead and name the gap in this ticket's report — do not wait on a typdoc fix.
-3. **Four catalog documents**, each `body-type: json`, body exactly one JSON object:
+3. **Four catalog documents**, each `content_type: json`, body exactly one JSON object:
    - `docs/design/catalog/rules.md`: `{"rules": [{"id": "<id>", "configurable": <bool>}, ...]}`
      — every rule id in `design.md`'s two Validation-rules tables today, `configurable: true` for
      ids from the table whose second column is `Default`, `false` for the table whose second
@@ -53,6 +62,8 @@ which is a test double, not the source).
 
 ## Done
 
-- `.typdoc/config.json`, both collection files, and the catalog schema exist and validate clean.
+- `.typdoc/config.json`, both collection files, and both schemas exist and validate clean.
 - The four catalog documents exist with content matching `design.md`'s current tables exactly
   (verified by the manual read-back above, recorded in the report).
+- If `explained_by` is built as required: four `SPC` documents exist, one per catalog document,
+  each a short, real explanation — not a placeholder — and every `explained_by` ref resolves.
