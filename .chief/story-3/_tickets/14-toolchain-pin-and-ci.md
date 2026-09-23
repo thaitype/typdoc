@@ -1,7 +1,7 @@
 # 14: Pin the toolchain and wire up CI
 
 Type: implementation
-Status: reopened 2026-09-23 — macOS follow-up (M-12-adjacent, see below); original scope resolved and merged
+Status: claimed (reopened for macOS follow-up)
 Blocked by: None (can start immediately)
 
 Ticket 4's answer, built: three gates, not four.
