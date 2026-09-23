@@ -13,7 +13,7 @@ That asks a folder of tickets which of them are open and waiting on nothing unfi
 
 ## Status
 
-Version 0.1.0. Not released, and not finished: `pull` and remote schemas are not built.
+Version 0.2.0. Not released, and not finished: `pull` and remote schemas are not built.
 
 **What works today**
 
@@ -32,10 +32,10 @@ Linux is the platform this is run and tested on. Nothing else is claimed.
 ## Install
 
 typdoc needs a recent Rust toolchain and nothing else. It is not published to crates.io yet, so
-install it from a clone:
+install it from the `v0.2.0` tag rather than from `main`:
 
 ```console
-$ git clone https://github.com/thaitype/typdoc
+$ git clone --branch v0.2.0 --depth 1 https://github.com/thaitype/typdoc
 $ cd typdoc
 $ cargo install --path crates/typdoc
 ```

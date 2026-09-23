@@ -1,6 +1,6 @@
 [package]
 name = "typdoc-fs"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 
 # The only crate that may change a file. Every other crate reaches a file system through
@@ -9,7 +9,7 @@ edition.workspace = true
 # a call lives in, which a manifest declares and a reader can grep for, rather than by an
 # attribute that a later one could quietly add beside it.
 [dependencies]
-typdoc-core = { version = "0.1.0", path = "../typdoc-core" }
+typdoc-core = { version = "0.2.0", path = "../typdoc-core" }
 
 [dev-dependencies]
 tempfile = "3.27.0"
