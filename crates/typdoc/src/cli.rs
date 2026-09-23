@@ -9,10 +9,10 @@ use serde_json::value::RawValue;
 use serde_json::{Map, Value as Json, json};
 use typdoc_core::{
     Argument, AuditReport, Condition, Deps, Document, DocumentArg, Env, Error, ErrorKind, FieldRef,
-    Finding, Heading, ListFilter, ListResult, MvReport, NewTarget, Project, RefField, RefName,
-    RefOutcome, RefsDirection, RefsReference, RefsReport, RewrittenRef, Scope, SetOp, Severity,
-    SortKey, Source, Toc, UnrewrittenReason, UnrewrittenRef, ValidateReport, ValidateScope, Value,
-    discover, discover_for, parse_field, parse_query, resolve_on_disk,
+    Finding, Heading, ListFilter, ListResult, MvReport, NewTarget, Position, Project, RefField,
+    RefName, RefOutcome, RefsDirection, RefsReference, RefsReport, RewrittenRef, Scope, SetOp,
+    Severity, SortKey, Source, Toc, UnrewrittenReason, UnrewrittenRef, ValidateReport,
+    ValidateScope, Value, discover, discover_for, parse_field, parse_query, resolve_on_disk,
 };
 
 /// `--lock-timeout`'s default (design, Concurrency: "Retries with backoff until a timeout
@@ -366,13 +366,11 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                     "--schemas and --audit cannot be combined: each describes the whole project in its own way",
                 );
             }
-            // Every other command, and plain `validate`, still refuse the output without
-            // `--json` as not built yet. `--audit` is the one exception: the design gives it its
-            // own text form (Audit mode, the worked "typdoc audit: ..." example), so it is built
-            // here rather than refused alongside the rest.
-            if !json && !audit {
-                return failure_text(false, 1, "the output without --json is not built yet");
-            }
+            // Every other command still refuses the output without `--json` as not built yet.
+            // `validate` no longer does, in any of its three shapes: `--audit` had its own text
+            // form already (Audit mode, the worked "typdoc audit: ..." example); plain and
+            // `--schemas` get theirs here, one line per finding (design, the paragraph
+            // beginning "Output.").
             match validate(
                 deps,
                 &documents,
@@ -1176,9 +1174,9 @@ fn validate_args(env: &dyn Env, raw: &[OsString]) -> Result<(PathBuf, Vec<Docume
 /// (design, JSON output), with exit 2 when a finding is an error and 0 otherwise — except under
 /// `--audit`, whose exit code is 0 unless the config itself is invalid (design, Audit mode), and
 /// a config error never reaches this far: it ends the run before a report exists (`validate`'s
-/// own comment on its `?`). `json` chooses between the two output shapes the CLI's own match arm
-/// already decided are the only two reachable here: `--json`, or `--audit` alone, which is the
-/// one command whose text form this ticket builds.
+/// own comment on its `?`). `json` chooses `--json`'s shape; otherwise `--audit` keeps its own
+/// summary text (unchanged, ticket 20), and plain/`--schemas` get `validate_text`'s one line per
+/// finding.
 fn validate_outcome(report: &ValidateReport, json: bool) -> Outcome {
     let code = if report.audit.is_some() {
         0
@@ -1189,14 +1187,58 @@ fn validate_outcome(report: &ValidateReport, json: bool) -> Outcome {
     };
     let stdout = if json {
         format!("{}\n", validate_json(report))
-    } else {
+    } else if report.audit.is_some() {
         audit_text(report)
+    } else {
+        validate_text(report)
     };
     Outcome {
         code,
         stdout,
         stderr: String::new(),
     }
+}
+
+/// The text form of plain `validate` and `validate --schemas` (ticket 20; design, the paragraph
+/// beginning "Output.": "One line per finding, `path:line:col  level  message  rule`"), built
+/// from the same finding shape `--json` already carries. A finding with no known position
+/// prints its bare `path`, the same value `--json` gives `line`/`col` when they are absent
+/// (`finding_json`). The design's own worked example is not spaced consistently (`audit_text`'s
+/// own doc comment says the same of its neighbouring table), so the column widths here are this
+/// function's own, deterministic rule: each column padded to its widest entry plus two spaces,
+/// the same rule `audit_text` already uses for its name column. No findings at all is not a
+/// "clean" line — decided (ticket 20, following `list`'s own precedent): this returns an empty
+/// string, and the exit code alone carries a clean result, so nothing prints and nothing needs
+/// deciding here beyond feeding zero findings through the same loop as any other count.
+fn validate_text(report: &ValidateReport) -> String {
+    let locations: Vec<String> = report
+        .findings
+        .iter()
+        .map(|finding| match finding.position {
+            Some(Position { line, col }) => format!("{}:{line}:{col}", finding.path),
+            None => finding.path.clone(),
+        })
+        .collect();
+    let location_width = column_width(locations.iter().map(String::as_str));
+    let level_width = column_width(report.findings.iter().map(|f| severity_name(f.level)));
+    let message_width = column_width(report.findings.iter().map(|f| f.message.as_str()));
+    let mut out = String::new();
+    for (finding, location) in report.findings.iter().zip(locations.iter()) {
+        out.push_str(&format!(
+            "{location:location_width$}  {:level_width$}  {:message_width$}  {}\n",
+            severity_name(finding.level),
+            finding.message,
+            finding.rule,
+        ));
+    }
+    out
+}
+
+/// The widest entry, in `char`s (matching how `{:width$}` itself pads a string), or 0 for an
+/// empty iterator — the one shape `validate_text`'s three columns each need, pulled out so the
+/// column-width computation is written once rather than three times over.
+fn column_width<'a>(values: impl Iterator<Item = &'a str>) -> usize {
+    values.map(|value| value.chars().count()).max().unwrap_or(0)
 }
 
 fn validate_json(report: &ValidateReport) -> Json {

@@ -440,13 +440,72 @@ fn an_argument_that_names_no_document_stops_before_any_report_and_is_not_a_findi
     assert!(object.get("summary").is_none(), "{object}");
 }
 
+/// Ticket 20: plain `validate` without `--json` prints one line per finding, from the same
+/// finding data `--json` already carries. `error.md`'s broken body link is `body.links` at
+/// `error`, with a known position; `warn.md`'s unknown field is `frontmatter.unknown` at the
+/// default `warn`, with no position, so it prints its bare path (design, the paragraph
+/// beginning "Output.": `path:line:col` when a position is known, `path` alone otherwise, the
+/// same rule `--json` follows for `line`/`col`). Findings are ordered by path (`order`), so
+/// `error.md` prints first. `info` never occurs here: `Severity::Info` is produced only by
+/// `--audit`'s "a rule turned off is reported as info" (`effective_level`), and plain `validate`
+/// has no configurable level that produces it — a golden covering `info` belongs to `--audit`'s
+/// own tests, not here.
 #[test]
-fn validate_without_json_exits_1_as_not_built_yet() {
+fn plain_validate_without_json_prints_one_line_per_finding_at_warn_and_error() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "*.md", "schema": "note.json" }"#,
+        ),
+        ("note.json", r#"{ "name": "note", "fields": {} }"#),
+    ]);
+    project.file("warn.md", "---\nextra: surprise\n---\n");
+    project.file("error.md", "See [broken](./nope.md).\n");
+
+    let ran = Spawn::args(["validate"]).cwd(project.path()).run();
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    assert_eq!(ran.stderr, "");
+    let expected = "error.md:1:5  error  link target missing: ./nope.md                  body.links\n\
+        warn.md       warn   the field `extra` is not a field of the schema  frontmatter.unknown\n";
+    assert_eq!(ran.stdout, expected);
+}
+
+/// Ticket 20, decided (following `list`'s own precedent): a clean project prints nothing without
+/// `--json`, and the exit code alone carries the result — no special-cased "clean" line.
+#[test]
+fn a_clean_project_without_json_prints_nothing_and_exits_0() {
     let project = fixture("valid/minimal");
 
     let ran = Spawn::args(["validate"]).cwd(&project).run();
 
-    assert_eq!(ran.code, 1);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout, "");
+    assert_eq!(ran.stderr, "");
+}
+
+/// Ticket 20: `--schemas` alone, without `--json`, uses the same one-line-per-finding shape as
+/// plain `validate` for a schema-only problem (an import alias that collides with a reserved URL
+/// scheme, `schema.valid`, found with `checked.documents` at 0 since `--schemas` checks no
+/// document).
+#[test]
+fn schemas_alone_without_json_prints_the_same_one_line_per_finding_shape() {
+    let project = Scratch::project(&[(
+        ".typdoc/config.json",
+        r#"{ "version": 1, "imports": { "https": "../elsewhere" } }"#,
+    )]);
+    project.file("x.md", "");
+
+    let ran = Spawn::args(["validate", "--schemas"])
+        .cwd(project.path())
+        .run();
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    assert_eq!(ran.stderr, "");
+    let expected = ".typdoc/config.json  error  the import name `https` is a URL scheme \
+        (`http`, `https`, `mailto` and `file` are reserved), and the two would be told apart \
+        wrongly  schema.valid\n";
+    assert_eq!(ran.stdout, expected);
 }
 
 fn missing_title(project: &Scratch) -> Ran {
