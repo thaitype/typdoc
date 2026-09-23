@@ -1,7 +1,7 @@
 # 15: Release mechanics — 0.2.0, changelog, install from tag
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: 14
 
 Blocked by CI rather than by anything computational: a release is claimed only once the gates
