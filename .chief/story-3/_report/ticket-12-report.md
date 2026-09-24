@@ -155,3 +155,25 @@ table of losses" / "a rewording of the table's prose" wording in `frontmatter.rs
 `detector_for` and its two callers' messages, left over from when the source was a markdown
 table rather than a JSON `losses` array. Re-verified fmt/clippy/`scripts/test.sh` and all three
 drift proofs after this refactor — unchanged results.
+
+## Merge note (2026-09-24)
+
+Built in a worktree branched before M-13/`explained_by` landed on the main checkout; the build
+itself cherry-picked both onto its own branch before starting (documented in its own handback).
+Merging required first bringing `story-3-catalog-and-release` up to include M-13/`explained_by`
+via a direct cherry-pick of the same two commits (different hashes, identical content — cherry-
+pick always mints new hashes), then merging ticket 12's branch cleanly on top (one trivial
+conflict, in this ticket's own `Status:` line, resolved to `resolved`). Re-verified all three
+gates after the merge: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D
+warnings`, `scripts/test.sh` (998 tests, 56 suites, 0 failed).
+
+**Flagging the scope-narrowing the build itself already caught, not treating it as silently
+fine:** `rules.md`'s rewired test now checks 23 rule ids (the two Validation-rules tables
+`design.rs` always covered) rather than the 43 ids the old `RULES` constant checked (which also
+pulled in a third table of `config.*` config-error ids). This traces to contract decision 1's own
+catalog shape (`rules.md` = "one entry per rule id from both of today's two tables"), not to
+anything this ticket introduced — but it is a real, if pre-existing, narrowing of what the
+"design.rs replacement" catches: a `config.*` id added to or removed from `RULES` no longer turns
+any test red. Worth a decision on whether `config.*` ids need their own coverage (a fifth catalog
+document, or folded into an existing one) — not decided or fixed here, since the shape itself was
+already contract-decided before this ticket started.
