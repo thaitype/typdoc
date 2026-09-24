@@ -4,7 +4,7 @@ All notable, user-visible changes to typdoc are documented here. Internal reorga
 example, how the project's own design documents are structured and read in its own test suite)
 are left out unless they change something a user of the `typdoc` binary sees.
 
-## [0.2.0] - Unreleased
+## [0.2.0] - 2026-09-24
 
 ### Changed
 
@@ -48,6 +48,14 @@ are left out unless they change something a user of the `typdoc` binary sees.
   internal walk is now an explicit iterative traversal over a heap-allocated stack instead of one
   recursive call per document, with no ceiling on how long a chain can be. Output is unchanged for
   a two-node cycle, a self-loop, a chain with no cycle, and a cycle with a tail.
+- A ref is resolved by its exact spelling on every platform. On a case-insensitive file system
+  (macOS), `target.md` used to resolve to a file named `Target.md`; it is now reported as not
+  found, as it always was on Linux.
+- `set` and `new` refuse a write that forms a new cycle through an `acyclic` field (exit 2,
+  nothing written), which the design required and `validate` alone used to catch. A write that
+  forms no new cycle, including one to a document already on a cycle, still succeeds.
+- `set` and `new --set` values follow the escape rules: `\,`, `\*` and `\\` are escapes, and a bare
+  `*` or any other `\` is exit 1. Values used to be stored exactly as typed, backslashes included.
 
 ### Documentation
 
@@ -57,6 +65,8 @@ are left out unless they change something a user of the `typdoc` binary sees.
   replacing `docs/commands.md` and `docs/projects.md`) and explanation (`docs/explanation/`).
 - An agent skill ships with the repository in `skills/typdoc/`, installable with
   `npx skills add thaitype/typdoc`. It is written for this version and says so on its first line.
+- Examples and docs keep schemas in `.typdoc/schemas/`. A collection may still point at a schema
+  anywhere in the project; this is only where the docs suggest putting one.
 - The user docs now state where exact `number` comparison ends: a value past what an `f64` holds
   exactly (past the eighteenth significant digit) can compare equal to a different value in a
   `--where` expression or a `--sort` with no error. Whether `date` and `datetime`, which also
@@ -67,7 +77,7 @@ are left out unless they change something a user of the `typdoc` binary sees.
 - The toolchain is now pinned (`rust-toolchain.toml`) to the version this project's gates already
   pass on, and CI runs `scripts/test.sh`, `cargo fmt --check`, and
   `cargo clippy --workspace --all-targets -- -D warnings` on every push and pull request into
-  `main`.
+  `main`, on both Linux and macOS.
 
 ## [0.1.0] - 2026-09-23
 
