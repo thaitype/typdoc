@@ -88,17 +88,20 @@ and in `docs/commands.md`, not left implicit in this contract alone. `mv`'s exis
 2. **`docs/design/catalog/`'s and `docs/design/spec/`'s full schemas — decided by Mild directly
    (M-11), superseding this contract's original, narrower draft.**
    - **Catalog** (no code, per M-11a): `title` (required), `content_type` (enum `["json"]`,
-     required — Mild's own name, not `body-type`), `explained_by` (ref → `SPC`, written as a key
-     like `SPC-4`, not a path). `content_type` is the only value the central helper recognizes
-     this story; its dispatch is still on this field, never on the document's path.
+     required — Mild's own name, not `body-type`), `explained_by` (**`ref[]` → `SPC`, optional**
+     — Mild's own follow-up, 2026-09-24, replacing the single-`ref` shape ticket 10 built it as:
+     spec documents may not exist yet during migration, so a catalog document isn't required to
+     point at one, and a catalog document may reasonably need more than one). `content_type` is
+     the only value the central helper recognizes this story; its dispatch is still on this
+     field, never on the document's path.
    - **Spec** (coded, `SPC`, files `spec/SPC-<n>.md`): `title` (required), `status` (enum
      `draft|active|superseded`), `superseded_by` (ref → `SPC`, present only when superseded),
      `migrated_from` (string, the source location in `docs/archived-design/`).
-   - Whether `explained_by` is required is ticket 10's call to make while building (M-11's answer
-     lists it without the "only when..." qualifier `superseded_by` gets, but doesn't say
-     "required" outright either) — if built as required, each of the four catalog documents needs
-     a real, short `SPC` entry to point at (ticket 10 authors these four; the rest of
-     `docs/design/spec/` stays later work, per M-7).
+   - Ticket 10 originally built `explained_by` as a required single `ref` (a real, short `SPC`
+     entry authored for each of the four catalog documents, per its own judgment call at the
+     time) — all four still exist and are still valid content; only the field's shape changed,
+     from `ref` to `ref[]`, and from required to optional. Nothing about the four `SPC` entries
+     needed to change.
 3. **This repository needs a `.typdoc/` project (M-5).** One namespace covers `docs/design/spec/`
    and `docs/design/catalog/` as two collections, each with the schema above. Managed with the
    `v0.1.0` binary; if a bug in it blocks a step, that step is done by hand and the gap is named
@@ -126,9 +129,6 @@ and in `docs/commands.md`, not left implicit in this contract alone. `mv`'s exis
   doc line names only what's measured.
 - **The exact wording and placement of the `number`-comparison doc line** — left to ticket 22,
   consistent with this contract's shapes above.
-- **Whether `explained_by` is required** — see decision 2 above; ticket 10's own call while
-  building, with a documented fallback either way.
-
 ## Constraints
 
 - The workspace and toolchain are otherwise unchanged: Rust 2024, `crates/typdoc-core` the

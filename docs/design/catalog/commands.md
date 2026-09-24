@@ -1,7 +1,7 @@
 ---
 title: Commands catalog
 content_type: json
-explained_by: SPC-2
+explained_by: [SPC-2]
 ---
 
 {

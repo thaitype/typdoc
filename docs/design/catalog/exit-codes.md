@@ -1,7 +1,7 @@
 ---
 title: Exit codes catalog
 content_type: json
-explained_by: SPC-3
+explained_by: [SPC-3]
 ---
 
 {

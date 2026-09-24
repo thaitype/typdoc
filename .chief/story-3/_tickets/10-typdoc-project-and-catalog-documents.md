@@ -10,6 +10,14 @@ field is **`content_type`**, not `body_type`. Both schemas also gained fields ne
 nor this ticket's first draft had. See "The work" below, already updated; ticket 23's Answer has
 the full quote and reasoning.
 
+**Follow-up, 2026-09-24 (Mild): `explained_by` changed from `ref` to `ref[]`, and from required to
+optional** — spec documents may not exist yet during migration, and a catalog document may
+reasonably explain itself with more than one. Built directly (not a new ticket): `schemas/catalog.json`
+updated, and the four catalog documents' frontmatter changed from `explained_by: SPC-N` to
+`explained_by: [SPC-N]`. The four `SPC` entries this ticket authored below (back when the field
+was read as required) needed no change themselves — only the field's shape and cardinality moved,
+not what it points at or why. See contract decision 2 for the current, correct shape.
+
 Contract decision 3 and ticket 5/6's answers give the shape; this ticket builds it and fills it
 with today's real data (the same five sets `design.rs` extracts from `design.md` today, read by
 hand from `docs/design/design.md` before it moves — not copied from `design.rs`'s own fixture,

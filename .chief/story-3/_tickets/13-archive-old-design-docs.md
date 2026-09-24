@@ -2,13 +2,15 @@
 
 Type: implementation
 Status: open
-Blocked by: 12, 24
+Blocked by: 12
 
 **Blocked by 12, added 2026-09-23 (Aria caught this before build started):** moving
 `design.md` away while `design.rs`, `fixtures.rs`, and the shell-examples harness still read it
 from its old path turns those readers red the moment this ticket lands — and under a parallel
-build, this ticket has no reason on its own to wait, so it could land first and break them. Do
-not start this ticket until 12 (and, transitively, 24) are done.
+build, this ticket has no reason on its own to wait, so it could land first and break them.
+Ticket 24 (M-13) is resolved and its build work folded entirely into ticket 12 (2026-09-24), so
+this is `Blocked by: 12` alone now, not `12, 24` — nothing left in ticket 24 for this ticket to
+wait on separately. Do not start until 12 is done.
 
 ## The work
 

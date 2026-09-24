@@ -46,3 +46,8 @@ files keep their fixed names); `spec` keeps `SPC`; the field is renamed `body_ty
 Ticket 10 (schema/documents), ticket 11 (helper — dispatches on `content_type`, unchanged
 logic), the contract (decisions 1-3), and the map all need updating to match — not done by this
 ticket, done where each of those already lives.
+
+**Amended 2026-09-24 by Mild's own follow-up:** `explained_by` is `ref[]`, not the single `ref`
+recorded above, and optional rather than required. See ticket 10 and contract decision 2 for the
+current, correct shape — this ticket's own record of the `ref`/required version stands as the
+history of what M-11 actually said, not silently rewritten.
