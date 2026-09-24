@@ -42,6 +42,28 @@ fn lock_owner_pid(lock: &std::path::Path) -> Option<u32> {
     value["pid"].as_u64().map(|pid| pid as u32)
 }
 
+/// Polls until the lock file at `lock` names `pid` as its owner, or panics if `LOCK_APPEARS_WITHIN`
+/// (already generous next to how quickly a real write finishes) passes without that happening.
+/// `wait_for_file` alone only proves the file exists, not that the write of its contents — the
+/// `pid` field this reads — has finished; reading it back immediately after existence is confirmed
+/// can observe an empty or partially written file, which is a race in the observation, not a real
+/// fault, so this polls for the field itself rather than accepting `None` as the answer.
+fn wait_until_lock_names_pid(lock: &std::path::Path, pid: u32) {
+    let start = Instant::now();
+    loop {
+        let owner = lock_owner_pid(lock);
+        if owner == Some(pid) {
+            return;
+        }
+        assert!(
+            start.elapsed() < LOCK_APPEARS_WITHIN,
+            "the lock file at {lock:?} never named its own holder's pid ({pid}) within \
+             {LOCK_APPEARS_WITHIN:?} (last read: {owner:?})"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
 /// Polls until every contender is confirmed still running (`RunningChild::is_alive`) *and* the
 /// lock file still names the holder's own pid (nobody else has taken it over, and the holder has
 /// not yet released it) — the combination the ticket's own reasoning gives for "waiting" rather
@@ -101,11 +123,7 @@ fn n_processes_racing_one_lock_issue_n_distinct_keys_with_no_document_overwritte
         "the holder's own lock file never appeared"
     );
     let holder_pid = holder.pid();
-    assert_eq!(
-        lock_owner_pid(&lock),
-        Some(holder_pid),
-        "the lock file the holder just created must name its own pid"
-    );
+    wait_until_lock_names_pid(&lock, holder_pid);
 
     let titles: Vec<String> = (1..=CONTENDER_COUNT)
         .map(|i| format!("Contender {i}"))
