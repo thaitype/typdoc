@@ -1,6 +1,6 @@
 //! Body links, reference definitions, duplicate labels and text that looks like a link but is
 //! not: `typdoc_core::scan`, pure over one document's text (ticket 10 of the decisions is the
-//! spec; see `docs/design-decision-phase-1/_tickets/10-link-forms-checked.md`).
+//! spec; see `docs/archived-design/design-decision-phase-1/_tickets/10-link-forms-checked.md`).
 
 use typdoc_core::{BodyLink, DuplicateDefinition, Suspect, scan};
 

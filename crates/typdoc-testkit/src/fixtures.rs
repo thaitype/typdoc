@@ -13,7 +13,7 @@ pub fn locate(manifest_dir: &Path) -> Result<PathBuf, String> {
     for (what, missing) in [
         ("fixtures folder", root.join("fixtures")),
         // Not a design document (M-13/ticket 12): a marker every checkout has, that cannot be
-        // confused for "reading the design" the way `docs/design/design.md` could be.
+        // confused for "reading the design" the way `docs/archived-design/design.md` could be.
         ("workspace manifest", root.join("Cargo.toml")),
     ] {
         if !missing.exists() {

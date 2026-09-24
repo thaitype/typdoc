@@ -86,7 +86,7 @@ fn args_env(items: &[&str], env: &[(&str, &str)]) -> Recorded {
 /// `typdoc` supplied where the text is a bare `--` fragment) and the value declared by hand
 /// from the design's own words about quoting.
 struct DeclaredExample {
-    /// The example's text, as it appears in `docs/design/design.md` (or its `spec`
+    /// The example's text, as it appears in `docs/archived-design/design.md` (or its `spec`
     /// replacement) -- used in failure messages, not read back out of any file.
     text: &'static str,
     /// What is actually run through the shell.

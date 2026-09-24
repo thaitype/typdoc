@@ -1,6 +1,6 @@
 # Development
 
-This page is for working on typdoc rather than with it. The [design](design/design.md) is the source of
+This page is for working on typdoc rather than with it. The [design](archived-design/design.md) is the source of
 truth for what the tool does; where this page and the design disagree, the design wins.
 
 ## The workspace
@@ -86,9 +86,10 @@ decision record.
 
 ## Where the truth is
 
-- [The design](design/design.md) — what typdoc does and why, in full, and the arbiter when documents
-  disagree.
-- The decision records for [phase 1](design/design-decision-phase-1/) and [phase 2](design/design-decision-phase-2/) — the decisions behind
+- [The design](archived-design/design.md) — what typdoc does and why, in full, and the arbiter when
+  documents disagree. Archived (story 3, ticket 13); a working copy being progressively emptied
+  into `design/spec/`/`design/catalog/` lives at [`migrating-design/`](migrating-design/).
+- The decision records for [phase 1](archived-design/design-decision-phase-1/) and [phase 2](archived-design/design-decision-phase-2/) — the decisions behind
   the design, each with the research or the measurement it rests on, and a map naming what is
   still open.
 - The [README](../README.md), [getting started](getting-started.md), [commands](commands.md) and

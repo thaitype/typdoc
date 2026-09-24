@@ -2,7 +2,7 @@
 
 A typdoc project is a folder with a `.typdoc` folder in it. This page describes what goes in that folder. [Getting started](getting-started.md) builds one step by step; this one is for looking things up.
 
-The [design](design/design.md) is the source of truth for all of it. Where this page is shorter, it is a summary, not a different rule.
+The [design](archived-design/design.md) is the source of truth for all of it. Where this page is shorter, it is a summary, not a different rule.
 
 ## The layout
 

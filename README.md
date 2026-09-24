@@ -71,7 +71,7 @@ $ typdoc set WF-2 status=claimed --json
 `set` writes the file; `git checkout examples/` in the clone undoes it. A write rewrites the whole
 frontmatter block rather than the line it changed: every value is carried across exactly as it was
 written, but comments, blank lines, quoting and inline lists such as `[WF-1]` are not kept.
-The [design](docs/design/design.md) has the full list of what a write does not promise to preserve.
+The [design](docs/archived-design/design.md) has the full list of what a write does not promise to preserve.
 [Getting started](docs/getting-started.md) walks through building a project of your own from an empty
 folder.
 

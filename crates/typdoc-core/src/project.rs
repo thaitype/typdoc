@@ -1517,7 +1517,7 @@ impl Project {
 
     /// `list`: every document of `scope` whose collection is selected and whose fields satisfy
     /// every `--where` condition, sorted by `--sort` and then, breaking every tie, in key or path
-    /// order (`docs/design-decision-phase-1/_tickets/15-json-output-shape.md`, "Already decided
+    /// order (`docs/archived-design/design-decision-phase-1/_tickets/15-json-output-shape.md`, "Already decided
     /// elsewhere and not reopened"). `--limit` is not read here: the design reports `total` before
     /// it and says a flag that limits what is listed never changes an item's values, so cutting
     /// the result is the caller's job, done after this returns the whole match, in order.
