@@ -1,7 +1,7 @@
 # 25: `resolve_path`'s fallback trusts the filesystem's own case-folding
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None (can start immediately)
 
 **Found 2026-09-24, running the real macOS CI proof for ticket 14/M-15** — `validate.rs`'s
