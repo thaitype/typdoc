@@ -281,7 +281,7 @@ mod tests {
 
             let catalog: RulesCatalog = read_json_body(&file).expect("rules.md is valid json");
 
-            assert_eq!(catalog.rules.len(), 23, "{:?}", catalog.rules);
+            assert_eq!(catalog.rules.len(), 24, "{:?}", catalog.rules);
             assert!(
                 catalog
                     .rules

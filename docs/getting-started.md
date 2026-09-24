@@ -19,7 +19,8 @@ $ echo '{ "version": 1 }' > .typdoc/config.json
 $ echo '.typdoc/locks/' > .gitignore
 ```
 
-`.typdoc/config.json` is what marks the folder as a typdoc project. We'll keep the schemas in
+`.typdoc/` itself is what marks the folder as a typdoc project — `config.json` is optional, but
+we'll write it anyway to pin the version explicitly. We'll keep the schemas in
 `.typdoc/schemas/` so everything typdoc reads sits in one place; a schema can live anywhere in the
 project, though, since collections point at it by path. typdoc creates
 `.typdoc/locks/` while it writes, and it doesn't belong in git, hence the `.gitignore`.
@@ -28,9 +29,12 @@ Check that typdoc sees it:
 
 ```console
 $ typdoc validate
+path     level  rule               message
+.typdoc  warn   collections.empty  this project has no collections: nothing is configured to validate
 ```
 
-No output and no error: an empty project is a valid one.
+Exit code 0, so nothing is broken — but a warning, since there's nothing to check yet. That
+warning goes away as soon as the first collection exists, next.
 
 ## 2. Describe a ticket
 

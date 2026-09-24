@@ -12,7 +12,7 @@ use crate::argument::DocumentArg;
 use crate::body::{self, Heading};
 use crate::config::{
     CONFIG_FILE, Collection, Config, LEFTOVER_TEMP_FILE, Level, LockMode, Namespace, RefBase,
-    Report, Rules, config_file,
+    Report, Rules, TYPDOC_DIR, config_file,
 };
 use crate::document::{Document, Value};
 use crate::env::{Deps, Env};
@@ -34,20 +34,23 @@ use crate::state;
 use crate::template::{Step, Template};
 use crate::validate::{self, DocName, Finding, Severity, ValidateScope};
 
-/// The folder that holds `.typdoc/config.json`: `TYPDOC_DIR` when it is set, and otherwise
-/// the nearest one above the current directory, that directory included.
+/// The folder that holds `.typdoc/`: `TYPDOC_DIR` when it is set, and otherwise the nearest one
+/// above the current directory, that directory included. A project is marked by the `.typdoc`
+/// folder existing, not by `config.json` inside it (M-24: `.typdoc/config.json` is optional) —
+/// `.is_dir()` specifically, not `.exists()`, so a plain file named `.typdoc` never counts as a
+/// project.
 pub fn discover(env: &dyn Env) -> Result<PathBuf, Error> {
     let cwd = env.current_dir().map_err(Error::io_at(Path::new(".")))?;
     if let Some(dir) = env.var("TYPDOC_DIR").filter(|v| !v.is_empty()) {
         let dir = cwd.join(dir);
-        return if config_file(&dir).is_file() {
+        return if dir.join(TYPDOC_DIR).is_dir() {
             Ok(dir)
         } else {
             Err(Error::NoProjectAt { dir })
         };
     }
     cwd.ancestors()
-        .find(|dir| config_file(dir).is_file())
+        .find(|dir| dir.join(TYPDOC_DIR).is_dir())
         .map(Path::to_owned)
         .ok_or(Error::NoProject { from: cwd })
 }
@@ -2626,6 +2629,13 @@ impl Project {
             } else {
                 None
             };
+            // `collections.empty` (M-24): project-wide, independent of scope or of what else
+            // `.typdoc/` holds — `self.collections` is every collection the project's config
+            // has, complete regardless of `--namespace`/`TYPDOC_NAMESPACE` (collections are not
+            // namespace-scoped), so this checks it once here rather than per namespace.
+            if self.collections.is_empty() {
+                findings.push(validate::collections_empty_finding(TYPDOC_DIR));
+            }
             validate::order(&mut findings);
             return Ok(ValidateReport {
                 scope: ValidateScope::All,

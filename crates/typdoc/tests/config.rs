@@ -264,6 +264,70 @@ fn typdoc_dir_naming_a_folder_without_a_config_is_no_project_and_names_the_confi
     assert!(message.contains("elsewhere"), "{message}");
 }
 
+// --- M-24: `.typdoc/config.json` becomes optional; project discovery looks for the folder ---
+
+/// A plain file named `.typdoc` (no extension, the same name the folder would have) is not a
+/// project: discovery needs the directory, not merely something at that name (contract, M-24:
+/// `.is_dir()` specifically, not `.exists()`). Covers the ancestor-walk branch of `discover()`.
+#[test]
+fn a_plain_file_named_dot_typdoc_is_not_a_project_via_the_ancestor_walk() {
+    let only = Scratch::empty();
+    only.file(".typdoc", "not a directory");
+
+    let ran = get_a(&only);
+
+    no_project_error(&ran);
+}
+
+/// The same plain-file-named-`.typdoc` case, through the `TYPDOC_DIR` branch of `discover()`:
+/// `TYPDOC_DIR` names the folder the project would live in, and that folder holds a plain file
+/// called `.typdoc`, not a directory.
+#[test]
+fn a_plain_file_named_dot_typdoc_is_not_a_project_via_typdoc_dir() {
+    let project = Scratch::empty();
+    project.file("elsewhere/.typdoc", "not a directory");
+
+    let ran = Spawn::args(["get", "a.md", "--json"])
+        .var("TYPDOC_DIR", "elsewhere")
+        .cwd(project.path())
+        .run();
+
+    no_project_error(&ran);
+}
+
+/// A `.typdoc/` folder with no `config.json` at all is still a valid project, read as
+/// `{"version": 1}` (contract, M-24): every command's discovery looks for the folder, and a
+/// missing `config.json` is not a read error.
+#[test]
+fn a_typdoc_folder_with_no_config_json_at_all_loads_as_version_1() {
+    let project = Scratch::empty();
+    project.file(
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "*.md", "schema": "note.json" }"#,
+    );
+    project.file("note.json", r#"{ "name": "note", "fields": {} }"#);
+    project.file("a.md", "---\ntitle: x\n---\n");
+
+    let ran = get_a(&project);
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stdout_json()["document"]["path"], json!("a.md"));
+}
+
+/// A bare `.typdoc/` folder with nothing in it at all (no `config.json`, no `collections/`) is
+/// still a valid project: `list` returns a normal exit code and an empty result, not a config
+/// error (contract, M-24, the demoable case).
+#[test]
+fn a_bare_typdoc_folder_with_nothing_in_it_still_lets_list_run() {
+    let project = Scratch::empty();
+    std::fs::create_dir_all(project.path().join(".typdoc")).expect("a folder");
+
+    let ran = Spawn::args(["list", "--json"]).cwd(project.path()).run();
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stdout_json()["total"], json!(0));
+}
+
 #[test]
 fn a_collection_file_that_cannot_be_parsed_or_is_the_wrong_shape_is_config_collection_parse() {
     for text in [

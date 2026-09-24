@@ -235,10 +235,18 @@ fn parse_imports(value: &Value, report: &mut Report) -> Result<BTreeMap<String, 
     Ok(imports)
 }
 
-/// `config.json` as an object whose `version` is known. Anything else ends the list.
+/// `config.json` as an object whose `version` is known. Anything else ends the list. A missing
+/// file is not an error (M-24: `.typdoc/config.json` is optional) — read as an empty object,
+/// equivalent to `{"version": 1}`, the same defaults `Config::load` already produces for every
+/// key `top` does not have. A file present but unreadable for another reason (permissions, and
+/// so on) still surfaces as an ordinary IO error.
 fn read_config_json(root: &Path, report: &mut Report) -> Result<Map<String, Value>, Error> {
     let file = config_file(root);
-    let bytes = fs::read(&file).map_err(Error::io_at(&file))?;
+    let bytes = match fs::read(&file) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Map::new()),
+        Err(e) => return Err(Error::io_at(&file)(e)),
+    };
     let value: Value = match serde_json::from_slice(&bytes) {
         Ok(value) => value,
         Err(e) => {

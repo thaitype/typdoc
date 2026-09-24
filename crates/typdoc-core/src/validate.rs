@@ -608,6 +608,27 @@ pub(crate) fn state_retired_finding(
     )
 }
 
+/// A finding about a project with no collections at all (`collections.empty`, `warn`, M-24):
+/// `.typdoc/config.json` being optional means a bare `.typdoc/` folder is a valid project, so
+/// this only warns that nothing is configured to check yet — it stops nothing, reads included,
+/// the same non-fatal shape `state_retired_finding` already has. Project-level, not about any
+/// one document: `path` is `TYPDOC_DIR` (`.typdoc`) and `namespace`/`collection`/`key`/`field`
+/// are all `None`, the same shape `schema.valid` uses for a finding that is not about one
+/// document.
+pub(crate) fn collections_empty_finding(path: &str) -> Finding {
+    build_finding(
+        Severity::Warn,
+        "collections.empty",
+        path,
+        None,
+        None,
+        None,
+        None,
+        None,
+        "this project has no collections: nothing is configured to validate".to_owned(),
+    )
+}
+
 fn display_value(value: &Value) -> String {
     match value {
         Value::Text(text) => format!("`{text}`"),

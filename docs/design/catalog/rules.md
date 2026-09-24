@@ -15,6 +15,7 @@ explained_by: [SPC-1]
     { "id": "refs.acyclic", "configurable": false },
     { "id": "keys.unique", "configurable": false },
     { "id": "collections.overlap", "configurable": false },
+    { "id": "collections.empty", "configurable": false },
     { "id": "state.missing", "configurable": false },
     { "id": "state.malformed", "configurable": false },
     { "id": "state.behind", "configurable": false },
