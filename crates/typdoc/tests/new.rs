@@ -611,6 +611,42 @@ fn new_coded_without_json_prints_the_labeled_block_not_the_bare_key() {
     );
 }
 
+// ---------------------------------------------------------------------------------------------
+// Ticket 31 (M-19): `--set`'s escaping grammar applies through `new` too, since `apply_ops` is
+// shared between `set` and `new`.
+// ---------------------------------------------------------------------------------------------
+
+/// `\*` in a `new --set` value is a literal `*`, exactly as it is for `set`.
+#[test]
+fn news_own_set_unescapes_a_backslash_star_to_a_literal_star() {
+    let project = Scratch::project(&NOTES);
+
+    let ran = run(
+        project.path(),
+        &["new", "a.md", "--set", r"title=a\*b", "--json"],
+    );
+
+    let out = ok_json(&ran);
+    assert_eq!(out["document"]["fields"]["title"], json!("a*b"));
+}
+
+/// A bare unescaped `*` through `new --set` is refused too, and creates nothing.
+#[test]
+fn news_own_set_refuses_a_bare_unescaped_star_and_creates_nothing() {
+    let project = Scratch::project(&NOTES);
+
+    let ran = run(
+        project.path(),
+        &["new", "a.md", "--set", "title=x*y", "--json"],
+    );
+
+    assert_eq!(ran.code, 1, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
+    assert!(
+        !project.path().join("a.md").exists(),
+        "a refused new must create nothing"
+    );
+}
+
 /// The bug this ticket fixes, kept as the regression it was found as (testing-decisions, "Text
 /// output"): before this ticket, `typdoc new` with a target that is neither a code nor a path
 /// printed the raw `--json` error object on stderr even without `--json`, because

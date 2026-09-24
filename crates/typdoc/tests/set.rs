@@ -405,6 +405,120 @@ fn auto_update_is_stamped_only_when_a_value_actually_changes() {
     );
 }
 
+// ---------------------------------------------------------------------------------------------
+// Ticket 31 (M-19): `--set`/`field=value` escaping (design §Query, as applied to `set`).
+// ---------------------------------------------------------------------------------------------
+
+/// `\*` is a literal `*`. Repro: today the backslash is kept in the stored value instead.
+#[test]
+fn a_backslash_star_in_a_scalar_value_is_stored_as_a_literal_star() {
+    let project = Scratch::project(&NOTES);
+    project.file("a.md", "---\ntitle: Before\n---\n\nBody.\n");
+
+    let ran = run(project.path(), &["set", "a.md", r"title=a\*b", "--json"]);
+
+    let out = ok_json(&ran);
+    assert_eq!(out["document"]["fields"]["title"], json!("a*b"));
+    let after = std::fs::read_to_string(project.path().join("a.md")).unwrap();
+    assert!(after.contains("a*b"), "{after:?}");
+    assert!(!after.contains(r"a\*b"), "{after:?}");
+}
+
+/// A bare, unescaped `*` has no wildcard meaning in `--set` (unlike `--where`/`--if`) and is an
+/// outright error. Repro: today it is silently accepted and stored literally.
+#[test]
+fn a_bare_unescaped_star_in_a_set_value_is_refused_and_writes_nothing() {
+    let project = Scratch::project(&NOTES);
+    project.file("a.md", "---\ntitle: Before\n---\n\nBody.\n");
+    let before = std::fs::read(project.path().join("a.md")).unwrap();
+
+    let ran = run(project.path(), &["set", "a.md", "title=x*y", "--json"]);
+
+    assert_eq!(ran.code, 1, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
+    let after = std::fs::read(project.path().join("a.md")).unwrap();
+    assert_eq!(before, after, "a refused set must write nothing");
+}
+
+/// `\,` is a literal `,`; a scalar field has nothing to split into, so the escape just yields the
+/// character, with no list produced.
+#[test]
+fn a_backslash_comma_in_a_scalar_value_is_stored_as_a_literal_comma() {
+    let project = Scratch::project(&NOTES);
+    project.file("a.md", "---\ntitle: Before\n---\n\nBody.\n");
+
+    let ran = run(project.path(), &["set", "a.md", r"title=a\,b", "--json"]);
+
+    let out = ok_json(&ran);
+    assert_eq!(out["document"]["fields"]["title"], json!("a,b"));
+}
+
+/// A list field still splits on an unescaped `,`, but a `\,` inside an item is a literal comma,
+/// not a split point.
+#[test]
+fn a_list_field_splits_on_unescaped_commas_but_not_on_an_escaped_one() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "*.md", "schema": "note.json" }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": { "tags": { "type": "list" } } }"#,
+        ),
+        ("a.md", "---\ntags: [alpha]\n---\n\nBody.\n"),
+    ]);
+
+    let ran = run(project.path(), &["set", "a.md", r"tags=a\,b,c", "--json"]);
+
+    let out = ok_json(&ran);
+    assert_eq!(out["document"]["fields"]["tags"], json!(["a,b", "c"]));
+}
+
+/// `\\` is a literal `\`.
+#[test]
+fn a_double_backslash_in_a_value_is_stored_as_a_single_backslash() {
+    let project = Scratch::project(&NOTES);
+    project.file("a.md", "---\ntitle: Before\n---\n\nBody.\n");
+
+    let ran = run(project.path(), &["set", "a.md", r"title=a\\b", "--json"]);
+
+    let out = ok_json(&ran);
+    assert_eq!(out["document"]["fields"]["title"], json!(r"a\b"));
+}
+
+/// `\` followed by anything other than `,`, `*` or `\` is an unrecognized escape and refused.
+#[test]
+fn an_unrecognized_escape_in_a_set_value_is_refused_and_writes_nothing() {
+    let project = Scratch::project(&NOTES);
+    project.file("a.md", "---\ntitle: Before\n---\n\nBody.\n");
+    let before = std::fs::read(project.path().join("a.md")).unwrap();
+
+    let ran = run(project.path(), &["set", "a.md", r"title=a\qb", "--json"]);
+
+    assert_eq!(ran.code, 1, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
+    let error = ran.stderr_json();
+    assert!(
+        error["error"].as_str().unwrap_or_default().contains(r"\q"),
+        "{error}"
+    );
+    let after = std::fs::read(project.path().join("a.md")).unwrap();
+    assert_eq!(before, after, "a refused set must write nothing");
+}
+
+/// A value ending in a lone, unmatched `\` is refused rather than silently dropped or kept.
+#[test]
+fn a_value_ending_in_a_lone_backslash_is_refused_and_writes_nothing() {
+    let project = Scratch::project(&NOTES);
+    project.file("a.md", "---\ntitle: Before\n---\n\nBody.\n");
+    let before = std::fs::read(project.path().join("a.md")).unwrap();
+
+    let ran = run(project.path(), &["set", "a.md", r"title=a\", "--json"]);
+
+    assert_eq!(ran.code, 1, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
+    let after = std::fs::read(project.path().join("a.md")).unwrap();
+    assert_eq!(before, after, "a refused set must write nothing");
+}
+
 /// A `set --if` naming a `ref.*`/`refby.*` condition is refused plainly (bad arguments) rather
 /// than evaluated wrongly: an open limit, stated rather than hidden.
 #[test]

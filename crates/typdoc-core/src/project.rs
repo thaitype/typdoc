@@ -785,7 +785,7 @@ impl Project {
         }
 
         let mut writer = YamlSerdeWriter::new(before_fields);
-        apply_ops(&mut writer, sets, &no_schema);
+        apply_ops(&mut writer, sets, &no_schema)?;
         let block_text = writer.finish().map_err(|message| Error::Frontmatter {
             file: file.clone(),
             message,
@@ -895,7 +895,7 @@ impl Project {
         }
 
         let mut writer = YamlSerdeWriter::new(before_fields.clone());
-        apply_ops(&mut writer, sets, schema);
+        apply_ops(&mut writer, sets, schema)?;
         let block_v1 = writer.finish().map_err(|message| Error::Frontmatter {
             file: file.clone(),
             message,
@@ -1100,10 +1100,7 @@ impl Project {
             key: Some(key.as_str()),
         };
         let now = deps.clock.now().to_rfc3339();
-        let block = new_block(schema, &all_sets, &now).map_err(|message| Error::Frontmatter {
-            file: file.clone(),
-            message,
-        })?;
+        let block = new_block(schema, &all_sets, &now, &file)?;
         let candidate = splice(&block, "");
 
         let findings = self.validate_new_candidate(
@@ -1215,10 +1212,7 @@ impl Project {
             key: None,
         };
         let now = deps.clock.now().to_rfc3339();
-        let block = new_block(schema, sets, &now).map_err(|message| Error::Frontmatter {
-            file: file.clone(),
-            message,
-        })?;
+        let block = new_block(schema, sets, &now, &file)?;
         let candidate = splice(&block, "");
 
         let findings = self.validate_new_candidate(
@@ -4755,8 +4749,10 @@ fn json_scalar_text(value: &serde_json::Value) -> String {
 /// whichever of the first two wrote there, the same "last write wins" grammar `apply_ops` already
 /// gives `set`. A field the schema does not name is untouched by the first two passes, which walk
 /// only `schema.fields()`, so it reaches the block only when `sets` names it, at the end, the
-/// same as `set` already keeps an unknown field.
-fn new_block(schema: &Resolved, sets: &[SetOp], now: &str) -> Result<String, String> {
+/// same as `set` already keeps an unknown field. `file` is only for a `writer.finish()` failure's
+/// `Error::Frontmatter`; `apply_ops`'s own error (a malformed `--set` escape, ticket 31/M-19)
+/// propagates as-is, already the right shape (`Error::BadArgument`).
+fn new_block(schema: &Resolved, sets: &[SetOp], now: &str, file: &Path) -> Result<String, Error> {
     let mut writer = YamlSerdeWriter::new(Vec::new());
     for (field_name, field) in schema.fields() {
         match schema_default(field) {
@@ -4770,8 +4766,11 @@ fn new_block(schema: &Resolved, sets: &[SetOp], now: &str) -> Result<String, Str
             writer.set_scalar(field_name, now.to_owned());
         }
     }
-    apply_ops(&mut writer, sets, schema);
-    writer.finish()
+    apply_ops(&mut writer, sets, schema)?;
+    writer.finish().map_err(|message| Error::Frontmatter {
+        file: file.to_owned(),
+        message,
+    })
 }
 
 /// The findings of every one of `sets` that names a field the schema marks `auto` directly: `new`
@@ -4866,28 +4865,87 @@ fn read_fields(
 /// "Array values are comma-separated" — the same convention `set` reads a value by), and every
 /// other field, known or not, is set as the scalar text it was given, which is only later found
 /// not to fit its type, by `frontmatter.types`, if it does not. A field the schema does not name
-/// is always a scalar, since there is no type to say a comma should split it.
-fn apply_ops(writer: &mut YamlSerdeWriter, sets: &[SetOp], schema: &Resolved) {
+/// is always a scalar, since there is no type to say a comma should split it. Fallible (ticket
+/// 31/M-19): `raw` is read for `\*`/`\,`/`\\` escapes and a bare `*` here, once the list-vs-
+/// scalar decision is known, rather than at CLI-parse time in `parse_set_op`, where the field's
+/// schema is not yet resolved.
+fn apply_ops(writer: &mut YamlSerdeWriter, sets: &[SetOp], schema: &Resolved) -> Result<(), Error> {
     for op in sets {
         match op {
             SetOp::Set { field, raw } => {
                 let is_list = schema.field(field).is_some_and(|found| {
                     matches!(found.kind, FieldType::List | FieldType::RefList)
                 });
+                let items = unescape_set_value(raw, is_list)?;
                 if is_list {
-                    let items = if raw.is_empty() {
-                        Vec::new()
-                    } else {
-                        raw.split(',').map(str::to_owned).collect()
-                    };
                     writer.set_list(field, items);
                 } else {
-                    writer.set_scalar(field, raw.clone());
+                    #[expect(
+                        clippy::expect_used,
+                        reason = "`unescape_set_value` with `is_list: false` never splits on `,` \
+                                  (the only thing that pushes more than one item), so it always \
+                                  returns exactly one item for a scalar field"
+                    )]
+                    let value = items.into_iter().next().expect("one item for a scalar");
+                    writer.set_scalar(field, value);
                 }
             }
             SetOp::Remove { field } => writer.remove_field(field),
         }
     }
+    Ok(())
+}
+
+/// The escape-scanning half of `apply_ops` (ticket 31/M-19, design §Query as applied to `set`):
+/// walks `raw` once, char by char, unescaping `\*`, `\,` and `\\` to their literal character;
+/// any other `\x` is an error, as is a value ending in a lone `\`. Unlike `query.rs`'s
+/// `parse_value` (the reference this mirrors for `--where`/`--if`), a bare unescaped `*` is
+/// always an error here — `set` has no wildcard concept, so there is no glob split to fall back
+/// to. When `split_on_comma` is true (a list/`ref[]` field), an unescaped `,` starts a new item;
+/// otherwise (a scalar field, nothing to split into) it is just a literal comma and the whole
+/// value comes back as the single item. An empty `raw` is never passed in by `apply_ops` (an
+/// empty `--set` value parses as `SetOp::Remove`, not `SetOp::Set`), but is handled here too:
+/// it comes back as a single empty item for a scalar, or no items at all for a list.
+fn unescape_set_value(raw: &str, split_on_comma: bool) -> Result<Vec<String>, Error> {
+    if raw.is_empty() {
+        return Ok(if split_on_comma {
+            Vec::new()
+        } else {
+            vec![String::new()]
+        });
+    }
+    let mut items = Vec::new();
+    let mut current = String::new();
+    let mut chars = raw.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => match chars.next() {
+                Some(escaped @ (',' | '*' | '\\')) => current.push(escaped),
+                Some(other) => {
+                    return Err(Error::BadArgument(format!(
+                        "`\\{other}` is not a recognized escape in a `set` value: only `\\,`, \
+                         `\\*` and `\\\\` are"
+                    )));
+                }
+                None => {
+                    return Err(Error::BadArgument(
+                        "a `set` value cannot end with `\\`".to_owned(),
+                    ));
+                }
+            },
+            '*' => {
+                return Err(Error::BadArgument(
+                    "a bare `*` is not allowed in a `set` value: `set` has no wildcard \
+                     matching, unlike `--where`/`--if` (escape it as `\\*` for a literal `*`)"
+                        .to_owned(),
+                ));
+            }
+            ',' if split_on_comma => items.push(std::mem::take(&mut current)),
+            other => current.push(other),
+        }
+    }
+    items.push(current);
+    Ok(items)
 }
 
 /// Whether any field's value differs between `before` and `after`, by the typed [`Value`] each
