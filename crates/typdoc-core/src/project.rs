@@ -22,7 +22,7 @@ use crate::fs::{Fs, create_exclusively, write_atomically};
 use crate::index::{Entry as Indexed, Index, Member};
 use crate::lines::Position;
 use crate::links::{self, BodyLink, BodyLinks};
-use crate::mv::{self, ContentChange, MvReport, UnrewrittenReason, UnrewrittenRef};
+use crate::mv::{self, ContentChange, MvReport, RewrittenRef, UnrewrittenReason, UnrewrittenRef};
 use crate::namespace_lock::{
     self, NamespaceLock, acquire, local_namespace_lock_path, order_locks, release,
 };
@@ -238,6 +238,16 @@ struct RefProject {
     /// A written ref that no longer resolves, to the current key or path of the document that
     /// recorded moving away from it (`auto: moves`).
     moved: BTreeMap<String, String>,
+}
+
+/// `Project::prescan_refs`'s two accumulators, bundled into one value so `Project::prescan_one`
+/// (shared between its ordinary per-entry walk and its one extra call for a `new` candidate not
+/// yet in `self.index`) takes one argument for both rather than a `&mut` for each
+/// (`clippy::too_many_arguments`, at the threshold with everything else `prescan_one` already
+/// needs).
+struct PrescanAccum {
+    moved: BTreeMap<String, String>,
+    edges: BTreeMap<String, Vec<(String, String)>>,
 }
 
 /// The context every checked destination of one document (`check_body_destination`'s callers)
@@ -785,7 +795,7 @@ impl Project {
         }
 
         let mut writer = YamlSerdeWriter::new(before_fields);
-        apply_ops(&mut writer, sets, &no_schema);
+        apply_ops(&mut writer, sets, &no_schema)?;
         let block_text = writer.finish().map_err(|message| Error::Frontmatter {
             file: file.clone(),
             message,
@@ -895,7 +905,7 @@ impl Project {
         }
 
         let mut writer = YamlSerdeWriter::new(before_fields.clone());
-        apply_ops(&mut writer, sets, schema);
+        apply_ops(&mut writer, sets, schema)?;
         let block_v1 = writer.finish().map_err(|message| Error::Frontmatter {
             file: file.clone(),
             message,
@@ -931,16 +941,36 @@ impl Project {
             &name,
         ));
         if !findings.iter().any(|f| f.rule == "frontmatter.parse") {
-            // `refs.acyclic`'s half of `ref_project()` is discarded rather than filtered by
-            // `path` the way `Project::validate`'s `Paths` scope does it: that filter picks
-            // cycles out of a scan already made from the files on disk, before this write, and
-            // a cycle found there is not evidence about `candidate`, the text this write is
-            // about to produce. Filtering the pre-write scan would refuse a write for a cycle
-            // this write does not touch (a false refusal on an unrelated field) and would miss
-            // one this write's own ref field just created (a false pass), which is worse than
-            // leaving it unchecked here: `validate`, run after the write, still catches a real
-            // cycle either way, just one step later than a same-command refusal would.
-            let (ref_project, _acyclic) = self.ref_project()?;
+            // `refs.acyclic` at write time (ticket 30, M-18): a plain `self.ref_project()` scans
+            // every document from disk, before this write's `candidate` text exists there, so a
+            // cycle it finds would be evidence about the pre-write state, not about `candidate` —
+            // checking it directly would be wrong in both directions (a false refusal for an
+            // unrelated cycle elsewhere, a false pass for one this write's own field just
+            // created, since the on-disk copy of this document is still the old one).
+            // `ref_project_for_candidate` fixes the evidence instead of giving up on it: `path`
+            // is scanned from `candidate` rather than from disk, so the resulting `acyclic`
+            // findings are about the state this write is about to produce. Filtered to `path`
+            // itself, since a cycle elsewhere the scan also (correctly) still finds is not this
+            // write's to refuse — that is `validate`'s finding to report, unaffected by this.
+            //
+            // Narrowed further (ticket 34, M-21): `path` can appear in the post-write cyclic set
+            // for a reason that has nothing to do with this write — an acyclic field this write
+            // never touched, already cyclic before the write and still cyclic after. "No cycle
+            // forms" is about this write's own *effect*, not a standing fact about the document,
+            // so a finding only counts when the field it names (`finding.field`, always `Some`
+            // for `refs.acyclic`) actually changed value between `before_fields` and
+            // `after_final` — the same before/after pair `fields_changed` above already computed
+            // for `auto: update`, reused here rather than recomputed.
+            let (ref_project, acyclic) = self.ref_project_for_candidate(path, entry, &candidate)?;
+            let before_map = fields_map(&before_fields);
+            let after_map = fields_map(&after_final);
+            findings.extend(acyclic.into_iter().filter(|finding| {
+                finding.path == path
+                    && finding
+                        .field
+                        .as_deref()
+                        .is_some_and(|field| before_map.get(field) != after_map.get(field))
+            }));
             findings.extend(self.check_refs(
                 path,
                 entry,
@@ -1100,10 +1130,7 @@ impl Project {
             key: Some(key.as_str()),
         };
         let now = deps.clock.now().to_rfc3339();
-        let block = new_block(schema, &all_sets, &now).map_err(|message| Error::Frontmatter {
-            file: file.clone(),
-            message,
-        })?;
+        let block = new_block(schema, &all_sets, &now, &file)?;
         let candidate = splice(&block, "");
 
         let findings = self.validate_new_candidate(
@@ -1215,10 +1242,7 @@ impl Project {
             key: None,
         };
         let now = deps.clock.now().to_rfc3339();
-        let block = new_block(schema, sets, &now).map_err(|message| Error::Frontmatter {
-            file: file.clone(),
-            message,
-        })?;
+        let block = new_block(schema, sets, &now, &file)?;
         let candidate = splice(&block, "");
 
         let findings = self.validate_new_candidate(
@@ -1295,13 +1319,19 @@ impl Project {
             name,
         ));
         if !findings.iter().any(|f| f.rule == "frontmatter.parse") {
-            let (ref_project, _acyclic) = self.ref_project()?;
             let entry = Indexed {
                 collection: collection_idx,
                 namespace: namespace_idx,
                 file: file.to_owned(),
                 key,
             };
+            // Same write-time `refs.acyclic` check as `set_collected`'s (ticket 30, M-18), and
+            // the same reason it must scan `candidate` rather than disk: this document is not
+            // even in `self.index` yet, and `ref_project_for_candidate` scans it anyway (see
+            // `prescan_refs`'s own doc comment), so a document already on disk that names this
+            // one's key or path also sees it as real for this one scan.
+            let (ref_project, acyclic) = self.ref_project_for_candidate(path, &entry, candidate)?;
+            findings.extend(acyclic.into_iter().filter(|finding| finding.path == path));
             findings.extend(self.check_refs(
                 path,
                 &entry,
@@ -1517,7 +1547,7 @@ impl Project {
 
     /// `list`: every document of `scope` whose collection is selected and whose fields satisfy
     /// every `--where` condition, sorted by `--sort` and then, breaking every tie, in key or path
-    /// order (`docs/design-decision-phase-1/_tickets/15-json-output-shape.md`, "Already decided
+    /// order (`docs/archived-design/design-decision-phase-1/_tickets/15-json-output-shape.md`, "Already decided
     /// elsewhere and not reopened"). `--limit` is not read here: the design reports `total` before
     /// it and says a flag that limits what is listed never changes an item's values, so cutting
     /// the result is the caller's job, done after this returns the whole match, in order.
@@ -3519,8 +3549,29 @@ impl Project {
     /// alongside rather than folded in, since whether they are reported depends on the scope
     /// (see `validate`'s two callers of this).
     fn ref_project(&self) -> Result<(RefProject, Vec<Finding>), Error> {
+        self.ref_project_inner(None)
+    }
+
+    /// [`Project::ref_project`], scanning `path` from `candidate` instead of from disk (and, if
+    /// `path` is not indexed yet, as an extra document — see `prescan_refs`), for `set_collected`
+    /// and `validate_new_candidate`'s write-time `refs.acyclic` check (ticket 30, M-18): the only
+    /// two callers that ever pass a candidate, both about to write `path` and needing to know
+    /// whether that exact text, not what is on disk right now, closes a cycle.
+    fn ref_project_for_candidate(
+        &self,
+        path: &str,
+        entry: &Indexed,
+        candidate: &str,
+    ) -> Result<(RefProject, Vec<Finding>), Error> {
+        self.ref_project_inner(Some((path, entry, candidate)))
+    }
+
+    fn ref_project_inner(
+        &self,
+        candidate: Option<(&str, &Indexed, &str)>,
+    ) -> Result<(RefProject, Vec<Finding>), Error> {
         let codes = self.project_codes();
-        let (moved, acyclic) = self.prescan_refs(&codes)?;
+        let (moved, acyclic) = self.prescan_refs(&codes, candidate)?;
         Ok((RefProject { codes, moved }, acyclic))
     }
 
@@ -3729,71 +3780,79 @@ impl Project {
     /// the document that recorded moving away from it (`auto: moves`), and the `refs.acyclic`
     /// findings of every cycle found through a field marked `acyclic` (one finding per document
     /// on a cycle, per field, since each one's own edge is what is wrong with it).
+    ///
+    /// `candidate`, when given (ticket 30, M-18), is `(path, entry, text)` for exactly one write
+    /// in progress: `path` is scanned with `text` — the write's own candidate frontmatter —
+    /// instead of whatever is on disk for it right now, and, if `path` is not yet in `self.index`
+    /// at all (a `new` write, not yet indexed or on disk), it is scanned as an extra document on
+    /// top of the ordinary walk rather than in place of one of its entries. Every other document
+    /// is read from disk exactly as it is today: a caller with no `candidate` (every read-only
+    /// caller — `validate`, `get`, `refs`, `toc`, and so on, none of which call this at all except
+    /// `validate` through `Project::ref_project`) sees no change at all, since `candidate` is
+    /// `None` and both branches below fall back to the original behaviour byte for byte.
     fn prescan_refs(
         &self,
         codes: &BTreeSet<String>,
+        candidate: Option<(&str, &Indexed, &str)>,
     ) -> Result<(BTreeMap<String, String>, Vec<Finding>), Error> {
-        let mut moved: BTreeMap<String, String> = BTreeMap::new();
-        let mut edges: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+        let mut accum = PrescanAccum {
+            moved: BTreeMap::new(),
+            edges: BTreeMap::new(),
+        };
+        // The candidate's identity, real enough for `refs::resolve_one_for_candidate` to resolve
+        // a ref to it from any document scanned in this same pass, whether or not `path` is
+        // indexed yet — see that function's own doc comment for why a `new` candidate needs this
+        // and a `set` candidate does not (but is given it anyway, harmlessly, for one code path).
+        let phantom = candidate.map(|(path, entry, _)| refs::Candidate {
+            namespace: entry.namespace,
+            key: entry.key.as_deref(),
+            path,
+        });
         for (path, entry) in self.index.iter() {
-            let collection = &self.collections[entry.collection];
-            let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
-            let Some(fields) = parsed_fields(&text, &collection.schema) else {
-                continue;
-            };
-            let ctx = refs::Ctx {
-                doc_namespace: entry.namespace,
-                doc_path: path,
-                ref_base: collection.ref_base,
-                namespaces: &self.config.namespaces,
-                codes,
-                index: &self.index,
-                root: &self.root,
-                imports: &self.imports,
-            };
-            let identity = entry.key.clone().unwrap_or_else(|| path.to_owned());
-            for (field_name, value) in &fields {
-                let Some(field) = collection.schema.field(field_name) else {
-                    continue;
-                };
-                if field.auto == Some(Auto::Moves)
-                    && field.kind == FieldType::List
-                    && let Value::List(items) = value
-                {
-                    for item in items {
-                        moved
-                            .entry(item.clone())
-                            .or_insert_with(|| identity.clone());
-                    }
+            let text = match candidate {
+                Some((candidate_path, _, candidate_text)) if candidate_path == path => {
+                    candidate_text.to_owned()
                 }
-                if field.is_acyclic()
-                    && matches!(field.kind, FieldType::Ref | FieldType::RefList)
-                    && crate::coerce::fits(&field.kind, value)
-                {
-                    for written in ref_values(value) {
-                        if let Ok(resolved) = refs::resolve_one(written, &ctx) {
-                            edges
-                                .entry(field_name.clone())
-                                .or_default()
-                                .push((path.to_owned(), resolved.path));
-                        }
-                    }
-                }
-            }
+                _ => fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?,
+            };
+            self.prescan_one(path, entry, &text, codes, phantom.as_ref(), &mut accum);
         }
+        if let Some((candidate_path, candidate_entry, candidate_text)) = candidate
+            && self.index.get(candidate_path).is_none()
+        {
+            self.prescan_one(
+                candidate_path,
+                candidate_entry,
+                candidate_text,
+                codes,
+                phantom.as_ref(),
+                &mut accum,
+            );
+        }
+        let PrescanAccum { moved, edges } = accum;
         let mut findings = Vec::new();
         for (field_name, field_edges) in &edges {
             for cyclic_path in refs::cyclic_nodes(field_edges) {
-                let Some(entry) = self.index.get(&cyclic_path) else {
+                let found = match self.index.get(&cyclic_path) {
+                    Some(entry) => Some((entry.collection, entry.namespace, entry.key.as_deref())),
+                    None => candidate.and_then(|(candidate_path, candidate_entry, _)| {
+                        (candidate_path == cyclic_path).then_some((
+                            candidate_entry.collection,
+                            candidate_entry.namespace,
+                            candidate_entry.key.as_deref(),
+                        ))
+                    }),
+                };
+                let Some((collection_idx, namespace_idx, key)) = found else {
                     continue;
                 };
-                let collection = &self.collections[entry.collection];
-                let namespace = &self.config.namespaces[entry.namespace].name;
+                let collection = &self.collections[collection_idx];
+                let namespace = &self.config.namespaces[namespace_idx].name;
                 let name = DocName {
                     path: &cyclic_path,
                     namespace,
                     collection: &collection.name,
-                    key: entry.key.as_deref(),
+                    key,
                 };
                 findings.push(validate::finding(
                     &name,
@@ -3807,6 +3866,74 @@ impl Project {
         // Not sorted here: the caller merges this into a larger set of findings and orders that
         // once, so sorting this slice first would only be thrown away.
         Ok((moved, findings))
+    }
+
+    /// One document's own contribution to `prescan_refs`'s whole-project `moved` map and
+    /// `acyclic` edge list, shared between the ordinary per-entry walk and the one extra call a
+    /// `new` candidate not yet in `self.index` needs. `phantom`, when given, is the write's own
+    /// candidate identity (see `prescan_refs`): every ref this document writes is resolved
+    /// through `refs::resolve_one_for_candidate` instead of plain `refs::resolve_one` so a ref
+    /// naming that identity resolves even though it is not indexed or on disk yet; with no
+    /// `phantom` (every read-only scan), this is `refs::resolve_one` exactly as before.
+    fn prescan_one(
+        &self,
+        path: &str,
+        entry: &Indexed,
+        text: &str,
+        codes: &BTreeSet<String>,
+        phantom: Option<&refs::Candidate>,
+        accum: &mut PrescanAccum,
+    ) {
+        let PrescanAccum { moved, edges } = accum;
+        let collection = &self.collections[entry.collection];
+        let Some(fields) = parsed_fields(text, &collection.schema) else {
+            return;
+        };
+        let ctx = refs::Ctx {
+            doc_namespace: entry.namespace,
+            doc_path: path,
+            ref_base: collection.ref_base,
+            namespaces: &self.config.namespaces,
+            codes,
+            index: &self.index,
+            root: &self.root,
+            imports: &self.imports,
+        };
+        let identity = entry.key.clone().unwrap_or_else(|| path.to_owned());
+        for (field_name, value) in &fields {
+            let Some(field) = collection.schema.field(field_name) else {
+                continue;
+            };
+            if field.auto == Some(Auto::Moves)
+                && field.kind == FieldType::List
+                && let Value::List(items) = value
+            {
+                for item in items {
+                    moved
+                        .entry(item.clone())
+                        .or_insert_with(|| identity.clone());
+                }
+            }
+            if field.is_acyclic()
+                && matches!(field.kind, FieldType::Ref | FieldType::RefList)
+                && crate::coerce::fits(&field.kind, value)
+            {
+                for written in ref_values(value) {
+                    let resolved = match phantom {
+                        Some(candidate) => {
+                            refs::resolve_one_for_candidate(written, &ctx, candidate)
+                        }
+                        None => refs::resolve_one(written, &ctx),
+                    };
+                    if let Ok(resolved) = resolved {
+                        edges
+                            .entry(field_name.clone())
+                            .or_default()
+                            .push((path.to_owned(), resolved.path));
+                    }
+                }
+            }
+        }
     }
 
     /// The path a document argument names, its place in the index, and the text of the file.
@@ -4021,7 +4148,8 @@ impl Project {
             });
         }
 
-        let mut changes = self.mv_rewrite_changes(&rewrite_by_holder, &to_path, None)?;
+        let (mut changes, rewritten) =
+            self.mv_rewrite_changes(&rewrite_by_holder, &to_path, None)?;
         if let Some(change) = self.mv_document_change(
             &from_path,
             from_collection,
@@ -4038,6 +4166,7 @@ impl Project {
             self.mv_result(&to_path, to_namespace, to_collection, &to_full)?;
         Ok(MvReport {
             document,
+            rewritten,
             unrewritten,
             findings,
         })
@@ -4155,7 +4284,7 @@ impl Project {
             });
         }
 
-        let mut changes =
+        let (mut changes, rewritten) =
             self.mv_rewrite_changes(&rewrite_by_holder, &to_path, Some((&from_key, &new_key)))?;
         // The value `auto: moves` records for a coded document: its previous key, with its own
         // namespace's prefix, since a bare key alone would not say which namespace it belonged
@@ -4196,6 +4325,7 @@ impl Project {
         )?;
         Ok(MvReport {
             document,
+            rewritten,
             unrewritten,
             findings,
         })
@@ -4245,7 +4375,87 @@ impl Project {
                 .or_default()
                 .push(reference);
         }
+        unrewritten.extend(self.mv_reverse_mentions(&reverse.document)?);
         Ok((rewrite_by_holder, unrewritten))
+    }
+
+    /// Every plain-text body mention (`links::mentions`, the same machinery `body.mentions`
+    /// checks with) of `from`'s own key, across every document of the project, each reported as
+    /// an [`UnrewrittenRef`] with [`UnrewrittenReason::Mention`] — M-22's fix: `mv`/
+    /// `mv --renumber` used to leave a plain-text mention of the moved key for a later
+    /// `validate` to discover alone, instead of surfacing it itself at move time.
+    ///
+    /// A mention is always key-shaped (`links::mentions`'s own doc comment: "a bare key, or one
+    /// written with a sibling or import prefix" — never a path), so this only has anything to
+    /// find when `from` itself resolves to a coded document (`from.key` is `Some`); a
+    /// path-identified document has no key for a mention to ever name, so this returns nothing
+    /// for it without reading a single file — in particular, a plain `mv` (as opposed to
+    /// `--renumber`) never reaches the loop below at all: a coded document cannot change path
+    /// under plain `mv` (refused earlier, in `mv` itself), so `mv`'s own reverse scan only ever
+    /// runs this against an uncoded `from`.
+    ///
+    /// This is a second full-project read, deliberately separate from the formal-refs reverse
+    /// scan `self.refs(..., reverse, ...)` above and from `Project::incoming_refs` (used only by
+    /// `list`'s `refby.*` filter): both of those already discard each document's raw text once
+    /// they have parsed it into fields and body links, and neither is set up to hand that text
+    /// back out for a second, unrelated pass (`links::mentions` needs the raw file text,
+    /// frontmatter included, to compute its own line/col positions). Threading raw text out of
+    /// either would reshape a method `refs --reverse`/`list` also depend on for a concern only
+    /// `mv` has; a second read, paid only when `from` actually has a key to look for (never on a
+    /// plain `mv`, only on `--renumber`, which is already the heavier of the two paths, writing
+    /// a new state file and allocating a key), is the smaller change.
+    fn mv_reverse_mentions(&self, from: &RefName) -> Result<Vec<UnrewrittenRef>, Error> {
+        let Some(from_key) = &from.key else {
+            return Ok(Vec::new());
+        };
+        let mut holders: Vec<(&str, &Indexed)> = self.index.iter().collect();
+        holders.sort_by_key(|(path, _)| *path);
+        let mut found = Vec::new();
+        for (path, entry) in holders {
+            let collection = &self.collections[entry.collection];
+            let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
+            let options = rule_options(
+                "body.mentions",
+                &self.config.validation,
+                &collection.validation,
+            );
+            let inline_code = bool_option(&options, "inlineCode", true);
+            let fenced_code = bool_option(&options, "fencedCode", false);
+            // A document whose frontmatter does not parse contributes nothing here, the same as
+            // it contributes no `body.*` finding to a whole-project `validate` and no ref to
+            // `refs --reverse`'s own reverse scan above (that scan's own doc comment gives the
+            // same reasoning): its own `frontmatter.parse` finding is a different rule's job.
+            let Ok(mentions) = links::mentions(&text, inline_code, fenced_code) else {
+                continue;
+            };
+            for mention in mentions {
+                // The same prefix-stripping `mention_missing` uses, but compared directly
+                // against `from`'s own key rather than asked whether it currently resolves:
+                // before the move, it still does, so `mention_missing` would always say
+                // "not missing" and this would never fire — the wrong question at this point.
+                let key = mention
+                    .written
+                    .rsplit(':')
+                    .next()
+                    .unwrap_or(&mention.written);
+                if key != from_key {
+                    continue;
+                }
+                found.push(UnrewrittenRef {
+                    reference: RefsReference {
+                        other: RefOutcome::Resolved(self.ref_name_of(path)),
+                        field: "$body".to_owned(),
+                        written: mention.written.clone(),
+                        position: Some(Position {
+                            line: mention.line,
+                            col: mention.col,
+                        }),
+                    },
+                    reason: UnrewrittenReason::Mention,
+                });
+            }
+        }
+        Ok(found)
     }
 
     /// The namespaces `mv`/`mv --renumber` must lock, in the order Lock order gives (decision
@@ -4287,14 +4497,19 @@ impl Project {
 
     /// One [`ContentChange`] for every holder in `rewrite_by_holder` whose rewritten text
     /// actually differs from what is on disk now: every ref recomputed to name `to_path`,
-    /// keeping its own written form (`rewrite_holder`).
+    /// keeping its own written form (`rewrite_holder`); alongside it, the full list of every ref
+    /// that rewrite actually applied (ticket 21, `mv --json`'s new `rewritten`), gathered only
+    /// from a holder whose text did change — the same condition that decides whether a
+    /// [`ContentChange`] is queued for it, since `rewrite_holder` only ever changes `text` by
+    /// applying one of the refs this returns.
     fn mv_rewrite_changes(
         &self,
         rewrite_by_holder: &RewriteByHolder,
         to_path: &str,
         key_rewrite: Option<(&str, &str)>,
-    ) -> Result<Vec<ContentChange>, Error> {
+    ) -> Result<(Vec<ContentChange>, Vec<RewrittenRef>), Error> {
         let mut changes = Vec::new();
+        let mut rewritten = Vec::new();
         for (holder_path, refs) in rewrite_by_holder {
             #[expect(
                 clippy::expect_used,
@@ -4306,16 +4521,17 @@ impl Project {
                 .get(holder_path)
                 .expect("holder paths in this map were already looked up above");
             let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
-            let new_text =
+            let (new_text, holder_rewritten) =
                 self.rewrite_holder(holder_path, entry, &text, refs, to_path, key_rewrite)?;
             if new_text != text {
                 changes.push(ContentChange {
                     path: entry.file.clone(),
                     bytes: new_text.into_bytes(),
                 });
+                rewritten.extend(holder_rewritten);
             }
         }
-        Ok(changes)
+        Ok((changes, rewritten))
     }
 
     /// `mv` and `mv_renumber`'s shared tail, once each has its own `changes` and `to_full`
@@ -4375,8 +4591,11 @@ impl Project {
     /// keeping its own written form (`mv::rewritten_path_ref`), applied to a frontmatter field
     /// through the writer and to a body link by splicing the one line it sits on. Returns `text`
     /// unchanged when `refs` is empty, so a caller can compare before and after to know whether
-    /// anything actually needs preparing. `key_rewrite` is `Some((old_key, new_key))` only from
-    /// `mv --renumber`, and is passed straight through to `mv::rewritten_path_ref`, the one place
+    /// anything actually needs preparing, alongside one [`RewrittenRef`] per ref this actually
+    /// applied (ticket 21) — never one for a ref this function defensively left alone (a body
+    /// link whose position or line no longer matches what was expected), since that ref did not
+    /// in fact get rewritten. `key_rewrite` is `Some((old_key, new_key))` only from `mv
+    /// --renumber`, and is passed straight through to `mv::rewritten_path_ref`, the one place
     /// that reads it.
     fn rewrite_holder(
         &self,
@@ -4386,7 +4605,7 @@ impl Project {
         refs: &[RefsReference],
         new_target: &str,
         key_rewrite: Option<(&str, &str)>,
-    ) -> Result<String, Error> {
+    ) -> Result<(String, Vec<RewrittenRef>), Error> {
         let collection = &self.collections[entry.collection];
         let bad = |message| Error::Frontmatter {
             file: entry.file.clone(),
@@ -4401,6 +4620,7 @@ impl Project {
         let mut frontmatter_touched = false;
         let mut body = text.to_owned();
         let mut body_touched = false;
+        let mut rewritten = Vec::new();
 
         for reference in refs {
             let new_written = mv::rewritten_path_ref(
@@ -4412,6 +4632,7 @@ impl Project {
                 new_target,
                 key_rewrite,
             );
+            let after = new_written.clone();
             if reference.field == "$body" {
                 let Some(position) = reference.position else {
                     continue;
@@ -4441,23 +4662,30 @@ impl Project {
                 }
                 frontmatter_touched = true;
             }
+            rewritten.push(RewrittenRef {
+                document: holder_path.to_owned(),
+                field: reference.field.clone(),
+                before: reference.written.clone(),
+                after,
+            });
         }
 
         if !frontmatter_touched && !body_touched {
-            return Ok(text.to_owned());
+            // `rewritten` is empty here: every push above happens in the same iteration that
+            // sets one of these two flags, so neither being set means nothing was pushed.
+            return Ok((text.to_owned(), rewritten));
         }
         if !frontmatter_touched {
-            return Ok(body);
+            return Ok((body, rewritten));
         }
         let new_block = writer.finish().map_err(bad)?;
         // The body may have been spliced above; re-split it fresh (frontmatter edits never move
         // where the body begins, since they replace the block in place) so the reassembly uses
         // whichever of the two changed.
         let body_split = frontmatter::split(&body).map_err(bad)?;
-        Ok(assemble_frontmatter(
-            split.block.is_some(),
-            &new_block,
-            &body[body_split.body..],
+        Ok((
+            assemble_frontmatter(split.block.is_some(), &new_block, &body[body_split.body..]),
+            rewritten,
         ))
     }
 
@@ -4734,8 +4962,10 @@ fn json_scalar_text(value: &serde_json::Value) -> String {
 /// whichever of the first two wrote there, the same "last write wins" grammar `apply_ops` already
 /// gives `set`. A field the schema does not name is untouched by the first two passes, which walk
 /// only `schema.fields()`, so it reaches the block only when `sets` names it, at the end, the
-/// same as `set` already keeps an unknown field.
-fn new_block(schema: &Resolved, sets: &[SetOp], now: &str) -> Result<String, String> {
+/// same as `set` already keeps an unknown field. `file` is only for a `writer.finish()` failure's
+/// `Error::Frontmatter`; `apply_ops`'s own error (a malformed `--set` escape, ticket 31/M-19)
+/// propagates as-is, already the right shape (`Error::BadArgument`).
+fn new_block(schema: &Resolved, sets: &[SetOp], now: &str, file: &Path) -> Result<String, Error> {
     let mut writer = YamlSerdeWriter::new(Vec::new());
     for (field_name, field) in schema.fields() {
         match schema_default(field) {
@@ -4749,8 +4979,11 @@ fn new_block(schema: &Resolved, sets: &[SetOp], now: &str) -> Result<String, Str
             writer.set_scalar(field_name, now.to_owned());
         }
     }
-    apply_ops(&mut writer, sets, schema);
-    writer.finish()
+    apply_ops(&mut writer, sets, schema)?;
+    writer.finish().map_err(|message| Error::Frontmatter {
+        file: file.to_owned(),
+        message,
+    })
 }
 
 /// The findings of every one of `sets` that names a field the schema marks `auto` directly: `new`
@@ -4845,28 +5078,87 @@ fn read_fields(
 /// "Array values are comma-separated" — the same convention `set` reads a value by), and every
 /// other field, known or not, is set as the scalar text it was given, which is only later found
 /// not to fit its type, by `frontmatter.types`, if it does not. A field the schema does not name
-/// is always a scalar, since there is no type to say a comma should split it.
-fn apply_ops(writer: &mut YamlSerdeWriter, sets: &[SetOp], schema: &Resolved) {
+/// is always a scalar, since there is no type to say a comma should split it. Fallible (ticket
+/// 31/M-19): `raw` is read for `\*`/`\,`/`\\` escapes and a bare `*` here, once the list-vs-
+/// scalar decision is known, rather than at CLI-parse time in `parse_set_op`, where the field's
+/// schema is not yet resolved.
+fn apply_ops(writer: &mut YamlSerdeWriter, sets: &[SetOp], schema: &Resolved) -> Result<(), Error> {
     for op in sets {
         match op {
             SetOp::Set { field, raw } => {
                 let is_list = schema.field(field).is_some_and(|found| {
                     matches!(found.kind, FieldType::List | FieldType::RefList)
                 });
+                let items = unescape_set_value(raw, is_list)?;
                 if is_list {
-                    let items = if raw.is_empty() {
-                        Vec::new()
-                    } else {
-                        raw.split(',').map(str::to_owned).collect()
-                    };
                     writer.set_list(field, items);
                 } else {
-                    writer.set_scalar(field, raw.clone());
+                    #[expect(
+                        clippy::expect_used,
+                        reason = "`unescape_set_value` with `is_list: false` never splits on `,` \
+                                  (the only thing that pushes more than one item), so it always \
+                                  returns exactly one item for a scalar field"
+                    )]
+                    let value = items.into_iter().next().expect("one item for a scalar");
+                    writer.set_scalar(field, value);
                 }
             }
             SetOp::Remove { field } => writer.remove_field(field),
         }
     }
+    Ok(())
+}
+
+/// The escape-scanning half of `apply_ops` (ticket 31/M-19, design §Query as applied to `set`):
+/// walks `raw` once, char by char, unescaping `\*`, `\,` and `\\` to their literal character;
+/// any other `\x` is an error, as is a value ending in a lone `\`. Unlike `query.rs`'s
+/// `parse_value` (the reference this mirrors for `--where`/`--if`), a bare unescaped `*` is
+/// always an error here — `set` has no wildcard concept, so there is no glob split to fall back
+/// to. When `split_on_comma` is true (a list/`ref[]` field), an unescaped `,` starts a new item;
+/// otherwise (a scalar field, nothing to split into) it is just a literal comma and the whole
+/// value comes back as the single item. An empty `raw` is never passed in by `apply_ops` (an
+/// empty `--set` value parses as `SetOp::Remove`, not `SetOp::Set`), but is handled here too:
+/// it comes back as a single empty item for a scalar, or no items at all for a list.
+fn unescape_set_value(raw: &str, split_on_comma: bool) -> Result<Vec<String>, Error> {
+    if raw.is_empty() {
+        return Ok(if split_on_comma {
+            Vec::new()
+        } else {
+            vec![String::new()]
+        });
+    }
+    let mut items = Vec::new();
+    let mut current = String::new();
+    let mut chars = raw.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => match chars.next() {
+                Some(escaped @ (',' | '*' | '\\')) => current.push(escaped),
+                Some(other) => {
+                    return Err(Error::BadArgument(format!(
+                        "`\\{other}` is not a recognized escape in a `set` value: only `\\,`, \
+                         `\\*` and `\\\\` are"
+                    )));
+                }
+                None => {
+                    return Err(Error::BadArgument(
+                        "a `set` value cannot end with `\\`".to_owned(),
+                    ));
+                }
+            },
+            '*' => {
+                return Err(Error::BadArgument(
+                    "a bare `*` is not allowed in a `set` value: `set` has no wildcard \
+                     matching, unlike `--where`/`--if` (escape it as `\\*` for a literal `*`)"
+                        .to_owned(),
+                ));
+            }
+            ',' if split_on_comma => items.push(std::mem::take(&mut current)),
+            other => current.push(other),
+        }
+    }
+    items.push(current);
+    Ok(items)
 }
 
 /// Whether any field's value differs between `before` and `after`, by the typed [`Value`] each

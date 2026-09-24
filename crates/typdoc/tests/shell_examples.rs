@@ -1,5 +1,18 @@
-//! The harness for `docs/design.md`'s shell examples: every one is read from the document
-//! itself (`typdoc_testkit::shell_examples`), so this file and the design share one list.
+//! The harness for typdoc's shell examples, run for real against a stand-in binary through
+//! `sh` and `bash`.
+//!
+//! Before ticket 12/M-13, this file extracted every example from the design document
+//! automatically, through a markdown-walking helper this crate no longer has, so the harness
+//! and the document shared one list. That was itself a violation of the same rule that removed
+//! the old design-parsing test helper (M-1: no program reads markdown to extract spec as
+//! machine data) -- a bigger one, since it covered every worked shell example in the whole
+//! document rather than five specific tables. M-13 (ticket 24) resolved it as option 1:
+//! hand-list every example directly here, with no fifth catalog document. The list below
+//! (`declared_examples`, plus `additional_safe_examples`) is now the *only* list this harness
+//! runs -- nothing here reads the design document, or any other markdown, to find an example.
+//! See this ticket's report for which further "safe" examples (no shell-unsafe character),
+//! previously found only through extraction, were hand-listed here and which were dropped, and
+//! why.
 //!
 //! Process spawning here is the one exception to the CLI tests' spawn helper (`common::Spawn`
 //! spawns the built `typdoc` binary directly, with a fixed argument list it controls). What
@@ -12,16 +25,11 @@
 //! An example needs a value declared by hand only when a word in it holds a character
 //! outside the safe set (letters, digits, `_ - . / : = , @ % +` and the space): with no such
 //! character, no shell can change what it means, so the expected value is just its words
-//! split on whitespace, computed here rather than written by hand. An example that is not a
-//! literal, standalone invocation (a placeholder, a runtime value, a line of a longer script,
-//! illustrative output) is named as a template instead, with the reason.
+//! split on whitespace, computed here rather than written by hand.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
-
-use typdoc_testkit::fixtures::design_text;
-use typdoc_testkit::shell_examples::{examples, quoting_paragraph_spans};
 
 /// v1 covers these two, and only these two: this host has `sh` (dash) and `bash`, and has no
 /// zsh, which is why the design's own shell list stops at these. A shell named here that the
@@ -74,12 +82,12 @@ fn args_env(items: &[&str], env: &[(&str, &str)]) -> Recorded {
     }
 }
 
-/// One example the design states in full: what is run (`command`, exactly the example's
-/// text, with `typdoc` supplied where the text is a bare `--` fragment) and the value
-/// declared by hand from the design's own words about quoting.
+/// One example declared in full: what is run (`command`, exactly the example's text, with
+/// `typdoc` supplied where the text is a bare `--` fragment) and the value declared by hand
+/// from the design's own words about quoting.
 struct DeclaredExample {
-    /// The example's text, exactly as `typdoc_testkit::shell_examples::examples` reads it
-    /// from the design; this is the key an orphan or a missing declaration is named by.
+    /// The example's text, as it appears in `docs/archived-design/design.md` (or its `spec`
+    /// replacement) -- used in failure messages, not read back out of any file.
     text: &'static str,
     /// What is actually run through the shell.
     command: &'static str,
@@ -96,10 +104,10 @@ fn literal(text: &'static str, expected: Recorded) -> DeclaredExample {
     }
 }
 
-/// Every example in the design that needs a value declared by hand: a literal, standalone
-/// invocation with a character outside the safe set. Each value is what "give it to typdoc
-/// exactly as written, in single quotes" (Quoting in the shell) means for that one example,
-/// worked out from the design's own words, never from running anything.
+/// Every example that needs a value declared by hand: a literal, standalone invocation with a
+/// character outside the safe set. Each value is what "give it to typdoc exactly as written,
+/// in single quotes" (Quoting in the shell) means for that one example, worked out from the
+/// design's own words, never from running anything.
 fn declared_examples() -> Vec<DeclaredExample> {
     vec![
         literal(
@@ -221,93 +229,32 @@ fn declared_examples() -> Vec<DeclaredExample> {
     ]
 }
 
-/// Every example in the design that is not a literal, standalone invocation, with the
-/// reason: a placeholder, a value only known at runtime, a line of a longer script, or
-/// illustrative output rather than something typed.
-fn templates() -> Vec<(&'static str, &'static str)> {
+/// The further "safe" examples (no shell-unsafe character) worth keeping now that nothing
+/// extracts examples from markdown any more (ticket 12/M-13, option 1). Before this ticket,
+/// each was found automatically by walking `docs/design/design.md` and its expected value was
+/// computed by splitting it on whitespace, since no unsafe character means no shell can change
+/// what it means -- `safe_command_and_expected` below still does exactly that; only the list
+/// of texts is now written by hand instead of extracted.
+///
+/// These nine are every worked, standalone invocation with real arguments that used to reach
+/// the harness only this way (drawn from the design's "Worked examples" and "Common tasks"
+/// tables). What did *not* make this list, and why, is in this ticket's report: bare mentions
+/// of a single flag or command name with no arguments (`--json`, `--where`, `typdoc new` alone,
+/// and so on), which are prose references rather than invocations and exercise no shell
+/// behavior a one-word, all-alphanumeric string could ever be at risk from; and `typdoc
+/// validate` on its own, whose coverage `every_listed_shell_runs` below already gives it
+/// verbatim.
+fn additional_safe_examples() -> Vec<&'static str> {
     vec![
-        ("--namespace <list>", "<list> is a placeholder"),
-        ("typdoc new <path>", "<path> is a placeholder"),
-        (
-            r#"typdoc new <CODE> "<title>" [--set k=v ...]"#,
-            "<CODE> is a redirection in a shell, and \"<title>\" and [--set k=v ...] are placeholders",
-        ),
-        (
-            "typdoc new <path> [--set k=v ...]",
-            "<path> and [--set k=v ...] are placeholders",
-        ),
-        (
-            "typdoc get <key|path> [--json]",
-            "<key|path> is a placeholder",
-        ),
-        (
-            "typdoc list [--collection c[,c]] [--code C[,C]] [--where EXPR ...] [--fields f,...]",
-            "the synopsis of typdoc list: every bracketed part is a placeholder",
-        ),
-        (
-            "--sort field:dir",
-            "field and dir are placeholder names, not literal text",
-        ),
-        (
-            "typdoc set <key|path> k=v [k=v ...] [--if EXPR ...]",
-            "the synopsis of typdoc set: every bracketed part is a placeholder",
-        ),
-        (
-            "typdoc toc <key|path> [--depth n] [--json]",
-            "<key|path> is a placeholder",
-        ),
-        (
-            "typdoc refs <key|path> [--field f|$body] [--reverse] [--json]",
-            "<key|path> is a placeholder",
-        ),
-        ("typdoc mv <from> <to>", "<from> and <to> are placeholders"),
-        (
-            "typdoc mv <from> --renumber <namespace>",
-            "<from> and <namespace> are placeholders",
-        ),
-        (
-            "typdoc pull [<url> ...] [--check]",
-            "<url> is a placeholder",
-        ),
-        (
-            "typdoc validate [<key|path> ...] [--schemas] [--strict] [--audit]",
-            "<key|path> is a placeholder",
-        ),
-        (
-            "typdoc audit: 3 collections, 214 files (12 in no collection)",
-            "illustrative command output, not something typed",
-        ),
-        (
-            r#"typdoc new WF "..." --set kind=grilling"#,
-            "\"...\" stands for an omitted title, not literal text",
-        ),
-        (
-            r#"typdoc new WF "..." --set kind=feature --set blocked_by=WF-3"#,
-            "\"...\" stands for an omitted title, not literal text",
-        ),
-        (
-            "typdoc set WF-3 status=claimed owner=$SID --if status=open",
-            "$SID is a value the caller sets at runtime, not literal text",
-        ),
-        (
-            "typdoc set WF-3 status=resolved --if owner=$SID",
-            "$SID is a value the caller sets at runtime, not literal text",
-        ),
-        (
-            "--where status=open --where 'ref.all(blocked_by).status=resolved' --limit 1 --ids) && [ -n \"$key\" ]; do",
-            "a continuation line of a multi-line while loop, not a standalone invocation",
-        ),
-        (
-            "typdoc set \"$key\" status=claimed owner=\"$SID\" --if status=open && break",
-            "a line of the same while loop; $key and $SID are runtime values",
-        ),
-        (
-            "TYPDOC_NAMESPACE='*'",
-            "an assignment's right-hand side is never split or glob-expanded, quoted or not \
-             (checked with * against files present, in both sh and bash), so removing the \
-             quotes here would not change what typdoc receives; shown for the style, not \
-             because this one is quote-sensitive",
-        ),
+        "typdoc list --collection wayfinder,decisions --where status=open --sort status --sort updated_at:desc",
+        "typdoc set WF-3 status=claimed owner=zeldia-7a2f --if status=open",
+        "typdoc refs precedents/secret-handling.md --reverse",
+        "typdoc mv WF-2 --renumber story-3",
+        "typdoc set WF-5 blocked_by=WF-3,WF-4",
+        "typdoc toc WF-3 --json",
+        "typdoc list --where blocked_by=WF-3",
+        "typdoc refs learnings/never-send-secrets-over-ship.md --reverse",
+        "typdoc get story-2:WF-5",
     ]
 }
 
@@ -319,14 +266,6 @@ fn has_unsafe_char(text: &str) -> bool {
     !text
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || "_-./:=,@%+ ".contains(c))
-}
-
-fn declared_texts() -> std::collections::BTreeSet<&'static str> {
-    declared_examples().iter().map(|e| e.text).collect()
-}
-
-fn template_texts() -> std::collections::BTreeSet<&'static str> {
-    templates().iter().map(|(text, _)| *text).collect()
 }
 
 /// A directory holding files an unquoted `*` and an unquoted `chief::*` can each match, so
@@ -440,34 +379,6 @@ fn safe_command_and_expected(text: &str) -> (String, Recorded) {
 }
 
 #[test]
-fn every_unsafe_example_has_a_declared_value_and_every_declared_value_matches_an_example() {
-    let design = design_text();
-    let extracted = examples(&design);
-    let extracted_set: std::collections::BTreeSet<&str> =
-        extracted.iter().map(String::as_str).collect();
-    let declared = declared_texts();
-    let templated = template_texts();
-
-    let mut problems = Vec::new();
-    for text in &extracted {
-        if templated.contains(text.as_str()) {
-            continue;
-        }
-        if has_unsafe_char(text) && !declared.contains(text.as_str()) {
-            problems.push(format!("no declared value for the example: {text}"));
-        }
-    }
-    for text in declared.iter().chain(templated.iter()) {
-        if !extracted_set.contains(text) {
-            problems.push(format!(
-                "a declared value or template names no example in the design: {text}"
-            ));
-        }
-    }
-    assert!(problems.is_empty(), "{}", problems.join("\n"));
-}
-
-#[test]
 fn every_declared_example_matches_its_declared_value_quoted_in_every_listed_shell() {
     let dir = star_matching_dir();
 
@@ -520,22 +431,21 @@ fn removing_the_quotes_from_a_declared_example_changes_what_the_shell_passes() {
     }
 }
 
+/// The further hand-listed "safe" examples (`additional_safe_examples`) each reach the
+/// stand-in as their own whitespace-split words, through every listed shell -- the same check
+/// the pre-M-13 harness ran automatically for every example extraction found with no unsafe
+/// character, now run over a fixed, hand-written list instead.
 #[test]
-fn every_example_with_no_unsafe_character_reaches_the_stand_in_as_its_own_words() {
-    let design = design_text();
-    let declared = declared_texts();
-    let templated = template_texts();
+fn every_hand_listed_safe_example_reaches_the_stand_in_as_its_own_words() {
     let dir = star_matching_dir();
 
-    for text in examples(&design) {
-        if declared.contains(text.as_str()) || templated.contains(text.as_str()) {
-            continue;
-        }
+    for text in additional_safe_examples() {
         assert!(
-            !has_unsafe_char(&text),
-            "example has a character outside the safe set and no declared value: {text}"
+            !has_unsafe_char(text),
+            "a hand-listed safe example has a character outside the safe set and belongs in \
+             declared_examples instead: {text}"
         );
-        let (command, expected) = safe_command_and_expected(&text);
+        let (command, expected) = safe_command_and_expected(text);
         for shell in SHELLS {
             let run = run_in_shell(shell, &command, dir.path());
             assert_eq!(
@@ -545,45 +455,6 @@ fn every_example_with_no_unsafe_character_reaches_the_stand_in_as_its_own_words(
                 run.stderr
             );
         }
-    }
-}
-
-#[test]
-fn every_code_span_of_the_quoting_paragraph_is_classified() {
-    let design = design_text();
-    let spans = quoting_paragraph_spans(&design);
-
-    let expected_spans = [
-        "--where",
-        "--if",
-        "--set",
-        "--namespace",
-        r"--where 'title=Cosmos\, or SQL'",
-        "--namespace '*'",
-        "--namespace 'chief::*'",
-        "TYPDOC_NAMESPACE='*'",
-        "\\",
-        "*",
-        "<",
-        ">",
-        "!",
-    ];
-    assert_eq!(spans, expected_spans, "the paragraph's spans changed");
-
-    let flag_names = ["--where", "--if", "--set", "--namespace"];
-    let single_characters = ["\\", "*", "<", ">", "!"];
-    let declared = declared_texts();
-    let templated = template_texts();
-
-    for span in &spans {
-        let classified = flag_names.contains(&span.as_str())
-            || single_characters.contains(&span.as_str())
-            || declared.contains(span.as_str())
-            || templated.contains(span.as_str());
-        assert!(
-            classified,
-            "unclassified span in the Quoting paragraph: {span}"
-        );
     }
 }
 

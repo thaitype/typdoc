@@ -32,12 +32,27 @@ pub struct UnrewrittenRef {
     pub reason: UnrewrittenReason,
 }
 
-/// What a successful `mv` reports: the document under its new name, the refs it could not
-/// rewrite and why, and what the destination's schema rejects when the move landed the document
-/// somewhere its fields do not satisfy (decision 16: carried out and reported, not refused).
+/// One ref `mv`/`mv --renumber` did rewrite: the holder's project-relative path (`document`,
+/// matching `UnrewrittenRef`'s own use of "the document that holds it"), the field it lives in
+/// (`"$body"` for a body link, the same convention `RefsReference::field` already uses), and its
+/// written form before and after (ticket 21, `mv --json`'s new `rewritten`: `{document, field,
+/// before, after}`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RewrittenRef {
+    pub document: String,
+    pub field: String,
+    pub before: String,
+    pub after: String,
+}
+
+/// What a successful `mv` reports: the document under its new name, every ref it did rewrite
+/// (ticket 21), the refs it could not rewrite and why, and what the destination's schema rejects
+/// when the move landed the document somewhere its fields do not satisfy (decision 16: carried
+/// out and reported, not refused).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MvReport {
     pub document: Document,
+    pub rewritten: Vec<RewrittenRef>,
     pub unrewritten: Vec<UnrewrittenRef>,
     pub findings: Vec<Finding>,
 }

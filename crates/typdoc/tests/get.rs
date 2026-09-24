@@ -213,15 +213,45 @@ fn a_call_with_no_document_exits_1() {
     error_of(&ran, 1);
 }
 
+/// The hand-written golden for `get`'s text-mode shape (contract, text-output shapes: `path`,
+/// `collection`, `schema`, `namespace`, then frontmatter fields in file order — `valid/minimal`'s
+/// `note.md` writes `title` before `tags`, and this is not a coded document, so there is no
+/// `key` line). Every line is `name: value`, so this is also the field-names-principle check the
+/// ticket asks for: a bare, unlabeled line would show up as a diff against this literal string.
 #[test]
-fn the_output_without_json_is_not_built_and_exits_1() {
+fn get_without_json_prints_the_labeled_block() {
     let ran = Spawn::args(["get", "note.md"])
         .cwd(fixture("valid/minimal"))
         .run();
 
-    assert_eq!(ran.code, 1);
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stderr, "");
+    assert_eq!(
+        ran.stdout,
+        "path: note.md\n\
+         collection: notes\n\
+         schema: note\n\
+         namespace: default\n\
+         title: A minimal note\n\
+         tags: alpha,beta\n"
+    );
+}
+
+/// The already-fixed error path (contract decision 4): without `--json`, a failure prints plain
+/// text on stderr, never the `--json` error object.
+#[test]
+fn get_without_json_prints_a_plain_text_error() {
+    let ran = Spawn::args(["get", "absent.md"])
+        .cwd(fixture("valid/minimal"))
+        .run();
+
+    assert_eq!(ran.code, 5);
     assert_eq!(ran.stdout, "");
-    assert!(ran.stderr.starts_with("typdoc: "), "{}", ran.stderr);
+    assert!(
+        ran.stderr.starts_with("typdoc: ") && !ran.stderr.starts_with("typdoc: {"),
+        "{}",
+        ran.stderr
+    );
 }
 
 #[test]
@@ -437,6 +467,12 @@ fn a_file_below_the_project_folder_is_not_in_a_collection_that_matches_names_the
 }
 
 /// One name that cannot be read denies no answer about the file beside it.
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
+              name; APFS on macOS refuses to create one at all (EILSEQ), confirmed on a real \
+              macos-latest CI run, 2026-09-24"
+)]
 #[test]
 fn a_name_that_is_not_utf8_and_that_a_collection_matches_is_skipped() {
     let project = Scratch::project(&NOTES);
@@ -450,6 +486,12 @@ fn a_name_that_is_not_utf8_and_that_a_collection_matches_is_skipped() {
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
 }
 
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
+              name; APFS on macOS refuses to create one at all (EILSEQ), confirmed on a real \
+              macos-latest CI run, 2026-09-24"
+)]
 #[test]
 fn a_name_that_is_not_utf8_and_that_no_collection_matches_is_left_alone() {
     let project = Scratch::project(&NOTES);

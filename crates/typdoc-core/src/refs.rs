@@ -19,7 +19,8 @@
 //! way the rest of this crate's index-reading behaviour already is.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 
 use crate::argument::looks_like_key;
 use crate::config::{Namespace, RefBase};
@@ -137,6 +138,69 @@ pub(crate) fn resolve_one(written: &str, ctx: &Ctx) -> Outcome {
     ) {
         Form::Key { namespace, key } => resolve_key(namespace, &key, ctx.index),
         Form::Path { base, rest } => resolve_path(&join(&base, &rest), ctx.index, ctx.root),
+        Form::Import { alias, rest } => resolve_into_import(&alias, &rest, ctx.imports),
+        Form::BadPrefix => Err(Reason::BadPrefix),
+    }
+}
+
+/// The identity a write's own candidate is about to carry, real enough for
+/// [`resolve_one_for_candidate`] to resolve a ref to it even though it is not yet in `Ctx::index`
+/// or on disk: `set`'s candidate already has both (it is only its *fields* — not its key or
+/// path — that are about to change), and `new`'s has its path (given or allocated) and, for a
+/// coded collection, the key `Project::allocate_key` already committed to before the file exists.
+pub(crate) struct Candidate<'a> {
+    pub namespace: usize,
+    pub key: Option<&'a str>,
+    pub path: &'a str,
+}
+
+/// Identical to [`resolve_one`], except a ref that names `candidate`'s own identity — its key in
+/// its namespace, written as such, or a path that joins to its own — resolves to it directly,
+/// without reading `Ctx::index` or the disk for either. `Project::prescan_refs`'s substituted
+/// scan (ticket 30, M-18) needs this in both directions: not only for the candidate's own
+/// fields (already handled by substituting its text for what would otherwise be read from disk),
+/// but for every *other* document's fields too — a `new` candidate is not indexed and its file
+/// does not exist yet, so nothing already on disk that names its key or path would ever resolve
+/// against the real index, which would make it structurally impossible for `new` to ever close a
+/// cycle with a document that already points at the one about to be created. A `set` candidate's
+/// key and path are already real and already resolve through `Ctx::index` on their own, so this
+/// changes nothing for it — the check here simply never matches before falling through.
+pub(crate) fn resolve_one_for_candidate(
+    written: &str,
+    ctx: &Ctx,
+    candidate: &Candidate,
+) -> Outcome {
+    match classify(
+        written,
+        ctx.doc_namespace,
+        ctx.doc_path,
+        ctx.ref_base,
+        ctx.namespaces,
+        ctx.codes,
+    ) {
+        Form::Key { namespace, key } => {
+            if namespace == candidate.namespace && candidate.key == Some(key.as_str()) {
+                return Ok(Resolved {
+                    path: candidate.path.to_owned(),
+                    collection: None,
+                    via: Via::Key,
+                    project: None,
+                });
+            }
+            resolve_key(namespace, &key, ctx.index)
+        }
+        Form::Path { base, rest } => {
+            let joined = join(&base, &rest);
+            if joined == candidate.path {
+                return Ok(Resolved {
+                    path: candidate.path.to_owned(),
+                    collection: None,
+                    via: Via::Path,
+                    project: None,
+                });
+            }
+            resolve_path(&joined, ctx.index, ctx.root)
+        }
         Form::Import { alias, rest } => resolve_into_import(&alias, &rest, ctx.imports),
         Form::BadPrefix => Err(Reason::BadPrefix),
     }
@@ -403,6 +467,16 @@ fn join(base: &str, rest: &str) -> String {
 /// on disk but matches no collection resolves too, with no collection (only `target: "*"`
 /// accepts it: design.md's Target names, "`*` also accepts files outside any collection, such as
 /// a README"); anything else is `not-found`.
+///
+/// The index lookup above is case-exact by construction (`Index` keys itself off the real
+/// on-disk path strings it discovered while walking the project). This fallback has to be
+/// case-exact too, and for that it cannot lean on any single syscall whose case sensitivity
+/// depends on the filesystem: `Path::is_file` (a `stat`) answers `true` for a wrongly-cased path
+/// on a case-insensitive-but-preserving filesystem such as macOS's default APFS, which would
+/// contradict the design's own guarantee that a ref compares "exactly as it is written, case
+/// included, on every platform". `case_exact_file` does the check by reading real directory
+/// entries instead, so it gives the same answer regardless of what the filesystem's own lookup
+/// would have folded.
 pub(crate) fn resolve_path(path: &str, index: &Index, root: &Path) -> Outcome {
     if let Some(entry) = index.get(path) {
         return Ok(Resolved {
@@ -412,7 +486,7 @@ pub(crate) fn resolve_path(path: &str, index: &Index, root: &Path) -> Outcome {
             project: None,
         });
     }
-    if root.join(path).is_file() {
+    if case_exact_file(root, path) {
         return Ok(Resolved {
             path: path.to_owned(),
             collection: None,
@@ -421,6 +495,63 @@ pub(crate) fn resolve_path(path: &str, index: &Index, root: &Path) -> Outcome {
         });
     }
     Err(Reason::NotFound)
+}
+
+/// Whether `path` names a real file under `root`, with every path component matched against the
+/// real on-disk name byte for byte — never trusting a single `stat`-style syscall whose case
+/// sensitivity varies by filesystem (case-sensitive on Linux's ext4, case-insensitive but
+/// case-preserving on macOS's default APFS; Windows is out of scope). `path` can have more than
+/// one component (`join`, above, can join a multi-segment `rest` onto a base folder), and a
+/// filesystem that case-folds does so for every component of a lookup, not only the last one, so
+/// each directory along the way is opened and its entries compared exactly, the same as the
+/// final filename.
+///
+/// Normalizes first (a `::`-import's own trailing `resolve_path` call in
+/// `resolve_into_project` can reach here unjoined and unnormalized, unlike every other caller,
+/// which already ran the written path through `join`) so `.` and `..` segments are read as path
+/// syntax, never as literal directory-entry names to search for.
+///
+/// Reading a directory that does not exist (a missing parent, or a path that plain does not
+/// exist at all) is answered `false`, the same as `is_file()` on a nonexistent path was answered
+/// before this change — never a panic, never a propagated `Err`. A symlink is followed the same
+/// way `is_file()` already followed it: the check is only ever about whether the *name* at each
+/// level is spelled exactly as written, not about how the entry got there.
+fn case_exact_file(root: &Path, path: &str) -> bool {
+    let normalized = normalize(path);
+    let relative = normalized.strip_prefix('/').unwrap_or(&normalized);
+    if relative.is_empty() {
+        return false;
+    }
+
+    let mut current = root.to_path_buf();
+    let mut components = relative.split('/').peekable();
+    while let Some(component) = components.next() {
+        let Some(entry_path) = exact_entry(&current, component) else {
+            return false;
+        };
+        if components.peek().is_none() {
+            return entry_path.is_file();
+        }
+        current = entry_path;
+    }
+    false
+}
+
+/// The real on-disk path of `dir`'s child named exactly `name` (raw `OsStr` comparison, never
+/// case-folded or Unicode-normalized), or `None` when no entry matches or `dir` cannot be read
+/// at all — a missing directory, a path that is not a directory, or a permissions error are all
+/// read the same way a genuinely absent entry is, since the caller only ever wants a clean yes
+/// or no. An entry `read_dir` itself could not read (`Result::Err` from the iterator) is skipped
+/// rather than aborting the whole scan, the same reasoning: one unreadable sibling should not
+/// turn a real match elsewhere in the directory into a false negative.
+fn exact_entry(dir: &Path, name: &str) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        if entry.file_name() == OsStr::new(name) {
+            return Some(entry.path());
+        }
+    }
+    None
 }
 
 /// Whether a resolved ref's target is one `target` allows. `None` (the option was not written)
@@ -483,32 +614,69 @@ pub(crate) fn cyclic_nodes(edges: &[(String, String)]) -> BTreeSet<String> {
         Black,
     }
 
+    // Explicit iterative DFS over a heap-allocated work stack (`frames`), one frame per node on
+    // the walk's current path, each tracking how far through that node's own child list it has
+    // got — the recursive version's call-stack frame and its position in `for &child in
+    // children`, made into data instead of a call. Same three-colour algorithm, same push/pop/
+    // colour order as the recursive form it replaces, so the four cycle-shape tests below (and
+    // ticket 9's long-chain regression test) see the same output either way; only the growth
+    // moves from the (fixed, small) thread stack to the heap, which is what removes the ceiling
+    // ticket 1 found (`refs.rs`, `cyclic_nodes`'s `visit`).
     fn visit<'a>(
-        node: &'a str,
+        start: &'a str,
         outgoing: &BTreeMap<&'a str, Vec<&'a str>>,
         color: &mut BTreeMap<&'a str, Color>,
         stack: &mut Vec<&'a str>,
         cyclic: &mut BTreeSet<String>,
     ) {
-        color.insert(node, Color::Gray);
-        stack.push(node);
-        if let Some(children) = outgoing.get(node) {
-            for &child in children {
-                match color.get(child).copied().unwrap_or(Color::White) {
-                    Color::White => visit(child, outgoing, color, stack, cyclic),
-                    Color::Gray => {
-                        if let Some(at) = stack.iter().position(|n| *n == child) {
-                            for n in &stack[at..] {
-                                cyclic.insert((*n).to_owned());
+        struct Frame<'a> {
+            node: &'a str,
+            /// How many of `node`'s outgoing edges this frame has already followed.
+            next_child: usize,
+        }
+
+        color.insert(start, Color::Gray);
+        stack.push(start);
+        let mut frames: Vec<Frame<'a>> = vec![Frame {
+            node: start,
+            next_child: 0,
+        }];
+
+        while let Some(frame) = frames.last_mut() {
+            let children: &[&str] = match outgoing.get(frame.node) {
+                Some(children) => children.as_slice(),
+                None => &[],
+            };
+            match children.get(frame.next_child) {
+                Some(&child) => {
+                    frame.next_child += 1;
+                    match color.get(child).copied().unwrap_or(Color::White) {
+                        Color::White => {
+                            color.insert(child, Color::Gray);
+                            stack.push(child);
+                            frames.push(Frame {
+                                node: child,
+                                next_child: 0,
+                            });
+                        }
+                        Color::Gray => {
+                            if let Some(at) = stack.iter().position(|n| *n == child) {
+                                for n in &stack[at..] {
+                                    cyclic.insert((*n).to_owned());
+                                }
                             }
                         }
+                        Color::Black => {}
                     }
-                    Color::Black => {}
+                }
+                None => {
+                    let finished = frame.node;
+                    frames.pop();
+                    stack.pop();
+                    color.insert(finished, Color::Black);
                 }
             }
         }
-        stack.pop();
-        color.insert(node, Color::Black);
     }
 
     let mut color: BTreeMap<&str, Color> = BTreeMap::new();
@@ -797,6 +965,43 @@ mod tests {
             found,
             set(&["a", "b"]),
             "c only receives an edge, it starts none"
+        );
+    }
+
+    /// Ticket 1's finding: a long **one-way** chain through one `acyclic` field recurses to depth
+    /// N with no cycle required at all. Run on a thread built with an explicitly small stack
+    /// (never this machine's own default, so the result does not depend on which machine runs
+    /// it): before the iterative rewrite, `visit` recurses once per node and overflows that
+    /// stack; after it, the walk grows on the heap instead, so it survives a chain far longer
+    /// than any call stack could hold. 200_000 nodes matches the floor ticket 1 and ticket 9 both
+    /// name; the existing four `cyclic_nodes` tests above already cover the two-node cycle,
+    /// self-loop, no-cycle-chain and cycle-with-a-tail shapes this rewrite must keep giving the
+    /// same answers for.
+    #[test]
+    fn a_very_long_one_way_chain_with_no_cycle_does_not_overflow_the_stack() {
+        const CHAIN_LENGTH: usize = 200_000;
+        // 1 MiB: far below this process's own default test-thread stack, chosen explicitly so
+        // the regression does not depend on which machine or harness runs it (testing-decisions.md,
+        // "The stack-overflow fix").
+        const SMALL_STACK_BYTES: usize = 1024 * 1024;
+
+        let edges: Vec<(String, String)> = (0..CHAIN_LENGTH)
+            .map(|i| (format!("n{i}"), format!("n{}", i + 1)))
+            .collect();
+
+        let handle = std::thread::Builder::new()
+            .stack_size(SMALL_STACK_BYTES)
+            .spawn(move || cyclic_nodes(&edges))
+            .expect("spawning a thread with an explicit stack size does not itself fail");
+
+        let found = handle
+            .join()
+            .expect("cyclic_nodes must not overflow the stack on a long acyclic chain");
+
+        assert_eq!(
+            found,
+            BTreeSet::new(),
+            "a one-way chain with no cycle reports no cyclic nodes, however long it is"
         );
     }
 

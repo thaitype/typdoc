@@ -440,13 +440,76 @@ fn an_argument_that_names_no_document_stops_before_any_report_and_is_not_a_findi
     assert!(object.get("summary").is_none(), "{object}");
 }
 
+/// Ticket 20: plain `validate` without `--json` prints a header row, then one line per finding,
+/// from the same finding data `--json` already carries (header row and `path, level, rule,
+/// message` column order added by M-16 — matching `finding_json`'s own JSON field names exactly,
+/// `path` even though the printed value can be `path:line:col`). `error.md`'s broken body link is
+/// `body.links` at `error`, with a known position; `warn.md`'s unknown field is
+/// `frontmatter.unknown` at the default `warn`, with no position, so it prints its bare path
+/// (design, the paragraph beginning "Output.": `path:line:col` when a position is known, `path`
+/// alone otherwise, the same rule `--json` follows for `line`/`col`). Findings are ordered by
+/// path (`order`), so `error.md` prints first. `info` never occurs here: `Severity::Info` is
+/// produced only by `--audit`'s "a rule turned off is reported as info" (`effective_level`), and
+/// plain `validate` has no configurable level that produces it — a golden covering `info` belongs
+/// to `--audit`'s own tests, not here.
 #[test]
-fn validate_without_json_exits_1_as_not_built_yet() {
+fn plain_validate_without_json_prints_one_line_per_finding_at_warn_and_error() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "*.md", "schema": "note.json" }"#,
+        ),
+        ("note.json", r#"{ "name": "note", "fields": {} }"#),
+    ]);
+    project.file("warn.md", "---\nextra: surprise\n---\n");
+    project.file("error.md", "See [broken](./nope.md).\n");
+
+    let ran = Spawn::args(["validate"]).cwd(project.path()).run();
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    assert_eq!(ran.stderr, "");
+    let expected = "path          level  rule                 message\n\
+        error.md:1:5  error  body.links           link target missing: ./nope.md\n\
+        warn.md       warn   frontmatter.unknown  the field `extra` is not a field of the schema\n";
+    assert_eq!(ran.stdout, expected);
+}
+
+/// Ticket 20, decided (following `list`'s own precedent): a clean project prints nothing without
+/// `--json`, and the exit code alone carries the result — no special-cased "clean" line.
+#[test]
+fn a_clean_project_without_json_prints_nothing_and_exits_0() {
     let project = fixture("valid/minimal");
 
     let ran = Spawn::args(["validate"]).cwd(&project).run();
 
-    assert_eq!(ran.code, 1);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout, "");
+    assert_eq!(ran.stderr, "");
+}
+
+/// Ticket 20: `--schemas` alone, without `--json`, uses the same header-plus-one-line-per-finding
+/// shape as plain `validate` for a schema-only problem (an import alias that collides with a
+/// reserved URL scheme, `schema.valid`, found with `checked.documents` at 0 since `--schemas`
+/// checks no document).
+#[test]
+fn schemas_alone_without_json_prints_the_same_one_line_per_finding_shape() {
+    let project = Scratch::project(&[(
+        ".typdoc/config.json",
+        r#"{ "version": 1, "imports": { "https": "../elsewhere" } }"#,
+    )]);
+    project.file("x.md", "");
+
+    let ran = Spawn::args(["validate", "--schemas"])
+        .cwd(project.path())
+        .run();
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    assert_eq!(ran.stderr, "");
+    let expected = "path                 level  rule          message\n\
+        .typdoc/config.json  error  schema.valid  the import name `https` is a URL scheme \
+        (`http`, `https`, `mailto` and `file` are reserved), and the two would be told apart \
+        wrongly\n";
+    assert_eq!(ran.stdout, expected);
 }
 
 fn missing_title(project: &Scratch) -> Ran {
@@ -1347,6 +1410,23 @@ fn a_ref_whose_case_differs_from_the_files_is_not_found() {
     );
 }
 
+/// Ticket 25's own companion case: the fix to `resolve_path`'s fallback (reading real directory
+/// entries instead of trusting `Path::is_file`'s yes/no) must not turn a correct, exactly-cased
+/// match into a false negative. `README.txt` matches no collection (`REF_SCHEMA` only claims
+/// `*.md`), so this exercises the exact same fallback branch the mismatch test above does — the
+/// only difference is the case matches — and it must still resolve.
+#[test]
+fn a_ref_whose_case_exactly_matches_a_file_outside_every_collection_is_found() {
+    let project = Scratch::project(&REF_SCHEMA);
+    project.file("README.txt", "");
+    project.file("a.md", "---\nsee: README.txt\n---\n");
+
+    let ran = validate(&[], project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout_json()["findings"], json!([]));
+}
+
 /// The ticket's other example: `chief::WF-5` in a project with several namespaces is
 /// `bad-prefix`. The import form is not resolved in this story (ticket 17's), so this holds
 /// whether or not `chief` is a configured import alias: nothing here ever treats `::` as
@@ -1723,6 +1803,12 @@ fn a_symbolic_link_a_match_reaches_is_files_unreadable_and_every_other_file_is_s
 
 /// A file name that is not valid UTF-8: the last step of the template reaches it, so it is
 /// skipped where a name it could match would have been taken.
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
+              name; APFS on macOS refuses to create one at all (EILSEQ), confirmed on a real \
+              macos-latest CI run, 2026-09-24"
+)]
 #[test]
 fn a_file_name_that_is_not_valid_utf8_is_files_unreadable_and_the_rest_is_still_checked() {
     let project = Scratch::project(&EVERY_MARKDOWN);
@@ -1746,6 +1832,12 @@ fn a_file_name_that_is_not_valid_utf8_is_files_unreadable_and_the_rest_is_still_
 
 /// A folder name that is not valid UTF-8 goes through the step that enters a folder, not the
 /// step that takes a file, so it is its own case.
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
+              name; APFS on macOS refuses to create one at all (EILSEQ), confirmed on a real \
+              macos-latest CI run, 2026-09-24"
+)]
 #[test]
 fn a_folder_name_that_is_not_valid_utf8_is_files_unreadable_and_the_rest_is_still_checked() {
     let project = Scratch::project(&EVERY_MARKDOWN);

@@ -224,6 +224,62 @@ fn a_number_no_primitive_holds_on_an_untouched_field_is_written_back_and_printed
     );
 }
 
+/// The hand-written golden for `set`'s text-mode shape (contract, text-output shapes: the same
+/// labeled block `get` prints, for the document as it stands after the write). `valid/minimal`'s
+/// `note.md` writes `title` before `tags`, and `set` here only touches `title`, so the labeled
+/// block shows the changed title and the untouched `tags` in that same file order.
+#[test]
+fn set_without_json_prints_the_labeled_block_after_the_write() {
+    let project = Scratch::project(&NOTES);
+    project.file(
+        "note.md",
+        "---\ntitle: A minimal note\ntags: [alpha, beta]\n---\n\nBody.\n",
+    );
+
+    let ran = run(project.path(), &["set", "note.md", "title=A changed note"]);
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stderr, "");
+    assert_eq!(
+        ran.stdout,
+        "path: note.md\n\
+         collection: notes\n\
+         schema: note\n\
+         namespace: default\n\
+         title: A changed note\n\
+         tags: alpha,beta\n"
+    );
+}
+
+/// The already-fixed error path (contract decision 4, ticket 16's own "a validation failure on
+/// set" case): a validation failure prints plain text on stderr without `--json`, never the
+/// `--json` error object.
+#[test]
+fn set_without_json_prints_a_plain_text_error_on_a_validation_failure() {
+    let project = Scratch::project(&[
+        (".typdoc/collections/tickets.json", STATUS_COLLECTION),
+        ("ticket.json", STATUS_SCHEMA),
+        ("a.md", "---\ntitle: A ticket\nstatus: open\n---\n\nBody.\n"),
+    ]);
+    let before = std::fs::read(project.path().join("a.md")).unwrap();
+
+    let ran = run(project.path(), &["set", "a.md", "status=resolved"]);
+
+    assert_eq!(ran.code, 2, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
+    assert_eq!(ran.stdout, "");
+    assert!(
+        ran.stderr.starts_with("typdoc: ") && !ran.stderr.starts_with("typdoc: {"),
+        "{}",
+        ran.stderr
+    );
+
+    let after = std::fs::read(project.path().join("a.md")).unwrap();
+    assert_eq!(
+        before, after,
+        "a refused write must leave the file untouched"
+    );
+}
+
 /// `k=` removes a field entirely.
 #[test]
 fn k_with_nothing_after_the_equals_removes_the_field() {
@@ -349,6 +405,120 @@ fn auto_update_is_stamped_only_when_a_value_actually_changes() {
     );
 }
 
+// ---------------------------------------------------------------------------------------------
+// Ticket 31 (M-19): `--set`/`field=value` escaping (design §Query, as applied to `set`).
+// ---------------------------------------------------------------------------------------------
+
+/// `\*` is a literal `*`. Repro: today the backslash is kept in the stored value instead.
+#[test]
+fn a_backslash_star_in_a_scalar_value_is_stored_as_a_literal_star() {
+    let project = Scratch::project(&NOTES);
+    project.file("a.md", "---\ntitle: Before\n---\n\nBody.\n");
+
+    let ran = run(project.path(), &["set", "a.md", r"title=a\*b", "--json"]);
+
+    let out = ok_json(&ran);
+    assert_eq!(out["document"]["fields"]["title"], json!("a*b"));
+    let after = std::fs::read_to_string(project.path().join("a.md")).unwrap();
+    assert!(after.contains("a*b"), "{after:?}");
+    assert!(!after.contains(r"a\*b"), "{after:?}");
+}
+
+/// A bare, unescaped `*` has no wildcard meaning in `--set` (unlike `--where`/`--if`) and is an
+/// outright error. Repro: today it is silently accepted and stored literally.
+#[test]
+fn a_bare_unescaped_star_in_a_set_value_is_refused_and_writes_nothing() {
+    let project = Scratch::project(&NOTES);
+    project.file("a.md", "---\ntitle: Before\n---\n\nBody.\n");
+    let before = std::fs::read(project.path().join("a.md")).unwrap();
+
+    let ran = run(project.path(), &["set", "a.md", "title=x*y", "--json"]);
+
+    assert_eq!(ran.code, 1, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
+    let after = std::fs::read(project.path().join("a.md")).unwrap();
+    assert_eq!(before, after, "a refused set must write nothing");
+}
+
+/// `\,` is a literal `,`; a scalar field has nothing to split into, so the escape just yields the
+/// character, with no list produced.
+#[test]
+fn a_backslash_comma_in_a_scalar_value_is_stored_as_a_literal_comma() {
+    let project = Scratch::project(&NOTES);
+    project.file("a.md", "---\ntitle: Before\n---\n\nBody.\n");
+
+    let ran = run(project.path(), &["set", "a.md", r"title=a\,b", "--json"]);
+
+    let out = ok_json(&ran);
+    assert_eq!(out["document"]["fields"]["title"], json!("a,b"));
+}
+
+/// A list field still splits on an unescaped `,`, but a `\,` inside an item is a literal comma,
+/// not a split point.
+#[test]
+fn a_list_field_splits_on_unescaped_commas_but_not_on_an_escaped_one() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "*.md", "schema": "note.json" }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": { "tags": { "type": "list" } } }"#,
+        ),
+        ("a.md", "---\ntags: [alpha]\n---\n\nBody.\n"),
+    ]);
+
+    let ran = run(project.path(), &["set", "a.md", r"tags=a\,b,c", "--json"]);
+
+    let out = ok_json(&ran);
+    assert_eq!(out["document"]["fields"]["tags"], json!(["a,b", "c"]));
+}
+
+/// `\\` is a literal `\`.
+#[test]
+fn a_double_backslash_in_a_value_is_stored_as_a_single_backslash() {
+    let project = Scratch::project(&NOTES);
+    project.file("a.md", "---\ntitle: Before\n---\n\nBody.\n");
+
+    let ran = run(project.path(), &["set", "a.md", r"title=a\\b", "--json"]);
+
+    let out = ok_json(&ran);
+    assert_eq!(out["document"]["fields"]["title"], json!(r"a\b"));
+}
+
+/// `\` followed by anything other than `,`, `*` or `\` is an unrecognized escape and refused.
+#[test]
+fn an_unrecognized_escape_in_a_set_value_is_refused_and_writes_nothing() {
+    let project = Scratch::project(&NOTES);
+    project.file("a.md", "---\ntitle: Before\n---\n\nBody.\n");
+    let before = std::fs::read(project.path().join("a.md")).unwrap();
+
+    let ran = run(project.path(), &["set", "a.md", r"title=a\qb", "--json"]);
+
+    assert_eq!(ran.code, 1, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
+    let error = ran.stderr_json();
+    assert!(
+        error["error"].as_str().unwrap_or_default().contains(r"\q"),
+        "{error}"
+    );
+    let after = std::fs::read(project.path().join("a.md")).unwrap();
+    assert_eq!(before, after, "a refused set must write nothing");
+}
+
+/// A value ending in a lone, unmatched `\` is refused rather than silently dropped or kept.
+#[test]
+fn a_value_ending_in_a_lone_backslash_is_refused_and_writes_nothing() {
+    let project = Scratch::project(&NOTES);
+    project.file("a.md", "---\ntitle: Before\n---\n\nBody.\n");
+    let before = std::fs::read(project.path().join("a.md")).unwrap();
+
+    let ran = run(project.path(), &["set", "a.md", r"title=a\", "--json"]);
+
+    assert_eq!(ran.code, 1, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
+    let after = std::fs::read(project.path().join("a.md")).unwrap();
+    assert_eq!(before, after, "a refused set must write nothing");
+}
+
 /// A `set --if` naming a `ref.*`/`refby.*` condition is refused plainly (bad arguments) rather
 /// than evaluated wrongly: an open limit, stated rather than hidden.
 #[test]
@@ -369,4 +539,205 @@ fn an_if_with_a_ref_condition_is_refused_plainly() {
     );
 
     assert_eq!(ran.code, 1, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
+}
+
+// --- ticket 30 (M-18): `set` refuses a write-time cycle on an `acyclic` field ---
+
+const WF_ACYCLIC_SCHEMA: &str = r#"{
+  "name": "ticket",
+  "code": "WF",
+  "fields": {
+    "title": { "type": "string" },
+    "blocked_by": { "type": "ref[]", "target": "*", "acyclic": true }
+  }
+}"#;
+
+const WF_ACYCLIC_COLLECTION: [(&str, &str); 2] = [
+    (
+        ".typdoc/collections/tickets.json",
+        r#"{ "match": "tickets/{key}.md", "schema": "wf.json" }"#,
+    ),
+    ("wf.json", WF_ACYCLIC_SCHEMA),
+];
+
+/// M-18 repro (ticket 30): `WF-1` already has `blocked_by: [WF-5]`. Setting `WF-5`'s own
+/// `blocked_by` to `WF-1` would close the cycle `WF-1 -> WF-5 -> WF-1` on the `acyclic` field
+/// `blocked_by`; this must be refused at write time (exit 2, nothing written, `refs.acyclic` in
+/// `details`), the same command, not caught only by a later `validate` run.
+#[test]
+fn set_refuses_a_write_that_closes_an_immediate_cycle_on_an_acyclic_field() {
+    let project = Scratch::project(&WF_ACYCLIC_COLLECTION);
+    project.file(
+        "tickets/WF-1.md",
+        "---\ntitle: One\nblocked_by: [WF-5]\n---\n",
+    );
+    project.file("tickets/WF-5.md", "---\ntitle: Five\n---\n");
+    let before = std::fs::read(project.path().join("tickets/WF-5.md")).unwrap();
+
+    let ran = run(
+        project.path(),
+        &["set", "WF-5", "blocked_by=WF-1", "--json"],
+    );
+
+    assert_eq!(ran.code, 2, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
+    assert_eq!(ran.stdout, "");
+    let error = ran.stderr_json();
+    let details = error["details"].as_array().expect("a details array");
+    assert!(
+        details.iter().any(|f| f["rule"] == json!("refs.acyclic")),
+        "{details:?}"
+    );
+
+    let after = std::fs::read(project.path().join("tickets/WF-5.md")).unwrap();
+    assert_eq!(
+        before, after,
+        "a refused write must leave the document's bytes untouched"
+    );
+}
+
+/// A longer chain (3 documents) closed by the write, not just the immediate two-document repro
+/// above: the indirect case ticket 30 also requires, exercising `refs::cyclic_nodes`'s walk
+/// through more than one intermediate document.
+#[test]
+fn set_refuses_a_write_that_closes_a_longer_chain_into_a_cycle() {
+    let project = Scratch::project(&WF_ACYCLIC_COLLECTION);
+    project.file(
+        "tickets/WF-1.md",
+        "---\ntitle: One\nblocked_by: [WF-2]\n---\n",
+    );
+    project.file(
+        "tickets/WF-2.md",
+        "---\ntitle: Two\nblocked_by: [WF-3]\n---\n",
+    );
+    project.file("tickets/WF-3.md", "---\ntitle: Three\n---\n");
+    let before = std::fs::read(project.path().join("tickets/WF-3.md")).unwrap();
+
+    let ran = run(
+        project.path(),
+        &["set", "WF-3", "blocked_by=WF-1", "--json"],
+    );
+
+    assert_eq!(ran.code, 2, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
+    let details = ran.stderr_json()["details"].as_array().unwrap().clone();
+    assert!(
+        details.iter().any(|f| f["rule"] == json!("refs.acyclic")),
+        "{details:?}"
+    );
+    let after = std::fs::read(project.path().join("tickets/WF-3.md")).unwrap();
+    assert_eq!(before, after);
+}
+
+/// A write untouched by an unrelated, pre-existing cycle elsewhere succeeds normally: the "no
+/// false refusal" half of ticket 30's fix — the pre-write scan necessarily still finds that
+/// unrelated cycle too, and it must not leak into this write's own refusal.
+#[test]
+fn set_is_not_refused_by_an_unrelated_pre_existing_cycle_elsewhere() {
+    let project = Scratch::project(&WF_ACYCLIC_COLLECTION);
+    project.file(
+        "tickets/WF-10.md",
+        "---\ntitle: Ten\nblocked_by: [WF-11]\n---\n",
+    );
+    project.file(
+        "tickets/WF-11.md",
+        "---\ntitle: Eleven\nblocked_by: [WF-10]\n---\n",
+    );
+    project.file("tickets/WF-1.md", "---\ntitle: One\n---\n");
+
+    let ran = run(project.path(), &["set", "WF-1", "title=Updated", "--json"]);
+
+    let out = ok_json(&ran);
+    assert_eq!(out["document"]["fields"]["title"], json!("Updated"));
+}
+
+// --- ticket 34 (M-21): narrow the write-time `refs.acyclic` check to a write's own change of an
+// `acyclic` field, not merely to a document that happens to sit on a pre-existing cycle for a
+// reason this write never touched ---
+
+/// M-21's repro (Mild's decision, relayed by Aria): `WF-1` and `WF-5` already sit on a cycle
+/// through `blocked_by`, built directly on disk (bypassing `set`'s own write-time check, since
+/// the CLI itself would now refuse to create one). `set WF-1 title=…` never touches
+/// `blocked_by` at all, so it must succeed even though `WF-1` is sitting on that pre-existing
+/// cycle — only a write that itself changes an `acyclic` field is this check's to refuse. A
+/// subsequent `validate` still reports the pre-existing cycle: this write does not fix it, and
+/// this ticket does not change `validate`'s own behavior at all.
+#[test]
+fn set_untouched_by_its_own_acyclic_field_succeeds_despite_a_pre_existing_cycle() {
+    let project = Scratch::project(&WF_ACYCLIC_COLLECTION);
+    project.file(
+        "tickets/WF-1.md",
+        "---\ntitle: One\nblocked_by: [WF-5]\n---\n",
+    );
+    project.file(
+        "tickets/WF-5.md",
+        "---\ntitle: Five\nblocked_by: [WF-1]\n---\n",
+    );
+
+    let ran = run(project.path(), &["set", "WF-1", "title=Updated", "--json"]);
+
+    let out = ok_json(&ran);
+    assert_eq!(out["document"]["fields"]["title"], json!("Updated"));
+
+    let validated = run(project.path(), &["validate", "--json"]);
+    assert_eq!(validated.code, 2, "{}", validated.stderr);
+    let findings = validated.stdout_json()["findings"]
+        .as_array()
+        .cloned()
+        .unwrap();
+    assert!(
+        findings.iter().any(|f| f["rule"] == json!("refs.acyclic")),
+        "{findings:?}"
+    );
+}
+
+/// The explicit "breaks then unrelated write" case the ticket calls out by name: no cycle exists
+/// on disk at all (the field that used to close one is simply not there), and a `set` on an
+/// unrelated field of that formerly-cyclic-shaped document succeeds.
+#[test]
+fn set_on_an_unrelated_field_succeeds_when_no_cycle_exists_at_all() {
+    let project = Scratch::project(&WF_ACYCLIC_COLLECTION);
+    project.file(
+        "tickets/WF-1.md",
+        "---\ntitle: One\nblocked_by: [WF-5]\n---\n",
+    );
+    project.file("tickets/WF-5.md", "---\ntitle: Five\n---\n");
+
+    let ran = run(project.path(), &["set", "WF-1", "title=Updated", "--json"]);
+
+    let out = ok_json(&ran);
+    assert_eq!(out["document"]["fields"]["title"], json!("Updated"));
+}
+
+/// A "different pair through the same field" case: `blocked_by` already sits on a cycle between
+/// `WF-1` and `WF-5` (built directly on disk); `WF-5` also already points at `WF-10` (a
+/// dead-end, since `WF-10` does not point back at anything yet). The write gives `WF-10` its own
+/// `blocked_by` pointing back at `WF-1`, closing a second, three-document cycle
+/// (`WF-1 -> WF-5 -> WF-10 -> WF-1`) that did not exist before this write. `WF-10`'s own change
+/// is what closes it, so it must still be refused.
+#[test]
+fn set_refuses_a_write_that_closes_a_new_cycle_through_a_different_pair_on_the_same_field() {
+    let project = Scratch::project(&WF_ACYCLIC_COLLECTION);
+    project.file(
+        "tickets/WF-1.md",
+        "---\ntitle: One\nblocked_by: [WF-5]\n---\n",
+    );
+    project.file(
+        "tickets/WF-5.md",
+        "---\ntitle: Five\nblocked_by: [WF-1, WF-10]\n---\n",
+    );
+    project.file("tickets/WF-10.md", "---\ntitle: Ten\n---\n");
+    let before = std::fs::read(project.path().join("tickets/WF-10.md")).unwrap();
+
+    let ran = run(
+        project.path(),
+        &["set", "WF-10", "blocked_by=WF-1", "--json"],
+    );
+
+    assert_eq!(ran.code, 2, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
+    let details = ran.stderr_json()["details"].as_array().unwrap().clone();
+    assert!(
+        details.iter().any(|f| f["rule"] == json!("refs.acyclic")),
+        "{details:?}"
+    );
+    let after = std::fs::read(project.path().join("tickets/WF-10.md")).unwrap();
+    assert_eq!(before, after);
 }

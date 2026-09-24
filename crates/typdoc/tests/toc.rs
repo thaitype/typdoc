@@ -277,10 +277,98 @@ fn a_call_with_no_document_exits_1() {
     error_of(&ran, 1);
 }
 
+/// Golden for the text-mode table (ticket 17): a fixture with headings at more than one level
+/// (`nothing-under.md` — levels 1, 2, 3, 2, per `depth_chooses_which_headings_are_listed_and_
+/// never_changes_an_end` above), checked for the header row and each column's labeling.
 #[test]
-fn without_json_the_output_is_not_built_yet_and_exits_1() {
-    let ran = toc(&fixture("valid/body"), &["thai.md"]);
+fn without_json_prints_a_header_rowed_table_one_row_per_heading() {
+    let ran = toc(&fixture("valid/body"), &["nothing-under.md"]);
 
-    assert_eq!(ran.code, 1, "stderr: {}", ran.stderr);
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stderr, "");
+    assert_eq!(
+        ran.stdout,
+        "\
+line  end  level  heading
+1     7    1      Top
+3     4    2      Empty
+4     4    3      Deeper
+5     7    2      Sibling
+"
+    );
+}
+
+/// Decided (Aria, 2026-09-23), following `list`'s own precedent: a document with no headings
+/// prints no header and nothing at all — the exit code alone carries the result.
+#[test]
+fn a_document_with_no_headings_prints_nothing_without_json() {
+    let project = Scratch::project(&NOTES);
+    project.file("plain.md", "---\ntitle: x\n---\n\njust text\n");
+
+    let ran = toc(project.path(), &["plain.md"]);
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
     assert_eq!(ran.stdout, "");
+    assert_eq!(ran.stderr, "");
+}
+
+/// M-14 (2026-09-24): a document that HAS headings, all of them filtered out by `--depth`, is a
+/// different empty result from "no headings at all" — told apart on stderr, one line, stdout
+/// still empty, exit still 0. Both headings here are level 2; `--depth 1` keeps neither.
+#[test]
+fn depth_filtered_to_nothing_says_so_on_stderr_distinct_from_no_headings_at_all() {
+    let project = Scratch::project(&NOTES);
+    project.file(
+        "two-headings.md",
+        "---\ntitle: x\n---\n\n## First\n\ntext\n\n## Second\n\nmore\n",
+    );
+
+    let ran = toc(project.path(), &["two-headings.md", "--depth", "1"]);
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stdout, "");
+    assert_eq!(
+        ran.stderr,
+        "no headings at depth \u{2264} 1 (2 headings are deeper)\n"
+    );
+}
+
+/// The singular form on both counts independently: depth 0 read as "≤ 0", one heading read as
+/// "1 heading is deeper", not "1 headings are deeper".
+#[test]
+fn depth_filtered_to_nothing_uses_the_singular_form_for_one_heading() {
+    let project = Scratch::project(&NOTES);
+    project.file(
+        "one-heading.md",
+        "---\ntitle: x\n---\n\n## Only one\n\ntext\n",
+    );
+
+    let ran = toc(project.path(), &["one-heading.md", "--depth", "1"]);
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stdout, "");
+    assert_eq!(
+        ran.stderr,
+        "no headings at depth \u{2264} 1 (1 heading is deeper)\n"
+    );
+}
+
+/// The error path's `failure(true, ...)` fixed to the real `json` flag (ticket 17): an error
+/// without `--json` prints plain text, not the `--json` error object.
+#[test]
+fn an_error_without_json_prints_plain_text_not_the_json_object() {
+    let ran = toc(&fixture("valid/body"), &["absent.md"]);
+
+    assert_eq!(ran.code, 5, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stdout, "");
+    assert!(
+        ran.stderr.starts_with("typdoc: "),
+        "expected plain text, got {:?}",
+        ran.stderr
+    );
+    assert!(
+        serde_json::from_str::<Value>(&ran.stderr).is_err(),
+        "stderr should not be the --json error object: {:?}",
+        ran.stderr
+    );
 }

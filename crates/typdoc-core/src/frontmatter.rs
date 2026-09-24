@@ -1238,10 +1238,11 @@ mod corpus {
         b.lines().any(|l| l.contains(" !"))
     }
 
-    /// Which detector tells whether some document holds the shape a row of the design's table
-    /// of losses names, matched on a fragment of the row stable across a rewording of the
-    /// table's prose. `Err` names a row nothing here recognizes, so a row the design adds is a
-    /// row this test cannot silently pass on the strength of a different one.
+    /// Which detector tells whether some document holds the shape a loss entry of
+    /// `docs/design/catalog/frontmatter-losses.md` names, matched on a fragment of the entry
+    /// stable across a rewording of its text. `Err` names an entry nothing here recognizes, so
+    /// an entry the catalog adds is one this test cannot silently pass on the strength of a
+    /// different one.
     fn detector_for(row: &str) -> Result<fn(&str) -> bool, String> {
         if row == "Comments, anywhere in the block" {
             Ok(has_comment)
@@ -1259,7 +1260,7 @@ mod corpus {
             Ok(has_a_tag)
         } else {
             Err(format!(
-                "the design's table of losses has a row this check does not recognize: \
+                "the catalog of frontmatter losses has an entry this check does not recognize: \
                  {row:?}; teach this test to tell whether a fixture document holds it before \
                  trusting that one does"
             ))
@@ -1307,13 +1308,19 @@ mod corpus {
         assert!(has_a_tag("a: !Ref x\n"));
     }
 
-    /// Goal criterion 1's other half: the table of losses is read from the design, not copied
-    /// here a second time, so a row the design adds or changes is a row this test reads too.
+    /// Goal criterion 1's other half: the list of losses is read from
+    /// `docs/design/catalog/frontmatter-losses.md`, not copied here a second time, so a row the
+    /// catalog adds or changes is a row this test reads too.
     #[test]
     fn every_shape_the_design_names_as_lost_is_held_by_some_document_in_the_corpus() {
-        let losses =
-            typdoc_testkit::design::frontmatter_losses(&typdoc_testkit::fixtures::design_text())
-                .unwrap_or_else(|e| panic!("reading the table of losses from the design: {e}"));
+        #[derive(serde::Deserialize)]
+        struct FrontmatterLossesCatalog {
+            losses: Vec<String>,
+        }
+
+        let catalog: FrontmatterLossesCatalog =
+            typdoc_testkit::fixtures::read_catalog("docs/design/catalog/frontmatter-losses.md");
+        let losses = catalog.losses;
         let blocks = raw_blocks();
         assert!(
             !blocks.is_empty(),
@@ -1325,8 +1332,8 @@ mod corpus {
 
             assert!(
                 blocks.iter().any(|b| holds(b)),
-                "no document in the fixtures holds the shape {row:?}, which the design's table \
-                 of losses names as something a write does not keep"
+                "no document in the fixtures holds the shape {row:?}, which the catalog of \
+                 frontmatter losses names as something a write does not keep"
             );
         }
     }

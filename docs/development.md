@@ -1,105 +1,94 @@
 # Development
 
-This page is for working on typdoc rather than with it. The [design](design/design.md) is the source of
-truth for what the tool does; where this page and the design disagree, the design wins.
+How to build typdoc, run its tests, and get a change through CI.
+
+## Setup
+
+You need Rust. The repository pins the toolchain in `rust-toolchain.toml` (1.96.0, with rustfmt
+and clippy), and `rustup` picks it up automatically.
+
+```console
+$ git clone https://github.com/thaitype/typdoc
+$ cd typdoc
+$ cargo build
+$ target/debug/typdoc --version
+```
 
 ## The workspace
 
-Four crates, and the split between the first two is load-bearing rather than tidy:
-
-| Crate | What it is |
+| Crate | Contains |
 | --- | --- |
-| `typdoc-core` | Reading, parsing, rules, refs, queries, and every decision. It reaches the environment, the clock and the file system only through a seam. |
-| `typdoc-fs` | The concrete file system, and the only crate that writes a file. It depends on `typdoc-core`, never the other way round. |
-| `typdoc` | The command line: argument parsing, output, exit codes, and the binary that is installed. |
-| `typdoc-testkit` | Test support shared between the crates: fixtures, staging, and the harnesses that read the design. |
+| `crates/typdoc-core` | Parsing, schemas, rules, refs, queries: every decision typdoc makes |
+| `crates/typdoc-fs` | The real file system. The only crate that writes files |
+| `crates/typdoc` | The command-line interface and the installed binary |
+| `crates/typdoc-testkit` | Shared test support: fixtures, staging, golden files |
 
-What may write a file is settled by which crate a piece of code lives in, not by an attribute
-somebody can add. Moving a write into `typdoc-core` undoes that, and the lints below are what says
-so out loud.
+`typdoc-core` never touches the file system, the environment or the clock directly. It goes
+through a trait, and `typdoc-fs` provides the real implementation. That split is enforced, not
+just a convention: each crate's `clippy.toml` bans the calls it isn't allowed to make, test code
+included. If a change seems to need an exception, the code is probably in the wrong crate.
 
-Edition 2024, resolver 3.
+## Running the tests
 
-## Build
-
-```console
-$ cargo build
-```
-
-The binary lands in `target/debug/typdoc`. To install it for use instead, the [README](../README.md) has the
-command.
-
-## Tests: run `scripts/test.sh`, not `cargo test`
+Use the script rather than `cargo test`:
 
 ```console
 $ scripts/test.sh                 # the whole suite
-$ scripts/test.sh ARGS...         # the same, with these arguments instead
-$ scripts/test.sh --self-test     # prove the ceiling stops a runaway
+$ scripts/test.sh -p typdoc-core  # any cargo test arguments
+$ scripts/test.sh --self-test     # check that the memory ceiling works
 ```
 
-The script runs the suite under a memory ceiling of 6144 MB with swap switched off, because a
-loop that could not end once took every byte of the machine it ran on and the kernel killed the
-session along with the run. The numbers behind the ceiling are measured and are written down in
-the script: the suite itself peaks at 229 MB and a cold build followed by a full run peaks at
-1451 MB, both at the cgroup rather than per process, and the run that made the kernel step in
-reached 16 GB. They belong to a four-core machine; more cores build more crates at once and need
-measuring again.
+The script runs the tests under a memory ceiling, so a test stuck in a loop can't take down the
+machine. On Linux it uses `systemd-run`; on macOS it uses its own watchdog. If it can't apply the
+ceiling it stops with an error rather than running without one.
 
-Two things follow that are worth knowing before the first run.
-
-**The script refuses rather than running uncapped.** Without `systemd-run`, or where a user scope
-cannot be started, it exits 2 and says so. A safety net that disappears quietly is worse than
-none, because everyone goes on believing it is there. On a machine without it, put the run under
-another ceiling rather than dropping the ceiling.
-
-**`cargo test` by hand needs a feature.** The shell examples harness puts a stand-in for `typdoc`
-on `PATH`, and that stand-in is a binary of the `typdoc` package behind the `test-stand-in`
-feature, which is off by default so that `cargo install` does not offer it to a caller. The
-workspace run in the script turns it on. A run started by hand does not, and the four tests that
-reach for the stand-in fail on a path that is not there:
+Plain `cargo test` also works, but a few tests need a stand-in binary that's behind a feature
+flag, so pass it:
 
 ```console
 $ cargo test --workspace --features typdoc/test-stand-in
 ```
 
-Naming a feature of one package refuses a run that selects another package alone, which is why
-the script does not add the flag to its passthrough form.
+If `/tmp` is small or full on your machine, point `TMPDIR` somewhere else before running the tests.
 
-## Lints
+## Before you commit
 
-Each crate carries its own `clippy.toml`, and the lists in them are the architecture written as
-a check rather than as a comment.
+The same three checks CI runs:
 
-`typdoc-core` may not call the environment, the home directory, the clock, or any function that
-writes, creates, renames, removes or changes the permissions of a file. Those are reached through
-`deps` or through the `Fs` trait, and the concrete calls live in `typdoc-fs`, which carries no
-such list because it is the place the writing is meant to happen.
+```console
+$ cargo fmt --check
+$ cargo clippy --workspace --all-targets -- -D warnings
+$ scripts/test.sh
+```
 
-`typdoc` and `typdoc-testkit` may not start a process except through the CLI tests' spawn helper
-and the shell examples harness, each of which the list names.
+## CI
 
-**The lists cover test code too, and an `allow` is not the fix.** A test that reaches around the
-seam is exactly the test that stops proving anything about the code that ships, and a lint turned
-off in one place stops being a property of the crate everywhere. A call that seems to need an
-exception is a sign the seam is in the wrong place, which is a design question and belongs in a
-decision record.
+GitHub Actions runs those three checks on every push to `main` and every pull request, on both
+`ubuntu-latest` and `macos-latest`. The workflow is `.github/workflows/ci.yml`.
 
-## Where the truth is
+The Linux and macOS test counts differ by a small fixed number: a handful of tests create files
+whose names aren't valid UTF-8, which macOS file systems don't allow, so those are skipped there.
 
-- [The design](design/design.md) — what typdoc does and why, in full, and the arbiter when documents
-  disagree.
-- The decision records for [phase 1](design/design-decision-phase-1/) and [phase 2](design/design-decision-phase-2/) — the decisions behind
-  the design, each with the research or the measurement it rests on, and a map naming what is
-  still open.
-- The [README](../README.md), [getting started](getting-started.md), [commands](commands.md) and
-  [projects](projects.md) — written for
-  whoever uses the tool. An output printed in any of them is a real one, produced by running it.
+## Where things are documented
 
-## What is not set up
+| For | Where |
+| --- | --- |
+| People using typdoc | `README.md` and `docs/` |
+| Coding agents using typdoc | `skills/typdoc/`, the agent skill |
+| What typdoc should do | `docs/design/spec/` (prose) and `docs/design/catalog/` (the data tests read) |
+| Past decisions | `docs/archived-design/`, frozen |
 
-Neither of these is an oversight to work around quietly; both are open.
+When a change alters what a command prints or accepts, update the user docs and the agent skill
+in the same pull request. The skill states the typdoc version it describes on its first line.
 
-- **There is no CI.** "Held in place by a test" means the test exists, not that anything runs it
-  before a change lands. Running `scripts/test.sh` is on whoever makes the change.
-- **The toolchain is not pinned.** There is no `rust-toolchain.toml`; the documents say only that
-  a recent toolchain is needed. What is built and run today is 1.96.0.
+The tests never read Markdown to learn what typdoc should do. Rule ids, commands, exit codes and
+similar lists live as JSON in `docs/design/catalog/`, and the tests compare the code against
+those.
+
+## Releasing
+
+1. Bump `version` in every crate's `Cargo.toml`.
+2. Add the release to `CHANGELOG.md`.
+3. Update the version on the first line of `skills/typdoc/SKILL.md`, and the install tag in the
+   README and docs.
+4. Merge to `main`, then tag `vX.Y.Z`.

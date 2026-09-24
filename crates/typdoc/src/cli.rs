@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -9,10 +9,10 @@ use serde_json::value::RawValue;
 use serde_json::{Map, Value as Json, json};
 use typdoc_core::{
     Argument, AuditReport, Condition, Deps, Document, DocumentArg, Env, Error, ErrorKind, FieldRef,
-    Finding, ListFilter, ListResult, MvReport, NewTarget, Project, RefField, RefOutcome,
-    RefsDirection, RefsReference, RefsReport, Scope, SetOp, Severity, SortKey, Source, Toc,
-    UnrewrittenReason, UnrewrittenRef, ValidateReport, ValidateScope, Value, discover,
-    discover_for, parse_field, parse_query, resolve_on_disk,
+    Finding, Heading, ListFilter, ListResult, MvReport, NewTarget, Position, Project, RefField,
+    RefName, RefOutcome, RefsDirection, RefsReference, RefsReport, RewrittenRef, Scope, SetOp,
+    Severity, SortKey, Source, Toc, UnrewrittenReason, UnrewrittenRef, ValidateReport,
+    ValidateScope, Value, discover, discover_for, parse_field, parse_query, resolve_on_disk,
 };
 
 /// `--lock-timeout`'s default (design, Concurrency: "Retries with backoff until a timeout
@@ -197,27 +197,15 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
             };
             let parsed = match parse_new_target(target_text, title.as_deref()) {
                 Ok(parsed) => parsed,
-                Err(e) => return failure(true, exit_code(e.kind()), &e),
+                Err(e) => return failure(json, exit_code(e.kind()), &e),
             };
-            // Unlike every other command, `--json` is not checked first: which text form (if
-            // any) is built depends on the parsed target (the bare-key form the design shows for
-            // a coded schema, design `typdoc new`: "stdout: WF-3"; nothing yet for a path), and
-            // parsing is pure, so deciding this after it costs nothing and does not risk a write
-            // whose report is then refused.
-            if !json && matches!(parsed, NewTarget::Path { .. }) {
-                return failure_text(
-                    false,
-                    1,
-                    "the output without --json is not built yet for a path-identified document",
-                );
-            }
             let sets = match set
                 .iter()
                 .map(|raw| parse_set_op(raw))
                 .collect::<Result<Vec<SetOp>, Error>>()
             {
                 Ok(sets) => sets,
-                Err(e) => return failure(true, exit_code(e.kind()), &e),
+                Err(e) => return failure(json, exit_code(e.kind()), &e),
             };
             match new_document(
                 deps,
@@ -229,29 +217,25 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 Ok(document) if json => {
                     success_raw(&raw_object(&[("document", document_json(&document))]))
                 }
-                Ok(document) => {
-                    // `parsed` was refused above unless it is `NewTarget::Coded`, which
-                    // `Project::new_document` always answers with a `key` (design, `typdoc new`:
-                    // "It prints the new key, and nothing else, on standard output").
-                    let key = document.key.as_deref().unwrap_or_default();
-                    Outcome {
-                        code: 0,
-                        stdout: format!("{key}\n"),
-                        stderr: String::new(),
-                    }
-                }
-                Err(e) => failure(true, exit_code(e.kind()), &e),
+                Ok(document) => Outcome {
+                    code: 0,
+                    stdout: document_text(&document),
+                    stderr: String::new(),
+                },
+                Err(e) => failure(json, exit_code(e.kind()), &e),
             }
         }
-        Command::Get { document, json } => {
-            if !json {
-                return failure_text(false, 1, "the output without --json is not built yet");
+        Command::Get { document, json } => match get(deps, &document, cli.namespace.as_deref()) {
+            Ok(document) if json => {
+                success_raw(&raw_object(&[("document", document_json(&document))]))
             }
-            match get(deps, &document, cli.namespace.as_deref()) {
-                Ok(document) => success_raw(&raw_object(&[("document", document_json(&document))])),
-                Err(e) => failure(true, exit_code(e.kind()), &e),
-            }
-        }
+            Ok(document) => Outcome {
+                code: 0,
+                stdout: document_text(&document),
+                stderr: String::new(),
+            },
+            Err(e) => failure(json, exit_code(e.kind()), &e),
+        },
         Command::Set {
             document,
             fields,
@@ -259,12 +243,9 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
             lock_timeout,
             json,
         } => {
-            if !json {
-                return failure_text(false, 1, "the output without --json is not built yet");
-            }
             if fields.is_empty() {
                 return failure_text(
-                    true,
+                    json,
                     1,
                     "set needs at least one `field=value` or `field=` argument",
                 );
@@ -275,11 +256,11 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 .collect::<Result<Vec<SetOp>, Error>>()
             {
                 Ok(sets) => sets,
-                Err(e) => return failure(true, exit_code(e.kind()), &e),
+                Err(e) => return failure(json, exit_code(e.kind()), &e),
             };
             let ifs = match parse_ifs(&if_) {
                 Ok(ifs) => ifs,
-                Err(e) => return failure(true, exit_code(e.kind()), &e),
+                Err(e) => return failure(json, exit_code(e.kind()), &e),
             };
             match set(
                 deps,
@@ -289,8 +270,15 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 Duration::from_secs(lock_timeout),
                 cli.namespace.as_deref(),
             ) {
-                Ok(document) => success_raw(&raw_object(&[("document", document_json(&document))])),
-                Err(e) => failure(true, exit_code(e.kind()), &e),
+                Ok(document) if json => {
+                    success_raw(&raw_object(&[("document", document_json(&document))]))
+                }
+                Ok(document) => Outcome {
+                    code: 0,
+                    stdout: document_text(&document),
+                    stderr: String::new(),
+                },
+                Err(e) => failure(json, exit_code(e.kind()), &e),
             }
         }
         Command::List {
@@ -318,7 +306,15 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 &sort,
                 cli.namespace.as_deref(),
             ) {
-                Ok(result) => list_outcome(&result, limit, fields.as_deref(), &where_, ids, json),
+                Ok((result, multi_namespace)) => list_outcome(
+                    &result,
+                    limit,
+                    fields.as_deref(),
+                    &where_,
+                    ids,
+                    json,
+                    multi_namespace,
+                ),
                 Err(e) => failure(json, exit_code(e.kind()), &e),
             }
         }
@@ -327,34 +323,26 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
             field,
             reverse,
             json,
-        } => {
-            if !json {
-                return failure_text(false, 1, "the output without --json is not built yet");
-            }
-            match refs(
-                deps,
-                &document,
-                reverse,
-                field.as_deref(),
-                cli.namespace.as_deref(),
-            ) {
-                Ok(report) => success(refs_json(&report)),
-                Err(e) => failure(true, exit_code(e.kind()), &e),
-            }
-        }
+        } => match refs(
+            deps,
+            &document,
+            reverse,
+            field.as_deref(),
+            cli.namespace.as_deref(),
+        ) {
+            Ok((report, _)) if json => success(refs_json(&report)),
+            Ok((report, multi_namespace)) => refs_outcome(&report, multi_namespace),
+            Err(e) => failure(json, exit_code(e.kind()), &e),
+        },
         Command::Toc {
             document,
             depth,
             json,
-        } => {
-            if !json {
-                return failure_text(false, 1, "the output without --json is not built yet");
-            }
-            match toc(deps, &document, cli.namespace.as_deref()) {
-                Ok(toc) => success(toc_json(&toc, depth)),
-                Err(e) => failure(true, exit_code(e.kind()), &e),
-            }
-        }
+        } => match toc(deps, &document, cli.namespace.as_deref()) {
+            Ok(toc) if json => success(toc_json(&toc, depth)),
+            Ok(toc) => toc_outcome(&toc, depth),
+            Err(e) => failure(json, exit_code(e.kind()), &e),
+        },
         Command::Validate {
             documents,
             schemas,
@@ -386,13 +374,11 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                     "--schemas and --audit cannot be combined: each describes the whole project in its own way",
                 );
             }
-            // Every other command, and plain `validate`, still refuse the output without
-            // `--json` as not built yet. `--audit` is the one exception: the design gives it its
-            // own text form (Audit mode, the worked "typdoc audit: ..." example), so it is built
-            // here rather than refused alongside the rest.
-            if !json && !audit {
-                return failure_text(false, 1, "the output without --json is not built yet");
-            }
+            // Every other command still refuses the output without `--json` as not built yet.
+            // `validate` no longer does, in any of its three shapes: `--audit` had its own text
+            // form already (Audit mode, the worked "typdoc audit: ..." example); plain and
+            // `--schemas` get theirs here, one line per finding (design, the paragraph
+            // beginning "Output.").
             match validate(
                 deps,
                 &documents,
@@ -423,21 +409,21 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 1,
                 "mv needs a destination: a path to move to, or --renumber <namespace>",
             ),
-            (Some(to), None) => {
-                if !json {
-                    return failure_text(false, 1, "the output without --json is not built yet");
-                }
-                match mv(
-                    deps,
-                    &from,
-                    &to,
-                    Duration::from_secs(lock_timeout),
-                    cli.namespace.as_deref(),
-                ) {
-                    Ok(report) => success_raw(&mv_json(&report)),
-                    Err(e) => failure(true, exit_code(e.kind()), &e),
-                }
-            }
+            (Some(to), None) => match mv(
+                deps,
+                &from,
+                &to,
+                Duration::from_secs(lock_timeout),
+                cli.namespace.as_deref(),
+            ) {
+                Ok((report, _)) if json => success_raw(&mv_json(&report)),
+                Ok((report, multi_namespace)) => Outcome {
+                    code: 0,
+                    stdout: mv_text(&report, multi_namespace),
+                    stderr: String::new(),
+                },
+                Err(e) => failure(json, exit_code(e.kind()), &e),
+            },
             (None, Some(namespace)) => {
                 match mv_renumber(
                     deps,
@@ -446,20 +432,18 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                     Duration::from_secs(lock_timeout),
                     cli.namespace.as_deref(),
                 ) {
-                    Ok(report) if json => success_raw(&mv_json(&report)),
-                    Ok(report) => {
-                        // `Project::mv_renumber` only ever succeeds with a coded document, which
-                        // always carries a key (design, `typdoc mv`: "it prints the new key, and
-                        // nothing else, on standard output", the same shape `typdoc new` prints
-                        // for a coded target).
-                        let key = report.document.key.as_deref().unwrap_or_default();
-                        Outcome {
-                            code: 0,
-                            stdout: format!("{key}\n"),
-                            stderr: String::new(),
-                        }
-                    }
-                    Err(e) => failure(true, exit_code(e.kind()), &e),
+                    Ok((report, _)) if json => success_raw(&mv_json(&report)),
+                    // **Changed (M-10h), deliberate:** the same labeled block plus
+                    // `rewritten:`/`unrewritten:`/`findings:` every other write command's text
+                    // mode prints, replacing what used to be the bare new key on its own line —
+                    // a caller that only wants the key reads it out of `--json` instead, the same
+                    // as any other field (contract, text-output shapes, `mv --renumber`).
+                    Ok((report, multi_namespace)) => Outcome {
+                        code: 0,
+                        stdout: mv_text(&report, multi_namespace),
+                        stderr: String::new(),
+                    },
+                    Err(e) => failure(json, exit_code(e.kind()), &e),
                 }
             }
         },
@@ -645,9 +629,10 @@ fn list(
     wheres: &[String],
     sort: &[String],
     namespace: Option<&str>,
-) -> Result<ListResult, Error> {
+) -> Result<(ListResult, bool), Error> {
     let root = discover(deps.env)?;
     let project = Project::load(&root, deps.env)?;
+    let multi_namespace = project.config().namespaces.len() > 1;
     let scope = project.scope(None, namespace, deps.env)?;
     let collections = split_list(collection);
     let codes = split_list(code);
@@ -665,7 +650,8 @@ fn list(
         wheres: &conditions,
         sort: &sort_keys,
     };
-    project.list_all(&scope, &filter)
+    let result = project.list_all(&scope, &filter)?;
+    Ok((result, multi_namespace))
 }
 
 /// `--collection`/`--code`'s value, split on `,`; absent is the same as empty (every collection).
@@ -709,6 +695,7 @@ fn list_outcome(
     wheres: &[String],
     ids: bool,
     json: bool,
+    multi_namespace: bool,
 ) -> Outcome {
     let matched = &result.documents;
     let stderr = dangling_refs_stderr(&result.dangling_refs);
@@ -727,7 +714,7 @@ fn list_outcome(
     if ids {
         let mut stdout = String::new();
         for doc in listed {
-            stdout.push_str(doc.key.as_deref().unwrap_or(doc.path.as_str()));
+            stdout.push_str(&identity_text(doc, multi_namespace));
             stdout.push('\n');
         }
         return Outcome {
@@ -739,7 +726,7 @@ fn list_outcome(
     let columns = table_columns(fields, wheres);
     Outcome {
         code: 0,
-        stdout: list_table(matched, listed.len(), &columns),
+        stdout: list_table(matched, listed.len(), &columns, multi_namespace),
         stderr,
     }
 }
@@ -811,51 +798,134 @@ fn field_name(field: &FieldRef) -> String {
     }
 }
 
-/// The default text table: one row per document of `matched[..listed_len]`, columns padded to
-/// the width their longest value takes across the whole of `matched` (not only the rows
-/// printed), so that a value the table prints does not change with `--limit` (the ticket's own
-/// criterion: a column's width computed from the listed rows only would move when `--limit`
-/// changes which rows are listed, and this construction cannot do that, since every row's cells
-/// are measured before any row is left out). Columns are separated by two spaces; there is no
-/// header row, since the design gives none.
-fn list_table(matched: &[Document], listed_len: usize, columns: &[String]) -> String {
+/// The default text table: a header row (`path`, `key` or `document`, `title`, then `columns`,
+/// in that order), then one row per document of `matched[..listed_len]`, columns padded to the
+/// width their longest value takes across the whole of `matched` (not only the rows printed)
+/// *and* the header's own labels, so that a value the table prints does not change with `--limit`
+/// (the ticket's own criterion: a column's width computed from the listed rows only would move
+/// when `--limit` changes which rows are listed, and this construction cannot do that, since
+/// every row's cells are measured before any row is left out) and the header stays aligned with
+/// the rows under it. Columns are separated by two spaces.
+///
+/// No header, and nothing at all, when `listed_len` is 0 — whether because `matched` itself is
+/// empty (`list`'s empty-result case, unchanged from before this row existed) or because
+/// `--limit 0` leaves nothing to list: either way a header with no rows under it would be exactly
+/// the "header-with-no-rows" shape the ticket for this row rules out, so both cases are treated
+/// alike rather than only the first.
+///
+/// The identity column is labeled `key` when every document in `matched` has one (a coded
+/// collection), `path` when none does (an uncoded collection) — matching the identity `table_row`
+/// already prints per row (`doc.key.unwrap_or(doc.path)`, qualified `namespace:key` instead of
+/// the bare key when the project has more than one namespace) — and `document` when `matched` is
+/// a genuine mix of both (spanning collections with and without a code): a header must not claim
+/// a column holds something a row in it plainly doesn't, so neither `key` nor `path` alone is
+/// accurate once even one row of each shape is present. The label itself never depends on
+/// `multi_namespace` — it names what kind of value the column holds (a key or a path), not how a
+/// key happens to be spelled. Decided once for the whole table rather than per row so the header
+/// names a single column consistently.
+fn list_table(
+    matched: &[Document],
+    listed_len: usize,
+    columns: &[String],
+    multi_namespace: bool,
+) -> String {
+    if listed_len == 0 {
+        return String::new();
+    }
     let column_count = 2 + columns.len();
-    let rows: Vec<Vec<String>> = matched.iter().map(|doc| table_row(doc, columns)).collect();
-    let mut widths = vec![0usize; column_count];
-    for row in &rows {
+    let rows: Vec<Vec<String>> = matched
+        .iter()
+        .map(|doc| table_row(doc, columns, multi_namespace))
+        .collect();
+    let identity_label = if matched.iter().all(|doc| doc.key.is_some()) {
+        "key"
+    } else if matched.iter().any(|doc| doc.key.is_some()) {
+        "document"
+    } else {
+        "path"
+    };
+    let mut header = Vec::with_capacity(column_count);
+    header.push(identity_label.to_owned());
+    header.push("title".to_owned());
+    header.extend(columns.iter().cloned());
+
+    render_table(&header, &rows, listed_len)
+}
+
+/// The shared column-aligned table shape behind `list_table`, `refs_text` and `validate_text`: a
+/// header row, then up to `listed_len` of `rows`, every column padded to its widest entry across
+/// the whole of `rows` (not only the ones rendered) *and* the header's own labels — see
+/// `list_table`'s doc comment for why widths are measured over every row rather than only the
+/// printed ones. `listed_len == 0` prints nothing at all, not even the header, which is the one
+/// rule every one of these three callers shares: a header with no rows under it is never printed.
+fn render_table(header: &[String], rows: &[Vec<String>], listed_len: usize) -> String {
+    if listed_len == 0 {
+        return String::new();
+    }
+    let mut widths = vec![0usize; header.len()];
+    for row in rows
+        .iter()
+        .map(Vec::as_slice)
+        .chain(std::iter::once(header))
+    {
         for (i, cell) in row.iter().enumerate() {
             widths[i] = widths[i].max(cell.chars().count());
         }
     }
     let mut out = String::new();
+    render_row(&mut out, header, &widths);
     for row in rows.iter().take(listed_len) {
-        let mut line = String::new();
-        for (i, cell) in row.iter().enumerate() {
-            if i > 0 {
-                line.push_str("  ");
-            }
-            line.push_str(cell);
-            if i + 1 < row.len() {
-                line.push_str(&" ".repeat(widths[i] - cell.chars().count()));
-            }
-        }
-        // The padding above never trails past a row's last non-empty cell except when that very
-        // last cell is itself empty (an unset field in the rightmost column): trimmed here so an
-        // empty trailing column leaves no trailing whitespace, without touching a column's own
-        // width (computed above, from `matched`, and untouched by this).
-        out.push_str(line.trim_end());
-        out.push('\n');
+        render_row(&mut out, row, &widths);
     }
     out
 }
 
-fn table_row(doc: &Document, columns: &[String]) -> Vec<String> {
-    let mut row = vec![doc.key.clone().unwrap_or_else(|| doc.path.clone())];
+/// One line of `list_table` (the header or a data row): cells joined by two spaces, each padded
+/// to its column's width except the last, which is trimmed instead — see `list_table`'s own doc
+/// comment for why the last column is trimmed rather than padded.
+fn render_row(out: &mut String, row: &[String], widths: &[usize]) {
+    let mut line = String::new();
+    for (i, cell) in row.iter().enumerate() {
+        if i > 0 {
+            line.push_str("  ");
+        }
+        line.push_str(cell);
+        if i + 1 < row.len() {
+            line.push_str(&" ".repeat(widths[i] - cell.chars().count()));
+        }
+    }
+    // The padding above never trails past a row's last non-empty cell except when that very
+    // last cell is itself empty (an unset field in the rightmost column): trimmed here so an
+    // empty trailing column leaves no trailing whitespace, without touching a column's own
+    // width (computed above, from `matched` and the header, and untouched by this).
+    out.push_str(line.trim_end());
+    out.push('\n');
+}
+
+fn table_row(doc: &Document, columns: &[String], multi_namespace: bool) -> Vec<String> {
+    let mut row = vec![identity_text(doc, multi_namespace)];
     row.push(cell_value(doc, "title"));
     for column in columns {
         row.push(cell_value(doc, column));
     }
     row
+}
+
+/// A document's identity as `list`'s table and `--ids` print it (the design's naming table, "In
+/// this project"): a coded document is its bare `key` when the project has exactly one
+/// namespace, `{namespace}:{key}` when it has several — the same qualification rule
+/// `ref_name_text` applies to a `refs`/`mv` name, and the same separator, so a name either one
+/// prints is always one another command can resolve. An uncoded document (no `key`) is always
+/// its `path`, unaffected by namespace count either way. A coded document with no namespace
+/// should not occur — coding requires a collection, which requires a namespace (`Document::key`'s
+/// own doc comment) — but is handled defensively here by falling back to the bare key rather than
+/// panicking or silently dropping it.
+fn identity_text(doc: &Document, multi_namespace: bool) -> String {
+    match (&doc.key, &doc.namespace) {
+        (Some(key), Some(namespace)) if multi_namespace => format!("{namespace}:{key}"),
+        (Some(key), _) => key.clone(),
+        _ => doc.path.clone(),
+    }
 }
 
 /// One cell of the default table: a pseudo-field read straight off `doc`, a named field read
@@ -892,17 +962,77 @@ fn render_cell(value: &Value) -> String {
     }
 }
 
+/// The labeled block `get`, `set`, and both forms of `new` print without `--json` (contract,
+/// text-output shapes): one `name: value` line per field — `path`, `collection`, `schema`,
+/// `namespace` (present only when the document has one, absent for a file outside every
+/// namespace folder), `key` (present only for a coded document), then the frontmatter fields in
+/// file order (`document.fields` is already "in the order of the file", `Document`'s own doc
+/// comment). `collection` and `schema` are left out when `collection` is empty, the same case
+/// `document_json` already carries its own reason for: a collection name is never empty except
+/// when `mv` has moved a document out of every collection (decision 16), and there is then no
+/// schema to report either.
+///
+/// This is the one function every ticket that prints this block calls (ticket 21's `mv` reuses
+/// it for the destination's `get`-shaped block), so a caller only ever writes this shape once.
+fn document_text(document: &Document) -> String {
+    let mut out = String::new();
+    push_line(&mut out, "path", &document.path);
+    if !document.collection.is_empty() {
+        push_line(&mut out, "collection", &document.collection);
+        push_line(&mut out, "schema", &document.schema);
+    }
+    if let Some(namespace) = &document.namespace {
+        push_line(&mut out, "namespace", namespace);
+    }
+    if let Some(key) = &document.key {
+        push_line(&mut out, "key", key);
+    }
+    for (name, value) in &document.fields {
+        push_line(&mut out, name, &field_text(value));
+    }
+    out
+}
+
+/// One `name: value` line, `name` never escaped or quoted: the field-names principle asks only
+/// that a value be labeled, not that the block be machine-parsed back (that reader uses `--json`
+/// instead).
+fn push_line(out: &mut String, name: &str, value: &str) {
+    out.push_str(name);
+    out.push_str(": ");
+    out.push_str(value);
+    out.push('\n');
+}
+
+/// A field's value for [`document_text`]'s labeled block: as written for text-shaped values,
+/// comma-joined for a list — the same as `render_cell`, which is `list`'s own table cell — except
+/// for a `number`, which prints the digits the document itself holds (`Number::written`) rather
+/// than the value they convert to. This is the write path's existing `[number-text]` rule
+/// (`value_json`, below, holds `--json` to the same rule already); reused here rather than
+/// reimplemented, so a text reader and a `--json` reader are never told two different digit
+/// strings for the same field.
+fn field_text(value: &Value) -> String {
+    match value {
+        Value::Text(text) | Value::Date(text) | Value::Datetime(text) => text.clone(),
+        Value::Empty => String::new(),
+        Value::List(items) => items.join(","),
+        Value::Number(n) => n.written().to_owned(),
+        Value::Bool(b) => b.to_string(),
+    }
+}
+
 fn refs(
     deps: &Deps,
     document: &std::ffi::OsStr,
     reverse: bool,
     field: Option<&str>,
     namespace: Option<&str>,
-) -> Result<RefsReport, Error> {
+) -> Result<(RefsReport, bool), Error> {
     let (root, arg) = discover_for(Argument::parse(document)?, deps.env)?;
     let project = Project::load(&root, deps.env)?;
+    let multi_namespace = project.config().namespaces.len() > 1;
     let scope = scope_for(&project, &arg, namespace, deps.env)?;
-    project.refs(&arg, &scope, reverse, field, deps.env)
+    let report = project.refs(&arg, &scope, reverse, field, deps.env)?;
+    Ok((report, multi_namespace))
 }
 
 /// `mv`: `to` is read the same way `from` is (design.md, Arguments that name a document: "`mv`
@@ -916,15 +1046,17 @@ fn mv(
     to: &std::ffi::OsStr,
     lock_timeout: Duration,
     namespace: Option<&str>,
-) -> Result<MvReport, Error> {
+) -> Result<(MvReport, bool), Error> {
     let (root, from_arg) = discover_for(Argument::parse(from)?, deps.env)?;
     let project = Project::load(&root, deps.env)?;
+    let multi_namespace = project.config().namespaces.len() > 1;
     let to_arg = match Argument::parse(to)? {
         Argument::Named(document) => document,
         Argument::OnDisk(path) => resolve_on_disk(&root, &path, deps.env)?,
     };
     let scope = scope_for(&project, &from_arg, namespace, deps.env)?;
-    project.mv(&from_arg, &to_arg, &scope, lock_timeout, deps)
+    let report = project.mv(&from_arg, &to_arg, &scope, lock_timeout, deps)?;
+    Ok((report, multi_namespace))
 }
 
 /// `mv --renumber`: `namespace` is a bare namespace name, never a document argument, so it is
@@ -937,9 +1069,10 @@ fn mv_renumber(
     namespace: &std::ffi::OsStr,
     lock_timeout: Duration,
     namespace_flag: Option<&str>,
-) -> Result<MvReport, Error> {
+) -> Result<(MvReport, bool), Error> {
     let (root, from_arg) = discover_for(Argument::parse(from)?, deps.env)?;
     let project = Project::load(&root, deps.env)?;
+    let multi_namespace = project.config().namespaces.len() > 1;
     let namespace_text = match namespace.to_str() {
         Some(text) => text,
         None => {
@@ -949,7 +1082,150 @@ fn mv_renumber(
         }
     };
     let scope = scope_for(&project, &from_arg, namespace_flag, deps.env)?;
-    project.mv_renumber(&from_arg, namespace_text, &scope, lock_timeout, deps)
+    let report = project.mv_renumber(&from_arg, namespace_text, &scope, lock_timeout, deps)?;
+    Ok((report, multi_namespace))
+}
+
+/// Both forms of `mv`'s text-mode shape (contract, text-output shapes, `mv`/`mv --renumber`;
+/// ticket 21): the destination's `get`-shaped block (`document_text`, ticket 16's shared
+/// renderer, reused rather than reimplemented), then three lines always present so a clean move
+/// is as loud as a busy one — nothing printed would look indistinguishable from "not built yet"
+/// — `rewritten:` (a count), `unrewritten:` (its own count plus one line per entry), and
+/// `findings:` (its entries or `none`).
+fn mv_text(report: &MvReport, multi_namespace: bool) -> String {
+    let mut out = document_text(&report.document);
+    push_line(&mut out, "rewritten", &rewritten_summary(&report.rewritten));
+    push_unrewritten_lines(&mut out, &report.unrewritten, multi_namespace);
+    push_findings_lines(&mut out, &report.findings);
+    out
+}
+
+/// `rewritten: N ref(s) in M document(s)`: `N` is `rewritten.len()`, but `M` is the number of
+/// *distinct* holders among them, not the same count — a holder rewritten in two fields (or in
+/// one field and its body) still counts as one document. Singular/plural on both counts
+/// independently, since `N` and `M` can differ (one holder, two rewritten refs: "2 refs in 1
+/// document").
+fn rewritten_summary(rewritten: &[RewrittenRef]) -> String {
+    let documents: BTreeSet<&str> = rewritten.iter().map(|r| r.document.as_str()).collect();
+    format!(
+        "{} in {}",
+        count_noun(rewritten.len(), "ref"),
+        count_noun(documents.len(), "document"),
+    )
+}
+
+/// `N noun` or `N nouns` — plural is the noun plus `s`, true of every noun this prints
+/// (`ref`/`refs`, `document`/`documents`); `1` is the only count that takes the singular form,
+/// including `0` ("0 documents", not "0 document").
+fn count_noun(n: usize, noun: &str) -> String {
+    if n == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{n} {noun}s")
+    }
+}
+
+/// `unrewritten:`'s own count, then one line per entry naming the project, document, field and
+/// written form of the ref that was not rewritten (contract, `mv` (plain)); `none` in place of
+/// the count, with no entry lines, when there are none (testing-decisions.md, "Text output": a
+/// clean move's `unrewritten:` shows `none`).
+fn push_unrewritten_lines(out: &mut String, unrewritten: &[UnrewrittenRef], multi_namespace: bool) {
+    if unrewritten.is_empty() {
+        push_line(out, "unrewritten", "none");
+        return;
+    }
+    push_line(out, "unrewritten", &unrewritten.len().to_string());
+    for item in unrewritten {
+        out.push_str(&unrewritten_text(item, multi_namespace));
+        out.push('\n');
+    }
+}
+
+/// One `unrewritten` entry: the holder's identity (`ref_outcome_text`), the field it lives in
+/// (`"$body"` for a body link) and the written form `mv` left untouched. `item.reference.other`
+/// is always `Resolved` here — `mv_reverse_scan` (`typdoc-core`) only ever builds an
+/// `UnrewrittenRef` from a reference it has already destructured as `Resolved` — but this reads
+/// defensively rather than assuming it, since nothing here enforces that invariant across crates.
+fn unrewritten_text(item: &UnrewrittenRef, multi_namespace: bool) -> String {
+    let name = ref_outcome_text(&item.reference.other, multi_namespace);
+    format!(
+        "{name}  {}  {}",
+        item.reference.field, item.reference.written
+    )
+}
+
+/// The other end of a reference, text-mode: the resolved document's name (`ref_name_text`), or
+/// `(unresolved: {reason})` when it did not resolve. Shared by `unrewritten_text` (`mv`'s own
+/// `unrewritten:` lines) and `refs_text` (ticket 29) — both name "the document at the other end
+/// of this reference" and must render it identically, so this is the one place that does.
+fn ref_outcome_text(outcome: &RefOutcome, multi_namespace: bool) -> String {
+    match outcome {
+        RefOutcome::Resolved(name) => ref_name_text(name, multi_namespace),
+        RefOutcome::Unresolved(reason) => format!("(unresolved: {reason})"),
+    }
+}
+
+/// A document's identity, text-mode (the design's naming table, "In this project"/"In an
+/// imported project"): a coded document is its bare `key` when the project has exactly one
+/// namespace, `namespace:key` (e.g. `chief:WF-7`) when it has several; anything else (no `key`
+/// at all) is its bare path either way — with a `project::` prefix in front when the name is of
+/// another project's document (decision 2's `imported-project` reason — not reachable by any
+/// fixture yet, since it needs the reverse-into-imports scan a separate part of this story leaves
+/// as a known gap; see `mv.rs`'s own test file). The `project::` prefix is a wholly separate
+/// concern — the imported project's own namespace count, not this one's — and is unaffected by
+/// `multi_namespace` either way (ticket 32).
+fn ref_name_text(name: &RefName, multi_namespace: bool) -> String {
+    let mut out = String::new();
+    if let Some(project) = &name.project {
+        out.push_str(project);
+        out.push_str("::");
+    }
+    match (&name.namespace, &name.key) {
+        (Some(namespace), Some(key)) if multi_namespace => {
+            out.push_str(namespace);
+            out.push(':');
+            out.push_str(key);
+        }
+        (_, Some(key)) => out.push_str(key),
+        _ => out.push_str(&name.path),
+    }
+    out
+}
+
+/// `findings:`, listing its entries or the word `none` (contract, `mv` (plain)) — the same
+/// schema-satisfaction check `mv --json` already carries (`report.findings`), one line per
+/// finding rather than a count, since a caller reading the text at all is reading it to see what
+/// to go fix.
+fn push_findings_lines(out: &mut String, findings: &[Finding]) {
+    if findings.is_empty() {
+        push_line(out, "findings", "none");
+        return;
+    }
+    out.push_str("findings:\n");
+    for finding in findings {
+        out.push_str(&finding_text(finding));
+        out.push('\n');
+    }
+}
+
+/// One finding, text-mode, for `mv`'s own `findings:` block: `<path>[#field]: <rule> <level>:
+/// <message>`. No shared convention exists yet for a finding's text-mode line — plain/`--schemas`
+/// `validate`'s own text mode is a different ticket, not built on this branch — so this is `mv`'s
+/// own, deterministic rendering, built from the same [`Finding`] shape `--json` already exposes
+/// (`finding_json`).
+fn finding_text(finding: &Finding) -> String {
+    let mut out = finding.path.clone();
+    if let Some(field) = &finding.field {
+        out.push('#');
+        out.push_str(field);
+    }
+    out.push_str(": ");
+    out.push_str(finding.rule);
+    out.push(' ');
+    out.push_str(severity_name(finding.level));
+    out.push_str(": ");
+    out.push_str(&finding.message);
+    out
 }
 
 fn validate(
@@ -994,9 +1270,9 @@ fn validate_args(env: &dyn Env, raw: &[OsString]) -> Result<(PathBuf, Vec<Docume
 /// (design, JSON output), with exit 2 when a finding is an error and 0 otherwise — except under
 /// `--audit`, whose exit code is 0 unless the config itself is invalid (design, Audit mode), and
 /// a config error never reaches this far: it ends the run before a report exists (`validate`'s
-/// own comment on its `?`). `json` chooses between the two output shapes the CLI's own match arm
-/// already decided are the only two reachable here: `--json`, or `--audit` alone, which is the
-/// one command whose text form this ticket builds.
+/// own comment on its `?`). `json` chooses `--json`'s shape; otherwise `--audit` keeps its own
+/// summary text (unchanged, ticket 20), and plain/`--schemas` get `validate_text`'s one line per
+/// finding.
 fn validate_outcome(report: &ValidateReport, json: bool) -> Outcome {
     let code = if report.audit.is_some() {
         0
@@ -1007,14 +1283,55 @@ fn validate_outcome(report: &ValidateReport, json: bool) -> Outcome {
     };
     let stdout = if json {
         format!("{}\n", validate_json(report))
-    } else {
+    } else if report.audit.is_some() {
         audit_text(report)
+    } else {
+        validate_text(report)
     };
     Outcome {
         code,
         stdout,
         stderr: String::new(),
     }
+}
+
+/// The text form of plain `validate` and `validate --schemas` (ticket 20, header row added by
+/// M-16), built from the same finding shape `--json` already carries. A header row (`path`,
+/// `level`, `rule`, `message` — matching `finding_json`'s own field names exactly; `path` even
+/// though the printed value can be `path:line:col`, since that is still the `path` field with a
+/// position folded in), then one line per finding, rendered with `render_table` — the same
+/// column-aligned, two-space-separated shape `list_table` uses, each column padded to its widest
+/// entry across every finding *and* the header labels. A finding with no known position prints
+/// its bare `path`, the same value `--json` gives `line`/`col` when they are absent
+/// (`finding_json`). No findings at all is not a "clean" line — decided (ticket 20, following
+/// `list`'s own precedent, extended by M-16 to the header too): `render_table` returns an empty
+/// string when there is nothing to list, so neither a header nor any row prints, and the exit
+/// code alone carries a clean result.
+fn validate_text(report: &ValidateReport) -> String {
+    let header = vec![
+        "path".to_owned(),
+        "level".to_owned(),
+        "rule".to_owned(),
+        "message".to_owned(),
+    ];
+    let rows: Vec<Vec<String>> = report
+        .findings
+        .iter()
+        .map(|finding| {
+            let path = match finding.position {
+                Some(Position { line, col }) => format!("{}:{line}:{col}", finding.path),
+                None => finding.path.clone(),
+            };
+            vec![
+                path,
+                severity_name(finding.level).to_owned(),
+                finding.rule.to_owned(),
+                finding.message.clone(),
+            ]
+        })
+        .collect();
+    let listed_len = rows.len();
+    render_table(&header, &rows, listed_len)
 }
 
 fn validate_json(report: &ValidateReport) -> Json {
@@ -1346,12 +1663,19 @@ fn failure(json: bool, code: u8, error: &Error) -> Outcome {
     }
 }
 
+/// Whether a heading at `level` belongs in a result cut off at `depth`: every heading when
+/// `depth` is absent, or only those no deeper than it. Shared by `toc_json` and `toc_outcome` so
+/// the two shapes cannot silently drift onto different headings from a copy of the same filter.
+fn within_depth(level: u8, depth: Option<u8>) -> bool {
+    depth.is_none_or(|depth| level <= depth)
+}
+
 /// The headings down to `depth`, each with the `end` it has in the whole document.
 fn toc_json(toc: &Toc, depth: Option<u8>) -> Json {
     let headings: Vec<Json> = toc
         .headings
         .iter()
-        .filter(|heading| depth.is_none_or(|depth| heading.level <= depth))
+        .filter(|heading| within_depth(heading.level, depth))
         .map(|heading| {
             json!({
                 "level": heading.level,
@@ -1371,6 +1695,151 @@ fn toc_json(toc: &Toc, depth: Option<u8>) -> Json {
         )),
         "headings": headings,
     })
+}
+
+/// `toc`'s text-mode table: a header row (`line`, `end`, `level`, `heading`), then one row per
+/// heading down to `depth` — the same filter `toc_json` applies, so both shapes agree on which
+/// headings are listed.
+///
+/// Two different empty results, told apart on stderr (M-14, 2026-09-24): a document with no
+/// headings at all prints nothing at all, `list`'s own silent-empty precedent — but a document
+/// that HAS headings, all of them filtered out by `--depth`, says so on stderr in one line
+/// (`no headings at depth ≤ N (M heading(s) is/are deeper)`), stdout still empty, exit still 0.
+/// Silence alone can't tell "nothing here" from "wrong depth for this document," which is the
+/// gap M-14 closes; `--json` is unaffected either way.
+fn toc_outcome(toc: &Toc, depth: Option<u8>) -> Outcome {
+    let headings: Vec<&Heading> = toc
+        .headings
+        .iter()
+        .filter(|heading| within_depth(heading.level, depth))
+        .collect();
+    // `within_depth` with `depth: None` keeps every heading, so a non-empty document's filtered
+    // result can only come up empty when `depth` is `Some` — this `if let` is what makes that
+    // the only way into the branch below, rather than a separate check the two conditions have
+    // to be kept in sync with by hand.
+    if let Some(depth) = depth
+        && headings.is_empty()
+        && !toc.headings.is_empty()
+    {
+        let deeper = toc.headings.len();
+        return Outcome {
+            code: 0,
+            stdout: String::new(),
+            stderr: format!(
+                "no headings at depth \u{2264} {depth} ({deeper} {} {} deeper)\n",
+                if deeper == 1 { "heading" } else { "headings" },
+                if deeper == 1 { "is" } else { "are" },
+            ),
+        };
+    }
+    Outcome {
+        code: 0,
+        stdout: toc_table(&headings),
+        stderr: String::new(),
+    }
+}
+
+/// Renders `headings` as a table with a header row, columns padded to the width their longest
+/// value takes (header included), the same two-space-separated, last-column-unpadded convention
+/// `list_table` uses for its own table. Empty when `headings` is empty: no header line for a
+/// document (or `--depth`) with nothing to show.
+fn toc_table(headings: &[&Heading]) -> String {
+    if headings.is_empty() {
+        return String::new();
+    }
+    const HEADER: [&str; 4] = ["line", "end", "level", "heading"];
+    let rows: Vec<[String; 4]> = headings
+        .iter()
+        .map(|heading| {
+            [
+                heading.line.to_string(),
+                heading.end.to_string(),
+                heading.level.to_string(),
+                heading.text.clone(),
+            ]
+        })
+        .collect();
+    let mut widths = HEADER.map(str::len);
+    for row in &rows {
+        for (i, cell) in row.iter().enumerate() {
+            widths[i] = widths[i].max(cell.chars().count());
+        }
+    }
+    let mut out = String::new();
+    push_toc_row(&mut out, &HEADER.map(str::to_owned), &widths);
+    for row in &rows {
+        push_toc_row(&mut out, row, &widths);
+    }
+    out
+}
+
+/// One padded, trimmed row of `toc_table`: cells separated by two spaces, each padded to its
+/// column's width except the last, which is never padded (so a trailing `heading` column carries
+/// no dangling whitespace).
+fn push_toc_row(out: &mut String, cells: &[String; 4], widths: &[usize; 4]) {
+    let mut line = String::new();
+    for (i, cell) in cells.iter().enumerate() {
+        if i > 0 {
+            line.push_str("  ");
+        }
+        line.push_str(cell);
+        if i + 1 < cells.len() {
+            line.push_str(&" ".repeat(widths[i] - cell.chars().count()));
+        }
+    }
+    out.push_str(line.trim_end());
+    out.push('\n');
+}
+
+/// `refs`'s text-mode shape (design.md, `typdoc refs`'s own worked example, header row added by
+/// M-16, corrected by ticket 29 to name the other document): a header row, then one line per
+/// reference — the document at the other end (`document`), the field it was found in
+/// (`field`), and, for the forward direction only, the target as it is written (`written`) — in
+/// the order `Project::refs` already gives them (respecting `--reverse` and `--field`, both
+/// applied before `refs_text` ever sees the report). No header and no output at all when there
+/// are no refs.
+fn refs_outcome(report: &RefsReport, multi_namespace: bool) -> Outcome {
+    Outcome {
+        code: 0,
+        stdout: refs_text(report, multi_namespace),
+        stderr: String::new(),
+    }
+}
+
+/// A header row, then one row per reference, rendered with `render_table` — the same
+/// column-aligned, two-space-separated shape `list_table` uses, each column padded to its widest
+/// entry across every reference *and* the header labels. No header and no output at all when
+/// there are no refs — `render_table` returns an empty string when there is nothing to list.
+///
+/// The first two columns are always `document` (`ref_outcome_text` — the resolved name, or
+/// `(unresolved: {reason})`) and `field`. `written` is a third column only for
+/// `RefsDirection::Out`: there, `written` can genuinely differ from the resolved `document` (an
+/// alias, a relative form), so it is real information. For `RefsDirection::In` (`--reverse`),
+/// `written` is only how the holder happened to write the ref back to the document already named
+/// on the command line — it adds nothing `document` doesn't already say, so it is dropped, header
+/// included (ticket 29).
+fn refs_text(report: &RefsReport, multi_namespace: bool) -> String {
+    let forward = report.direction == RefsDirection::Out;
+    let mut header = vec!["document".to_owned(), "field".to_owned()];
+    if forward {
+        header.push("written".to_owned());
+    }
+    let rows: Vec<Vec<String>> = report
+        .refs
+        .iter()
+        .map(|reference| {
+            let mut row = vec![
+                ref_outcome_text(&reference.other, multi_namespace),
+                reference.field.clone(),
+            ];
+            if forward {
+                row.push(reference.written.clone());
+            }
+            row
+        })
+        .collect();
+    let listed_len = rows.len();
+    render_table(&header, &rows, listed_len)
 }
 
 /// `refs`' report: the document asked about, `direction`, and its references in the order
@@ -1434,11 +1903,14 @@ fn reference_json(reference: &RefsReference) -> Map<String, Json> {
 }
 
 /// `mv`'s own shape (decision 17): the document under its new name, in the same object `get`
-/// prints; `unrewritten`, the reference object `refs --reverse` uses (`reference_json`) with
-/// `reason` added; and `findings`, the finding object `validate` already prints. Built as JSON
-/// text rather than `serde_json::Value`, the same reason `document_json` is: `document` may hold
-/// a `number` whose digits `serde_json::Number` cannot carry unchanged.
+/// prints; `rewritten` (ticket 21, M-10h, additive to every field this already printed), one
+/// `{document, field, before, after}` per ref `mv` actually rewrote; `unrewritten`, the reference
+/// object `refs --reverse` uses (`reference_json`) with `reason` added; and `findings`, the
+/// finding object `validate` already prints. Built as JSON text rather than `serde_json::Value`,
+/// the same reason `document_json` is: `document` may hold a `number` whose digits
+/// `serde_json::Number` cannot carry unchanged.
 fn mv_json(report: &MvReport) -> Box<RawValue> {
+    let rewritten: Vec<Box<RawValue>> = report.rewritten.iter().map(rewritten_json).collect();
     let unrewritten: Vec<Box<RawValue>> = report.unrewritten.iter().map(unrewritten_json).collect();
     let findings: Vec<Box<RawValue>> = report
         .findings
@@ -1447,9 +1919,23 @@ fn mv_json(report: &MvReport) -> Box<RawValue> {
         .collect();
     raw_object(&[
         ("document", document_json(&report.document)),
+        ("rewritten", raw_array(&rewritten)),
         ("unrewritten", raw_array(&unrewritten)),
         ("findings", raw_array(&findings)),
     ])
+}
+
+/// One entry of `mv`'s `rewritten` (ticket 21): the holder's path, the field it lives in
+/// (`"$body"` for a body link), and its written form before and after — the full detail behind
+/// the text summary's count, per the contract's own reasoning for there being no `--verbose`
+/// flag (`git diff` or `--json` is where that detail lives).
+fn rewritten_json(item: &RewrittenRef) -> Box<RawValue> {
+    raw(&json!({
+        "document": item.document,
+        "field": item.field,
+        "before": item.before,
+        "after": item.after,
+    }))
 }
 
 /// One entry of `mv`'s `unrewritten`: the reference object plus `reason`, one of the three

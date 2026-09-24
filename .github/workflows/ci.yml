@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: scripts/test.sh
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml at the repo root pins the toolchain (1.96.0) and
+      # its rustfmt/clippy components. rustup, preinstalled on GitHub-hosted
+      # runners (both ubuntu-latest and macos-latest), reads that file and
+      # installs the matching toolchain (and components) on first use, so no
+      # separate toolchain-install action is needed here.
+      - run: rustc --version
+      # Proves the memory ceiling itself is enforced on this runner before
+      # trusting it for the real run below. On Linux this exercises the
+      # existing systemd-run --user --scope path (already known to work from
+      # this ticket's earlier, ubuntu-only build). On macOS, `ulimit -v` was
+      # tried first and found non-functional on a real runner ("ulimit -v is
+      # not settable in this shell") — the cap here is a background watchdog
+      # that polls available memory via `vm_stat` and SIGKILLs the whole
+      # process group if it drops too far below a freshly-measured baseline
+      # (see scripts/test.sh's own header comment for the full history and
+      # why raw `vm_stat` "free" alone reads misleadingly low on macOS). This
+      # step is where that watchdog's own self-test proves itself on real
+      # hardware. A failure here means the cap doesn't work on this OS, not
+      # that the suite is broken — worth telling apart if this step is the
+      # one that goes red.
+      #
+      # TMPDIR is set inline, per step, as a plain shell variable read from
+      # $RUNNER_TEMP — not through a workflow- or job-level `env:` block.
+      # GitHub Actions doesn't resolve the `runner` context there (only
+      # `github`/`vars`/`secrets`/`inputs`/`needs`/`strategy`/`matrix` are
+      # available in a workflow- or job-level `env:`); a workflow that tries
+      # anyway isn't rejected loudly — the whole file silently fails to
+      # register under its own `name:` and every job comes up empty (found by
+      # bisecting a real failed run, not read from documentation alone: see
+      # the story's own build notes). `runner.temp` and `$RUNNER_TEMP` are
+      # the same disk-backed, per-job directory on every OS, ubuntu or macOS.
+      - run: TMPDIR="$RUNNER_TEMP" scripts/test.sh --self-test
+      # The real gate. scripts/test.sh itself now prints how many tests
+      # passed and refuses to report success if that count is zero, so a
+      # step that silently ran nothing shows up as red here, not as a quiet
+      # skip. The ubuntu-latest and macos-latest counts do NOT match by a
+      # small, named amount: seven tests that create a file named by raw,
+      # non-UTF-8 bytes are `#[cfg_attr(not(target_os = "linux"), ignore =
+      # "...")]`, confirmed necessary on a real macos-latest run, 2026-09-24
+      # — APFS refuses to create such a filename at all (EILSEQ), where
+      # Linux's filesystems allow arbitrary bytes in a name. Those seven show
+      # up as "ignored," not silently missing, in the macOS job's own count.
+      - run: TMPDIR="$RUNNER_TEMP" scripts/test.sh
+
+  fmt:
+    name: cargo fmt --check
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustc --version
+      - run: cargo fmt --check
+
+  clippy:
+    name: cargo clippy
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustc --version
+      - run: cargo clippy --workspace --all-targets -- -D warnings

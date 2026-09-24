@@ -11,8 +11,7 @@ use common::{NOTES, Ran, Scratch, Spawn, fixture};
 use typdoc::registry;
 use typdoc_core::rules::{RULES, UNIMPLEMENTED_RULES};
 use typdoc_testkit::check::{Kind, acknowledged, broken_coverage, exact_set, tripped_rules};
-use typdoc_testkit::design::{command_names, exit_codes};
-use typdoc_testkit::fixtures::{broken_entries, design_text};
+use typdoc_testkit::fixtures::broken_entries;
 use typdoc_testkit::golden;
 
 fn set<T: Ord + Clone>(items: &[T]) -> BTreeSet<T> {
@@ -21,6 +20,43 @@ fn set<T: Ord + Clone>(items: &[T]) -> BTreeSet<T> {
 
 fn names(items: &[&str]) -> BTreeSet<String> {
     items.iter().map(|item| item.to_string()).collect()
+}
+
+/// Reads a catalog document's JSON body (through `typdoc_testkit::fixtures::read_catalog`, the
+/// one shared reader ticket 12's other two rewired tests also use) and returns the array field
+/// `field` from it, as raw `serde_json::Value`s -- `typdoc` has no direct `serde` dependency of
+/// its own to derive typed structs with, so the catalogs this file reads are read as JSON
+/// values instead.
+fn catalog_array(relative: &str, field: &str) -> Vec<serde_json::Value> {
+    let body: serde_json::Value = typdoc_testkit::fixtures::read_catalog(relative);
+    body[field]
+        .as_array()
+        .unwrap_or_else(|| panic!("{relative}: `{field}` is not an array"))
+        .clone()
+}
+
+fn design_commands() -> BTreeSet<String> {
+    catalog_array("docs/design/catalog/commands.md", "commands")
+        .into_iter()
+        .map(|value| {
+            value
+                .as_str()
+                .unwrap_or_else(|| panic!("a command entry is not a string: {value}"))
+                .to_owned()
+        })
+        .collect()
+}
+
+fn design_exit_codes() -> BTreeSet<u8> {
+    catalog_array("docs/design/catalog/exit-codes.md", "codes")
+        .into_iter()
+        .map(|value| {
+            let code = value
+                .as_u64()
+                .unwrap_or_else(|| panic!("an exit code entry is not a number: {value}"));
+            u8::try_from(code).unwrap_or_else(|_| panic!("exit code {code} does not fit in u8"))
+        })
+        .collect()
 }
 
 #[test]
@@ -33,7 +69,7 @@ fn every_command_the_design_names_is_built_or_listed_and_nothing_listed_is_built
             present: "the registry",
             list: "unimplemented_commands",
         },
-        &command_names(&design_text()).unwrap(),
+        &design_commands(),
         &built,
         &names(registry::UNIMPLEMENTED_COMMANDS),
     );
@@ -245,7 +281,7 @@ fn every_exit_code_of_the_design_is_produced_or_listed_and_nothing_listed_is_pro
             present: "the codes a test produces",
             list: "unproduced_exit_codes",
         },
-        &exit_codes(&design_text()).unwrap(),
+        &design_exit_codes(),
         &produced_exit_codes(),
         &set(registry::UNPRODUCED_EXIT_CODES),
     );

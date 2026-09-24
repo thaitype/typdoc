@@ -1,203 +1,277 @@
 # Getting started
 
-This walks through building a typdoc project from an empty folder. Every command below was run as it is written; the outputs are the real ones.
+In this tutorial we'll build a small ticket tracker for a website project, starting from an empty
+folder. By the end we'll have tickets that block each other, a note that links to them, and a
+project that typdoc checks for us. It takes about ten minutes.
 
-You need a recent Rust toolchain to install the tool, and nothing else.
+You need typdoc installed (`typdoc --version` should print `typdoc 0.2.0`). The
+[README](../README.md#install) shows how.
 
-```console
-$ git clone https://github.com/thaitype/typdoc
-$ cd typdoc && cargo install --path crates/typdoc
-```
+## 1. Create the project
 
-That puts `typdoc` in `~/.cargo/bin`, and this page calls it by that name throughout.
-
-## A project is a folder with a `.typdoc` folder in it
-
-Make a folder to work in and give it a config. The smallest one names only the version:
+Make a folder and tell typdoc it's a project:
 
 ```console
-$ mkdir -p my-notes/.typdoc/collections my-notes/schemas my-notes/notes
-$ cd my-notes
+$ mkdir website && cd website
+$ git init
+$ mkdir -p .typdoc/collections .typdoc/schemas tickets notes
 $ echo '{ "version": 1 }' > .typdoc/config.json
+$ echo '.typdoc/locks/' > .gitignore
 ```
 
-Nothing else about the folder is special, and nothing about the documents you put in it has to change.
+`.typdoc/config.json` is what marks the folder as a typdoc project. We'll keep the schemas in
+`.typdoc/schemas/` so everything typdoc reads sits in one place; a schema can live anywhere in the
+project, though, since collections point at it by path. typdoc creates
+`.typdoc/locks/` while it writes, and it doesn't belong in git, hence the `.gitignore`.
 
-## Say what a document looks like
-
-A *schema* says which fields a document has and what they hold:
+Check that typdoc sees it:
 
 ```console
-$ cat > schemas/note.json <<'JSON'
-{
-  "name": "note",
-  "fields": {
-    "title":  { "type": "string", "required": true },
-    "status": { "type": "enum", "values": ["draft", "done"] }
-  }
-}
-JSON
+$ typdoc validate
 ```
 
-A *collection* says which files that schema applies to:
+No output and no error: an empty project is a valid one.
 
-```console
-$ echo '{ "match": "notes/*.md", "schema": "schemas/note.json" }' > .typdoc/collections/notes.json
-```
+## 2. Describe a ticket
 
-## Write a document
-
-An ordinary Markdown file with YAML frontmatter:
-
-```console
-$ cat > notes/first.md <<'MD'
----
-title: My first note
-status: draft
----
-
-# My first note
-
-The body is yours. typdoc reads its headings and links and changes nothing.
-MD
-```
-
-## Ask typdoc about it
-
-```console
-$ typdoc validate --json
-{"summary":{"scope":"all","strict":false,"checked":{"namespaces":["default"],"documents":1},"findings":{"error":0,"warn":0,"info":0}},"findings":[]}
-```
-
-One document checked and nothing to report. Now break it on purpose, by giving `status` a value the schema does not allow:
-
-```console
-$ printf -- '---\ntitle: Second\nstatus: nope\n---\n' > notes/second.md
-$ typdoc validate --json
-```
+A schema says what a ticket looks like. Save this as `.typdoc/schemas/ticket.json`:
 
 ```json
-{
-  "rule": "frontmatter.types",
-  "message": "the field `status` is not one of the schema's values: `nope`",
-  "path": "notes/second.md",
-  "level": "error"
-}
-```
-
-The command ends with exit code 2 when a finding is an error, which is what makes it useful in a hook or in CI. Delete `notes/second.md` before going on.
-
-## Give documents keys
-
-A schema with a `code` gives its documents keys such as `WF-1`, and the collection's `match` says where the key sits in the file name:
-
-```console
-$ mkdir tickets
-$ cat > schemas/ticket.json <<'JSON'
 {
   "name": "ticket",
-  "code": "WF",
+  "code": "TK",
   "fields": {
     "title":      { "type": "string", "required": true },
-    "status":     { "type": "enum", "values": ["open", "done"] },
-    "blocked_by": { "type": "ref[]", "target": ["ticket"] }
+    "status":     { "type": "enum", "values": ["open", "doing", "done"], "default": "open" },
+    "blocked_by": { "type": "ref[]", "target": ["ticket"], "default": [] }
   }
 }
-JSON
-$ echo '{ "match": "tickets/{key}.md", "schema": "schemas/ticket.json" }' > .typdoc/collections/tickets.json
-$ printf -- '---\ntitle: First ticket\nstatus: done\n---\n' > tickets/WF-1.md
 ```
 
-Validating now reports something you have not seen yet:
+Every ticket needs a title. Its status is one of three values and starts as `open`. It can list
+other tickets that block it.
 
-```console
-$ typdoc validate --json
-```
+The `code` makes tickets numbered: they'll be called `TK-1`, `TK-2` and so on.
+
+Now tell typdoc where tickets live. Save this as `.typdoc/collections/tickets.json`:
 
 ```json
-{
-  "rule": "state.missing",
-  "message": "the collection `tickets` has documents in this namespace and no `last` recorded in its state file"
-}
+{ "match": "tickets/{key}.md", "schema": ".typdoc/schemas/ticket.json" }
 ```
 
-A collection whose schema has a `code` keeps the last number it handed out in a state file, so that two people numbering tickets at once do not collide. `WF-1` was written by hand rather than by typdoc, so nothing has recorded it yet; tell typdoc the highest number you have used, once, the same way you would when adopting typdoc on a folder of documents that already have keys:
+## 3. Create some tickets
 
 ```console
-$ mkdir -p .typdoc/state
-$ echo '{ "tickets": { "last": 1 } }' > .typdoc/state/default.json
-$ typdoc validate --json
-{"summary":{"scope":"all","strict":false,"checked":{"namespaces":["default"],"documents":2},"findings":{"error":0,"warn":0,"info":0}},"findings":[]}
+$ typdoc new TK "Choose a static site generator"
+path: tickets/TK-1.md
+collection: tickets
+schema: ticket
+namespace: default
+key: TK-1
+blocked_by: 
+status: open
+title: Choose a static site generator
 ```
 
-## Create and change documents
-
-From here on, `typdoc new` allocates the key and writes the state file for you — there is no state file to maintain by hand once one exists:
+typdoc picked the number, created `tickets/TK-1.md`, and filled in the defaults. Two more, one of
+them blocked by the first:
 
 ```console
-$ typdoc new WF "Second ticket" --set status=open --set blocked_by=WF-1 --json
-{"document":{"path":"tickets/WF-2.md","namespace":"default","key":"WF-2","code":"WF","collection":"tickets","schema":"ticket","fields":{"title":"Second ticket","status":"open","blocked_by":["WF-1"]}}}
+$ typdoc new TK "Write the landing page" --set blocked_by=TK-1
+$ typdoc new TK "Buy a domain"
 ```
 
-The coded form of `new` takes a title and prints the bare key without `--json`; every other field goes through `--set`, the same `field=value` syntax `set` takes below. `new` validates the candidate before it allocates anything, so a `--set` that fails never burns a number, and it creates the file with no replace: a destination that already exists is refused, nothing written.
+Open `tickets/TK-2.md`. It's an ordinary Markdown file:
 
-`typdoc set` changes fields on a document that already exists, under the same lock as the write:
+```markdown
+---
+blocked_by:
+- TK-1
+status: open
+title: Write the landing page
+---
+```
+
+Anything you write below the frontmatter is yours; typdoc won't change it.
+
+## 4. Ask questions
+
+List everything:
 
 ```console
-$ typdoc set WF-1 title="The first ticket" --json
-{"document":{"path":"tickets/WF-1.md","namespace":"default","key":"WF-1","code":"WF","collection":"tickets","schema":"ticket","fields":{"title":"The first ticket","status":"done"}}}
+$ typdoc list
+key   title
+TK-1  Choose a static site generator
+TK-2  Write the landing page
+TK-3  Buy a domain
 ```
 
-Only `title` changed; every other field, and everything about the file that is not frontmatter, reads back exactly as it did. `typdoc mv` moves or renames a document and rewrites every ref this project holds to it; a coded document such as these two keeps its key within its own namespace and needs `mv --renumber <namespace>` to leave it, which [projects](projects.md) and [commands](commands.md) cover. None of the three writes anything without the namespace's lock, and all three refuse rather than guess wherever the destination is ambiguous.
-
-## Follow the links
-
-`blocked_by` is a ref field, so typdoc knows `WF-2` points at `WF-1`, and can answer in both directions:
+Now something more useful: which open tickets can we start right now, because nothing blocking
+them is unfinished?
 
 ```console
-$ typdoc refs WF-1 --reverse --json
+$ typdoc list --where status=open --where 'ref.all(blocked_by).status=done'
+key   title                           status  blocked_by
+TK-1  Choose a static site generator  open
+TK-3  Buy a domain                    open
 ```
+
+`TK-2` isn't there, because `TK-1` isn't done yet. The single quotes matter: they stop the shell
+from reading `(` and `)` itself.
+
+## 5. Work a ticket
+
+Start on `TK-1`, but only if it's still open:
+
+```console
+$ typdoc set TK-1 status=doing --if status=open
+path: tickets/TK-1.md
+...
+status: doing
+title: Choose a static site generator
+```
+
+Run the same command again:
+
+```console
+$ typdoc set TK-1 status=doing --if status=open
+typdoc: `status=open` is false
+```
+
+Nothing was written this time. If two people try to claim the same ticket, only one of them gets
+it.
+
+Finish it and ask the same question as before:
+
+```console
+$ typdoc set TK-1 status=done
+$ typdoc list --where status=open --where 'ref.all(blocked_by).status=done'
+key   title                   status  blocked_by
+TK-2  Write the landing page  open    TK-1
+TK-3  Buy a domain            open
+```
+
+`TK-2` is ready now.
+
+## 6. Catch a mistake
+
+Edit `tickets/TK-3.md` by hand and change its status to something the schema doesn't allow:
+
+```markdown
+status: in-progress
+```
+
+Then check the project:
+
+```console
+$ typdoc validate
+path             level  rule               message
+tickets/TK-3.md  error  frontmatter.types  the field `status` is not one of the schema's values: `in-progress`
+```
+
+Put it right with `set`, which checks the value before writing:
+
+```console
+$ typdoc set TK-3 status=doing
+$ typdoc validate
+```
+
+Clean again.
+
+## 7. Add notes that link to tickets
+
+Notes don't need numbers, so their schema has no `code`. Save `.typdoc/schemas/note.json`:
 
 ```json
-{ "path": "tickets/WF-2.md", "field": "blocked_by", ... }
+{ "name": "note", "fields": { "title": { "type": "string", "required": true } } }
 ```
 
-A ref that points at nothing is reported by `validate`, which is the thing that makes a folder of Markdown hold together as documents rather than as files.
+and `.typdoc/collections/notes.json`:
 
-## Ask questions
+```json
+{ "match": "notes/*.md", "schema": ".typdoc/schemas/note.json" }
+```
+
+A note without a code is named by its path, which you choose:
 
 ```console
-$ typdoc list --collection tickets --where status=open --where 'ref.all(blocked_by).status=done'
-WF-2  Second ticket  open  WF-1
+$ typdoc new notes/site-ideas.md --set title="Ideas for the site"
 ```
 
-That is the question worth asking a folder of tickets: what is open and not waiting on anything unfinished. `--where` may repeat, and every condition must hold. A condition can follow a ref, as `ref.all(blocked_by).status=done` does, and `all` is true for a document with no blockers at all.
+Open `notes/site-ideas.md` and add a body with ordinary Markdown links:
 
-`--collection tickets` is doing real work there. Without it the query spans every collection, and `status=open` is an error rather than an empty result, because the `note` schema allows `draft` and `done` and not `open`. A field name or an enum value that no schema in scope knows is a mistake worth hearing about, not a query that quietly matches nothing.
+```markdown
+## Hosting
 
-## Starting from notes you already have
+Whatever we pick in [the generator ticket](../tickets/TK-1.md) decides this.
 
-The walkthrough above builds a project from nothing. Adopting typdoc on a folder that already exists is the other way round, and `--audit` is the mode for it: it answers "what would I have to fix to use this here", and it ends with 0 whatever it finds, so you can run it on a folder you have not decided about yet.
+## Look and feel
 
-Take a folder holding five Markdown files, three under `notes/`, a `README.md` and a scratch file under `drafts/`. Give it the smallest config, one collection and one schema, and ask:
+Keep it plain. See [the landing page ticket](../tickets/TK-2.md).
+```
+
+And one more note, `notes/weekly.md`, that links to the first:
+
+```markdown
+---
+title: Weekly notes
+---
+
+Started collecting [site ideas](site-ideas.md).
+```
+
+typdoc reads those links. Ask what points at `TK-1`:
 
 ```console
-$ typdoc validate --audit
-typdoc audit: 1 collections, 5 files (2 in no collection)
-
-notes  3 files   frontmatter.unknown 1 warn
-
-in no collection: README.md, drafts/scratch.md (2)
-
-no frontmatter: notes/plain.md (1)
+$ typdoc refs TK-1 --reverse
+document             field
+notes/site-ideas.md  $body
+TK-2                 blocked_by
 ```
 
-Every file is accounted for: three in the `notes` collection, of which one has a field the schema does not name; two in no collection at all; and one of the three that has no frontmatter and so was listed rather than checked. Two and two and one make five, which is the point of the summary — it never reports less work than there is.
+`$body` means a link in the Markdown body; `blocked_by` is the frontmatter field.
 
-From there, adopting is a loop: widen `match` until the files you meant to cover are covered, add fields to the schema until the warnings are ones you care about, and leave the rest uncollected on purpose. When the audit is as clean as you want it, `validate` without `--audit` is the gate to put in a hook or in CI.
+## 8. Rename a file without breaking links
 
-## Where to go next
+`site-ideas.md` isn't a great name. Rename it with typdoc:
 
-- [Projects](projects.md) — namespaces, imports, match templates, and every field option a schema has.
-- [Commands](commands.md) — the eight commands, their options, and their exit codes.
-- [The example project](../examples/) — the project this page builds, ready to copy.
+```console
+$ typdoc mv notes/site-ideas.md notes/website.md
+path: notes/website.md
+collection: notes
+schema: note
+namespace: default
+title: Ideas for the site
+rewritten: 1 ref in 1 document
+unrewritten: none
+findings: none
+```
+
+Look at `notes/weekly.md`:
+
+```markdown
+Started collecting [site ideas](website.md).
+```
+
+typdoc found the link and rewrote it. Had we used `git mv` instead, that link would now point at
+a file that doesn't exist, and `typdoc validate` would say so.
+
+```console
+$ typdoc validate
+```
+
+Still clean.
+
+## What we built
+
+We have a project with two kinds of document: numbered tickets that block each other, and notes
+named by path that link to tickets and to each other. typdoc hands out ticket numbers, answers
+questions about the tickets, refuses values the schema doesn't allow, and keeps links working when
+files move. The files themselves are still plain Markdown.
+
+Where to go next:
+
+- Already have a folder of Markdown files? [Add typdoc to it](how-to/adopt-an-existing-folder.md).
+- Want to know what else `--where` can do? See [query syntax](reference/queries.md).
+- Curious why ticket numbers work the way they do? Read
+  [keys, numbers, and why they're never reused](explanation/keys-and-numbers.md).

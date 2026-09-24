@@ -384,17 +384,25 @@ fn a_value_the_default_table_prints_does_not_change_with_limit() {
 
     assert_eq!(full.code, 0, "stderr: {}", full.stderr);
     assert_eq!(cut.code, 0, "stderr: {}", cut.stderr);
-    let first_line_of_full = full.stdout.lines().next().unwrap();
-    assert_eq!(cut.stdout.trim_end(), first_line_of_full);
+    let full_lines: Vec<&str> = full.stdout.lines().collect();
+    let cut_lines: Vec<&str> = cut.stdout.lines().collect();
+    // The header (driven off the whole matched set, not the listed one) is identical either way.
+    assert_eq!(
+        cut_lines[0], full_lines[0],
+        "header must not depend on --limit"
+    );
+    // T-1's own row (the first row under the header) must also be identical either way.
+    let t1_line_of_full = full_lines[1];
+    assert_eq!(cut_lines.get(1), Some(&t1_line_of_full));
     // And, concretely, `title` is padded to fit T-2's ten-character title (9 padding spaces
     // after T-1's one-character title, plus the 2-space column separator) even though `--limit
     // 1` never prints T-2 at all: a width taken from the listed rows alone would pad `A` to only
     // its own width, giving 2 spaces before `open`, not 11.
-    let gap = first_line_of_full.split("A").nth(1).unwrap();
+    let gap = t1_line_of_full.split("A").nth(1).unwrap();
     let spaces_before_open = gap.len() - gap.trim_start_matches(' ').len();
     assert_eq!(
         spaces_before_open, 11,
-        "{first_line_of_full:?} is not padded to T-2's title width"
+        "{t1_line_of_full:?} is not padded to T-2's title width"
     );
 }
 
@@ -410,15 +418,64 @@ fn the_default_table_shows_identity_title_and_every_field_used_in_where() {
     );
 
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
-    // Only WF-1 and WF-3 carry `context`; the row must show the key, the title and the value of
-    // `context`, in that order, as columns.
+    // A header row names the key, the title and `context`, in that order, above the rows;
+    // only WF-1 and WF-3 carry `context`, so each row must show the key, the title and the
+    // value of `context`, in that same column order.
     let lines: Vec<&str> = ran.stdout.lines().collect();
-    assert_eq!(lines.len(), 2);
-    assert!(lines[0].starts_with("WF-1"), "{lines:?}");
-    assert!(lines[0].contains("Ticket one"), "{lines:?}");
-    assert!(lines[0].contains("chief::WF-5"), "{lines:?}");
-    assert!(lines[1].starts_with("WF-3"), "{lines:?}");
-    assert!(lines[1].contains("WF-2"), "{lines:?}");
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    assert_eq!(
+        lines[0].split_whitespace().collect::<Vec<_>>(),
+        ["key", "title", "context"],
+        "{lines:?}"
+    );
+    assert!(lines[1].starts_with("WF-1"), "{lines:?}");
+    assert!(lines[1].contains("Ticket one"), "{lines:?}");
+    assert!(lines[1].contains("chief::WF-5"), "{lines:?}");
+    assert!(lines[2].starts_with("WF-3"), "{lines:?}");
+    assert!(lines[2].contains("WF-2"), "{lines:?}");
+}
+
+#[test]
+fn the_header_row_names_path_for_a_path_identified_collection() {
+    let ran = list(&fixture("valid/refs"), &["--collection", "notes"]);
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    let lines: Vec<&str> = ran.stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(
+        lines[0].split_whitespace().collect::<Vec<_>>(),
+        ["path", "title"],
+        "{lines:?}"
+    );
+    assert!(lines[1].starts_with("notes/a.md"), "{lines:?}");
+}
+
+#[test]
+fn the_header_row_names_document_when_the_matched_set_mixes_coded_and_path_identified_documents() {
+    // No `--collection`/`--code`: `valid/refs` spans both `tickets` (coded) and `notes`
+    // (path-identified). This is a genuine mix -- some matched documents have a key, some don't
+    // -- so the identity column is labeled `document` (ticket 29): `key` would wrongly claim
+    // every row holds one, when `notes/a.md`'s own row plainly holds a path instead -- the same
+    // identity `table_row` already prints per row (`doc.key.unwrap_or(doc.path)`) is unaffected,
+    // only the header's label changes.
+    let ran = list(&fixture("valid/refs"), &[]);
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    let lines: Vec<&str> = ran.stdout.lines().collect();
+    assert_eq!(lines.len(), 5, "{lines:?}");
+    assert_eq!(
+        lines[0].split_whitespace().collect::<Vec<_>>(),
+        ["document", "title"],
+        "{lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.starts_with("WF-1")),
+        "a coded row still prints its key: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.starts_with("notes/a.md")),
+        "an uncoded row still prints its path: {lines:?}"
+    );
 }
 
 #[test]
@@ -436,10 +493,38 @@ fn fields_overrides_the_where_derived_columns() {
     );
 
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
-    for line in ran.stdout.lines() {
+    let mut lines = ran.stdout.lines();
+    let header = lines.next().unwrap();
+    assert_eq!(
+        header.split_whitespace().collect::<Vec<_>>(),
+        ["key", "title", "collection"],
+        "{header:?}"
+    );
+    for line in lines {
         assert!(line.contains("tickets"), "{line:?}");
     }
     assert!(!ran.stdout.contains("chief::WF-5"), "{}", ran.stdout);
+}
+
+#[test]
+fn the_default_table_prints_nothing_for_an_empty_result_not_a_header_alone() {
+    let ran = list(&fixture("valid/refs"), &["--where", "title=NoSuchTitle"]);
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stdout, "", "no header when there is nothing under it");
+}
+
+#[test]
+fn limit_zero_leaves_no_header_with_zero_rows_under_it() {
+    let project = three_tickets();
+
+    let ran = list(project.path(), &["--limit", "0"]);
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(
+        ran.stdout, "",
+        "a header above zero listed rows is the same mistake as a header above an empty result"
+    );
 }
 
 #[test]
@@ -453,6 +538,90 @@ fn ids_prints_one_key_or_path_per_line() {
 #[test]
 fn ids_and_json_cannot_be_combined() {
     error_of(&list(&fixture("valid/refs"), &["--ids", "--json"]), 1);
+}
+
+// ---------------------------------------------------------------------------------------------
+// M-20 (ticket 32): a coded document's identity in `list`'s table and in `--ids` is the bare
+// `key` only when the project has exactly one namespace; `namespace:key` when it has several
+// (the design's own naming table) — matching what `ref_name_text` already prints for `refs`/`mv`.
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn ids_qualifies_a_coded_documents_key_when_the_project_has_several_namespaces() {
+    // `valid/several-namespaces` has two namespaces, `story-1` and `story-2`, each with a
+    // document coded `WF-1` — this ticket's own Direction 1 repro: the bare key alone is
+    // ambiguous project-wide (passing it back to another command exits 1), so `--ids` must print
+    // each one qualified by its own namespace.
+    let ran = list(
+        &fixture("valid/several-namespaces"),
+        &["--collection", "tickets", "--where", "key=WF-1", "--ids"],
+    );
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    let mut ids: Vec<&str> = ran.stdout.lines().collect();
+    ids.sort();
+    assert_eq!(ids, ["story-1:WF-1", "story-2:WF-1"]);
+}
+
+#[test]
+fn list_table_qualifies_a_coded_documents_key_when_the_project_has_several_namespaces() {
+    let ran = list(
+        &fixture("valid/several-namespaces"),
+        &["--collection", "tickets"],
+    );
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    let lines: Vec<&str> = ran.stdout.lines().collect();
+    assert_eq!(lines.len(), 4, "{lines:?}");
+    // The header still says `key` (ticket 29's header logic is unaffected by this ticket: it
+    // names what kind of value the column holds, not how a key happens to be spelled).
+    assert_eq!(
+        lines[0].split_whitespace().collect::<Vec<_>>()[0],
+        "key",
+        "{lines:?}"
+    );
+    let identities: Vec<&str> = lines[1..]
+        .iter()
+        .map(|line| line.split_whitespace().next().unwrap())
+        .collect();
+    assert!(identities.contains(&"story-1:WF-1"), "{identities:?}");
+    assert!(identities.contains(&"story-2:WF-1"), "{identities:?}");
+    assert!(identities.contains(&"story-2:WF-9"), "{identities:?}");
+}
+
+#[test]
+fn list_table_and_ids_stay_bare_when_the_project_has_exactly_one_namespace() {
+    // `valid/refs` has a single (default) namespace: unaffected by Direction 1's fix, both
+    // shapes still print the bare key exactly as before — the regression this ticket must not
+    // introduce.
+    let ids = list(&fixture("valid/refs"), &["--code", "WF", "--ids"]);
+    assert_eq!(ids.code, 0, "stderr: {}", ids.stderr);
+    let mut lines: Vec<&str> = ids.stdout.lines().collect();
+    lines.sort();
+    assert_eq!(lines, ["WF-1", "WF-2", "WF-3"]);
+
+    let table = list(&fixture("valid/refs"), &["--code", "WF"]);
+    assert_eq!(table.code, 0, "stderr: {}", table.stderr);
+    assert!(table.stdout.contains("WF-1"), "{}", table.stdout);
+    assert!(!table.stdout.contains("default:WF-1"), "{}", table.stdout);
+}
+
+#[test]
+fn a_mixed_list_result_qualifies_only_the_coded_rows_in_a_multi_namespace_project() {
+    // `valid/several-namespaces`, scoped to the `story-*` namespaces: tickets (coded) and notes
+    // (uncoded) both match — coded rows must show `namespace:key`, uncoded rows keep their bare
+    // path, unaffected either way (the design's own rule for an uncoded document).
+    let ran = list(
+        &fixture("valid/several-namespaces"),
+        &["--namespace", "story-*"],
+    );
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert!(ran.stdout.contains("story-1:WF-1"), "{}", ran.stdout);
+    assert!(ran.stdout.contains("story-2:WF-1"), "{}", ran.stdout);
+    assert!(ran.stdout.contains("story-2:WF-9"), "{}", ran.stdout);
+    assert!(ran.stdout.contains("story-1/notes/a.md"), "{}", ran.stdout);
+    assert!(ran.stdout.contains("story-2/notes/a.md"), "{}", ran.stdout);
 }
 
 // ---------------------------------------------------------------------------------------------
