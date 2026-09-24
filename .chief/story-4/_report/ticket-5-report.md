@@ -35,11 +35,12 @@ done
   `cargo publish --workspace --dry-run --allow-dirty` actually ran, packaged all three crates in
   dependency order, correctly skipped `typdoc-testkit`; both new YAML files parsed structurally
   valid (`actionlint` wasn't available in this environment — flagged as a real gap, see below).
-- **Still needs a real CI run to fully close out:** the ticket's own acceptance criterion (a green
-  `publish-check` run on this story's PR, `ci.yml`'s jobs still running unaffected, run id
-  recorded) can only be confirmed once this branch is actually pushed and a PR/CI run exists —
-  that hasn't happened yet from this local build. This is the one item that needs a live GitHub
-  Actions run to be trusted as the gate, not something further local work can close.
+- **Acceptance criterion closed out:** `thaitype/typdoc#4` (branch `story-4-namespace-ignore` →
+  `main`) shows both `publish-check` jobs green —
+  `cargo publish --dry-run (ubuntu-latest)`/`(macos-latest)`, PR run
+  https://github.com/thaitype/typdoc/actions/runs/36043126502 — alongside `ci.yml`'s `test`,
+  `fmt`, `clippy` all green on the same PR run (https://github.com/thaitype/typdoc/actions/runs/36043126481).
+  16/16 checks passed across both the `push` and `pull_request` triggered runs.
 - Found and fixed two pre-existing `rustfmt` violations in `crates/typdoc/tests/namespaces.rs`
   (inherited from ticket 2's merge, mechanical line-wraps only) — fixed here since leaving them
   would fail `ci.yml`'s `fmt` job on this PR regardless of this ticket's own work.
@@ -47,4 +48,4 @@ done
   `/chief-review-code` clean both axes (one fixed-immediately nit: missing `name:` on
   `publish.yml`'s two jobs). Checked and independently re-checked for story/ticket
   references in code/YAML comments — none found.
-- Commit `5b9d0bb` on `story-4-namespace-ignore`.
+- Commit `48b1e60` on `story-4-namespace-ignore`.
