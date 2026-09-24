@@ -65,12 +65,15 @@ Some refs to the old name can't be rewritten. `unrewritten` lists each one with 
 
 - `imported-project`: the ref is in another project that imports this one. typdoc never writes to
   another project. Go there and update it.
+- `mention`: a plain-text mention of the moved key ("we decided this in WF-1"), not a ref at all,
+  so `mv` never rewrites it — but it still surfaces here, at move time, so you don't have to wait
+  for a later `typdoc validate` to find it.
 - `links-rule-off`: the ref is a body link in a document where the `body.links` rule is switched
   off, so typdoc doesn't track that document's links.
 
-Mentions of a key in plain text ("we decided this in WF-1") are never refs, so `mv` never rewrites
-them. If your project turns on the `body.mentions` rule, `typdoc validate` reports mentions of
-keys that no longer exist, and you can fix them by hand.
+If your project turns on the `body.mentions` rule, `typdoc validate` independently reports the
+same mentions once they no longer resolve, agreeing with what `mv` already told you. Fix either
+kind of leftover — a mention or a rule-off ref — by hand.
 
 For the full list, with the file and field of each one, use `--json`:
 

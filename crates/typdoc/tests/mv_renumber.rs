@@ -663,6 +663,196 @@ fn a_renumber_that_leaves_a_ref_unrewritten_prints_its_own_count_and_entry_line(
     );
 }
 
+// ---------------------------------------------------------------------------------------------
+// M-22 (ticket 35): a plain-text body mention of the moved key is surfaced in `unrewritten`
+// itself, at move time, instead of being left for a later `validate` run to discover alone.
+// ---------------------------------------------------------------------------------------------
+
+/// The exact repro from the ticket: a document's body says the bare key in ordinary prose, no
+/// ref field and no markdown link around it at all. Before this fix, `unrewritten` said nothing
+/// about it; now it carries one entry with `reason: mention`, `field: "$body"`, the mention's own
+/// written text, and its line/col position (line 5: three frontmatter lines, a blank line, then
+/// the body's first line; col 5: `See ` is four characters before `WF-5` starts).
+#[test]
+fn renumber_lists_a_plain_text_mention_of_the_moved_key_in_unrewritten() {
+    let project = project();
+    project.file(
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "notes/*.md", "schema": "note.json" }"#,
+    );
+    project.file(
+        "note.json",
+        r#"{ "name": "note", "fields": { "title": { "type": "string" } } }"#,
+    );
+    project.file("story-1/tickets/WF-5.md", "---\ntitle: One\n---\n");
+    project.file(
+        "story-1/notes/holder.md",
+        "---\ntitle: Holder\n---\n\nSee WF-5 for background, no link here.\n",
+    );
+
+    let ran = renumber(&project, "WF-5", "story-3");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let out = ran.stdout_json();
+    let unrewritten = out["unrewritten"].as_array().expect("array");
+    assert_eq!(unrewritten.len(), 1, "{unrewritten:?}");
+    assert_eq!(unrewritten[0]["reason"], json!("mention"));
+    assert_eq!(unrewritten[0]["path"], json!("story-1/notes/holder.md"));
+    assert_eq!(unrewritten[0]["field"], json!("$body"));
+    assert_eq!(unrewritten[0]["written"], json!("WF-5"));
+    assert_eq!(unrewritten[0]["line"], json!(5));
+    assert_eq!(unrewritten[0]["col"], json!(5));
+    assert_eq!(
+        project.read("story-1/notes/holder.md"),
+        "---\ntitle: Holder\n---\n\nSee WF-5 for background, no link here.\n",
+        "a mention is never rewritten, only reported"
+    );
+}
+
+/// Both `mv` forms report the same way (design: `unrewritten`/`findings` are "always present" for
+/// both) — the plain-text form of the same repro, this time through the text golden rather than
+/// `--json`.
+#[test]
+fn renumber_prints_the_mention_entry_in_the_text_golden() {
+    let project = project();
+    project.file(
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "notes/*.md", "schema": "note.json" }"#,
+    );
+    project.file(
+        "note.json",
+        r#"{ "name": "note", "fields": { "title": { "type": "string" } } }"#,
+    );
+    project.file("story-1/tickets/WF-5.md", "---\ntitle: One\n---\n");
+    project.file(
+        "story-1/notes/holder.md",
+        "---\ntitle: Holder\n---\n\nSee WF-5 for background, no link here.\n",
+    );
+
+    let ran = renumber_bare(&project, "WF-5", "story-3");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(
+        ran.stdout,
+        "path: story-3/tickets/WF-1.md\n\
+         collection: tickets\n\
+         schema: ticket\n\
+         namespace: story-3\n\
+         key: WF-1\n\
+         title: One\n\
+         rewritten: 0 refs in 0 documents\n\
+         unrewritten: 1\n\
+         story-1/notes/holder.md  $body  WF-5\n\
+         findings: none\n"
+    );
+}
+
+/// A negative case: a document mentioning a different key entirely — not the one being moved —
+/// is never reported.
+#[test]
+fn renumber_does_not_report_a_mention_of_an_unrelated_key() {
+    let project = project();
+    project.file(
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "notes/*.md", "schema": "note.json" }"#,
+    );
+    project.file(
+        "note.json",
+        r#"{ "name": "note", "fields": { "title": { "type": "string" } } }"#,
+    );
+    project.file("story-1/tickets/WF-5.md", "---\ntitle: One\n---\n");
+    project.file("story-1/tickets/WF-9.md", "---\ntitle: Nine\n---\n");
+    project.file(
+        "story-1/notes/holder.md",
+        "---\ntitle: Holder\n---\n\nSee WF-9 for background, unrelated to this move.\n",
+    );
+
+    let ran = renumber(&project, "WF-5", "story-3");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout_json()["unrewritten"], json!([]));
+}
+
+/// A negative case, alongside the positive: a formal ref/link to the moved key is still rewritten
+/// normally in the very same holder that also carries an unrelated plain-text mention of it —
+/// this ticket only adds a new `unrewritten` entry, it does not change how a formal reference is
+/// handled.
+#[test]
+fn renumber_still_rewrites_a_formal_ref_while_separately_reporting_a_mention() {
+    let project = project();
+    project.file(
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "notes/*.md", "schema": "note.json" }"#,
+    );
+    project.file(
+        "note.json",
+        r#"{ "name": "note", "fields": {
+            "title": { "type": "string" },
+            "see": { "type": "ref", "target": "*" }
+        } }"#,
+    );
+    project.file("story-1/tickets/WF-5.md", "---\ntitle: One\n---\n");
+    project.file(
+        "story-1/notes/holder.md",
+        "---\ntitle: Holder\nsee: WF-5\n---\n\nAlso mentioned in prose as WF-5 here.\n",
+    );
+
+    let ran = renumber(&project, "WF-5", "story-3");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(
+        project.read("story-1/notes/holder.md"),
+        "---\ntitle: Holder\nsee: story-3:WF-1\n---\n\nAlso mentioned in prose as WF-5 here.\n",
+        "the formal `see` ref is rewritten to the new key; the plain-text mention is left as \
+         written"
+    );
+    let out = ran.stdout_json();
+    let unrewritten = out["unrewritten"].as_array().expect("array");
+    assert_eq!(unrewritten.len(), 1, "{unrewritten:?}");
+    assert_eq!(unrewritten[0]["reason"], json!("mention"));
+    assert_eq!(unrewritten[0]["written"], json!("WF-5"));
+}
+
+/// Belt and suspenders: a subsequent `validate` run, with `body.mentions` turned on, still
+/// independently reports the same mention as broken (`body.mentions WF-5 not found`) — two
+/// different code paths reaching the same conclusion, `mv` proactively at move time and
+/// `validate` afterward.
+#[test]
+fn a_subsequent_validate_run_agrees_with_the_mention_mv_already_reported() {
+    let project = project();
+    project.file(
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "notes/*.md", "schema": "note.json", "validation": { "body.mentions": { "level": "warn" } } }"#,
+    );
+    project.file(
+        "note.json",
+        r#"{ "name": "note", "fields": { "title": { "type": "string" } } }"#,
+    );
+    project.file("story-1/tickets/WF-5.md", "---\ntitle: One\n---\n");
+    project.file(
+        "story-1/notes/holder.md",
+        "---\ntitle: Holder\n---\n\nSee WF-5 for background, no link here.\n",
+    );
+
+    let ran = renumber(&project, "WF-5", "story-3");
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let mv_out = ran.stdout_json();
+    assert_eq!(mv_out["unrewritten"][0]["reason"], json!("mention"));
+
+    let validated = common::Spawn::args(["validate", "--json"])
+        .cwd(project.path())
+        .run();
+    let findings = validated.stdout_json()["findings"].clone();
+    let findings = findings.as_array().expect("array");
+    assert!(
+        findings.iter().any(|f| f["rule"] == json!("body.mentions")
+            && f["path"] == json!("story-1/notes/holder.md")
+            && f["message"] == json!("WF-5 not found")),
+        "validate should independently agree that the mention `mv` already reported now points \
+         nowhere: {findings:?}"
+    );
+}
+
 /// The already-fixed error path (contract decision 4, ticket 21's own item 4): without `--json`,
 /// `--renumber`'s own refusal (renumbering into the document's own namespace) prints plain text
 /// on stderr, never the `--json` error object — the same case

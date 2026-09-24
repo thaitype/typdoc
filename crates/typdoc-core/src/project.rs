@@ -4375,7 +4375,87 @@ impl Project {
                 .or_default()
                 .push(reference);
         }
+        unrewritten.extend(self.mv_reverse_mentions(&reverse.document)?);
         Ok((rewrite_by_holder, unrewritten))
+    }
+
+    /// Every plain-text body mention (`links::mentions`, the same machinery `body.mentions`
+    /// checks with) of `from`'s own key, across every document of the project, each reported as
+    /// an [`UnrewrittenRef`] with [`UnrewrittenReason::Mention`] — M-22's fix: `mv`/
+    /// `mv --renumber` used to leave a plain-text mention of the moved key for a later
+    /// `validate` to discover alone, instead of surfacing it itself at move time.
+    ///
+    /// A mention is always key-shaped (`links::mentions`'s own doc comment: "a bare key, or one
+    /// written with a sibling or import prefix" — never a path), so this only has anything to
+    /// find when `from` itself resolves to a coded document (`from.key` is `Some`); a
+    /// path-identified document has no key for a mention to ever name, so this returns nothing
+    /// for it without reading a single file — in particular, a plain `mv` (as opposed to
+    /// `--renumber`) never reaches the loop below at all: a coded document cannot change path
+    /// under plain `mv` (refused earlier, in `mv` itself), so `mv`'s own reverse scan only ever
+    /// runs this against an uncoded `from`.
+    ///
+    /// This is a second full-project read, deliberately separate from the formal-refs reverse
+    /// scan `self.refs(..., reverse, ...)` above and from `Project::incoming_refs` (used only by
+    /// `list`'s `refby.*` filter): both of those already discard each document's raw text once
+    /// they have parsed it into fields and body links, and neither is set up to hand that text
+    /// back out for a second, unrelated pass (`links::mentions` needs the raw file text,
+    /// frontmatter included, to compute its own line/col positions). Threading raw text out of
+    /// either would reshape a method `refs --reverse`/`list` also depend on for a concern only
+    /// `mv` has; a second read, paid only when `from` actually has a key to look for (never on a
+    /// plain `mv`, only on `--renumber`, which is already the heavier of the two paths, writing
+    /// a new state file and allocating a key), is the smaller change.
+    fn mv_reverse_mentions(&self, from: &RefName) -> Result<Vec<UnrewrittenRef>, Error> {
+        let Some(from_key) = &from.key else {
+            return Ok(Vec::new());
+        };
+        let mut holders: Vec<(&str, &Indexed)> = self.index.iter().collect();
+        holders.sort_by_key(|(path, _)| *path);
+        let mut found = Vec::new();
+        for (path, entry) in holders {
+            let collection = &self.collections[entry.collection];
+            let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
+            let options = rule_options(
+                "body.mentions",
+                &self.config.validation,
+                &collection.validation,
+            );
+            let inline_code = bool_option(&options, "inlineCode", true);
+            let fenced_code = bool_option(&options, "fencedCode", false);
+            // A document whose frontmatter does not parse contributes nothing here, the same as
+            // it contributes no `body.*` finding to a whole-project `validate` and no ref to
+            // `refs --reverse`'s own reverse scan above (that scan's own doc comment gives the
+            // same reasoning): its own `frontmatter.parse` finding is a different rule's job.
+            let Ok(mentions) = links::mentions(&text, inline_code, fenced_code) else {
+                continue;
+            };
+            for mention in mentions {
+                // The same prefix-stripping `mention_missing` uses, but compared directly
+                // against `from`'s own key rather than asked whether it currently resolves:
+                // before the move, it still does, so `mention_missing` would always say
+                // "not missing" and this would never fire — the wrong question at this point.
+                let key = mention
+                    .written
+                    .rsplit(':')
+                    .next()
+                    .unwrap_or(&mention.written);
+                if key != from_key {
+                    continue;
+                }
+                found.push(UnrewrittenRef {
+                    reference: RefsReference {
+                        other: RefOutcome::Resolved(self.ref_name_of(path)),
+                        field: "$body".to_owned(),
+                        written: mention.written.clone(),
+                        position: Some(Position {
+                            line: mention.line,
+                            col: mention.col,
+                        }),
+                    },
+                    reason: UnrewrittenReason::Mention,
+                });
+            }
+        }
+        Ok(found)
     }
 
     /// The namespaces `mv`/`mv --renumber` must lock, in the order Lock order gives (decision

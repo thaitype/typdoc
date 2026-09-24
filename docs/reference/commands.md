@@ -297,8 +297,8 @@ findings: none
 
 `--json` adds the details: `rewritten` lists each rewritten ref (`document`, `field`, `before`,
 `after`), `unrewritten` lists refs that still point at the old name with a `reason`
-(`imported-project`, `links-rule-off`), and `findings` lists what the new location's schema
-rejects. A move with findings still happens and exits 0.
+(`imported-project`, `mention`, `links-rule-off`), and `findings` lists what the new location's
+schema rejects. A move with findings still happens and exits 0.
 
 The destination existing is exit 7, with nothing written. An interrupted `mv` can be finished by
 running the same command again.
