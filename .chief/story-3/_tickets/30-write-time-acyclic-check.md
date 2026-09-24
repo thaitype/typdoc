@@ -1,7 +1,7 @@
 # 30: M-18 — `set`/`new` must refuse a write that forms a cycle on an `acyclic` field
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None (can start immediately)
 
 **Mild's decision (M-18), 2026-09-24, relayed by Aria, found running a real release build.**
