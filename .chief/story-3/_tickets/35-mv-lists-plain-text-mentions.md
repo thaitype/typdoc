@@ -1,7 +1,7 @@
 # 35: M-22 — `mv` must list plain-text mentions of the moved key in `unrewritten`
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None (can start immediately)
 
 **Mild's decision (M-22), 2026-09-24, relayed by Aria, found running a real release build.**
