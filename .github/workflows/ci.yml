@@ -5,19 +5,6 @@ on:
   pull_request:
     branches: [main]
 
-env:
-  # scripts/test.sh insists on TMPDIR pointed at a disk-backed directory (see
-  # the script's own header comment: on the machine story 2 ran on, /tmp was
-  # backed by memory and a runaway test took the whole box down with it).
-  # RUNNER_TEMP is GitHub Actions' own equivalent: a directory every runner
-  # guarantees exists, is backed by the runner's own disk, and is unique to
-  # and cleaned up with the job — the same shape of fix as story 2's, without
-  # hard-coding any one machine's path into the workflow. `runner.temp` is a
-  # core Actions context value, not an ubuntu-specific one: it resolves on
-  # macos-latest runners the same way (a per-job disk-backed temp directory
-  # under $RUNNER_TEMP), so no per-OS branching is needed here.
-  TMPDIR: ${{ runner.temp }}
-
 jobs:
   test:
     name: scripts/test.sh
@@ -45,16 +32,29 @@ jobs:
       # A failure here means the cap doesn't work on this OS, not that the
       # suite is broken — worth telling apart if this step is the one that
       # goes red.
-      - run: scripts/test.sh --self-test
+      #
+      # TMPDIR is set inline, per step, as a plain shell variable read from
+      # $RUNNER_TEMP — not through a workflow- or job-level `env:` block.
+      # GitHub Actions doesn't resolve the `runner` context there (only
+      # `github`/`vars`/`secrets`/`inputs`/`needs`/`strategy`/`matrix` are
+      # available in a workflow- or job-level `env:`); a workflow that tries
+      # anyway isn't rejected loudly — the whole file silently fails to
+      # register under its own `name:` and every job comes up empty (found by
+      # bisecting a real failed run, not read from documentation alone: see
+      # the story's own build notes). `runner.temp` and `$RUNNER_TEMP` are
+      # the same disk-backed, per-job directory on every OS, ubuntu or macOS.
+      - run: TMPDIR="$RUNNER_TEMP" scripts/test.sh --self-test
       # The real gate. scripts/test.sh itself now prints how many tests
       # passed and refuses to report success if that count is zero, so a
       # step that silently ran nothing shows up as red here, not as a quiet
-      # skip. Compare this count between the ubuntu-latest and macos-latest
-      # runs in the Actions log: same suite, same source, so the counts
-      # should match unless there's a real, named platform difference (none
-      # is known as of this workflow — every test in this workspace is
-      # `#[cfg(unix)]` at most, never `#[cfg(target_os = "linux")]`).
-      - run: scripts/test.sh
+      # skip. The ubuntu-latest and macos-latest counts do NOT match by a
+      # small, named amount: seven tests that create a file named by raw,
+      # non-UTF-8 bytes are `#[cfg_attr(not(target_os = "linux"), ignore =
+      # "...")]`, confirmed necessary on a real macos-latest run, 2026-09-24
+      # — APFS refuses to create such a filename at all (EILSEQ), where
+      # Linux's filesystems allow arbitrary bytes in a name. Those seven show
+      # up as "ignored," not silently missing, in the macOS job's own count.
+      - run: TMPDIR="$RUNNER_TEMP" scripts/test.sh
 
   fmt:
     name: cargo fmt --check

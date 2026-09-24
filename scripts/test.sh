@@ -21,25 +21,40 @@
 #
 # TWO OSES, TWO MECHANISMS. Linux has cgroups, reached here through
 # `systemd-run --user --scope`, which caps resident memory (`MemoryMax`)
-# directly and can be told to refuse swap. macOS has no cgroups and no
-# user-facing resident-memory cap; the only per-process lever a plain bash
-# script can reach there is `ulimit -v` (RLIMIT_AS), which caps virtual
-# address space, not resident memory. Those are not the same quantity: on
-# Darwin, virtual size sits well above resident size for almost any process,
-# because the dyld shared cache and unused-but-reserved allocator arenas are
-# mapped into address space without ever being paid for in RSS. Reusing the
-# Linux number verbatim as a macOS `ulimit -v` value would risk killing an
-# ordinary, non-runaway `cargo test` before it does any work, which is worse
-# than not capping at all: a ceiling that can't tell "just started" from
-# "runaway" isn't a ceiling. CEILING_MB_MACOS below is picked with that
-# overhead in mind, but it is a reasoned estimate made on a Linux machine —
-# not a measurement — and unverified. See CEILING_MB_MACOS's own comment.
+# directly and can be told to refuse swap.
 #
-# Whichever mechanism runs, `--self-test` is how it proves itself: a runaway
-# that would reach a stop point if nothing intervened. If a macOS run's own
-# `--self-test` step doesn't come back "stopped," that's real evidence
-# `ulimit -v` isn't enforcing here, not a hypothetical — see the "Extra care
-# for the macOS leg" note this script's own ticket carries.
+# macOS has no cgroups, and `ulimit -v` (RLIMIT_AS) — the first mechanism
+# tried here — turned out not to be a real option either: confirmed on a
+# real `macos-latest` GitHub-hosted runner, 2026-09-24, not assumed from
+# documentation, that plain `ulimit -v` is refused outright ("ulimit -v is
+# not settable in this shell") on that platform's bash. There is no
+# per-process kernel memory cap a plain bash script can reach on Darwin.
+#
+# The mechanism here instead is a background watchdog: run the command with
+# job control on (so it gets its own process group), poll the *system's*
+# free memory every 0.2 s via `vm_stat`, and SIGKILL the whole process group
+# the moment free memory drops by more than the ceiling *from the baseline
+# measured right before the command started* — not from total physical
+# memory, which a first real run (2026-09-24) showed was the wrong
+# reference point: a fixed "total minus ceiling" threshold assumed a
+# baseline free-at-idle figure that was never measured, and on the real
+# runner it was already below that threshold before the command even ran,
+# so the watchdog fired on its first sample and killed nothing but time.
+# Measuring the baseline per run instead answers "did this command's own
+# usage grow by more than the ceiling," regardless of whatever the runner's
+# baseline happens to be. This works because a GitHub-hosted runner is
+# otherwise idle — nothing else of consequence competes for memory during
+# the run — so "free memory fell by more than the ceiling since baseline"
+# and "our command used more than the ceiling" are the same fact there,
+# even though the mechanism doesn't touch the command's own limits at all.
+# It is soft (a fast-growing process can overshoot between two 0.2 s
+# samples) rather than kernel-enforced, but it is real enforcement, not a
+# no-op — which `ulimit -v` turned out to be here.
+#
+# `--self-test` is how it proves itself: a runaway that would reach a stop
+# point if nothing intervened. It also proves job control's process-group
+# kill actually reaches every descendant, not just the top process — a
+# `cargo test` runaway is rarely the top-level `cargo` process itself.
 #
 # GNU-ISMS CHECKED FOR, NOT JUST ASSUMED ABSENT. Read start to finish looking
 # for `sed -i` with no suffix, `grep -P`, `readlink -f`, `mapfile`, and bash
@@ -70,30 +85,19 @@ set -u
 
 CEILING_MB=6144
 
-# Unverified on real hardware (this script is being edited on a Linux
-# machine): a starting point for macOS's `ulimit -v`, not a measurement, and
-# a genuinely tight one — the reasoning below has a real tension in it that
-# a real run is what resolves, not this comment.
-#
-# `ulimit -v` measures virtual address space, and a Rust process's baseline
-# VSZ (dyld shared cache, thread-stack reservations, allocator arenas
-# reserved but untouched) commonly sits in the low gigabytes before any
-# workload runs at all — well above the equivalent RSS number, which is why
-# this isn't just the Linux 6144 reused. But GitHub's own hosted `macos-latest`
-# runner (the Apple Silicon one, which is what that label resolves to as of
-# this writing) has only 3 cores and 7 GB of RAM total — the Intel variant
-# has 14 GB, but is not what `macos-latest` currently means. So the number
-# below has to sit under a 7168 MB ceiling to be "deliberately far below what
-# the machine has" at all, while the VSZ-vs-RSS gap above argues for
-# something well above the Linux figure. Those two pulls don't fully
-# reconcile: 5120 MB (5 GB) is picked to leave real headroom below the box's
-# own 7 GB rather than to comfortably clear the baseline-VSZ estimate above,
-# because running out of real, physical memory on a 7 GB machine is the
-# worse failure to risk. If that's still too tight for an ordinary run to
-# even start, `require_cap`'s preflight and `--self-test`'s own probe (see
-# below) are what surface that as a loud, named failure instead of a run
-# that mysteriously never gets past `rustc --version`.
-CEILING_MB_MACOS=5120
+# Measured, not guessed, as of the second real run this size was tried
+# (2026-09-24): available memory (free + inactive + speculative + purgeable,
+# see free_kb_macos) on a fresh `macos-latest` runner, right before the real
+# `cargo test` invocation, was ~3.3 GB — nowhere near the 7 GB total the
+# machine reports, because most of a Mac's spare RAM sits in categories
+# `vm_stat`'s raw "free" doesn't count, and a meaningful chunk of even the
+# *available* figure is already the toolchain install and checkout that ran
+# moments before. 2048 MB leaves about 1.3 GB of that 3.3 GB as margin,
+# comparable to the Linux ceiling sitting well above its own 1451 MB measured
+# peak. If a real run's ordinary usage still doesn't fit, `--self-test`'s own
+# PROBE-OK check and `capped_macos`'s own preflight (both refuse loudly
+# rather than silently) are what surface that, not a mysterious kill.
+CEILING_MB_MACOS=2048
 
 os_kind() {
   case "$(uname -s)" in
@@ -104,6 +108,31 @@ os_kind() {
 }
 
 OS_KIND=$(os_kind)
+
+# macOS's *available* memory, in KB — not raw "Pages free" alone, which a
+# real run (2026-09-24) showed reads as only ~940 MB on a runner with 7 GB
+# total: macOS deliberately keeps very little literally free, using spare
+# RAM as file-backed disk cache rather than leaving it idle, unlike Linux
+# where free/available track closely together. "Pages free" undercounts what
+# a process can actually get by a wide margin there. The standard
+# approximation for what's really available without paging or writeback is
+# free + inactive + speculative + purgeable (each reclaimable instantly);
+# active and wired-down pages are the ones genuinely in use and excluded.
+# Multiplied by the page size `vm_stat` names in its own header line — Apple
+# Silicon and Intel Macs use different page sizes, so this is read, never
+# assumed.
+free_kb_macos() {
+  local page_size pages
+  page_size=$(vm_stat | sed -n '1s/.*page size of \([0-9]*\) bytes.*/\1/p')
+  pages=$(vm_stat | awk -F: '
+    /^Pages free/ || /^Pages inactive/ || /^Pages speculative/ || /^Pages purgeable/ {
+      gsub(/[. ]/, "", $2)
+      total += $2
+    }
+    END { print total + 0 }
+  ')
+  echo $(( pages * page_size / 1024 ))
+}
 
 # Fails loudly rather than running uncapped: a safety net that disappears
 # quietly is worse than none, because everyone still believes it is there.
@@ -122,14 +151,19 @@ require_cap() {
       fi
       ;;
     macos)
-      # This only proves the rlimit call itself is accepted by the shell, not
-      # that the kernel goes on to enforce it against a real runaway — that
-      # second part is exactly what --self-test is for, and what a real macOS
-      # CI run confirms or disproves. A shell that can't even set the limit
-      # is refused the same way an absent systemd-run is refused on Linux.
-      if ! (ulimit -v $((CEILING_MB_MACOS * 1024))) >/dev/null 2>&1; then
-        echo "test.sh: ulimit -v is not settable in this shell, so the memory ceiling cannot be applied." >&2
+      # `ulimit -v` is not an option here (see the header note) — this checks
+      # the watchdog's own two dependencies instead: `sysctl` for total
+      # memory, `vm_stat` for the free-memory samples it polls.
+      if ! command -v sysctl >/dev/null 2>&1 || ! command -v vm_stat >/dev/null 2>&1; then
+        echo "test.sh: sysctl or vm_stat is not on this machine, so free memory cannot be watched." >&2
         echo "test.sh: refusing to run the tests uncapped. Run them under another ceiling yourself." >&2
+        exit 2
+      fi
+      local total_kb
+      total_kb=$(( $(sysctl -n hw.memsize) / 1024 ))
+      if [ "$total_kb" -le "$((CEILING_MB_MACOS * 1024))" ]; then
+        echo "test.sh: this machine has less total memory (${total_kb} KB) than the ceiling (${CEILING_MB_MACOS} MB) leaves no room for." >&2
+        echo "test.sh: refusing to run the tests uncapped. Lower the ceiling for a machine this size." >&2
         exit 2
       fi
       ;;
@@ -149,26 +183,69 @@ capped() { # capped MB -- COMMAND...
       systemd-run --user --scope -q -p "MemoryMax=${mb}M" -p MemorySwapMax=0 -- "$@"
       ;;
     macos)
-      # A subshell, not the running script: `ulimit -v` changes the calling
-      # shell's own limit and everything it execs from then on, so it is set
-      # here, scoped to a subshell, and handed off to the real command with
-      # exec rather than run alongside it — the subshell's exit status then
-      # *is* the command's exit status, same as systemd-run --scope reports
-      # the scoped command's exit status on Linux.
-      (ulimit -v $((mb * 1024)) && exec "$@")
+      capped_macos "$mb" "$@"
       ;;
   esac
+}
+
+# The watchdog itself (see the header note for why this exists instead of a
+# kernel-enforced limit): runs COMMAND in the background under job control,
+# so it gets its own process group, and polls available memory every 0.2 s.
+# Available memory dropping by more than MB from the baseline measured right
+# before COMMAND started is treated as COMMAND having used more than MB, and
+# the whole process group is killed at once — not just the top process,
+# since a `cargo test` runaway is almost never `cargo` itself, and an
+# orphaned child left running would keep growing.
+capped_macos() { # capped_macos MB -- COMMAND...
+  local mb=$1
+  shift
+  local baseline_kb min_free_kb pid status
+  baseline_kb=$(free_kb_macos)
+  # Refuses the same way an absent systemd-run does on Linux, rather than
+  # silently running with no effective cap: if there isn't even MB's worth
+  # of available memory to lose in the first place, the threshold below
+  # would go negative and "available memory below a negative number" can
+  # never be true, so the watchdog would never fire.
+  if [ "$baseline_kb" -le "$((mb * 1024))" ]; then
+    echo "test.sh: only ${baseline_kb} KB available right now, not enough to lose ${mb} MB and still have a real ceiling." >&2
+    echo "test.sh: refusing to run the tests uncapped. Lower the ceiling, or find out what's using the rest first." >&2
+    exit 2
+  fi
+  min_free_kb=$((baseline_kb - mb * 1024))
+  echo "test.sh: macOS watchdog: ${baseline_kb} KB available at start, ceiling ${mb} MB, killing if available drops below ${min_free_kb} KB." >&2
+  set -m
+  "$@" &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$(free_kb_macos)" -lt "$min_free_kb" ]; then
+      kill -KILL -- "-$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      set +m
+      return 137
+    fi
+    sleep 0.2
+  done
+  wait "$pid"
+  status=$?
+  set +m
+  return "$status"
 }
 
 if [ "${1:-}" = "--self-test" ]; then
   require_cap
   self_test_cap=64
-  # 2048 MB is as unmeasured as CEILING_MB_MACOS itself -- picked to sit
-  # under it with room to spare, not from any real baseline number. See the
-  # PROBE-OK check right below: if this guess is wrong and even an ordinary
-  # command can't run under it, that check is what says so, loudly, instead
+  # The runaway below reaches about 128 MB (2^27 bytes) in its final string,
+  # having passed through every smaller power of two on the way — a
+  # free-memory-drop cap has to sit under that, not near CEILING_MB_MACOS
+  # itself, or the runaway finishes before it ever shows up as "missing"
+  # memory. 96 MB is picked to land inside the doubling's last two or three
+  # steps, the same reasoning the 64 MB Linux cap already uses, just with a
+  # little more margin for this mechanism's own overhead (job control,
+  # `vm_stat` calls) and macOS's smaller minimum-viable command footprint.
+  # See the PROBE-OK check right below: if this guess is wrong and even an
+  # ordinary command can't run under it, that check says so loudly instead
   # of the self-test reporting "ok" for the wrong reason.
-  [ "$OS_KIND" = "macos" ] && self_test_cap=2048
+  [ "$OS_KIND" = "macos" ] && self_test_cap=96
 
   # Prove the cap doesn't refuse an ordinary command before trusting it to
   # refuse a runaway. Without this, a ceiling set so tight that nothing can
@@ -218,10 +295,16 @@ esac
 tmp_out=$(mktemp "${TMPDIR:-/tmp}/typdoc-test.XXXXXXXXXX")
 trap 'rm -f "$tmp_out"' EXIT
 
+# `--no-fail-fast`: cargo's own default stops running further test binaries
+# once one reports a failure, which a real macOS run (2026-09-24) showed
+# hiding real information -- the run stopped at the first failing suite
+# having run only about half the workspace's test binaries, so any other
+# platform-specific failure past that point was invisible, not passing. One
+# red suite must never look like "everything after it is fine."
 if [ $# -gt 0 ]; then
-  capped "$ceiling" cargo test "$@" 2>&1 | tee "$tmp_out"
+  capped "$ceiling" cargo test --no-fail-fast "$@" 2>&1 | tee "$tmp_out"
 else
-  capped "$ceiling" cargo test --workspace --features typdoc/test-stand-in 2>&1 | tee "$tmp_out"
+  capped "$ceiling" cargo test --workspace --no-fail-fast --features typdoc/test-stand-in 2>&1 | tee "$tmp_out"
 fi
 run_status=${PIPESTATUS[0]}
 

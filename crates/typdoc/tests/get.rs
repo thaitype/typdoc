@@ -467,6 +467,12 @@ fn a_file_below_the_project_folder_is_not_in_a_collection_that_matches_names_the
 }
 
 /// One name that cannot be read denies no answer about the file beside it.
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
+              name; APFS on macOS refuses to create one at all (EILSEQ), confirmed on a real \
+              macos-latest CI run, 2026-09-24"
+)]
 #[test]
 fn a_name_that_is_not_utf8_and_that_a_collection_matches_is_skipped() {
     let project = Scratch::project(&NOTES);
@@ -480,6 +486,12 @@ fn a_name_that_is_not_utf8_and_that_a_collection_matches_is_skipped() {
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
 }
 
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
+              name; APFS on macOS refuses to create one at all (EILSEQ), confirmed on a real \
+              macos-latest CI run, 2026-09-24"
+)]
 #[test]
 fn a_name_that_is_not_utf8_and_that_no_collection_matches_is_left_alone() {
     let project = Scratch::project(&NOTES);

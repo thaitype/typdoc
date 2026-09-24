@@ -1782,6 +1782,12 @@ fn a_symbolic_link_a_match_reaches_is_files_unreadable_and_every_other_file_is_s
 
 /// A file name that is not valid UTF-8: the last step of the template reaches it, so it is
 /// skipped where a name it could match would have been taken.
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
+              name; APFS on macOS refuses to create one at all (EILSEQ), confirmed on a real \
+              macos-latest CI run, 2026-09-24"
+)]
 #[test]
 fn a_file_name_that_is_not_valid_utf8_is_files_unreadable_and_the_rest_is_still_checked() {
     let project = Scratch::project(&EVERY_MARKDOWN);
@@ -1805,6 +1811,12 @@ fn a_file_name_that_is_not_valid_utf8_is_files_unreadable_and_the_rest_is_still_
 
 /// A folder name that is not valid UTF-8 goes through the step that enters a folder, not the
 /// step that takes a file, so it is its own case.
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
+              name; APFS on macOS refuses to create one at all (EILSEQ), confirmed on a real \
+              macos-latest CI run, 2026-09-24"
+)]
 #[test]
 fn a_folder_name_that_is_not_valid_utf8_is_files_unreadable_and_the_rest_is_still_checked() {
     let project = Scratch::project(&EVERY_MARKDOWN);
