@@ -1,7 +1,7 @@
 # 27: `lock_contention.rs`'s own test races the holder's pid-write, not a product bug
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None (can start immediately)
 
 **Found 2026-09-24, Aria — verified by reading the real CI failure from the story's own
