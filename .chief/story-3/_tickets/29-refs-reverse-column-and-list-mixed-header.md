@@ -1,7 +1,7 @@
 # 29: Two defects Aria found running PR #2 for real (release build, fresh project)
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None (can start immediately)
 
 **Found 2026-09-24, Aria, running commit `1a8b4ee` for real** (a release build against a fresh
