@@ -787,14 +787,14 @@ fn field_name(field: &FieldRef) -> String {
     }
 }
 
-/// The default text table: a header row (`path` or `key`, `title`, then `columns`, in that
-/// order), then one row per document of `matched[..listed_len]`, columns padded to the width
-/// their longest value takes across the whole of `matched` (not only the rows printed) *and* the
-/// header's own labels, so that a value the table prints does not change with `--limit` (the
-/// ticket's own criterion: a column's width computed from the listed rows only would move when
-/// `--limit` changes which rows are listed, and this construction cannot do that, since every
-/// row's cells are measured before any row is left out) and the header stays aligned with the
-/// rows under it. Columns are separated by two spaces.
+/// The default text table: a header row (`path`, `key` or `document`, `title`, then `columns`,
+/// in that order), then one row per document of `matched[..listed_len]`, columns padded to the
+/// width their longest value takes across the whole of `matched` (not only the rows printed)
+/// *and* the header's own labels, so that a value the table prints does not change with `--limit`
+/// (the ticket's own criterion: a column's width computed from the listed rows only would move
+/// when `--limit` changes which rows are listed, and this construction cannot do that, since
+/// every row's cells are measured before any row is left out) and the header stays aligned with
+/// the rows under it. Columns are separated by two spaces.
 ///
 /// No header, and nothing at all, when `listed_len` is 0 — whether because `matched` itself is
 /// empty (`list`'s empty-result case, unchanged from before this row existed) or because
@@ -802,18 +802,23 @@ fn field_name(field: &FieldRef) -> String {
 /// the "header-with-no-rows" shape the ticket for this row rules out, so both cases are treated
 /// alike rather than only the first.
 ///
-/// The identity column is labeled `key` when any document in `matched` has one (a coded
-/// collection), `path` otherwise — matching the identity `table_row` already prints per row
-/// (`doc.key.unwrap_or(doc.path)`), decided once for the whole table rather than per row so the
-/// header names a single column consistently.
+/// The identity column is labeled `key` when every document in `matched` has one (a coded
+/// collection), `path` when none does (an uncoded collection) — matching the identity `table_row`
+/// already prints per row (`doc.key.unwrap_or(doc.path)`) — and `document` when `matched` is a
+/// genuine mix of both (spanning collections with and without a code): a header must not claim a
+/// column holds something a row in it plainly doesn't, so neither `key` nor `path` alone is
+/// accurate once even one row of each shape is present. Decided once for the whole table rather
+/// than per row so the header names a single column consistently.
 fn list_table(matched: &[Document], listed_len: usize, columns: &[String]) -> String {
     if listed_len == 0 {
         return String::new();
     }
     let column_count = 2 + columns.len();
     let rows: Vec<Vec<String>> = matched.iter().map(|doc| table_row(doc, columns)).collect();
-    let identity_label = if matched.iter().any(|doc| doc.key.is_some()) {
+    let identity_label = if matched.iter().all(|doc| doc.key.is_some()) {
         "key"
+    } else if matched.iter().any(|doc| doc.key.is_some()) {
+        "document"
     } else {
         "path"
     };
@@ -1091,20 +1096,28 @@ fn push_unrewritten_lines(out: &mut String, unrewritten: &[UnrewrittenRef]) {
     }
 }
 
-/// One `unrewritten` entry: the holder's identity (`ref_name_text`), the field it lives in
+/// One `unrewritten` entry: the holder's identity (`ref_outcome_text`), the field it lives in
 /// (`"$body"` for a body link) and the written form `mv` left untouched. `item.reference.other`
 /// is always `Resolved` here — `mv_reverse_scan` (`typdoc-core`) only ever builds an
 /// `UnrewrittenRef` from a reference it has already destructured as `Resolved` — but this reads
 /// defensively rather than assuming it, since nothing here enforces that invariant across crates.
 fn unrewritten_text(item: &UnrewrittenRef) -> String {
-    let name = match &item.reference.other {
-        RefOutcome::Resolved(name) => ref_name_text(name),
-        RefOutcome::Unresolved(reason) => format!("(unresolved: {reason})"),
-    };
+    let name = ref_outcome_text(&item.reference.other);
     format!(
         "{name}  {}  {}",
         item.reference.field, item.reference.written
     )
+}
+
+/// The other end of a reference, text-mode: the resolved document's name (`ref_name_text`), or
+/// `(unresolved: {reason})` when it did not resolve. Shared by `unrewritten_text` (`mv`'s own
+/// `unrewritten:` lines) and `refs_text` (ticket 29) — both name "the document at the other end
+/// of this reference" and must render it identically, so this is the one place that does.
+fn ref_outcome_text(outcome: &RefOutcome) -> String {
+    match outcome {
+        RefOutcome::Resolved(name) => ref_name_text(name),
+        RefOutcome::Unresolved(reason) => format!("(unresolved: {reason})"),
+    }
 }
 
 /// A document's identity, text-mode: the same category the design's own `refs` worked example
@@ -1730,10 +1743,12 @@ fn push_toc_row(out: &mut String, cells: &[String; 4], widths: &[usize; 4]) {
 }
 
 /// `refs`'s text-mode shape (design.md, `typdoc refs`'s own worked example, header row added by
-/// M-16): a header row, then one line per reference — the target as it is written (bare key,
-/// prefixed reference or path — `written`) and the field it was found in — in the order
-/// `Project::refs` already gives them (respecting `--reverse` and `--field`, both applied before
-/// `refs_text` ever sees the report). No header and no output at all when there are no refs.
+/// M-16, corrected by ticket 29 to name the other document): a header row, then one line per
+/// reference — the document at the other end (`document`), the field it was found in
+/// (`field`), and, for the forward direction only, the target as it is written (`written`) — in
+/// the order `Project::refs` already gives them (respecting `--reverse` and `--field`, both
+/// applied before `refs_text` ever sees the report). No header and no output at all when there
+/// are no refs.
 fn refs_outcome(report: &RefsReport) -> Outcome {
     Outcome {
         code: 0,
@@ -1742,17 +1757,34 @@ fn refs_outcome(report: &RefsReport) -> Outcome {
     }
 }
 
-/// A header row (`written`, `field` — matching `reference_json`'s own field names exactly, M-16)
-/// then one `written  field` line per reference, rendered with `render_table` — the same
+/// A header row, then one row per reference, rendered with `render_table` — the same
 /// column-aligned, two-space-separated shape `list_table` uses, each column padded to its widest
 /// entry across every reference *and* the header labels. No header and no output at all when
 /// there are no refs — `render_table` returns an empty string when there is nothing to list.
+///
+/// The first two columns are always `document` (`ref_outcome_text` — the resolved name, or
+/// `(unresolved: {reason})`) and `field`. `written` is a third column only for
+/// `RefsDirection::Out`: there, `written` can genuinely differ from the resolved `document` (an
+/// alias, a relative form), so it is real information. For `RefsDirection::In` (`--reverse`),
+/// `written` is only how the holder happened to write the ref back to the document already named
+/// on the command line — it adds nothing `document` doesn't already say, so it is dropped, header
+/// included (ticket 29).
 fn refs_text(report: &RefsReport) -> String {
-    let header = vec!["written".to_owned(), "field".to_owned()];
+    let forward = report.direction == RefsDirection::Out;
+    let mut header = vec!["document".to_owned(), "field".to_owned()];
+    if forward {
+        header.push("written".to_owned());
+    }
     let rows: Vec<Vec<String>> = report
         .refs
         .iter()
-        .map(|reference| vec![reference.written.clone(), reference.field.clone()])
+        .map(|reference| {
+            let mut row = vec![ref_outcome_text(&reference.other), reference.field.clone()];
+            if forward {
+                row.push(reference.written.clone());
+            }
+            row
+        })
         .collect();
     let listed_len = rows.len();
     render_table(&header, &rows, listed_len)

@@ -451,12 +451,13 @@ fn the_header_row_names_path_for_a_path_identified_collection() {
 }
 
 #[test]
-fn the_header_row_names_key_when_the_matched_set_mixes_coded_and_path_identified_documents() {
+fn the_header_row_names_document_when_the_matched_set_mixes_coded_and_path_identified_documents() {
     // No `--collection`/`--code`: `valid/refs` spans both `tickets` (coded) and `notes`
-    // (path-identified). At least one matched document has a key, so the identity column is
-    // labeled `key` for the whole table -- the same identity `table_row` already prints per row
-    // (`doc.key.unwrap_or(doc.path)`) -- even though `notes/a.md` itself has none and still
-    // prints its path in that column, unaffected by the header's label.
+    // (path-identified). This is a genuine mix -- some matched documents have a key, some don't
+    // -- so the identity column is labeled `document` (ticket 29): `key` would wrongly claim
+    // every row holds one, when `notes/a.md`'s own row plainly holds a path instead -- the same
+    // identity `table_row` already prints per row (`doc.key.unwrap_or(doc.path)`) is unaffected,
+    // only the header's label changes.
     let ran = list(&fixture("valid/refs"), &[]);
 
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
@@ -464,12 +465,16 @@ fn the_header_row_names_key_when_the_matched_set_mixes_coded_and_path_identified
     assert_eq!(lines.len(), 5, "{lines:?}");
     assert_eq!(
         lines[0].split_whitespace().collect::<Vec<_>>(),
-        ["key", "title"],
+        ["document", "title"],
         "{lines:?}"
     );
     assert!(
+        lines.iter().any(|line| line.starts_with("WF-1")),
+        "a coded row still prints its key: {lines:?}"
+    );
+    assert!(
         lines.iter().any(|line| line.starts_with("notes/a.md")),
-        "{lines:?}"
+        "an uncoded row still prints its path: {lines:?}"
     );
 }
 
