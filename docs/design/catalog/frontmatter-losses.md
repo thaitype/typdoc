@@ -1,7 +1,7 @@
 ---
 title: Frontmatter losses catalog
 content_type: json
-explained_by: SPC-4
+explained_by: [SPC-4]
 ---
 
 {

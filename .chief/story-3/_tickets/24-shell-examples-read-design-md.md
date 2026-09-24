@@ -1,7 +1,7 @@
 # 24: `shell_examples.rs` (both crates) extracts and runs design.md's own examples — a bigger M-1 violator than `design.rs` was
 
 Type: wayfinder:grilling
-Status: open
+Status: resolved
 Blocked by: None (can start immediately)
 
 **Found during a broader sweep, 2026-09-23, before ticket 12's build started** — while fixing
@@ -67,4 +67,29 @@ transitive) — both `crates/typdoc-testkit/src/shell_examples.rs` and
 
 ## Answer
 
-<filled in on resolve — M-13, open with Mild>
+**M-13, decided (Mild: *"เห็นด้วยกับข้อ 1"*, confirmed by Aria, 2026-09-24). Option 1: hand-list,
+no fifth catalog document.**
+
+- The hand-declared example list already in `crates/typdoc/tests/shell_examples.rs`
+  (the entries that already needed a hand-written expected value) *becomes the whole list* —
+  every example the harness runs, not only the ones that needed one before. The sh/bash runs
+  against the stand-in binary stay exactly as they are.
+- **Removed:** `crates/typdoc-testkit/src/shell_examples.rs` in full (`examples()`,
+  `quoting_paragraph_spans()`, `is_example()`, and their helpers — the markdown-extraction
+  mechanism itself). The test that cross-checks the declared list against what extraction found
+  in `design.md`, and the quoting-paragraph span test, are both removed, not adapted — there is
+  nothing left for either to check once extraction is gone.
+- **No `docs/design/catalog/shell-examples.md`** — option 2 (a fifth structured catalog document)
+  is not built.
+- **What ticket 12 still has to decide while building, not decided here:** every "safe" example
+  (no shell-unsafe character) that only ever reached the harness *through* extraction — never
+  hand-declared, because a safe example's expected value was computed automatically by
+  whitespace-splitting — loses that automatic path entirely. For each one, ticket 12 either
+  hand-lists it (preserving that example's coverage) or drops it (if it's not worth the upkeep of
+  a hand-written entry). The harness must not read markdown to find examples either way; this is
+  a coverage-vs-maintenance call on each specific example, not a design question left open.
+
+This closes ticket 24 and unblocks tickets 12 and 13: 12 removes `typdoc-testkit/src/design.rs`,
+`typdoc-testkit/src/shell_examples.rs`, `fixtures.rs`'s `design_text()` and its design.md-based
+root marker, and the two tests named above, all together; 13 (archiving `design.md`) follows once
+12 is done and nothing reads `design.md` from either mechanism any more.

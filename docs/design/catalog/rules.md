@@ -1,7 +1,7 @@
 ---
 title: Validation rules catalog
 content_type: json
-explained_by: SPC-1
+explained_by: [SPC-1]
 ---
 
 {

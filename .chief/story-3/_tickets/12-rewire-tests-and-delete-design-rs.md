@@ -2,15 +2,17 @@
 
 Type: implementation
 Status: open
-Blocked by: 11, 24
+Blocked by: None (M-13 landed 2026-09-24 — see ticket 24's Answer)
 
-**Scope correction, 2026-09-23 (Aria caught this before build started):** `crates/typdoc-testkit/src/fixtures.rs`
-is a fourth reader of `design.md`, not named in this ticket's first draft — `locate()` uses
-`docs/design/design.md` as its repo-root marker (line 15), and `design_text()` (line 44) reads
-it. Both are covered below now. **Blocked by 24 as well as 11**, added after a broader sweep
-found a much bigger fifth: `crates/typdoc-testkit/src/shell_examples.rs` and
-`crates/typdoc/tests/shell_examples.rs` extract and run design.md's own shell examples against a
-real binary — see ticket 24, not resolved yet.
+**Unblocked 2026-09-24.** `crates/typdoc-testkit/src/fixtures.rs` is a fourth reader of
+`design.md`, not named in this ticket's first draft (Aria caught it before build started) —
+`locate()` uses `docs/design/design.md` as its repo-root marker, `design_text()` reads it. Ticket
+24 (M-13) found a fifth, much bigger one — `crates/typdoc-testkit/src/shell_examples.rs` and
+`crates/typdoc/tests/shell_examples.rs` extract and run `design.md`'s own shell examples — and
+resolved it (option 1: hand-list, no fifth catalog document). All of it is this ticket's scope
+now: `design.rs`, `fixtures.rs`'s two functions, and `shell_examples.rs`'s extraction mechanism
+all get removed together, since M-13's answer means nothing needs `design_text()` any more once
+this ticket is done — no more "coordinate with ticket 24" caveat.
 
 ## The work
 
@@ -36,16 +38,30 @@ now-unused re-exports.
   (alongside the `fixtures/` folder). Replace it with a marker that isn't a design document —
   `Cargo.toml` at the root, or `.chief/`, or another folder every checkout has that isn't itself
   spec content. Pick one that can't be confused for "reading the design."
-- `design_text()` is removed entirely once nothing calls it — but check first: as of this
-  ticket's own draft, `crates/typdoc-testkit/src/shell_examples.rs`,
-  `crates/typdoc/tests/shell_examples.rs`, and `fixtures.rs`'s own self-test
-  (`design_text().starts_with("# typdoc")`) all call it too, and none of those is decided yet
-  (ticket 24). Do not remove `design_text()` out from under ticket 24's still-open work; if
-  ticket 24 resolves to keep some form of it, coordinate rather than deleting and re-adding.
+- `design_text()` is removed entirely (M-13 settled this — nothing needs it once
+  `shell_examples.rs`'s extraction mechanism is also gone, below). Also remove `fixtures.rs`'s own
+  self-test that calls it (`design_text().starts_with("# typdoc")` or similar).
 
-`rg 'typdoc_testkit::design\b'`, `rg 'design_text'`, and `rg '\bdesign\.rs\b'` (outside history)
-return nothing once this ticket and ticket 24's build work are both done — this ticket alone may
-not be able to make all three true if ticket 24 isn't finished first.
+**Ticket 24/M-13's part, built here too — `shell_examples.rs` (both crates):**
+- Delete `crates/typdoc-testkit/src/shell_examples.rs` in full: `examples()`,
+  `quoting_paragraph_spans()`, `is_example()`, and their helpers.
+- In `crates/typdoc/tests/shell_examples.rs`: the hand-declared list (`declared_texts()` and
+  whatever holds the already-hand-written expected values) becomes the *only* list — remove the
+  call into `typdoc_testkit::shell_examples::examples()`/`quoting_paragraph_spans()` and the two
+  tests that only existed to check extraction against the declared list or against the quoting
+  paragraph (remove them, don't adapt them — there's nothing left for either to check). The
+  sh/bash runs against the stand-in binary, for whatever's left in the hand-declared list, stay
+  exactly as they are.
+- For every "safe" example (no shell-unsafe character) that only ever reached the harness through
+  extraction — never hand-declared, since a safe example's expected value was computed
+  automatically by whitespace-splitting — decide per example: hand-list it (keeps that example's
+  coverage) or drop it (not worth a hand-written entry). Record which examples were kept vs.
+  dropped, and why, in this ticket's report — this is a real judgment call ticket 24 explicitly
+  left to this ticket, not a detail to wave through silently.
+
+`rg 'typdoc_testkit::design\b'`, `rg 'design_text'`, `rg '\bdesign\.rs\b'`, and
+`rg 'typdoc_testkit::shell_examples'` (outside history) all return nothing once this ticket is
+done.
 
 ## Tests
 
@@ -59,9 +75,12 @@ not be able to make all three true if ticket 24 isn't finished first.
 
 ## Done
 
-- `design.rs` no longer exists. `rg` for it and for `typdoc_testkit::design` finds nothing outside
-  history.
+- `design.rs` and `typdoc-testkit/src/shell_examples.rs` no longer exist. `rg` for either, for
+  `typdoc_testkit::design`, for `design_text`, and for `typdoc_testkit::shell_examples` finds
+  nothing outside history.
 - `fixtures.rs`'s `locate()` uses a marker that isn't a design document.
-- All three tests pass against the catalog documents and are re-confirmed able to catch drift.
-- `design_text()` is removed only if ticket 24's resolution no longer needs it; otherwise this
-  ticket's report says exactly what still calls it and why, and ticket 24 owns removing it.
+- All three rewired tests pass against the catalog documents and are re-confirmed able to catch
+  drift.
+- `crates/typdoc/tests/shell_examples.rs` still runs every example on its hand-declared list
+  (kept "safe" examples included, per this ticket's own judgment call) through a real shell
+  against the stand-in binary — the same coverage shape as before, minus the markdown extraction.
