@@ -1,7 +1,7 @@
 # 13: Archive the old design documents
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None (ticket 12 resolved 2026-09-24)
 
 **Unblocked 2026-09-24.** Ticket 12 (rewiring the three catalog-document readers, deleting
