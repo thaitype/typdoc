@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -108,6 +108,10 @@ pub struct Config {
     /// The entries of the project folder that a `namespaces` glob reached and skipped, sorted by
     /// path.
     pub(crate) skipped: Vec<Skipped>,
+    /// Names `namespaces`' own patterns matched and a later `!` excluded — fed to
+    /// `state::orphans` so an excluded namespace's leftover state file reads as known, not
+    /// orphaned, while it stays out of `namespaces` above and everything that reads that field.
+    pub(crate) excluded: BTreeSet<String>,
     /// `validation.global`.
     pub validation: Rules,
     /// Sorted by name.
@@ -209,11 +213,13 @@ impl Config {
         let namespaces::Resolved {
             namespaces,
             skipped,
+            excluded,
         } = namespaces::resolve(root, entries.as_deref(), report)?;
         let collections = read_collections(root, report)?;
         Ok(Config {
             namespaces,
             skipped,
+            excluded,
             validation,
             collections,
             imports,

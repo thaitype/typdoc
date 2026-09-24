@@ -5805,7 +5805,9 @@ fn ref_name_in(
 /// up yet, a broken config at a real location will not fix itself by installing more machines,
 /// and folding it into `imports.absent` would hide a mistake the design gives no way to catch.
 /// Every namespace's state file, read once: `config.state-orphan` for a file in `.typdoc/state/`
-/// that matches no current namespace, and `config.state-uncoded` for an entry that names a
+/// that matches neither a current namespace nor one `namespaces` currently excludes (an excluded
+/// namespace's own state file is left untouched, never read here, but is not an orphan either),
+/// and `config.state-uncoded` for an entry that names a
 /// collection this project has whose schema has no code (decision 13 narrows it to exactly this:
 /// an entry naming a collection the project does not have at all is `state.retired` instead, a
 /// finding rather than a config error, found later from `self.state` once `validate` runs, so
@@ -5831,7 +5833,7 @@ fn read_state(
     // for this case, a retired entry never stops a command, reads included).
     let known_collections: BTreeSet<&str> =
         loaded.iter().map(|found| found.name.as_str()).collect();
-    for orphan in state::orphans(root, &config.namespaces)? {
+    for orphan in state::orphans(root, &config.namespaces, &config.excluded)? {
         report.add(
             "config.state-orphan",
             &orphan,

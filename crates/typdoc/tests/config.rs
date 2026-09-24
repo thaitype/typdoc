@@ -217,7 +217,9 @@ fn a_stray_typdoc_json_is_not_reported_with_a_config_that_cannot_be_parsed() {
     assert_eq!(object["complete"], json!(false));
 }
 
-/// The error of a run that found no project: exit 5, the file it looked for named in the message.
+/// The error of a run that found no project: exit 5, the folder it looked for named in the
+/// message (discovery is folder-based, M-24: a project is marked by `.typdoc/` existing, not by
+/// `config.json` inside it, so the message names the folder, never the file).
 fn no_project_error(ran: &Ran) -> String {
     assert_eq!(ran.code, 5, "stderr: {}", ran.stderr);
     assert_eq!(ran.stdout, "", "a failure prints nothing on stdout");
@@ -226,12 +228,47 @@ fn no_project_error(ran: &Ran) -> String {
     assert!(object.get("complete").is_none(), "{object}");
     let message = object["error"].as_str().expect("an error message");
     assert!(message.starts_with("no project found"), "{message}");
-    assert!(message.contains(".typdoc/config.json"), "{message}");
+    assert!(message.contains(".typdoc/"), "{message}");
+    assert!(
+        !message.contains(".typdoc/config.json"),
+        "the folder is what marks a project, not the file inside it: {message}"
+    );
     message.to_owned()
 }
 
+/// The exact wording of both `NoProject` (the ancestor walk) and `NoProjectAt` (`TYPDOC_DIR`),
+/// locked in on its own: `no_project_error`'s own substring checks above compose several partial
+/// assertions shared by every case in this section, none of which pin the full sentence down —
+/// this is the test that does.
 #[test]
-fn an_empty_folder_is_no_project_and_the_message_names_the_config_file() {
+fn the_no_project_message_reads_exactly_no_project_folder_not_no_project_file() {
+    let empty = Scratch::empty();
+    let ancestor_walk = no_project_error(&get_a(&empty));
+    assert_eq!(
+        ancestor_walk,
+        format!(
+            "no project found: there is no .typdoc/ in {} or above it",
+            empty.path().display()
+        )
+    );
+
+    let elsewhere = Scratch::empty();
+    let ran = Spawn::args(["get", "a.md", "--json"])
+        .var("TYPDOC_DIR", "elsewhere")
+        .cwd(elsewhere.path())
+        .run();
+    let typdoc_dir = no_project_error(&ran);
+    assert_eq!(
+        typdoc_dir,
+        format!(
+            "no project found: {} has no .typdoc/",
+            elsewhere.path().join("elsewhere").display()
+        )
+    );
+}
+
+#[test]
+fn an_empty_folder_is_no_project_and_the_message_names_the_typdoc_folder() {
     let empty = Scratch::empty();
 
     let message = no_project_error(&get_a(&empty));
@@ -240,7 +277,7 @@ fn an_empty_folder_is_no_project_and_the_message_names_the_config_file() {
 }
 
 #[test]
-fn a_folder_holding_only_a_typdoc_json_is_no_project_and_the_message_names_the_config_file() {
+fn a_folder_holding_only_a_typdoc_json_is_no_project_and_the_message_names_the_typdoc_folder() {
     let only = Scratch::empty();
     only.file(".typdoc.json", r#"{ "version": 1 }"#);
 
@@ -251,7 +288,7 @@ fn a_folder_holding_only_a_typdoc_json_is_no_project_and_the_message_names_the_c
 }
 
 #[test]
-fn typdoc_dir_naming_a_folder_without_a_config_is_no_project_and_names_the_config_file() {
+fn typdoc_dir_naming_a_folder_without_a_config_is_no_project_and_names_the_typdoc_folder() {
     let project = two_notes();
     project.file("elsewhere/readme.md", "# Nothing here\n");
 

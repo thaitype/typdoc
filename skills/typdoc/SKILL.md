@@ -37,7 +37,7 @@ at it with `TYPDOC_DIR`:
 $ TYPDOC_DIR=path/to/project typdoc list --ids
 ```
 
-No project found is exit 5: `no project found: there is no .typdoc/config.json in … or above it`.
+No project found is exit 5: `no project found: there is no .typdoc/ in … or above it`.
 
 A path argument that does not start with `/`, `./` or `../` is relative to the **project folder**,
 not to the current directory. To learn what a project holds, read `.typdoc/config.json`,

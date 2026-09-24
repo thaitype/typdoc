@@ -82,7 +82,7 @@ fresh one.
 ### 5 — not found
 
 The document, key, path or file the command was asked to act on does not exist — including
-`no project found: there is no .typdoc/config.json in … or above it`. When a project-relative
+`no project found: there is no .typdoc/ in … or above it`. When a project-relative
 path names nothing but a file of that name exists relative to the current directory, the message
 says `./name` exists (a suggestion only).
 

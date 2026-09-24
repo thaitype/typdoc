@@ -4,7 +4,7 @@
 //! the one seam every write in this crate goes through (`write_atomically`), under the
 //! namespace's lock.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
@@ -317,19 +317,29 @@ fn skip_value(bytes: &[u8], start: usize) -> Option<usize> {
     }
 }
 
-/// The state files in `.typdoc/state/` that match no namespace of `namespaces`
-/// (`config.state-orphan`), by their path from the project folder, sorted. Every `*.json` file
-/// there is read as a state file, the same way `.typdoc/collections/` treats its own files;
-/// anything else is ignored.
-pub(crate) fn orphans(root: &Path, namespaces: &[Namespace]) -> Result<Vec<String>, Error> {
+/// The state files in `.typdoc/state/` that match neither a namespace of `namespaces` nor a name
+/// `excluded` (`config.state-orphan`), by their path from the project folder, sorted. Every
+/// `*.json` file there is read as a state file, the same way `.typdoc/collections/` treats its
+/// own files; anything else is ignored. `excluded` is a namespace `namespaces` currently excludes
+/// but that `namespaces`' own patterns did reach at some point — its state file is known, not
+/// orphaned, so that excluding a namespace that has already issued codes never breaks a project's
+/// load.
+pub(crate) fn orphans(
+    root: &Path,
+    namespaces: &[Namespace],
+    excluded: &BTreeSet<String>,
+) -> Result<Vec<String>, Error> {
     let dir = root.join(STATE_DIR);
     let entries = match fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(source) => return Err(Error::Io { file: dir, source }),
     };
-    let known: std::collections::BTreeSet<&str> =
-        namespaces.iter().map(|n| n.name.as_str()).collect();
+    let known: BTreeSet<&str> = namespaces
+        .iter()
+        .map(|n| n.name.as_str())
+        .chain(excluded.iter().map(String::as_str))
+        .collect();
     let mut found = Vec::new();
     for entry in entries {
         let entry = entry.map_err(Error::io_at(&dir))?;

@@ -979,3 +979,97 @@ fn a_bare_key_the_excluded_namespace_alone_ever_issued_resolves_as_not_found() {
         "a key only the excluded namespace ever issued is not found, the same as any unknown key"
     );
 }
+
+// --- state-orphan interaction (contract §1, item 6): excluding a namespace that has already
+// issued codes must not break every other command against the project ---
+
+/// A namespace excluded via `!` keeps its own state file: `validate`, `list`, `get` and `new`
+/// (writing into a different, still-visible namespace) all succeed, none of them stopped by
+/// `config.state-orphan` over the excluded namespace's own leftover state file.
+#[test]
+fn an_excluded_namespaces_existing_state_does_not_stop_other_commands() {
+    let project = coded(r#"["story-*", "!story-1"]"#);
+    project.file(".typdoc/state/story-1.json", r#"{ "tickets": { "last": 3 } }"#);
+    project.file("story-1/tickets/WF-1.md", "---\ntitle: Excluded\n---\n");
+    project.file(".typdoc/state/story-2.json", r#"{ "tickets": { "last": 1 } }"#);
+    project.file("story-2/tickets/WF-1.md", "---\ntitle: Visible\n---\n");
+
+    let validated = json_of(&project, &["validate"]);
+    let listed = json_of(&project, &["list"]);
+    let got = json_of(&project, &["get", "story-2/tickets/WF-1.md"]);
+    let created = json_of(&project, &["new", "WF", "Fresh"]);
+
+    assert_eq!(validated.code, 0, "{}", validated.stderr);
+    assert_eq!(listed.code, 0, "{}", listed.stderr);
+    assert_eq!(got.code, 0, "{}", got.stderr);
+    assert_eq!(created.code, 0, "{}", created.stderr);
+    assert_eq!(
+        created.stdout_json()["document"]["key"],
+        json!("WF-2"),
+        "story-2's own numbering, untouched by story-1's excluded state: {}",
+        created.stdout
+    );
+}
+
+/// Removing the `!` continues numbering from where the excluded namespace's state left off — no
+/// codes reissued — and the state file's bytes never changed while it was excluded: proof
+/// exclusion truly never read or wrote it, not merely that the numbers came out right by luck.
+#[test]
+fn re_including_a_namespace_continues_numbering_with_its_state_untouched() {
+    let project = coded(r#"["story-1", "story-2"]"#);
+    let original_state = "{\n  \"tickets\": {\n    \"last\": 3\n  }\n}\n";
+    project.file(".typdoc/state/story-1.json", original_state);
+    let before_exclusion = project.read(".typdoc/state/story-1.json");
+
+    project.file(
+        ".typdoc/config.json",
+        &config(r#"["story-1", "story-2", "!story-1"]"#),
+    );
+    let while_excluded = json_of(&project, &["validate"]);
+    assert_eq!(while_excluded.code, 0, "{}", while_excluded.stderr);
+
+    project.file(".typdoc/config.json", &config(r#"["story-1", "story-2"]"#));
+    let after_reinclusion = project.read(".typdoc/state/story-1.json");
+    assert_eq!(
+        after_reinclusion, before_exclusion,
+        "exclusion must never read or write the state file"
+    );
+
+    let created = json_of(
+        &project,
+        &["new", "WF", "Reincluded", "--namespace", "story-1"],
+    );
+
+    assert_eq!(created.code, 0, "{}", created.stderr);
+    assert_eq!(
+        created.stdout_json()["document"]["key"],
+        json!("WF-4"),
+        "continues from the state's own last, 3, not from 1: {}",
+        created.stdout
+    );
+}
+
+/// The true-orphan case stays caught: a state file whose folder no longer exists at all, named
+/// only by a `!` entry that therefore matches nothing, adds nothing to the excluded set (matching,
+/// not text, is what puts a name there) — its leftover state file is a genuine orphan.
+#[test]
+fn a_state_files_folder_gone_and_named_only_by_a_bang_entry_is_still_an_orphan() {
+    let project = coded(r#"["story-2", "!story-9"]"#);
+    project.file(".typdoc/state/story-9.json", r#"{ "tickets": { "last": 1 } }"#);
+
+    let ran = json_of(&project, &["validate"]);
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let error = ran.stderr_json();
+    assert_eq!(error["complete"], json!(true), "{error}");
+    assert_eq!(
+        error["details"],
+        json!([{
+            "level": "error",
+            "rule": "config.state-orphan",
+            "path": ".typdoc/state/story-9.json",
+            "message": ".typdoc/state/story-9.json matches no current namespace: delete it after removing a namespace, or rename it after renaming a folder",
+        }]),
+        "{error}"
+    );
+}

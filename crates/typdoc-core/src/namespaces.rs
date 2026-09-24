@@ -11,11 +11,17 @@ use crate::error::Error;
 use crate::schema::reserved_url_scheme;
 use crate::template::Segment;
 
-/// What the entries of `namespaces` came to: the namespaces, and the entries a glob reached and
-/// skipped.
+/// What the entries of `namespaces` came to: the namespaces, the entries a glob reached and
+/// skipped, and the names a `!` excluded.
 pub(crate) struct Resolved {
     pub namespaces: Vec<Namespace>,
     pub skipped: Vec<Skipped>,
+    /// Names a plain or glob entry matched and a later `!` then removed, and that no later plain
+    /// entry re-matched — the config's own patterns having actually reached and excluded them,
+    /// not "every folder on disk". A folder a `!` entry names but that matches nothing (deleted,
+    /// misspelled) never enters this set: matching, not text, is what puts a name here, so its
+    /// leftover state file still reads as a genuine orphan rather than a known-but-excluded one.
+    pub excluded: BTreeSet<String>,
 }
 
 /// The namespace `default`, or the folders that the entries name. A folder that an entry
@@ -33,9 +39,11 @@ pub(crate) fn resolve(
                 folder: String::new(),
             }],
             skipped: Vec::new(),
+            excluded: BTreeSet::new(),
         });
     };
     let mut matched: BTreeMap<String, PathBuf> = BTreeMap::new();
+    let mut excluded: BTreeSet<String> = BTreeSet::new();
     let mut skipped: BTreeSet<Skipped> = BTreeSet::new();
     if !entries.is_empty() {
         let listing = folders(root)?;
@@ -48,8 +56,12 @@ pub(crate) fn resolve(
             if negate {
                 for (name, _) in &found.folders {
                     matched.remove(name);
+                    excluded.insert(name.clone());
                 }
             } else {
+                for (name, _) in &found.folders {
+                    excluded.remove(name);
+                }
                 matched.extend(found.folders);
             }
             skipped.extend(found.skipped);
@@ -79,6 +91,7 @@ pub(crate) fn resolve(
     Ok(Resolved {
         namespaces,
         skipped: skipped.into_iter().collect(),
+        excluded,
     })
 }
 
@@ -272,6 +285,39 @@ mod tests {
     }
 
     #[test]
+    fn excluded_holds_the_names_a_bang_actually_matched_and_removed() {
+        let root = fixture_root();
+        let mut report = Report::default();
+        let resolved = resolve(
+            &root,
+            Some(&entries(&["story-*", "!story-1", "!story-2"])),
+            &mut report,
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.excluded,
+            BTreeSet::from(["story-1".to_owned(), "story-2".to_owned()])
+        );
+    }
+
+    #[test]
+    fn a_later_re_inclusion_clears_the_name_from_excluded() {
+        let root = fixture_root();
+        let mut report = Report::default();
+        let resolved = resolve(
+            &root,
+            Some(&entries(&["story-*", "!story-1", "story-1"])),
+            &mut report,
+        )
+        .unwrap();
+        assert!(
+            resolved.excluded.is_empty(),
+            "story-1 is back in `namespaces` itself; it is not also excluded: {:?}",
+            resolved.excluded
+        );
+    }
+
+    #[test]
     fn an_exclusion_matching_no_folder_by_exact_name_is_silent() {
         let root = fixture_root();
         let mut report = Report::default();
@@ -280,6 +326,10 @@ mod tests {
         assert!(
             report.errors().is_empty(),
             "a `!` entry naming an exact name that matches nothing is always silent"
+        );
+        assert!(
+            resolved.excluded.is_empty(),
+            "matching, not text, puts a name in `excluded`: `!story-9` matched no folder"
         );
     }
 
