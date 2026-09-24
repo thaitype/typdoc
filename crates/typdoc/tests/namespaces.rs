@@ -794,9 +794,9 @@ fn an_import_alias_named_after_a_url_scheme_is_still_refused_under_schema_valid(
     );
 }
 
-// --- Wildcard namespace exclusion (story 4, ticket 1): a `!`-prefixed entry of `namespaces`
-// removes what an earlier entry matched, in list order, and the excluded folder is invisible to
-// every command that reads namespaces of the project. ---
+// --- Wildcard namespace exclusion: a `!`-prefixed entry of `namespaces` removes what an
+// earlier entry matched, in list order, and the excluded folder is invisible to every command
+// that reads namespaces of the project. ---
 
 #[test]
 fn a_later_exclusion_hides_the_folder_from_every_command() {
