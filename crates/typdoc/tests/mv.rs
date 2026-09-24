@@ -573,6 +573,55 @@ fn a_move_that_leaves_a_ref_unrewritten_prints_its_own_count_and_entry_line() {
     );
 }
 
+/// `unrewritten:`'s identity follows the same naming-table rule `refs` does (ticket 32, M-20,
+/// Direction 2, `ref_name_text`/`ref_outcome_text` shared with `refs_text`): a coded holder in a
+/// single-namespace project prints its bare key, `WF-1`, not the unconditionally-qualified
+/// `default:WF-1` the bug used to print. The holder is coded (`tickets/WF-1.md`) and the moved
+/// document (`old.md`) is not, matching this ticket's own Direction 2 repro shape ("a coded
+/// holder pointing at the document asked about").
+#[test]
+fn unrewritten_names_a_coded_holder_by_its_bare_key_in_a_single_namespace_project() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "*.md", "schema": "note.json" }"#,
+        ),
+        (
+            ".typdoc/collections/tickets.json",
+            r#"{ "match": "tickets/{key}.md", "schema": "ticket.json", "validation": { "body.links": { "level": "off" } } }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": { "title": { "type": "string", "required": true } } }"#,
+        ),
+        (
+            "ticket.json",
+            r#"{ "name": "ticket", "code": "WF", "fields": { "title": { "type": "string" } } }"#,
+        ),
+    ]);
+    project.file("old.md", "---\ntitle: A\n---\n");
+    project.file(
+        "tickets/WF-1.md",
+        "---\ntitle: Holder\n---\n\nSee [it](../old.md) for details.\n",
+    );
+
+    let ran = mv_text(&project, "old.md", "new.md");
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(
+        ran.stdout,
+        "path: new.md\n\
+         collection: notes\n\
+         schema: note\n\
+         namespace: default\n\
+         title: A\n\
+         rewritten: 0 refs in 0 documents\n\
+         unrewritten: 1\n\
+         WF-1  $body  ../old.md\n\
+         findings: none\n"
+    );
+}
+
 /// A clean move, nothing to rewrite and nothing left unrewritten: `rewritten: 0 refs in 0
 /// documents`, `unrewritten: none` (testing-decisions.md, "Text output", the clean-move case).
 /// Its own schema (not `common::NOTES`'s empty-fields one) declares `title`, for the same reason

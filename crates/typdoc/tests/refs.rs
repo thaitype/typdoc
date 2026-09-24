@@ -285,9 +285,13 @@ fn refs_without_json_prints_the_designs_worked_example() {
 /// asked about, naming the holder itself in the first column
 /// (`reverse_scans_every_namespace_and_orders_by_the_holders_path`'s `--json` case gives the same
 /// three references, in the same order, that this checks in text). `tickets/WF-1.md` is a coded
-/// document (`default:WF-1`) holding the reversed target via `blocked_by`, the same shape the
-/// ticket's own bug report used (a coded holder pointing at the document asked about) — this
-/// fixture just has the roles the other way round (WF-1 is the holder here, not the target).
+/// document holding the reversed target via `blocked_by`, the same shape the ticket's own bug
+/// report used (a coded holder pointing at the document asked about) — this fixture just has the
+/// roles the other way round (WF-1 is the holder here, not the target). `valid/refs` has exactly
+/// one namespace (`default`), so per the design's naming table each coded holder prints its bare
+/// key, not `default:WF-1`/`default:WF-3` (ticket 32, M-20, Direction 2: `ref_name_text` used to
+/// qualify unconditionally, even where the project has only one namespace and a bare key would
+/// do).
 #[test]
 fn refs_reverse_without_json_prints_the_holders_name_and_field_per_line() {
     let ran = refs(&fixture("valid/refs"), &["tickets/WF-2.md", "--reverse"]);
@@ -296,10 +300,10 @@ fn refs_reverse_without_json_prints_the_holders_name_and_field_per_line() {
     assert_eq!(ran.stderr, "");
     assert_eq!(
         ran.stdout,
-        "document      field\n\
-         notes/a.md    $body\n\
-         default:WF-1  blocked_by\n\
-         default:WF-3  context\n"
+        "document    field\n\
+         notes/a.md  $body\n\
+         WF-1        blocked_by\n\
+         WF-3        context\n"
     );
 }
 
@@ -307,6 +311,8 @@ fn refs_reverse_without_json_prints_the_holders_name_and_field_per_line() {
 /// (`field_keeps_only_the_refs_held_in_that_field_in_either_direction`'s own `--json` case). This
 /// is the forward direction, so `written` still appears as the third column; one of the two refs
 /// (`WF-99`) never resolves, so `document` shows `(unresolved: not-found)` rather than a name.
+/// `valid/refs` has exactly one namespace, so the resolved row's `document` is the bare key
+/// `WF-2`, not `default:WF-2` (ticket 32, M-20, Direction 2).
 #[test]
 fn refs_field_without_json_keeps_only_that_fields_refs() {
     let ran = refs(
@@ -319,7 +325,7 @@ fn refs_field_without_json_keeps_only_that_fields_refs() {
     assert_eq!(
         ran.stdout,
         "document                 field       written\n\
-         default:WF-2             blocked_by  WF-2\n\
+         WF-2                     blocked_by  WF-2\n\
          (unresolved: not-found)  blocked_by  WF-99\n"
     );
 }

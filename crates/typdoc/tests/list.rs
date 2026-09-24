@@ -541,6 +541,90 @@ fn ids_and_json_cannot_be_combined() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// M-20 (ticket 32): a coded document's identity in `list`'s table and in `--ids` is the bare
+// `key` only when the project has exactly one namespace; `namespace:key` when it has several
+// (the design's own naming table) — matching what `ref_name_text` already prints for `refs`/`mv`.
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn ids_qualifies_a_coded_documents_key_when_the_project_has_several_namespaces() {
+    // `valid/several-namespaces` has two namespaces, `story-1` and `story-2`, each with a
+    // document coded `WF-1` — this ticket's own Direction 1 repro: the bare key alone is
+    // ambiguous project-wide (passing it back to another command exits 1), so `--ids` must print
+    // each one qualified by its own namespace.
+    let ran = list(
+        &fixture("valid/several-namespaces"),
+        &["--collection", "tickets", "--where", "key=WF-1", "--ids"],
+    );
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    let mut ids: Vec<&str> = ran.stdout.lines().collect();
+    ids.sort();
+    assert_eq!(ids, ["story-1:WF-1", "story-2:WF-1"]);
+}
+
+#[test]
+fn list_table_qualifies_a_coded_documents_key_when_the_project_has_several_namespaces() {
+    let ran = list(
+        &fixture("valid/several-namespaces"),
+        &["--collection", "tickets"],
+    );
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    let lines: Vec<&str> = ran.stdout.lines().collect();
+    assert_eq!(lines.len(), 4, "{lines:?}");
+    // The header still says `key` (ticket 29's header logic is unaffected by this ticket: it
+    // names what kind of value the column holds, not how a key happens to be spelled).
+    assert_eq!(
+        lines[0].split_whitespace().collect::<Vec<_>>()[0],
+        "key",
+        "{lines:?}"
+    );
+    let identities: Vec<&str> = lines[1..]
+        .iter()
+        .map(|line| line.split_whitespace().next().unwrap())
+        .collect();
+    assert!(identities.contains(&"story-1:WF-1"), "{identities:?}");
+    assert!(identities.contains(&"story-2:WF-1"), "{identities:?}");
+    assert!(identities.contains(&"story-2:WF-9"), "{identities:?}");
+}
+
+#[test]
+fn list_table_and_ids_stay_bare_when_the_project_has_exactly_one_namespace() {
+    // `valid/refs` has a single (default) namespace: unaffected by Direction 1's fix, both
+    // shapes still print the bare key exactly as before — the regression this ticket must not
+    // introduce.
+    let ids = list(&fixture("valid/refs"), &["--code", "WF", "--ids"]);
+    assert_eq!(ids.code, 0, "stderr: {}", ids.stderr);
+    let mut lines: Vec<&str> = ids.stdout.lines().collect();
+    lines.sort();
+    assert_eq!(lines, ["WF-1", "WF-2", "WF-3"]);
+
+    let table = list(&fixture("valid/refs"), &["--code", "WF"]);
+    assert_eq!(table.code, 0, "stderr: {}", table.stderr);
+    assert!(table.stdout.contains("WF-1"), "{}", table.stdout);
+    assert!(!table.stdout.contains("default:WF-1"), "{}", table.stdout);
+}
+
+#[test]
+fn a_mixed_list_result_qualifies_only_the_coded_rows_in_a_multi_namespace_project() {
+    // `valid/several-namespaces`, scoped to the `story-*` namespaces: tickets (coded) and notes
+    // (uncoded) both match — coded rows must show `namespace:key`, uncoded rows keep their bare
+    // path, unaffected either way (the design's own rule for an uncoded document).
+    let ran = list(
+        &fixture("valid/several-namespaces"),
+        &["--namespace", "story-*"],
+    );
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert!(ran.stdout.contains("story-1:WF-1"), "{}", ran.stdout);
+    assert!(ran.stdout.contains("story-2:WF-1"), "{}", ran.stdout);
+    assert!(ran.stdout.contains("story-2:WF-9"), "{}", ran.stdout);
+    assert!(ran.stdout.contains("story-1/notes/a.md"), "{}", ran.stdout);
+    assert!(ran.stdout.contains("story-2/notes/a.md"), "{}", ran.stdout);
+}
+
+// ---------------------------------------------------------------------------------------------
 // The scope by namespace
 // ---------------------------------------------------------------------------------------------
 
