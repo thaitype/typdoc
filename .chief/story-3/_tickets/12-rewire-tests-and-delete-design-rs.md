@@ -1,7 +1,7 @@
 # 12: Rewire the three `design.rs` callers onto the catalog documents, delete `design.rs`
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None (M-13 landed 2026-09-24 — see ticket 24's Answer)
 
 **Unblocked 2026-09-24.** `crates/typdoc-testkit/src/fixtures.rs` is a fourth reader of
