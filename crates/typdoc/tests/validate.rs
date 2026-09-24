@@ -1406,6 +1406,23 @@ fn a_ref_whose_case_differs_from_the_files_is_not_found() {
     );
 }
 
+/// Ticket 25's own companion case: the fix to `resolve_path`'s fallback (reading real directory
+/// entries instead of trusting `Path::is_file`'s yes/no) must not turn a correct, exactly-cased
+/// match into a false negative. `README.txt` matches no collection (`REF_SCHEMA` only claims
+/// `*.md`), so this exercises the exact same fallback branch the mismatch test above does — the
+/// only difference is the case matches — and it must still resolve.
+#[test]
+fn a_ref_whose_case_exactly_matches_a_file_outside_every_collection_is_found() {
+    let project = Scratch::project(&REF_SCHEMA);
+    project.file("README.txt", "");
+    project.file("a.md", "---\nsee: README.txt\n---\n");
+
+    let ran = validate(&[], project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout_json()["findings"], json!([]));
+}
+
 /// The ticket's other example: `chief::WF-5` in a project with several namespaces is
 /// `bad-prefix`. The import form is not resolved in this story (ticket 17's), so this holds
 /// whether or not `chief` is a configured import alias: nothing here ever treats `::` as

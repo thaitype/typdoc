@@ -19,7 +19,8 @@
 //! way the rest of this crate's index-reading behaviour already is.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 
 use crate::argument::looks_like_key;
 use crate::config::{Namespace, RefBase};
@@ -403,6 +404,16 @@ fn join(base: &str, rest: &str) -> String {
 /// on disk but matches no collection resolves too, with no collection (only `target: "*"`
 /// accepts it: design.md's Target names, "`*` also accepts files outside any collection, such as
 /// a README"); anything else is `not-found`.
+///
+/// The index lookup above is case-exact by construction (`Index` keys itself off the real
+/// on-disk path strings it discovered while walking the project). This fallback has to be
+/// case-exact too, and for that it cannot lean on any single syscall whose case sensitivity
+/// depends on the filesystem: `Path::is_file` (a `stat`) answers `true` for a wrongly-cased path
+/// on a case-insensitive-but-preserving filesystem such as macOS's default APFS, which would
+/// contradict the design's own guarantee that a ref compares "exactly as it is written, case
+/// included, on every platform". `case_exact_file` does the check by reading real directory
+/// entries instead, so it gives the same answer regardless of what the filesystem's own lookup
+/// would have folded.
 pub(crate) fn resolve_path(path: &str, index: &Index, root: &Path) -> Outcome {
     if let Some(entry) = index.get(path) {
         return Ok(Resolved {
@@ -412,7 +423,7 @@ pub(crate) fn resolve_path(path: &str, index: &Index, root: &Path) -> Outcome {
             project: None,
         });
     }
-    if root.join(path).is_file() {
+    if case_exact_file(root, path) {
         return Ok(Resolved {
             path: path.to_owned(),
             collection: None,
@@ -421,6 +432,63 @@ pub(crate) fn resolve_path(path: &str, index: &Index, root: &Path) -> Outcome {
         });
     }
     Err(Reason::NotFound)
+}
+
+/// Whether `path` names a real file under `root`, with every path component matched against the
+/// real on-disk name byte for byte — never trusting a single `stat`-style syscall whose case
+/// sensitivity varies by filesystem (case-sensitive on Linux's ext4, case-insensitive but
+/// case-preserving on macOS's default APFS; Windows is out of scope). `path` can have more than
+/// one component (`join`, above, can join a multi-segment `rest` onto a base folder), and a
+/// filesystem that case-folds does so for every component of a lookup, not only the last one, so
+/// each directory along the way is opened and its entries compared exactly, the same as the
+/// final filename.
+///
+/// Normalizes first (a `::`-import's own trailing `resolve_path` call in
+/// `resolve_into_project` can reach here unjoined and unnormalized, unlike every other caller,
+/// which already ran the written path through `join`) so `.` and `..` segments are read as path
+/// syntax, never as literal directory-entry names to search for.
+///
+/// Reading a directory that does not exist (a missing parent, or a path that plain does not
+/// exist at all) is answered `false`, the same as `is_file()` on a nonexistent path was answered
+/// before this change — never a panic, never a propagated `Err`. A symlink is followed the same
+/// way `is_file()` already followed it: the check is only ever about whether the *name* at each
+/// level is spelled exactly as written, not about how the entry got there.
+fn case_exact_file(root: &Path, path: &str) -> bool {
+    let normalized = normalize(path);
+    let relative = normalized.strip_prefix('/').unwrap_or(&normalized);
+    if relative.is_empty() {
+        return false;
+    }
+
+    let mut current = root.to_path_buf();
+    let mut components = relative.split('/').peekable();
+    while let Some(component) = components.next() {
+        let Some(entry_path) = exact_entry(&current, component) else {
+            return false;
+        };
+        if components.peek().is_none() {
+            return entry_path.is_file();
+        }
+        current = entry_path;
+    }
+    false
+}
+
+/// The real on-disk path of `dir`'s child named exactly `name` (raw `OsStr` comparison, never
+/// case-folded or Unicode-normalized), or `None` when no entry matches or `dir` cannot be read
+/// at all — a missing directory, a path that is not a directory, or a permissions error are all
+/// read the same way a genuinely absent entry is, since the caller only ever wants a clean yes
+/// or no. An entry `read_dir` itself could not read (`Result::Err` from the iterator) is skipped
+/// rather than aborting the whole scan, the same reasoning: one unreadable sibling should not
+/// turn a real match elsewhere in the directory into a false negative.
+fn exact_entry(dir: &Path, name: &str) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        if entry.file_name() == OsStr::new(name) {
+            return Some(entry.path());
+        }
+    }
+    None
 }
 
 /// Whether a resolved ref's target is one `target` allows. `None` (the option was not written)
