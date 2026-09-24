@@ -1,7 +1,7 @@
 # 34: M-21 — narrow ticket 30's write-time acyclic check to only refuse a NEW cycle
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None (ticket 30 already merged; this narrows its behavior)
 
 **Mild's decision (M-21), 2026-09-24, relayed by Aria — this is the narrow reading of the
