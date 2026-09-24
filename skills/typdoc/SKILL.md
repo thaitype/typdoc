@@ -5,7 +5,7 @@ description: Work with a typdoc project — a folder of Markdown documents whose
 
 # typdoc
 
-Written for **typdoc 0.2.0**. Source and issues: https://github.com/thaitype/typdoc —
+Written for **typdoc 0.3.0**. Source and issues: https://github.com/thaitype/typdoc —
 use it only when something here does not match what the binary does.
 
 typdoc treats a folder of Markdown files as typed, linked documents. Each document is YAML
@@ -21,10 +21,10 @@ does not decide for you.
 
 ```console
 $ typdoc --version
-typdoc 0.2.0
+typdoc 0.3.0
 ```
 
-If it is not `0.2.0`, say so to the user before relying on this skill, and prefer what
+If it is not `0.3.0`, say so to the user before relying on this skill, and prefer what
 `typdoc <command> --help` says wherever the two disagree.
 
 ## 2 · Find the project

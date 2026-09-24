@@ -989,9 +989,15 @@ fn a_bare_key_the_excluded_namespace_alone_ever_issued_resolves_as_not_found() {
 #[test]
 fn an_excluded_namespaces_existing_state_does_not_stop_other_commands() {
     let project = coded(r#"["story-*", "!story-1"]"#);
-    project.file(".typdoc/state/story-1.json", r#"{ "tickets": { "last": 3 } }"#);
+    project.file(
+        ".typdoc/state/story-1.json",
+        r#"{ "tickets": { "last": 3 } }"#,
+    );
     project.file("story-1/tickets/WF-1.md", "---\ntitle: Excluded\n---\n");
-    project.file(".typdoc/state/story-2.json", r#"{ "tickets": { "last": 1 } }"#);
+    project.file(
+        ".typdoc/state/story-2.json",
+        r#"{ "tickets": { "last": 1 } }"#,
+    );
     project.file("story-2/tickets/WF-1.md", "---\ntitle: Visible\n---\n");
 
     let validated = json_of(&project, &["validate"]);
@@ -1055,7 +1061,10 @@ fn re_including_a_namespace_continues_numbering_with_its_state_untouched() {
 #[test]
 fn a_state_files_folder_gone_and_named_only_by_a_bang_entry_is_still_an_orphan() {
     let project = coded(r#"["story-2", "!story-9"]"#);
-    project.file(".typdoc/state/story-9.json", r#"{ "tickets": { "last": 1 } }"#);
+    project.file(
+        ".typdoc/state/story-9.json",
+        r#"{ "tickets": { "last": 1 } }"#,
+    );
 
     let ran = json_of(&project, &["validate"]);
 

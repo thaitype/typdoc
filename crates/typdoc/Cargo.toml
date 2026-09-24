@@ -1,7 +1,10 @@
 [package]
 name = "typdoc"
-version = "0.2.0"
+version = "0.3.0"
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A CLI that treats a folder of Markdown files as typed, linked documents."
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
@@ -15,8 +18,8 @@ serde_json = { version = "1.0.151", features = ["preserve_order", "raw_value"] }
 # thread, and re-raises so the process ends by the signal rather than with an exit code of its
 # own, all in one dependency (decisions 5 and 6).
 signal-hook = "0.4.4"
-typdoc-core = { version = "0.2.0", path = "../typdoc-core" }
-typdoc-fs = { version = "0.2.0", path = "../typdoc-fs" }
+typdoc-core = { version = "0.3.0", path = "../typdoc-core" }
+typdoc-fs = { version = "0.3.0", path = "../typdoc-fs" }
 
 [dev-dependencies]
 # `kill(2)`, for the CLI spawn helper's own `RunningChild::signal`: sending a real `SIGINT` or

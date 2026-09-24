@@ -1,7 +1,7 @@
 # Validation
 
-typdoc 0.2.0. `typdoc validate` checks the project, or the documents named, against its schemas
-and rules. Every finding carries a `rule` id; this page lists every id 0.2.0 can report, what it
+typdoc 0.3.0. `typdoc validate` checks the project, or the documents named, against its schemas
+and rules. Every finding carries a `rule` id; this page lists every id 0.3.0 can report, what it
 means, and the usual fix.
 
 ## Running it

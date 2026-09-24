@@ -1,7 +1,10 @@
 [package]
 name = "typdoc-fs"
-version = "0.2.0"
+version = "0.3.0"
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The write half of the seam: the file system itself."
 
 # The only crate that may change a file. Every other crate reaches a file system through
 # `typdoc_core::Fs`, and `crates/typdoc-core/clippy.toml` refuses the calls that would go
@@ -9,7 +12,7 @@ edition.workspace = true
 # a call lives in, which a manifest declares and a reader can grep for, rather than by an
 # attribute that a later one could quietly add beside it.
 [dependencies]
-typdoc-core = { version = "0.2.0", path = "../typdoc-core" }
+typdoc-core = { version = "0.3.0", path = "../typdoc-core" }
 
 [dev-dependencies]
 tempfile = "3.27.0"

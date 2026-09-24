@@ -1,6 +1,6 @@
 # Reading a typdoc project
 
-typdoc 0.2.0. How to read what a project declares, so you know what its documents may hold. This
+typdoc 0.3.0. How to read what a project declares, so you know what its documents may hold. This
 page is for understanding an existing project, not for designing one.
 
 ## The layout
