@@ -160,7 +160,9 @@ table: no header, and nothing printed, when there is nothing to show — the sam
 `list` and `toc` already follow.
 
 `refs`' first two columns are always `document` — the document at the other end, the same
-identity `list`'s own `document`/`key`/`path` column names (a coded document as `namespace:key`,
+identity `list`'s own `document`/`key`/`path` column names (a coded document as its bare key when
+the project has exactly one namespace, `namespace:key` when it has several — ticket 32, M-20:
+qualification tracks whether the project genuinely needs it, not unconditional either way —
 otherwise its bare path, with a `project::` prefix for an imported project's document), or
 `(unresolved: <reason>)` when a forward ref did not resolve — and `field`. A third column,
 `written`, appears only for the forward direction (no `--reverse`): `written` can genuinely differ

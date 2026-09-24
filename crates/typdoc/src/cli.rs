@@ -306,7 +306,15 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 &sort,
                 cli.namespace.as_deref(),
             ) {
-                Ok(result) => list_outcome(&result, limit, fields.as_deref(), &where_, ids, json),
+                Ok((result, multi_namespace)) => list_outcome(
+                    &result,
+                    limit,
+                    fields.as_deref(),
+                    &where_,
+                    ids,
+                    json,
+                    multi_namespace,
+                ),
                 Err(e) => failure(json, exit_code(e.kind()), &e),
             }
         }
@@ -322,8 +330,8 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
             field.as_deref(),
             cli.namespace.as_deref(),
         ) {
-            Ok(report) if json => success(refs_json(&report)),
-            Ok(report) => refs_outcome(&report),
+            Ok((report, _)) if json => success(refs_json(&report)),
+            Ok((report, multi_namespace)) => refs_outcome(&report, multi_namespace),
             Err(e) => failure(json, exit_code(e.kind()), &e),
         },
         Command::Toc {
@@ -408,10 +416,10 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 Duration::from_secs(lock_timeout),
                 cli.namespace.as_deref(),
             ) {
-                Ok(report) if json => success_raw(&mv_json(&report)),
-                Ok(report) => Outcome {
+                Ok((report, _)) if json => success_raw(&mv_json(&report)),
+                Ok((report, multi_namespace)) => Outcome {
                     code: 0,
-                    stdout: mv_text(&report),
+                    stdout: mv_text(&report, multi_namespace),
                     stderr: String::new(),
                 },
                 Err(e) => failure(json, exit_code(e.kind()), &e),
@@ -424,15 +432,15 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                     Duration::from_secs(lock_timeout),
                     cli.namespace.as_deref(),
                 ) {
-                    Ok(report) if json => success_raw(&mv_json(&report)),
+                    Ok((report, _)) if json => success_raw(&mv_json(&report)),
                     // **Changed (M-10h), deliberate:** the same labeled block plus
                     // `rewritten:`/`unrewritten:`/`findings:` every other write command's text
                     // mode prints, replacing what used to be the bare new key on its own line —
                     // a caller that only wants the key reads it out of `--json` instead, the same
                     // as any other field (contract, text-output shapes, `mv --renumber`).
-                    Ok(report) => Outcome {
+                    Ok((report, multi_namespace)) => Outcome {
                         code: 0,
-                        stdout: mv_text(&report),
+                        stdout: mv_text(&report, multi_namespace),
                         stderr: String::new(),
                     },
                     Err(e) => failure(json, exit_code(e.kind()), &e),
@@ -621,9 +629,10 @@ fn list(
     wheres: &[String],
     sort: &[String],
     namespace: Option<&str>,
-) -> Result<ListResult, Error> {
+) -> Result<(ListResult, bool), Error> {
     let root = discover(deps.env)?;
     let project = Project::load(&root, deps.env)?;
+    let multi_namespace = project.config().namespaces.len() > 1;
     let scope = project.scope(None, namespace, deps.env)?;
     let collections = split_list(collection);
     let codes = split_list(code);
@@ -641,7 +650,8 @@ fn list(
         wheres: &conditions,
         sort: &sort_keys,
     };
-    project.list_all(&scope, &filter)
+    let result = project.list_all(&scope, &filter)?;
+    Ok((result, multi_namespace))
 }
 
 /// `--collection`/`--code`'s value, split on `,`; absent is the same as empty (every collection).
@@ -685,6 +695,7 @@ fn list_outcome(
     wheres: &[String],
     ids: bool,
     json: bool,
+    multi_namespace: bool,
 ) -> Outcome {
     let matched = &result.documents;
     let stderr = dangling_refs_stderr(&result.dangling_refs);
@@ -703,7 +714,7 @@ fn list_outcome(
     if ids {
         let mut stdout = String::new();
         for doc in listed {
-            stdout.push_str(doc.key.as_deref().unwrap_or(doc.path.as_str()));
+            stdout.push_str(&identity_text(doc, multi_namespace));
             stdout.push('\n');
         }
         return Outcome {
@@ -715,7 +726,7 @@ fn list_outcome(
     let columns = table_columns(fields, wheres);
     Outcome {
         code: 0,
-        stdout: list_table(matched, listed.len(), &columns),
+        stdout: list_table(matched, listed.len(), &columns, multi_namespace),
         stderr,
     }
 }
@@ -804,17 +815,28 @@ fn field_name(field: &FieldRef) -> String {
 ///
 /// The identity column is labeled `key` when every document in `matched` has one (a coded
 /// collection), `path` when none does (an uncoded collection) — matching the identity `table_row`
-/// already prints per row (`doc.key.unwrap_or(doc.path)`) — and `document` when `matched` is a
-/// genuine mix of both (spanning collections with and without a code): a header must not claim a
-/// column holds something a row in it plainly doesn't, so neither `key` nor `path` alone is
-/// accurate once even one row of each shape is present. Decided once for the whole table rather
-/// than per row so the header names a single column consistently.
-fn list_table(matched: &[Document], listed_len: usize, columns: &[String]) -> String {
+/// already prints per row (`doc.key.unwrap_or(doc.path)`, qualified `namespace:key` instead of
+/// the bare key when the project has more than one namespace) — and `document` when `matched` is
+/// a genuine mix of both (spanning collections with and without a code): a header must not claim
+/// a column holds something a row in it plainly doesn't, so neither `key` nor `path` alone is
+/// accurate once even one row of each shape is present. The label itself never depends on
+/// `multi_namespace` — it names what kind of value the column holds (a key or a path), not how a
+/// key happens to be spelled. Decided once for the whole table rather than per row so the header
+/// names a single column consistently.
+fn list_table(
+    matched: &[Document],
+    listed_len: usize,
+    columns: &[String],
+    multi_namespace: bool,
+) -> String {
     if listed_len == 0 {
         return String::new();
     }
     let column_count = 2 + columns.len();
-    let rows: Vec<Vec<String>> = matched.iter().map(|doc| table_row(doc, columns)).collect();
+    let rows: Vec<Vec<String>> = matched
+        .iter()
+        .map(|doc| table_row(doc, columns, multi_namespace))
+        .collect();
     let identity_label = if matched.iter().all(|doc| doc.key.is_some()) {
         "key"
     } else if matched.iter().any(|doc| doc.key.is_some()) {
@@ -880,13 +902,30 @@ fn render_row(out: &mut String, row: &[String], widths: &[usize]) {
     out.push('\n');
 }
 
-fn table_row(doc: &Document, columns: &[String]) -> Vec<String> {
-    let mut row = vec![doc.key.clone().unwrap_or_else(|| doc.path.clone())];
+fn table_row(doc: &Document, columns: &[String], multi_namespace: bool) -> Vec<String> {
+    let mut row = vec![identity_text(doc, multi_namespace)];
     row.push(cell_value(doc, "title"));
     for column in columns {
         row.push(cell_value(doc, column));
     }
     row
+}
+
+/// A document's identity as `list`'s table and `--ids` print it (the design's naming table, "In
+/// this project"): a coded document is its bare `key` when the project has exactly one
+/// namespace, `{namespace}:{key}` when it has several — the same qualification rule
+/// `ref_name_text` applies to a `refs`/`mv` name, and the same separator, so a name either one
+/// prints is always one another command can resolve. An uncoded document (no `key`) is always
+/// its `path`, unaffected by namespace count either way. A coded document with no namespace
+/// should not occur — coding requires a collection, which requires a namespace (`Document::key`'s
+/// own doc comment) — but is handled defensively here by falling back to the bare key rather than
+/// panicking or silently dropping it.
+fn identity_text(doc: &Document, multi_namespace: bool) -> String {
+    match (&doc.key, &doc.namespace) {
+        (Some(key), Some(namespace)) if multi_namespace => format!("{namespace}:{key}"),
+        (Some(key), _) => key.clone(),
+        _ => doc.path.clone(),
+    }
 }
 
 /// One cell of the default table: a pseudo-field read straight off `doc`, a named field read
@@ -987,11 +1026,13 @@ fn refs(
     reverse: bool,
     field: Option<&str>,
     namespace: Option<&str>,
-) -> Result<RefsReport, Error> {
+) -> Result<(RefsReport, bool), Error> {
     let (root, arg) = discover_for(Argument::parse(document)?, deps.env)?;
     let project = Project::load(&root, deps.env)?;
+    let multi_namespace = project.config().namespaces.len() > 1;
     let scope = scope_for(&project, &arg, namespace, deps.env)?;
-    project.refs(&arg, &scope, reverse, field, deps.env)
+    let report = project.refs(&arg, &scope, reverse, field, deps.env)?;
+    Ok((report, multi_namespace))
 }
 
 /// `mv`: `to` is read the same way `from` is (design.md, Arguments that name a document: "`mv`
@@ -1005,15 +1046,17 @@ fn mv(
     to: &std::ffi::OsStr,
     lock_timeout: Duration,
     namespace: Option<&str>,
-) -> Result<MvReport, Error> {
+) -> Result<(MvReport, bool), Error> {
     let (root, from_arg) = discover_for(Argument::parse(from)?, deps.env)?;
     let project = Project::load(&root, deps.env)?;
+    let multi_namespace = project.config().namespaces.len() > 1;
     let to_arg = match Argument::parse(to)? {
         Argument::Named(document) => document,
         Argument::OnDisk(path) => resolve_on_disk(&root, &path, deps.env)?,
     };
     let scope = scope_for(&project, &from_arg, namespace, deps.env)?;
-    project.mv(&from_arg, &to_arg, &scope, lock_timeout, deps)
+    let report = project.mv(&from_arg, &to_arg, &scope, lock_timeout, deps)?;
+    Ok((report, multi_namespace))
 }
 
 /// `mv --renumber`: `namespace` is a bare namespace name, never a document argument, so it is
@@ -1026,9 +1069,10 @@ fn mv_renumber(
     namespace: &std::ffi::OsStr,
     lock_timeout: Duration,
     namespace_flag: Option<&str>,
-) -> Result<MvReport, Error> {
+) -> Result<(MvReport, bool), Error> {
     let (root, from_arg) = discover_for(Argument::parse(from)?, deps.env)?;
     let project = Project::load(&root, deps.env)?;
+    let multi_namespace = project.config().namespaces.len() > 1;
     let namespace_text = match namespace.to_str() {
         Some(text) => text,
         None => {
@@ -1038,7 +1082,8 @@ fn mv_renumber(
         }
     };
     let scope = scope_for(&project, &from_arg, namespace_flag, deps.env)?;
-    project.mv_renumber(&from_arg, namespace_text, &scope, lock_timeout, deps)
+    let report = project.mv_renumber(&from_arg, namespace_text, &scope, lock_timeout, deps)?;
+    Ok((report, multi_namespace))
 }
 
 /// Both forms of `mv`'s text-mode shape (contract, text-output shapes, `mv`/`mv --renumber`;
@@ -1047,10 +1092,10 @@ fn mv_renumber(
 /// is as loud as a busy one — nothing printed would look indistinguishable from "not built yet"
 /// — `rewritten:` (a count), `unrewritten:` (its own count plus one line per entry), and
 /// `findings:` (its entries or `none`).
-fn mv_text(report: &MvReport) -> String {
+fn mv_text(report: &MvReport, multi_namespace: bool) -> String {
     let mut out = document_text(&report.document);
     push_line(&mut out, "rewritten", &rewritten_summary(&report.rewritten));
-    push_unrewritten_lines(&mut out, &report.unrewritten);
+    push_unrewritten_lines(&mut out, &report.unrewritten, multi_namespace);
     push_findings_lines(&mut out, &report.findings);
     out
 }
@@ -1084,14 +1129,14 @@ fn count_noun(n: usize, noun: &str) -> String {
 /// written form of the ref that was not rewritten (contract, `mv` (plain)); `none` in place of
 /// the count, with no entry lines, when there are none (testing-decisions.md, "Text output": a
 /// clean move's `unrewritten:` shows `none`).
-fn push_unrewritten_lines(out: &mut String, unrewritten: &[UnrewrittenRef]) {
+fn push_unrewritten_lines(out: &mut String, unrewritten: &[UnrewrittenRef], multi_namespace: bool) {
     if unrewritten.is_empty() {
         push_line(out, "unrewritten", "none");
         return;
     }
     push_line(out, "unrewritten", &unrewritten.len().to_string());
     for item in unrewritten {
-        out.push_str(&unrewritten_text(item));
+        out.push_str(&unrewritten_text(item, multi_namespace));
         out.push('\n');
     }
 }
@@ -1101,8 +1146,8 @@ fn push_unrewritten_lines(out: &mut String, unrewritten: &[UnrewrittenRef]) {
 /// is always `Resolved` here — `mv_reverse_scan` (`typdoc-core`) only ever builds an
 /// `UnrewrittenRef` from a reference it has already destructured as `Resolved` — but this reads
 /// defensively rather than assuming it, since nothing here enforces that invariant across crates.
-fn unrewritten_text(item: &UnrewrittenRef) -> String {
-    let name = ref_outcome_text(&item.reference.other);
+fn unrewritten_text(item: &UnrewrittenRef, multi_namespace: bool) -> String {
+    let name = ref_outcome_text(&item.reference.other, multi_namespace);
     format!(
         "{name}  {}  {}",
         item.reference.field, item.reference.written
@@ -1113,31 +1158,35 @@ fn unrewritten_text(item: &UnrewrittenRef) -> String {
 /// `(unresolved: {reason})` when it did not resolve. Shared by `unrewritten_text` (`mv`'s own
 /// `unrewritten:` lines) and `refs_text` (ticket 29) — both name "the document at the other end
 /// of this reference" and must render it identically, so this is the one place that does.
-fn ref_outcome_text(outcome: &RefOutcome) -> String {
+fn ref_outcome_text(outcome: &RefOutcome, multi_namespace: bool) -> String {
     match outcome {
-        RefOutcome::Resolved(name) => ref_name_text(name),
+        RefOutcome::Resolved(name) => ref_name_text(name, multi_namespace),
         RefOutcome::Unresolved(reason) => format!("(unresolved: {reason})"),
     }
 }
 
-/// A document's identity, text-mode: the same category the design's own `refs` worked example
-/// already prints (a coded document as `namespace:key`, e.g. `chief:WF-7`; anything else as its
-/// bare path), with a `project::` prefix in front when the name is of another project's document
-/// (decision 2's `imported-project` reason — not reachable by any fixture yet, since it needs the
-/// reverse-into-imports scan a separate part of this story leaves as a known gap; see `mv.rs`'s
-/// own test file).
-fn ref_name_text(name: &RefName) -> String {
+/// A document's identity, text-mode (the design's naming table, "In this project"/"In an
+/// imported project"): a coded document is its bare `key` when the project has exactly one
+/// namespace, `namespace:key` (e.g. `chief:WF-7`) when it has several; anything else (no `key`
+/// at all) is its bare path either way — with a `project::` prefix in front when the name is of
+/// another project's document (decision 2's `imported-project` reason — not reachable by any
+/// fixture yet, since it needs the reverse-into-imports scan a separate part of this story leaves
+/// as a known gap; see `mv.rs`'s own test file). The `project::` prefix is a wholly separate
+/// concern — the imported project's own namespace count, not this one's — and is unaffected by
+/// `multi_namespace` either way (ticket 32).
+fn ref_name_text(name: &RefName, multi_namespace: bool) -> String {
     let mut out = String::new();
     if let Some(project) = &name.project {
         out.push_str(project);
         out.push_str("::");
     }
     match (&name.namespace, &name.key) {
-        (Some(namespace), Some(key)) => {
+        (Some(namespace), Some(key)) if multi_namespace => {
             out.push_str(namespace);
             out.push(':');
             out.push_str(key);
         }
+        (_, Some(key)) => out.push_str(key),
         _ => out.push_str(&name.path),
     }
     out
@@ -1749,10 +1798,10 @@ fn push_toc_row(out: &mut String, cells: &[String; 4], widths: &[usize; 4]) {
 /// the order `Project::refs` already gives them (respecting `--reverse` and `--field`, both
 /// applied before `refs_text` ever sees the report). No header and no output at all when there
 /// are no refs.
-fn refs_outcome(report: &RefsReport) -> Outcome {
+fn refs_outcome(report: &RefsReport, multi_namespace: bool) -> Outcome {
     Outcome {
         code: 0,
-        stdout: refs_text(report),
+        stdout: refs_text(report, multi_namespace),
         stderr: String::new(),
     }
 }
@@ -1769,7 +1818,7 @@ fn refs_outcome(report: &RefsReport) -> Outcome {
 /// `written` is only how the holder happened to write the ref back to the document already named
 /// on the command line — it adds nothing `document` doesn't already say, so it is dropped, header
 /// included (ticket 29).
-fn refs_text(report: &RefsReport) -> String {
+fn refs_text(report: &RefsReport, multi_namespace: bool) -> String {
     let forward = report.direction == RefsDirection::Out;
     let mut header = vec!["document".to_owned(), "field".to_owned()];
     if forward {
@@ -1779,7 +1828,10 @@ fn refs_text(report: &RefsReport) -> String {
         .refs
         .iter()
         .map(|reference| {
-            let mut row = vec![ref_outcome_text(&reference.other), reference.field.clone()];
+            let mut row = vec![
+                ref_outcome_text(&reference.other, multi_namespace),
+                reference.field.clone(),
+            ];
             if forward {
                 row.push(reference.written.clone());
             }
