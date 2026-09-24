@@ -1,7 +1,7 @@
 # 14: Pin the toolchain and wire up CI
 
 Type: implementation
-Status: resolved (macOS follow-up built; live CI proof still pending, see report)
+Status: resolved (macOS follow-up built; live red-before-green CI proof done — see the story-3 status note for run IDs)
 Blocked by: None (can start immediately)
 
 Ticket 4's answer, built: three gates, not four.
