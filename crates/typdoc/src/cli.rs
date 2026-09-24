@@ -1623,14 +1623,39 @@ fn toc_json(toc: &Toc, depth: Option<u8>) -> Json {
 
 /// `toc`'s text-mode table: a header row (`line`, `end`, `level`, `heading`), then one row per
 /// heading down to `depth` — the same filter `toc_json` applies, so both shapes agree on which
-/// headings are listed. No header when the filtered result is empty (`list`'s own precedent,
-/// decided by Aria, 2026-09-23): the exit code alone carries an empty result.
+/// headings are listed.
+///
+/// Two different empty results, told apart on stderr (M-14, 2026-09-24): a document with no
+/// headings at all prints nothing at all, `list`'s own silent-empty precedent — but a document
+/// that HAS headings, all of them filtered out by `--depth`, says so on stderr in one line
+/// (`no headings at depth ≤ N (M heading(s) is/are deeper)`), stdout still empty, exit still 0.
+/// Silence alone can't tell "nothing here" from "wrong depth for this document," which is the
+/// gap M-14 closes; `--json` is unaffected either way.
 fn toc_outcome(toc: &Toc, depth: Option<u8>) -> Outcome {
     let headings: Vec<&Heading> = toc
         .headings
         .iter()
         .filter(|heading| within_depth(heading.level, depth))
         .collect();
+    // `within_depth` with `depth: None` keeps every heading, so a non-empty document's filtered
+    // result can only come up empty when `depth` is `Some` — this `if let` is what makes that
+    // the only way into the branch below, rather than a separate check the two conditions have
+    // to be kept in sync with by hand.
+    if let Some(depth) = depth
+        && headings.is_empty()
+        && !toc.headings.is_empty()
+    {
+        let deeper = toc.headings.len();
+        return Outcome {
+            code: 0,
+            stdout: String::new(),
+            stderr: format!(
+                "no headings at depth \u{2264} {depth} ({deeper} {} {} deeper)\n",
+                if deeper == 1 { "heading" } else { "headings" },
+                if deeper == 1 { "is" } else { "are" },
+            ),
+        };
+    }
     Outcome {
         code: 0,
         stdout: toc_table(&headings),

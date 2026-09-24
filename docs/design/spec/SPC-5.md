@@ -30,7 +30,13 @@ other field — `new`'s `--json` shape is unchanged.
 
 **`toc` is a table with a header row:** `line`, `end`, `level`, `heading`, one row per heading
 down to `--depth`, columns separated by two spaces and padded to the widest value in that column
-(header included). No header line, and nothing printed, for a document with no headings at all.
+(header included).
+
+**Two different empty results, told apart on stderr.** A document with no headings at all prints
+nothing at all — stdout empty, stderr empty, exit 0. A document that *has* headings, all of them
+filtered out by `--depth`, says so in one line on stderr instead — stdout still empty, exit still
+0 — since silence alone can't tell "nothing here" from "wrong depth for this document." `--json`
+is unaffected either way; it always returns the (possibly empty) `headings` array.
 
 ```console
 $ typdoc toc notes/guide.md
@@ -44,7 +50,17 @@ $ typdoc toc notes/guide.md --depth 1
 line  end  level  heading
 5     16   1      Getting started
 17    19   1      Reference
+
+$ typdoc toc notes/subsections.md --depth 1
+no headings at depth ≤ 1 (2 headings are deeper)
+
+$ typdoc toc notes/no-headings.md
+$
 ```
+
+(`notes/subsections.md` has two headings, both at level 2 — `--depth 1` keeps neither. `--depth`
+itself only accepts `1..=255`; `0` is bad arguments, exit 1, the same as any other out-of-range
+value — not a way to ask for "nothing at any depth.")
 
 **Both forms of `mv` print the destination's `get`-shaped block, then three lines always
 present**, so a clean move reads as loud as a busy one:

@@ -65,7 +65,9 @@ A reverse lookup scans this project's namespaces. It does not enter an imported 
 
 The headings of a document's body, with the lines they cover.
 
-`--depth <n>` lists only the headings down to that level. `end` is the last line of a heading's section and does not change with `--depth`; the ranges nest rather than tile, so a heading's range contains the ranges of the headings under it. Lines count from the top of the file, frontmatter included, so they match what an editor shows. A slug is what a `#heading` link has to use.
+`--depth <n>` (`1..=255`) lists only the headings down to that level. `end` is the last line of a heading's section and does not change with `--depth`; the ranges nest rather than tile, so a heading's range contains the ranges of the headings under it. Lines count from the top of the file, frontmatter included, so they match what an editor shows. A slug is what a `#heading` link has to use.
+
+Without `--json`, a document with no headings at all prints nothing. A document that has headings, all of them filtered out by `--depth`, says so in one line on stderr instead (e.g. `no headings at depth ≤ 1 (2 headings are deeper)`) — silence alone can't tell the two apart, so `--depth` filtering to nothing is never silent. `--json` always returns the (possibly empty) `headings` array either way.
 
 ## `typdoc validate [<key|path>...]`
 

@@ -125,3 +125,7 @@ Today every command without `--json` answers `the output without --json is not b
 **M-12 — pushing (2026-09-23).** Mild: *"push ขึ้น branch ได้คับ"* — approved for **throwaway branches used to prove CI red-before-green**, deleted after. Not a release of the story branch, not a PR, not main.
 
 **CI runners (2026-09-23).** Mild: *"ให้ทำ github actions ที่ ubuntu กับ mac นะครับ"* — CI runs every gate on **both** `ubuntu-latest` and `macos-latest`. Windows not asked.
+
+**M-14 — `toc --depth` with nothing at that depth (2026-09-24).** Mild: *"M-14 เห็นด้วยคับ"* — stdout stays empty and exit 0 (the list precedent), but when the document HAS headings and none survive `--depth`, text mode prints one line to **stderr**, e.g. `no headings at depth ≤ 1 (3 headings are deeper)`. A document with no headings at all prints nothing. `--json` unchanged.
+
+**M-15 — token (2026-09-24).** Mild: *"M-15 ทำให้แล้วคับ"* — the `mildronize` fine-grained PAT now has Workflows: Read and write for `thaitype/typdoc`. The CI red-before-green proof on throwaway branches (M-12) can run.

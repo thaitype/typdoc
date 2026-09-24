@@ -312,6 +312,47 @@ fn a_document_with_no_headings_prints_nothing_without_json() {
     assert_eq!(ran.stderr, "");
 }
 
+/// M-14 (2026-09-24): a document that HAS headings, all of them filtered out by `--depth`, is a
+/// different empty result from "no headings at all" — told apart on stderr, one line, stdout
+/// still empty, exit still 0. Both headings here are level 2; `--depth 1` keeps neither.
+#[test]
+fn depth_filtered_to_nothing_says_so_on_stderr_distinct_from_no_headings_at_all() {
+    let project = Scratch::project(&NOTES);
+    project.file(
+        "two-headings.md",
+        "---\ntitle: x\n---\n\n## First\n\ntext\n\n## Second\n\nmore\n",
+    );
+
+    let ran = toc(project.path(), &["two-headings.md", "--depth", "1"]);
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stdout, "");
+    assert_eq!(
+        ran.stderr,
+        "no headings at depth \u{2264} 1 (2 headings are deeper)\n"
+    );
+}
+
+/// The singular form on both counts independently: depth 0 read as "≤ 0", one heading read as
+/// "1 heading is deeper", not "1 headings are deeper".
+#[test]
+fn depth_filtered_to_nothing_uses_the_singular_form_for_one_heading() {
+    let project = Scratch::project(&NOTES);
+    project.file(
+        "one-heading.md",
+        "---\ntitle: x\n---\n\n## Only one\n\ntext\n",
+    );
+
+    let ran = toc(project.path(), &["one-heading.md", "--depth", "1"]);
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stdout, "");
+    assert_eq!(
+        ran.stderr,
+        "no headings at depth \u{2264} 1 (1 heading is deeper)\n"
+    );
+}
+
 /// The error path's `failure(true, ...)` fixed to the real `json` flag (ticket 17): an error
 /// without `--json` prints plain text, not the `--json` error object.
 #[test]
