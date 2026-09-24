@@ -1,7 +1,7 @@
 # 2: Excluding a namespace with existing state must not break project load
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 1
 
 ## What this delivers
