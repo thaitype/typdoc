@@ -24,14 +24,17 @@ jobs:
       # Proves the memory ceiling itself is enforced on this runner before
       # trusting it for the real run below. On Linux this exercises the
       # existing systemd-run --user --scope path (already known to work from
-      # this ticket's earlier, ubuntu-only build). On macOS this is the
-      # first real evidence, on real hardware, of whether `ulimit -v`
-      # actually stops a runaway (see scripts/test.sh's own header comment
-      # for why that was unverifiable from a Linux dev machine, and why it's
-      # a virtual-memory cap rather than the resident-memory cap Linux gets).
-      # A failure here means the cap doesn't work on this OS, not that the
-      # suite is broken — worth telling apart if this step is the one that
-      # goes red.
+      # this ticket's earlier, ubuntu-only build). On macOS, `ulimit -v` was
+      # tried first and found non-functional on a real runner ("ulimit -v is
+      # not settable in this shell") — the cap here is a background watchdog
+      # that polls available memory via `vm_stat` and SIGKILLs the whole
+      # process group if it drops too far below a freshly-measured baseline
+      # (see scripts/test.sh's own header comment for the full history and
+      # why raw `vm_stat` "free" alone reads misleadingly low on macOS). This
+      # step is where that watchdog's own self-test proves itself on real
+      # hardware. A failure here means the cap doesn't work on this OS, not
+      # that the suite is broken — worth telling apart if this step is the
+      # one that goes red.
       #
       # TMPDIR is set inline, per step, as a plain shell variable read from
       # $RUNNER_TEMP — not through a workflow- or job-level `env:` block.
