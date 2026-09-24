@@ -1,7 +1,7 @@
 # 26: Restore config.* rule-id coverage via a fifth catalog document
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None (ticket 13 resolved 2026-09-24)
 
 **Opened 2026-09-24, Aria's call, per the one-doc-per-concept rule from Q6.** Ticket 12's own
