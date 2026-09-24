@@ -1,5 +1,5 @@
-//! Where the fixtures and the design are. The tests run from a checkout of the repository;
-//! anywhere else the loader says so and stops.
+//! Where the fixtures are. The tests run from a checkout of the repository; anywhere else the
+//! loader says so and stops.
 
 use std::path::{Path, PathBuf};
 
@@ -12,7 +12,9 @@ pub fn locate(manifest_dir: &Path) -> Result<PathBuf, String> {
         .to_owned();
     for (what, missing) in [
         ("fixtures folder", root.join("fixtures")),
-        ("design", root.join("docs/design/design.md")),
+        // Not a design document (M-13/ticket 12): a marker every checkout has, that cannot be
+        // confused for "reading the design" the way `docs/design/design.md` could be.
+        ("workspace manifest", root.join("Cargo.toml")),
     ] {
         if !missing.exists() {
             return Err(format!(
@@ -40,11 +42,16 @@ pub fn path(relative: &str) -> PathBuf {
     found
 }
 
-/// The text of `docs/design/design.md`.
-pub fn design_text() -> String {
-    let file = root().join("docs/design/design.md");
-    std::fs::read_to_string(&file)
-        .unwrap_or_else(|e| panic!("the design {} cannot be read: {e}", file.display()))
+/// Reads `relative` (a path from the repository root, such as
+/// `docs/design/catalog/rules.md`) and parses its body into `T` through
+/// `typdoc_core::read_json_body`. The one place a test reaches for a catalog document's typed
+/// data, so a change to the read path or the panic wording touches here once, not once per
+/// test file that needs a catalog document (ticket 12's own callers: `typdoc-core/tests/rules.rs`,
+/// `typdoc-core/src/frontmatter.rs`'s corpus test, and `typdoc/tests/coverage.rs`).
+pub fn read_catalog<T: serde::de::DeserializeOwned>(relative: &str) -> T {
+    let path = root().join(relative);
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    typdoc_core::read_json_body(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
 /// The names of the entries of `fixtures/broken/`. A checkout with no such folder has no
@@ -81,7 +88,7 @@ mod tests {
     }
 
     #[test]
-    fn a_checkout_with_fixtures_and_no_design_is_also_refused() {
+    fn a_checkout_with_fixtures_and_no_manifest_is_also_refused() {
         let scratch = tempfile::tempdir().unwrap();
         let crate_dir = scratch.path().join("crates/x");
         std::fs::create_dir_all(&crate_dir).unwrap();
@@ -89,14 +96,14 @@ mod tests {
 
         let error = locate(&crate_dir).unwrap_err();
 
-        assert!(error.contains("design.md"), "{error}");
+        assert!(error.contains("Cargo.toml"), "{error}");
     }
 
     #[test]
-    fn inside_the_checkout_the_root_holds_fixtures_and_the_design() {
+    fn inside_the_checkout_the_root_holds_fixtures_and_the_workspace_manifest() {
         let root = root();
 
         assert!(root.join("fixtures/valid/minimal/note.md").is_file());
-        assert!(design_text().starts_with("# typdoc"));
+        assert!(root.join("Cargo.toml").is_file());
     }
 }
