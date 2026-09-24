@@ -1,7 +1,7 @@
 # 28: M-16 — header rows for text `refs` and text `validate`
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None (can start immediately)
 
 **Mild's decision (M-16), relayed by Aria, 2026-09-24, at final contract review of the whole
