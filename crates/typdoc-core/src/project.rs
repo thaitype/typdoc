@@ -952,8 +952,25 @@ impl Project {
             // findings are about the state this write is about to produce. Filtered to `path`
             // itself, since a cycle elsewhere the scan also (correctly) still finds is not this
             // write's to refuse — that is `validate`'s finding to report, unaffected by this.
+            //
+            // Narrowed further (ticket 34, M-21): `path` can appear in the post-write cyclic set
+            // for a reason that has nothing to do with this write — an acyclic field this write
+            // never touched, already cyclic before the write and still cyclic after. "No cycle
+            // forms" is about this write's own *effect*, not a standing fact about the document,
+            // so a finding only counts when the field it names (`finding.field`, always `Some`
+            // for `refs.acyclic`) actually changed value between `before_fields` and
+            // `after_final` — the same before/after pair `fields_changed` above already computed
+            // for `auto: update`, reused here rather than recomputed.
             let (ref_project, acyclic) = self.ref_project_for_candidate(path, entry, &candidate)?;
-            findings.extend(acyclic.into_iter().filter(|finding| finding.path == path));
+            let before_map = fields_map(&before_fields);
+            let after_map = fields_map(&after_final);
+            findings.extend(acyclic.into_iter().filter(|finding| {
+                finding.path == path
+                    && finding
+                        .field
+                        .as_deref()
+                        .is_some_and(|field| before_map.get(field) != after_map.get(field))
+            }));
             findings.extend(self.check_refs(
                 path,
                 entry,
