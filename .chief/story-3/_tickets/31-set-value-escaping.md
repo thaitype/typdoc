@@ -1,7 +1,7 @@
 # 31: M-19 — `--set` / `field=value` escaping per design §Query
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None (can start immediately)
 
 **Mild's decision (M-19), 2026-09-24, relayed by Aria, found running a real release build.**
