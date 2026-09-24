@@ -278,6 +278,53 @@ fn a_body_link_in_a_document_whose_body_links_rule_is_off_is_reported_unrewritte
 }
 
 // ---------------------------------------------------------------------------------------------
+// M-22 (ticket 35): confirmed, not assumed — a plain `mv` genuinely has nothing to report here.
+// `links::mentions` only ever recognizes key-shaped tokens (its own doc comment: "a bare key, or
+// one written with a sibling or import prefix" — never a path), and a coded document can never
+// move under plain `mv` at all (`a_coded_document_cannot_move_and_nothing_changes` above; only
+// `mv --renumber` changes a key). So plain `mv`'s own `from` never has a key for a mention to
+// match against, structurally, every time — proved here rather than left as an assumption.
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn a_plain_mv_never_reports_a_mention_since_the_moved_document_has_no_key() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "*.md", "schema": "note.json" }"#,
+        ),
+        (
+            ".typdoc/collections/tickets.json",
+            r#"{ "match": "tickets/{key}.md", "schema": "ticket.json" }"#,
+        ),
+        ("note.json", r#"{ "name": "note", "fields": {} }"#),
+        (
+            "ticket.json",
+            r#"{ "name": "ticket", "code": "WF", "fields": {} }"#,
+        ),
+    ]);
+    project.file("tickets/WF-1.md", "---\ntitle: One\n---\n");
+    project.file("old.md", "---\ntitle: A\n---\n");
+    project.file(
+        "holder.md",
+        "---\ntitle: B\n---\n\nSee WF-1 in passing, unrelated to this move.\n",
+    );
+
+    let ran = mv(&project, "old.md", "new.md");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(
+        ran.stdout_json()["unrewritten"],
+        json!([]),
+        "old.md has no key at all, so no mention of any key could ever be about it"
+    );
+    assert_eq!(
+        project.read("holder.md"),
+        "---\ntitle: B\n---\n\nSee WF-1 in passing, unrelated to this move.\n"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
 // Refs are rewritten in frontmatter and in body links, keeping each one's own written form.
 // ---------------------------------------------------------------------------------------------
 

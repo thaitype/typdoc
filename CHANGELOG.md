@@ -35,7 +35,9 @@ are left out unless they change something a user of the `typdoc` binary sees.
   naming the project, document, field, and written form), and `findings:` (its entries, or
   `none`). `mv --json` gains the full `rewritten` list — one entry per rewritten ref, naming the
   document, field, and its value before and after — additive to every field `mv --json` already
-  printed.
+  printed. `unrewritten`'s `reason` (`--json` only) is `imported-project`, `mention` (a
+  plain-text mention of the moved key, found and reported at move time rather than left for a
+  later `validate` run to discover alone), or `links-rule-off`.
 - Every command that fails without `--json` now prints a plain-text error (`typdoc: <message>`)
   on stderr, instead of the `--json` error object leaking through on paths that used to be
   unreachable without `--json`.
