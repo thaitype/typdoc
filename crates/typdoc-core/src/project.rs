@@ -4074,6 +4074,18 @@ impl Project {
         // Decision 12: identity before anything else. A refusal here writes nothing and needs no
         // lock to be right about, so it is checked first; the authoritative check, under the
         // lock, is decision 15's own (below).
+        //
+        // `same_file` (device+inode identity) is true both when `from`/`to` are the literal same
+        // path and when they are a genuine case-only rename — those are different situations for
+        // a user to understand, so string equality is checked first and gets its own message
+        // (story-4, ticket 4); the case-only wording is kept for when `same_file` is true but the
+        // paths differ as strings.
+        if from_path == to_path {
+            return Err(Error::AlreadyExists {
+                path: to_path.clone(),
+                message: format!("`{to_path}` already names this document: nothing to move"),
+            });
+        }
         if deps
             .fs
             .same_file(&from_file, &to_full)
