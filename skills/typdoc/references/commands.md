@@ -80,8 +80,8 @@ $ typdoc list --collection tickets --limit 1 --json
 
 No match is exit 0 with an empty result. Across several namespaces the text and `--ids` output
 print `namespace:key` (`story-1:WF-1`), a name any other command accepts; a one-namespace project
-prints the bare key. The first column is headed `key` when every row is a numbered document and
-`document` otherwise.
+prints the bare key. The first column is headed `key` when every row is a numbered document,
+`path` when none is, and `document` when the result mixes both.
 
 ## refs
 

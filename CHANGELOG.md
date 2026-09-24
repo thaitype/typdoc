@@ -49,6 +49,12 @@ are left out unless they change something a user of the `typdoc` binary sees.
 
 ### Documentation
 
+- The README and the user docs are rewritten for people rather than as a specification. The
+  README now covers the motivation, the concepts and how typdoc works; `docs/` is organised as a
+  tutorial (`getting-started.md`), how-to guides (`docs/how-to/`), reference (`docs/reference/`,
+  replacing `docs/commands.md` and `docs/projects.md`) and explanation (`docs/explanation/`).
+- An agent skill ships with the repository in `skills/typdoc/`, installable with
+  `npx skills add thaitype/typdoc`. It is written for this version and says so on its first line.
 - The user docs now state where exact `number` comparison ends: a value past what an `f64` holds
   exactly (past the eighteenth significant digit) can compare equal to a different value in a
   `--where` expression or a `--sort` with no error. Whether `date` and `datetime`, which also

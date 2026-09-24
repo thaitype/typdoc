@@ -94,8 +94,8 @@ Prints the documents that match every `--where`.
 | `--ids` | Print one name per line, with no header |
 
 The table's columns are the document's name, `title`, each field used in `--where`, then
-`--fields`. The first column is headed `key` when every row is a numbered document and `document`
-otherwise.
+`--fields`. The first column is headed `key` when every row is a numbered document, `path` when
+none is, and `document` when the result mixes both.
 
 ```console
 $ typdoc list --collection tickets --sort estimate:desc --fields estimate
