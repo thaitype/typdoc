@@ -1,7 +1,7 @@
 # 3: `.typdoc/config.json` becomes optional (M-24)
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: None (can start immediately)
 
 ## What this delivers
