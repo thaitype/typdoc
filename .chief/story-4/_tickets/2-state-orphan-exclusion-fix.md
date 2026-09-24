@@ -40,3 +40,17 @@ case, not an optional follow-up.
 
 If fixing this reveals a doc line from ticket 1 needs a clarifying sentence (state survives
 exclusion, continues numbering on re-inclusion), add it here rather than opening a new ticket.
+
+## Also in scope: fix the stale `NoProjectAt`/`NoProject` error text (found by manually running
+ticket 3's binary, 2026-09-24)
+
+Ticket 3 made project discovery folder-based (`.typdoc/` existence, not `config.json`
+existence), but `crates/typdoc-core/src/error.rs:33` and `:36` still read `"no project found:
+there is no .typdoc/config.json in {from} or above it"` and `"no project found: {dir} has no
+.typdoc/config.json"` — wrong now that a bare `.typdoc/` folder with no `config.json` is a valid
+project. Reword both to say there is no `.typdoc/` folder (exact wording is this ticket's call).
+Grep `skills/typdoc/SKILL.md` and `skills/typdoc/references/exit-codes.md` for the old wording
+and update alongside. Add a test asserting the corrected message text (there wasn't one covering
+the exact wording before — the existing tests that "lock in the exact wording," per ticket 3's
+own note, were checking something else; verify that claim while here). Folded into this ticket
+rather than opened separately since it's a small fix in the same file ticket 2 already touches.
