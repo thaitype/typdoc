@@ -738,3 +738,96 @@ fn the_key_from_json_can_be_captured_and_fed_back_to_get() {
     assert_eq!(out["document"]["key"], json!(key));
     assert_eq!(out["document"]["fields"]["title"], json!("Round trip"));
 }
+
+// --- ticket 30 (M-18): `new` refuses a write-time cycle on an `acyclic` field ---
+
+const WF_ACYCLIC_SCHEMA: &str = r#"{
+  "name": "ticket",
+  "code": "WF",
+  "fields": {
+    "title": { "type": "string", "required": true },
+    "blocked_by": { "type": "ref[]", "target": "*", "acyclic": true }
+  }
+}"#;
+
+/// Creating a new document whose own `acyclic` field value would close a cycle with an existing
+/// document: `WF-1` already has `blocked_by: [WF-2]` — dangling today, since `WF-2` does not
+/// exist yet — and `new WF` is about to allocate exactly `WF-2` (state's `last` is `1`). Giving
+/// the new document `blocked_by: [WF-1]` closes `WF-1 -> WF-2 -> WF-1` the moment it is created,
+/// and must be refused the same way `set` is: exit 2, `refs.acyclic` in `details`, nothing
+/// written (no document, `last` not burned) — not merely caught by a later `validate` run.
+#[test]
+fn new_refuses_a_write_that_would_close_a_cycle_with_an_existing_document() {
+    let files = [
+        (
+            ".typdoc/collections/tickets.json",
+            r#"{ "match": "tickets/{key}.md", "schema": "wf.json" }"#,
+        ),
+        ("wf.json", WF_ACYCLIC_SCHEMA),
+        (
+            ".typdoc/state/default.json",
+            r#"{ "tickets": { "last": 1 } }"#,
+        ),
+    ];
+    let project = Scratch::project(&files);
+    project.file(
+        "tickets/WF-1.md",
+        "---\ntitle: One\nblocked_by: [WF-2]\n---\n",
+    );
+    let state_before = std::fs::read(project.path().join(".typdoc/state/default.json")).unwrap();
+
+    let ran = run(
+        project.path(),
+        &["new", "WF", "Two", "--set", "blocked_by=WF-1", "--json"],
+    );
+
+    assert_eq!(ran.code, 2, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
+    let error = ran.stderr_json();
+    let details = error["details"].as_array().expect("a details array");
+    assert!(
+        details.iter().any(|f| f["rule"] == json!("refs.acyclic")),
+        "{details:?}"
+    );
+
+    assert!(
+        !project.path().join("tickets/WF-2.md").exists(),
+        "a refused new must not create the document that would have closed the cycle"
+    );
+    let state_after = std::fs::read(project.path().join(".typdoc/state/default.json")).unwrap();
+    assert_eq!(
+        state_before, state_after,
+        "a refused new must not burn the number it would have allocated"
+    );
+}
+
+/// The mirror "no false refusal" case for `new`: creating a document with no `acyclic` value at
+/// all succeeds normally even though an unrelated, pre-existing cycle already sits elsewhere in
+/// the project, through the same field, on documents this write does not touch.
+#[test]
+fn new_is_not_refused_by_an_unrelated_pre_existing_cycle_elsewhere() {
+    let files = [
+        (
+            ".typdoc/collections/tickets.json",
+            r#"{ "match": "tickets/{key}.md", "schema": "wf.json" }"#,
+        ),
+        ("wf.json", WF_ACYCLIC_SCHEMA),
+        (
+            ".typdoc/state/default.json",
+            r#"{ "tickets": { "last": 11 } }"#,
+        ),
+    ];
+    let project = Scratch::project(&files);
+    project.file(
+        "tickets/WF-10.md",
+        "---\ntitle: Ten\nblocked_by: [WF-11]\n---\n",
+    );
+    project.file(
+        "tickets/WF-11.md",
+        "---\ntitle: Eleven\nblocked_by: [WF-10]\n---\n",
+    );
+
+    let ran = run(project.path(), &["new", "WF", "Unrelated", "--json"]);
+
+    let out = ok_json(&ran);
+    assert_eq!(out["document"]["fields"]["title"], json!("Unrelated"));
+}
