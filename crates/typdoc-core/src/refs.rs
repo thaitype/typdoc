@@ -143,6 +143,69 @@ pub(crate) fn resolve_one(written: &str, ctx: &Ctx) -> Outcome {
     }
 }
 
+/// The identity a write's own candidate is about to carry, real enough for
+/// [`resolve_one_for_candidate`] to resolve a ref to it even though it is not yet in `Ctx::index`
+/// or on disk: `set`'s candidate already has both (it is only its *fields* — not its key or
+/// path — that are about to change), and `new`'s has its path (given or allocated) and, for a
+/// coded collection, the key `Project::allocate_key` already committed to before the file exists.
+pub(crate) struct Candidate<'a> {
+    pub namespace: usize,
+    pub key: Option<&'a str>,
+    pub path: &'a str,
+}
+
+/// Identical to [`resolve_one`], except a ref that names `candidate`'s own identity — its key in
+/// its namespace, written as such, or a path that joins to its own — resolves to it directly,
+/// without reading `Ctx::index` or the disk for either. `Project::prescan_refs`'s substituted
+/// scan (ticket 30, M-18) needs this in both directions: not only for the candidate's own
+/// fields (already handled by substituting its text for what would otherwise be read from disk),
+/// but for every *other* document's fields too — a `new` candidate is not indexed and its file
+/// does not exist yet, so nothing already on disk that names its key or path would ever resolve
+/// against the real index, which would make it structurally impossible for `new` to ever close a
+/// cycle with a document that already points at the one about to be created. A `set` candidate's
+/// key and path are already real and already resolve through `Ctx::index` on their own, so this
+/// changes nothing for it — the check here simply never matches before falling through.
+pub(crate) fn resolve_one_for_candidate(
+    written: &str,
+    ctx: &Ctx,
+    candidate: &Candidate,
+) -> Outcome {
+    match classify(
+        written,
+        ctx.doc_namespace,
+        ctx.doc_path,
+        ctx.ref_base,
+        ctx.namespaces,
+        ctx.codes,
+    ) {
+        Form::Key { namespace, key } => {
+            if namespace == candidate.namespace && candidate.key == Some(key.as_str()) {
+                return Ok(Resolved {
+                    path: candidate.path.to_owned(),
+                    collection: None,
+                    via: Via::Key,
+                    project: None,
+                });
+            }
+            resolve_key(namespace, &key, ctx.index)
+        }
+        Form::Path { base, rest } => {
+            let joined = join(&base, &rest);
+            if joined == candidate.path {
+                return Ok(Resolved {
+                    path: candidate.path.to_owned(),
+                    collection: None,
+                    via: Via::Path,
+                    project: None,
+                });
+            }
+            resolve_path(&joined, ctx.index, ctx.root)
+        }
+        Form::Import { alias, rest } => resolve_into_import(&alias, &rest, ctx.imports),
+        Form::BadPrefix => Err(Reason::BadPrefix),
+    }
+}
+
 /// `name::rest`: `alias` looked up against `imports` (`Project::imports`, resolved once at
 /// load). An alias this project does not configure is `bad-prefix`, the same reading a namespace
 /// prefix naming no sibling already gets; one absent on this machine is `import-absent`

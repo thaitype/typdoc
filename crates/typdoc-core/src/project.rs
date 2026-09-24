@@ -240,6 +240,16 @@ struct RefProject {
     moved: BTreeMap<String, String>,
 }
 
+/// `Project::prescan_refs`'s two accumulators, bundled into one value so `Project::prescan_one`
+/// (shared between its ordinary per-entry walk and its one extra call for a `new` candidate not
+/// yet in `self.index`) takes one argument for both rather than a `&mut` for each
+/// (`clippy::too_many_arguments`, at the threshold with everything else `prescan_one` already
+/// needs).
+struct PrescanAccum {
+    moved: BTreeMap<String, String>,
+    edges: BTreeMap<String, Vec<(String, String)>>,
+}
+
 /// The context every checked destination of one document (`check_body_destination`'s callers)
 /// shares: everything about the document and its rule levels that stays the same across every
 /// link, image and definition `check_body` walks, so a caller passes one reference instead of
@@ -931,16 +941,19 @@ impl Project {
             &name,
         ));
         if !findings.iter().any(|f| f.rule == "frontmatter.parse") {
-            // `refs.acyclic`'s half of `ref_project()` is discarded rather than filtered by
-            // `path` the way `Project::validate`'s `Paths` scope does it: that filter picks
-            // cycles out of a scan already made from the files on disk, before this write, and
-            // a cycle found there is not evidence about `candidate`, the text this write is
-            // about to produce. Filtering the pre-write scan would refuse a write for a cycle
-            // this write does not touch (a false refusal on an unrelated field) and would miss
-            // one this write's own ref field just created (a false pass), which is worse than
-            // leaving it unchecked here: `validate`, run after the write, still catches a real
-            // cycle either way, just one step later than a same-command refusal would.
-            let (ref_project, _acyclic) = self.ref_project()?;
+            // `refs.acyclic` at write time (ticket 30, M-18): a plain `self.ref_project()` scans
+            // every document from disk, before this write's `candidate` text exists there, so a
+            // cycle it finds would be evidence about the pre-write state, not about `candidate` —
+            // checking it directly would be wrong in both directions (a false refusal for an
+            // unrelated cycle elsewhere, a false pass for one this write's own field just
+            // created, since the on-disk copy of this document is still the old one).
+            // `ref_project_for_candidate` fixes the evidence instead of giving up on it: `path`
+            // is scanned from `candidate` rather than from disk, so the resulting `acyclic`
+            // findings are about the state this write is about to produce. Filtered to `path`
+            // itself, since a cycle elsewhere the scan also (correctly) still finds is not this
+            // write's to refuse — that is `validate`'s finding to report, unaffected by this.
+            let (ref_project, acyclic) = self.ref_project_for_candidate(path, entry, &candidate)?;
+            findings.extend(acyclic.into_iter().filter(|finding| finding.path == path));
             findings.extend(self.check_refs(
                 path,
                 entry,
@@ -1295,13 +1308,19 @@ impl Project {
             name,
         ));
         if !findings.iter().any(|f| f.rule == "frontmatter.parse") {
-            let (ref_project, _acyclic) = self.ref_project()?;
             let entry = Indexed {
                 collection: collection_idx,
                 namespace: namespace_idx,
                 file: file.to_owned(),
                 key,
             };
+            // Same write-time `refs.acyclic` check as `set_collected`'s (ticket 30, M-18), and
+            // the same reason it must scan `candidate` rather than disk: this document is not
+            // even in `self.index` yet, and `ref_project_for_candidate` scans it anyway (see
+            // `prescan_refs`'s own doc comment), so a document already on disk that names this
+            // one's key or path also sees it as real for this one scan.
+            let (ref_project, acyclic) = self.ref_project_for_candidate(path, &entry, candidate)?;
+            findings.extend(acyclic.into_iter().filter(|finding| finding.path == path));
             findings.extend(self.check_refs(
                 path,
                 &entry,
@@ -3519,8 +3538,29 @@ impl Project {
     /// alongside rather than folded in, since whether they are reported depends on the scope
     /// (see `validate`'s two callers of this).
     fn ref_project(&self) -> Result<(RefProject, Vec<Finding>), Error> {
+        self.ref_project_inner(None)
+    }
+
+    /// [`Project::ref_project`], scanning `path` from `candidate` instead of from disk (and, if
+    /// `path` is not indexed yet, as an extra document — see `prescan_refs`), for `set_collected`
+    /// and `validate_new_candidate`'s write-time `refs.acyclic` check (ticket 30, M-18): the only
+    /// two callers that ever pass a candidate, both about to write `path` and needing to know
+    /// whether that exact text, not what is on disk right now, closes a cycle.
+    fn ref_project_for_candidate(
+        &self,
+        path: &str,
+        entry: &Indexed,
+        candidate: &str,
+    ) -> Result<(RefProject, Vec<Finding>), Error> {
+        self.ref_project_inner(Some((path, entry, candidate)))
+    }
+
+    fn ref_project_inner(
+        &self,
+        candidate: Option<(&str, &Indexed, &str)>,
+    ) -> Result<(RefProject, Vec<Finding>), Error> {
         let codes = self.project_codes();
-        let (moved, acyclic) = self.prescan_refs(&codes)?;
+        let (moved, acyclic) = self.prescan_refs(&codes, candidate)?;
         Ok((RefProject { codes, moved }, acyclic))
     }
 
@@ -3729,71 +3769,79 @@ impl Project {
     /// the document that recorded moving away from it (`auto: moves`), and the `refs.acyclic`
     /// findings of every cycle found through a field marked `acyclic` (one finding per document
     /// on a cycle, per field, since each one's own edge is what is wrong with it).
+    ///
+    /// `candidate`, when given (ticket 30, M-18), is `(path, entry, text)` for exactly one write
+    /// in progress: `path` is scanned with `text` — the write's own candidate frontmatter —
+    /// instead of whatever is on disk for it right now, and, if `path` is not yet in `self.index`
+    /// at all (a `new` write, not yet indexed or on disk), it is scanned as an extra document on
+    /// top of the ordinary walk rather than in place of one of its entries. Every other document
+    /// is read from disk exactly as it is today: a caller with no `candidate` (every read-only
+    /// caller — `validate`, `get`, `refs`, `toc`, and so on, none of which call this at all except
+    /// `validate` through `Project::ref_project`) sees no change at all, since `candidate` is
+    /// `None` and both branches below fall back to the original behaviour byte for byte.
     fn prescan_refs(
         &self,
         codes: &BTreeSet<String>,
+        candidate: Option<(&str, &Indexed, &str)>,
     ) -> Result<(BTreeMap<String, String>, Vec<Finding>), Error> {
-        let mut moved: BTreeMap<String, String> = BTreeMap::new();
-        let mut edges: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+        let mut accum = PrescanAccum {
+            moved: BTreeMap::new(),
+            edges: BTreeMap::new(),
+        };
+        // The candidate's identity, real enough for `refs::resolve_one_for_candidate` to resolve
+        // a ref to it from any document scanned in this same pass, whether or not `path` is
+        // indexed yet — see that function's own doc comment for why a `new` candidate needs this
+        // and a `set` candidate does not (but is given it anyway, harmlessly, for one code path).
+        let phantom = candidate.map(|(path, entry, _)| refs::Candidate {
+            namespace: entry.namespace,
+            key: entry.key.as_deref(),
+            path,
+        });
         for (path, entry) in self.index.iter() {
-            let collection = &self.collections[entry.collection];
-            let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
-            let Some(fields) = parsed_fields(&text, &collection.schema) else {
-                continue;
-            };
-            let ctx = refs::Ctx {
-                doc_namespace: entry.namespace,
-                doc_path: path,
-                ref_base: collection.ref_base,
-                namespaces: &self.config.namespaces,
-                codes,
-                index: &self.index,
-                root: &self.root,
-                imports: &self.imports,
-            };
-            let identity = entry.key.clone().unwrap_or_else(|| path.to_owned());
-            for (field_name, value) in &fields {
-                let Some(field) = collection.schema.field(field_name) else {
-                    continue;
-                };
-                if field.auto == Some(Auto::Moves)
-                    && field.kind == FieldType::List
-                    && let Value::List(items) = value
-                {
-                    for item in items {
-                        moved
-                            .entry(item.clone())
-                            .or_insert_with(|| identity.clone());
-                    }
+            let text = match candidate {
+                Some((candidate_path, _, candidate_text)) if candidate_path == path => {
+                    candidate_text.to_owned()
                 }
-                if field.is_acyclic()
-                    && matches!(field.kind, FieldType::Ref | FieldType::RefList)
-                    && crate::coerce::fits(&field.kind, value)
-                {
-                    for written in ref_values(value) {
-                        if let Ok(resolved) = refs::resolve_one(written, &ctx) {
-                            edges
-                                .entry(field_name.clone())
-                                .or_default()
-                                .push((path.to_owned(), resolved.path));
-                        }
-                    }
-                }
-            }
+                _ => fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?,
+            };
+            self.prescan_one(path, entry, &text, codes, phantom.as_ref(), &mut accum);
         }
+        if let Some((candidate_path, candidate_entry, candidate_text)) = candidate
+            && self.index.get(candidate_path).is_none()
+        {
+            self.prescan_one(
+                candidate_path,
+                candidate_entry,
+                candidate_text,
+                codes,
+                phantom.as_ref(),
+                &mut accum,
+            );
+        }
+        let PrescanAccum { moved, edges } = accum;
         let mut findings = Vec::new();
         for (field_name, field_edges) in &edges {
             for cyclic_path in refs::cyclic_nodes(field_edges) {
-                let Some(entry) = self.index.get(&cyclic_path) else {
+                let found = match self.index.get(&cyclic_path) {
+                    Some(entry) => Some((entry.collection, entry.namespace, entry.key.as_deref())),
+                    None => candidate.and_then(|(candidate_path, candidate_entry, _)| {
+                        (candidate_path == cyclic_path).then_some((
+                            candidate_entry.collection,
+                            candidate_entry.namespace,
+                            candidate_entry.key.as_deref(),
+                        ))
+                    }),
+                };
+                let Some((collection_idx, namespace_idx, key)) = found else {
                     continue;
                 };
-                let collection = &self.collections[entry.collection];
-                let namespace = &self.config.namespaces[entry.namespace].name;
+                let collection = &self.collections[collection_idx];
+                let namespace = &self.config.namespaces[namespace_idx].name;
                 let name = DocName {
                     path: &cyclic_path,
                     namespace,
                     collection: &collection.name,
-                    key: entry.key.as_deref(),
+                    key,
                 };
                 findings.push(validate::finding(
                     &name,
@@ -3807,6 +3855,74 @@ impl Project {
         // Not sorted here: the caller merges this into a larger set of findings and orders that
         // once, so sorting this slice first would only be thrown away.
         Ok((moved, findings))
+    }
+
+    /// One document's own contribution to `prescan_refs`'s whole-project `moved` map and
+    /// `acyclic` edge list, shared between the ordinary per-entry walk and the one extra call a
+    /// `new` candidate not yet in `self.index` needs. `phantom`, when given, is the write's own
+    /// candidate identity (see `prescan_refs`): every ref this document writes is resolved
+    /// through `refs::resolve_one_for_candidate` instead of plain `refs::resolve_one` so a ref
+    /// naming that identity resolves even though it is not indexed or on disk yet; with no
+    /// `phantom` (every read-only scan), this is `refs::resolve_one` exactly as before.
+    fn prescan_one(
+        &self,
+        path: &str,
+        entry: &Indexed,
+        text: &str,
+        codes: &BTreeSet<String>,
+        phantom: Option<&refs::Candidate>,
+        accum: &mut PrescanAccum,
+    ) {
+        let PrescanAccum { moved, edges } = accum;
+        let collection = &self.collections[entry.collection];
+        let Some(fields) = parsed_fields(text, &collection.schema) else {
+            return;
+        };
+        let ctx = refs::Ctx {
+            doc_namespace: entry.namespace,
+            doc_path: path,
+            ref_base: collection.ref_base,
+            namespaces: &self.config.namespaces,
+            codes,
+            index: &self.index,
+            root: &self.root,
+            imports: &self.imports,
+        };
+        let identity = entry.key.clone().unwrap_or_else(|| path.to_owned());
+        for (field_name, value) in &fields {
+            let Some(field) = collection.schema.field(field_name) else {
+                continue;
+            };
+            if field.auto == Some(Auto::Moves)
+                && field.kind == FieldType::List
+                && let Value::List(items) = value
+            {
+                for item in items {
+                    moved
+                        .entry(item.clone())
+                        .or_insert_with(|| identity.clone());
+                }
+            }
+            if field.is_acyclic()
+                && matches!(field.kind, FieldType::Ref | FieldType::RefList)
+                && crate::coerce::fits(&field.kind, value)
+            {
+                for written in ref_values(value) {
+                    let resolved = match phantom {
+                        Some(candidate) => {
+                            refs::resolve_one_for_candidate(written, &ctx, candidate)
+                        }
+                        None => refs::resolve_one(written, &ctx),
+                    };
+                    if let Ok(resolved) = resolved {
+                        edges
+                            .entry(field_name.clone())
+                            .or_default()
+                            .push((path.to_owned(), resolved.path));
+                    }
+                }
+            }
+        }
     }
 
     /// The path a document argument names, its place in the index, and the text of the file.
