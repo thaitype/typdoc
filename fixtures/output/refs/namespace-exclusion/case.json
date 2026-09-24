@@ -1,0 +1,1 @@
+{ "project": "valid/namespace-exclusion", "command": ["refs", "story-2/notes/a.md", "--json"] }

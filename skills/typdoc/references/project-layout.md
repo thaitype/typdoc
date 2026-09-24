@@ -36,7 +36,13 @@ with no collections at all still loads and every command still runs; `validate` 
 
 - `version` is the only required key, and only when `config.json` exists at all.
 - `namespaces`: folders (names or `*` globs) that each hold their own documents. Absent → one
-  namespace, `default`, which is the whole folder.
+  namespace, `default`, which is the whole folder. An entry prefixed with `!` excludes a folder an
+  earlier entry matched (`["story-*", "!story-1"]`); entries apply in list order, so a later entry
+  wins over an earlier one — a later `!` can exclude what a wildcard just included, and a later
+  plain entry can re-include what an earlier `!` excluded. An excluded folder is fully invisible
+  to every command: not validated, not listed, not readable by path, and a ref into it is not
+  found. `--namespace`/`TYPDOC_NAMESPACE` do not support `!` — a leading `!` there is a syntax
+  error, not a way to exclude a namespace on the command line.
 - `imports`: alias → another project on this machine, so refs can cross into it. One level only.
 - `validation`: rule levels; see [validation.md](validation.md).
 
@@ -132,7 +138,11 @@ Which namespaces a command reads, first match wins:
 5. otherwise every namespace for reads — and a **write is refused** (exit 1, `the scope holds more
    than one namespace`).
 
-A bare key found in more than one namespace in scope is exit 1 with `candidates`.
+A bare key found in more than one namespace in scope is exit 1 with `candidates`. A namespace the
+config's own `!` entries excluded (see Config, above) is not a namespace of this project: naming
+it with `--namespace`/`TYPDOC_NAMESPACE`, or writing into it, fails exit 1 exactly as naming a
+namespace that was never configured at all would. A leading `!` on `--namespace`/
+`TYPDOC_NAMESPACE` itself is always a syntax error, not read as an exclusion.
 
 Every name typdoc prints can be passed to another command as is: with several namespaces in scope,
 `list`, `list --ids` and `refs` print `story-1:WF-1`; in a one-namespace project they print `WF-1`.

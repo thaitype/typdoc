@@ -1,0 +1,17 @@
+{
+  "document": {
+    "path": "story-2/notes/a.md",
+    "namespace": "story-2"
+  },
+  "direction": "out",
+  "refs": [
+    {
+      "path": "story-3/notes/a.md",
+      "namespace": "story-3",
+      "field": "$body",
+      "written": "../../story-3/notes/a.md",
+      "line": 5,
+      "col": 11
+    }
+  ]
+}

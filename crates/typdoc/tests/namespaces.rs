@@ -793,3 +793,189 @@ fn an_import_alias_named_after_a_url_scheme_is_still_refused_under_schema_valid(
         "{findings:?}"
     );
 }
+
+// --- Wildcard namespace exclusion (story 4, ticket 1): a `!`-prefixed entry of `namespaces`
+// removes what an earlier entry matched, in list order, and the excluded folder is invisible to
+// every command that reads namespaces of the project. ---
+
+#[test]
+fn a_later_exclusion_hides_the_folder_from_every_command() {
+    let project = clean(
+        r#"["story-*", "!story-1"]"#,
+        &["story-1", "story-2", "story-3"],
+    );
+
+    let listed = json_of(&project, &["list"]);
+    let checked = json_of(&project, &["validate"]);
+    let visible = get(project.path(), "story-2/a.md");
+    let excluded = get(project.path(), "story-1/a.md");
+
+    assert_eq!(paths_listed(&listed), ["story-2/a.md", "story-3/a.md"]);
+    assert_eq!(checked.code, 0, "{}", checked.stderr);
+    let report = checked.stdout_json();
+    assert_eq!(report["findings"], json!([]));
+    assert_eq!(
+        report["summary"]["checked"]["namespaces"],
+        json!(["story-2", "story-3"])
+    );
+    assert_eq!(document(&visible)["namespace"], json!("story-2"));
+    assert_eq!(
+        excluded.code, 5,
+        "an excluded namespace's document is not found, the same as one outside every namespace: {}",
+        excluded.stderr
+    );
+}
+
+#[test]
+fn a_later_plain_entry_re_includes_a_namespace_an_earlier_exclusion_removed() {
+    let project = clean(
+        r#"["story-*", "!story-1", "story-1"]"#,
+        &["story-1", "story-2"],
+    );
+
+    let found = document(&get(project.path(), "story-1/a.md"));
+
+    assert_eq!(
+        found["namespace"],
+        json!("story-1"),
+        "the last pattern that matches a folder decides"
+    );
+}
+
+#[test]
+fn an_exclusion_entry_matching_no_folder_is_silent_whether_exact_or_glob() {
+    for namespaces in [r#"["story-*", "!story-9"]"#, r#"["story-*", "!old-*"]"#] {
+        let project = clean(namespaces, &["story-1"]);
+
+        let ran = get(project.path(), "story-1/a.md");
+
+        assert_eq!(
+            document(&ran)["namespace"],
+            json!("story-1"),
+            "{namespaces}: a `!` entry matching nothing is never reported"
+        );
+    }
+}
+
+#[test]
+fn a_plain_entry_matching_no_folder_is_still_reported_alongside_an_exclusion() {
+    let project = clean(r#"["story-*", "absent", "!story-9"]"#, &["story-1"]);
+
+    let ran = get(project.path(), "story-1/a.md");
+
+    assert_eq!(
+        rules(&ran),
+        [(
+            "config.namespaces-entry".to_owned(),
+            ".typdoc/config.json".to_owned()
+        )],
+        "the plain entry `absent` still reports; the `!` entry stays silent"
+    );
+}
+
+#[test]
+fn a_flag_naming_an_excluded_namespace_explicitly_is_not_a_namespace_of_this_project() {
+    let project = clean(r#"["story-*", "!story-1"]"#, &["story-1", "story-2"]);
+
+    let ran = json_of(&project, &["list", "--namespace", "story-1"]);
+
+    assert_eq!(ran.code, 1, "{}", ran.stderr);
+    let text = ran.stderr_json()["error"].as_str().unwrap().to_owned();
+    assert!(text.contains("story-1"), "{text}");
+    assert!(
+        text.contains("not a namespace of this project"),
+        "an excluded namespace refuses the same way one that never existed does: {text}"
+    );
+}
+
+#[test]
+fn a_flag_with_a_leading_bang_is_a_syntax_error_not_a_silent_misread() {
+    let project = clean(r#"["story-*", "!story-1"]"#, &["story-1", "story-2"]);
+
+    let ran = json_of(&project, &["list", "--namespace", "!story-1"]);
+
+    assert_eq!(ran.code, 1, "{}", ran.stderr);
+    let text = ran.stderr_json()["error"].as_str().unwrap().to_owned();
+    assert!(
+        text.contains("not a namespace name or a glob"),
+        "`!` is namespaces-only this story; `--namespace` still rejects it outright: {text}"
+    );
+}
+
+#[test]
+fn a_write_into_an_excluded_namespace_fails_the_same_way_as_a_namespace_that_never_existed() {
+    let project = clean(r#"["story-*", "!story-1"]"#, &["story-1", "story-2"]);
+
+    let ran = json_of(&project, &["new", "story-1/b.md"]);
+
+    assert_eq!(ran.code, 1, "{}", ran.stderr);
+    let text = ran.stderr_json()["error"].as_str().unwrap().to_owned();
+    assert!(
+        text.contains("not inside any namespace"),
+        "`new` into an excluded namespace's folder needs no code of its own: {text}"
+    );
+}
+
+/// A coded project with two namespaces, `story-1` and `story-2`, `story-1` excluded, so
+/// `mv --renumber`'s own namespace resolution (contract §1, "Items 3 & 4") can be exercised the
+/// same way `new`'s already is above.
+fn coded(namespaces: &str) -> Scratch {
+    let project = Scratch::project(&[]);
+    project.file(".typdoc/config.json", &config(namespaces));
+    project.file(
+        ".typdoc/collections/tickets.json",
+        r#"{ "match": "tickets/{key}.md", "schema": "ticket.json" }"#,
+    );
+    project.file(
+        "ticket.json",
+        r#"{ "name": "ticket", "code": "WF", "fields": {
+            "title": { "type": "string" },
+            "context": { "type": "ref", "target": "*" }
+        } }"#,
+    );
+    project.file("story-1/.keep", "");
+    project.file("story-2/.keep", "");
+    project
+}
+
+#[test]
+fn a_renumber_into_an_excluded_namespace_fails_the_same_way_as_a_namespace_that_never_existed() {
+    let project = coded(r#"["story-*", "!story-1"]"#);
+    project.file("story-2/tickets/WF-1.md", "---\ntitle: One\n---\n");
+
+    let ran = json_of(&project, &["mv", "WF-1", "--renumber", "story-1"]);
+
+    assert_eq!(ran.code, 1, "{}", ran.stderr);
+    let text = ran.stderr_json()["error"].as_str().unwrap().to_owned();
+    assert!(text.contains("story-1"), "{text}");
+    assert!(
+        text.contains("not a namespace of this project"),
+        "`mv --renumber` into an excluded namespace refuses the same way one that never existed does: {text}"
+    );
+}
+
+/// Goal item 1: "a ref into [an excluded namespace] resolves as not found." A bare coded key is
+/// looked up in the referencing document's own namespace (`refs.rs::classify`'s bare-key form),
+/// so this is proven at the point a bare key that only the now-excluded namespace ever issued
+/// stops being found anywhere at all — the key's own namespace never entered the index
+/// `resolve_key` reads, exactly as it never would have for a key that was never issued.
+#[test]
+fn a_bare_key_the_excluded_namespace_alone_ever_issued_resolves_as_not_found() {
+    let project = coded(r#"["story-*", "!story-1"]"#);
+    // story-1 is excluded but still holds WF-1 on disk: the key never enters the project's
+    // index, the same as if the folder held nothing at all.
+    project.file("story-1/tickets/WF-1.md", "---\ntitle: Excluded\n---\n");
+    project.file(
+        "story-2/tickets/WF-2.md",
+        "---\ntitle: Visible\ncontext: WF-1\n---\n",
+    );
+
+    let ran = json_of(&project, &["refs", "story-2/tickets/WF-2.md"]);
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(
+        ran.stdout_json()["refs"],
+        json!([{ "unresolved": "not-found", "field": "context", "written": "WF-1" }]),
+        "a key only the excluded namespace ever issued is not found, the same as any unknown key"
+    );
+}

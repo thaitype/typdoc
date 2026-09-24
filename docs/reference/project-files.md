@@ -44,6 +44,11 @@ collections at all, whatever else `.typdoc/` holds — but every command still r
 Namespace folder names may use ASCII letters, digits, `-` and `_`, and can't be `default`,
 `http`, `https`, `mailto` or `file`.
 
+An entry of `namespaces` prefixed with `!` excludes a folder an earlier entry matched, applied in
+list order (the last entry that matches a folder decides). This is `namespaces`-only: a leading
+`!` on `--namespace`/`TYPDOC_NAMESPACE` is a syntax error, not a way to exclude one there. See
+[how to split work into namespaces](../how-to/use-namespaces.md#adopt-namespaces-one-folder-at-a-time).
+
 An import path is relative to the project folder and may use `${VAR}`. If the variable is unset
 or empty, the import counts as missing on this machine.
 

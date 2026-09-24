@@ -166,6 +166,13 @@ impl Report {
             complete: true,
         })
     }
+
+    /// What `add` collected so far, for a test that resolves namespaces directly against a
+    /// `Report` rather than through a full `Config::load`.
+    #[cfg(test)]
+    pub(crate) fn errors(&self) -> &[ConfigError] {
+        &self.errors
+    }
 }
 
 /// By path, then id, then message: the order of findings, with no position to break a tie.
