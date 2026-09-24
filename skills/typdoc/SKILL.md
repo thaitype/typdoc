@@ -113,9 +113,8 @@ $ typdoc validate notes/broken.md --json         # named documents only
 ```
 
 Each finding has a `rule` id; [validation.md](references/validation.md) says what each one means
-and how to fix it. Worth running after any hand edit, and after changing a ref field: in 0.2.0
-`set` checks that a ref resolves but does not refuse a cycle on an `acyclic` field —
-`validate` is what reports it.
+and how to fix it. Worth running after any hand edit: `set` and `new` check their own write, but
+nothing checks what an editor or `git mv` did until `validate` runs.
 
 ## Quoting
 

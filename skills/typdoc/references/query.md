@@ -116,22 +116,24 @@ typdoc: `status=open` is false
 
 `field=value` sets a field; `field=` removes it from the frontmatter.
 
-Unlike `--where`, the value is taken **literally** in 0.2.0 — no escape processing:
+The value uses the same escapes as `--where`, but has no wildcard:
 
 | Written | Stored |
 | --- | --- |
-| `'title=One, two'` | `One, two` — a comma is ordinary text in a scalar field |
-| `'blocked_by=WF-1,WF-2'` | `[WF-1, WF-2]` — a comma splits only a list or `ref[]` field |
-| `'title=x*y'` | `x*y` |
-| `'title=a\*b'` | `a\*b` — the backslash is kept |
+| `'title=One, two'` | `One, two`: a comma is ordinary text in a scalar field |
+| `'blocked_by=WF-1,WF-2'` | `[WF-1, WF-2]`: a comma splits only a list or `ref[]` field |
+| `'title=a\,b'` | `a,b` |
+| `'title=a\*b'` | `a*b`: `\*` is a literal star |
+| `'title=a\\b'` | `a\b` |
+| `'title=x*y'` | exit 1: a bare `*` is not allowed in a `set` value |
+| `'title=a\qb'` | exit 1: only `\,`, `\*` and `\\` are escapes |
 | `blocked_by=` | the field is removed (not set to an empty list) |
 
-The value is still checked against the schema before anything is written: an enum value outside
-`values` is exit 2, and a ref that does not resolve is exit 2 (`` the ref `WF-99` does not
-resolve: not found ``). **A cycle on an `acyclic` field is not refused at write time in 0.2.0** —
-`set WF-5 blocked_by=WF-1` succeeds even when WF-1 is already blocked by WF-5. `validate` reports it
-afterwards as `refs.acyclic` on every document in the cycle, so run `validate` after changing a
-ref field.
+The value is checked against the schema before anything is written: an enum value outside
+`values` is exit 2, a ref that does not resolve is exit 2 (`` the ref `WF-99` does not resolve:
+not found ``), and a write that would put the document on a cycle through an `acyclic` field is
+exit 2 (`` a cycle passes through `blocked_by` ``). Removing a ref to break an existing cycle is
+allowed.
 
 ## Quoting in the shell
 

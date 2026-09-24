@@ -130,9 +130,8 @@ Which namespaces a command reads, first match wins:
 
 A bare key found in more than one namespace in scope is exit 1 with `candidates`.
 
-In 0.2.0 the text and `--ids` output of `list` across several namespaces prints a bare key
-(`WF-1` twice for `story-1` and `story-2`). To pass a name on, use `list --json` and build
-`<namespace>:<key>` from each document's `namespace` and `key`, or use its `path`.
+Every name typdoc prints can be passed to another command as is: with several namespaces in scope,
+`list`, `list --ids` and `refs` print `story-1:WF-1`; in a one-namespace project they print `WF-1`.
 
 ## Imports
 

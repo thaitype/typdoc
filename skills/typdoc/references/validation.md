@@ -84,7 +84,7 @@ merging key by key:
 | `frontmatter.transitions` | An `enum` field moved between values its schema's `transitions` does not allow (checked on write) | Move through an allowed value |
 | `refs.resolve` | A frontmatter ref points at nothing | Correct the ref, or create the target |
 | `refs.target` | A ref points at a document whose schema the field's `target` does not allow | Point it at an allowed kind of document |
-| `refs.acyclic` | A cycle runs through an `acyclic` field; reported on every document in the cycle. `set`/`new` do not refuse a cycle in 0.2.0, so this is where it shows up | Remove one ref of the cycle (`typdoc set <doc> field=` or set it to the others) |
+| `refs.acyclic` | A cycle runs through an `acyclic` field; reported on every document in the cycle. `set`/`new` refuse a write that would form one, so a cycle here came from a hand edit or a merge | Remove one ref of the cycle (`typdoc set <doc> field=` or set it to the others) |
 | `keys.unique` | Two files share a key | Decide which document keeps the key, then give the other a different key (in a multi-namespace project, `typdoc mv <doc> --renumber <namespace>` issues a fresh one) and re-run `validate` |
 | `collections.overlap` | A file is matched by two collections; it is checked against neither | Change the `match` templates so each file belongs to one |
 | `state.missing` | A collection has coded documents in a namespace but no `last` recorded in `.typdoc/state/<namespace>.json`. `new` and `mv --renumber` refuse to issue a number there | Restore the file from version control, or write `{"<collection>": {"last": N}}` with N the highest number ever used |
@@ -153,4 +153,3 @@ Restore the pinned copy from version control instead.
   held in an imported project that points back here is missing from its result.
 - A body link that crosses into an imported project has its file checked (`body.links`) but not
   its `#anchor` (`body.anchors`).
-- `set`/`new` do not refuse a cycle on an `acyclic` field (see `refs.acyclic`).

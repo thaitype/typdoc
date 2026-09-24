@@ -79,7 +79,9 @@ $ typdoc list --collection tickets --limit 1 --json
 ```
 
 No match is exit 0 with an empty result. Across several namespaces the text and `--ids` output
-show a bare key, which may repeat — use `--json` (see [project-layout.md](project-layout.md)).
+print `namespace:key` (`story-1:WF-1`), a name any other command accepts; a one-namespace project
+prints the bare key. The first column is headed `key` when every row is a numbered document and
+`document` otherwise.
 
 ## refs
 
@@ -178,8 +180,12 @@ typdoc: `status=open` is false                       # exit 3, nothing written
 - The whole write happens under the namespace lock: read, `--if`, schema check, write. A false
   `--if` exits 3 with nothing written — use it as compare-and-set.
 - Refused (exit 2, nothing written): an enum value outside `values`, a ref that does not resolve,
-  a wrong type, writing an `auto` field directly. A cycle on an `acyclic` field is **not** refused
-  in 0.2.0; `validate` reports it.
+  a wrong type, a status change `transitions` does not allow, writing an `auto` field directly,
+  and a write that leaves the document on a cycle through an `acyclic` field (`a cycle passes
+  through blocked_by`). Removing the ref that closes an existing cycle is allowed. In 0.2.0 a
+  document already on a cycle refuses any other write until the cycle is broken.
+- A bad escape in a value (`\q`) or an unescaped `*` is exit 1: see
+  [query.md](query.md#set-fields-and-new---set).
 - A field the schema does not declare is written anyway and reported later by
   `frontmatter.unknown`.
 - `auto: update` fields are stamped when a value actually changes.
