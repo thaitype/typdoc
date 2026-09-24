@@ -4,7 +4,7 @@ In this tutorial we'll build a small ticket tracker for a website project, start
 folder. By the end we'll have tickets that block each other, a note that links to them, and a
 project that typdoc checks for us. It takes about ten minutes.
 
-You need typdoc installed (`typdoc --version` should print `typdoc 0.2.0`). The
+You need typdoc installed (`typdoc --version` should print a version). The
 [README](../README.md#install) shows how.
 
 ## 1. Create the project
