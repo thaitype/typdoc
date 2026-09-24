@@ -122,17 +122,33 @@ $ typdoc mv notes/first.md notes/renamed.md --json
 There is no `--verbose` flag: the detail lives in `--json`, and a human at a terminal already has
 it in `git diff`.
 
-**`list` gains a header row** above the table it already printed: the identity column (`key` for
-a coded collection, `path` otherwise), `title`, then each `--where`/`--fields` column, in that
-order. Widths are computed over every matched document, not only the rows `--limit` prints, so a
-column's width never moves when `--limit` does. No header, and nothing printed, when the result
-is empty — matching `list`'s own long-standing empty-result precedent, which this row does not
-change. `--ids` is unchanged: one key or path per line, no header.
+**`list` gains a header row** above the table it already printed: the identity column, `title`,
+then each `--where`/`--fields` column, in that order. The identity column is labeled `key` when
+every matched document has one (a coded collection), `path` when none does, and `document` when
+the matched set is a genuine mix of both (spanning collections with and without a code) — a
+header must not claim a column holds something a row in it plainly doesn't, and once even one row
+of each shape is present, neither `key` nor `path` alone is accurate; the cell itself is already
+"key when coded, else path" per row (`table_row`'s own `doc.key.unwrap_or(doc.path)`), so
+`document` is the label that fits every row rather than misdescribing some of them (ticket 29,
+correcting M-16's own `any`-based rule, which said `key` for a mixed result). Widths are computed
+over every matched document, not only the rows `--limit` prints, so a column's width never moves
+when `--limit` does. No header, and nothing printed, when the result is empty — matching `list`'s
+own long-standing empty-result precedent, which this row does not change. `--ids` is unchanged:
+one key or path per line, no header.
 
 ```console
 $ typdoc list --collection tickets --where status=open --where 'ref.all(blocked_by).status=done'
 key   title          status  blocked_by
 WF-2  Second ticket  open    WF-1
+```
+
+A result spanning a coded collection and an uncoded one gets `document` instead:
+
+```console
+$ typdoc list
+document    title
+WF-1        Ticket one
+notes/a.md  A note
 ```
 
 **`refs` and plain/`--schemas` `validate` gain a header row** (M-16), the same way `list` and
@@ -143,13 +159,29 @@ neither had a header naming those columns, which the labeling principle asks for
 table: no header, and nothing printed, when there is nothing to show — the same empty-result rule
 `list` and `toc` already follow.
 
-`refs`' two columns are `written`, `field` — matching its `--json` field names exactly.
+`refs`' first two columns are always `document` — the document at the other end, the same
+identity `list`'s own `document`/`key`/`path` column names (a coded document as `namespace:key`,
+otherwise its bare path, with a `project::` prefix for an imported project's document), or
+`(unresolved: <reason>)` when a forward ref did not resolve — and `field`. A third column,
+`written`, appears only for the forward direction (no `--reverse`): `written` can genuinely differ
+from the resolved `document` there (an alias, a relative form), so it is real information.
+`--reverse` answers "who points at this document", and there `written` is only how the holder
+happened to write the reference back to the very document already named on the command line — it
+tells the reader nothing `document` doesn't already say, so it is dropped, header included
+(ticket 29, correcting M-16's own shape, which put `written` first and printed it for both
+directions without ever naming the other document at all).
 
 ```console
 $ typdoc refs team/doc.md
-written         field
-chief:WF-7      context
-learnings/x.md  $body
+document             field    written
+chief:WF-7           context  chief:WF-7
+team/learnings/x.md  $body    learnings/x.md
+```
+
+```console
+$ typdoc refs WF-1 --reverse
+document  field
+WF-2      blocked_by
 ```
 
 `validate`'s columns are reordered to `path`, `level`, `rule`, `message` — `rule` moves before

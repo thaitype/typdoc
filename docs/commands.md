@@ -32,6 +32,8 @@ The documents that match a query.
 | `--limit <n>` | Print at most this many; `total` still counts every match |
 | `--ids` | One key or path per line instead of the table |
 
+Without `--json`, the table's identity column is labeled `key` when every matched document has one (a coded collection), `path` when none does, and `document` when the result mixes both (spanning collections with and without a code) — the cell itself is already "key when coded, else path" per row, so `document` is the only label that does not claim a column holds something a row in it plainly doesn't.
+
 A condition is `field=value`, `field!=value`, or an ordering comparison (`<`, `<=`, `>`, `>=`) on a number, date or datetime. `*` is a glob and a bare `field=*` asks whether the field is present at all. A list of alternatives is written `status=open,claimed`.
 
 A `number` past what an `f64` holds exactly (past about the eighteenth digit) compares by the value it converts to, not by the digits written, so two values that differ only past that point can compare equal instead of greater or less. Measured on this codebase: `typdoc list --where 'count>99999999999999999998'` returns nothing even when a document holds `count: 99999999999999999999`, because both convert to the same `f64` value and neither compares greater than the other. Whether `date` and `datetime` — which also compare as instants — are affected the same way is not measured.
@@ -58,6 +60,8 @@ What a document points at, or what points at it.
 | `--field <f>` | Only the refs in this field; `$body` for body links |
 
 Each reference carries either the document it resolved to, named by its `path` and `namespace` (and its `key` and `project` where it has them), or an `unresolved` reason. Never both, and never neither. The reasons are `not-found`, `bad-prefix` and `import-absent`.
+
+Without `--json`, each reference is a row: `document` (the document at the other end, resolved — a coded document as `namespace:key`, otherwise its bare path — or `(unresolved: <reason>)`), then `field`. Only without `--reverse` is there a third column, `written`, the target as it was actually written (an alias, a relative form) — for `--reverse` it would only repeat how the holder wrote a reference back to the document already named on the command line, so it is left out there.
 
 A reverse lookup scans this project's namespaces. It does not enter an imported project, which the design says it should; the difference is deliberate and is held in place by a test.
 

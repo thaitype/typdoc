@@ -254,13 +254,17 @@ fn an_argument_that_is_neither_a_path_nor_a_key_exits_1() {
 }
 
 /// The hand-written golden for `refs`'s text-mode shape (design.md, `typdoc refs`'s own worked
-/// example: `chief:WF-7   context` / `learnings/x.md   $body`, now with a header row, `written`
-/// / `field`, added by M-16 — matching `reference_json`'s own JSON field names).
+/// example: `chief:WF-7   context` / `learnings/x.md   $body`, header row added by M-16, and
+/// corrected by ticket 29 to name the other document first and to keep `written` as a third
+/// column since the forward direction is where it can genuinely differ from the resolved name).
 /// `fixtures/valid/refs-worked-example` is built to reproduce that exact example: `team/doc.md`
 /// holds one ref field, `context: chief:WF-7` (a sibling-namespace key), and one body link,
-/// `[x](learnings/x.md)`, so the two data lines below are not a paraphrase of the design's
-/// example, they are it, column-aligned to the widest entry in the `written` column
-/// (`learnings/x.md`, 15 chars).
+/// `[x](learnings/x.md)`. The `context` row's `written` happens to equal its resolved `document`
+/// (`chief:WF-7` was written exactly as its canonical name); the `$body` row's `written`
+/// (`learnings/x.md`, the relative form used in the link) differs from its resolved `document`
+/// (`team/learnings/x.md`, the full path) — together the two rows show `written` both equal to
+/// and different from `document`, confirming the column is genuinely informative for the forward
+/// direction rather than a copy of it.
 #[test]
 fn refs_without_json_prints_the_designs_worked_example() {
     let ran = refs(&fixture("valid/refs-worked-example"), &["team/doc.md"]);
@@ -269,33 +273,40 @@ fn refs_without_json_prints_the_designs_worked_example() {
     assert_eq!(ran.stderr, "");
     assert_eq!(
         ran.stdout,
-        "written         field\n\
-         chief:WF-7      context\n\
-         learnings/x.md  $body\n"
+        "document             field    written\n\
+         chief:WF-7           context  chief:WF-7\n\
+         team/learnings/x.md  $body    learnings/x.md\n"
     );
 }
 
-/// `--reverse` in text mode: same header-plus-`target  field` shape, for the refs that point at
-/// the document asked about rather than the ones it holds
+/// `--reverse` in text mode (ticket 29): a `document  field` header — no `written` column, since
+/// for `--reverse` it would only repeat how the holder wrote a reference back to the document
+/// already named on the command line — then one line per holder that points at the document
+/// asked about, naming the holder itself in the first column
 /// (`reverse_scans_every_namespace_and_orders_by_the_holders_path`'s `--json` case gives the same
-/// three references, in the same order, that this checks in text).
+/// three references, in the same order, that this checks in text). `tickets/WF-1.md` is a coded
+/// document (`default:WF-1`) holding the reversed target via `blocked_by`, the same shape the
+/// ticket's own bug report used (a coded holder pointing at the document asked about) — this
+/// fixture just has the roles the other way round (WF-1 is the holder here, not the target).
 #[test]
-fn refs_reverse_without_json_prints_target_and_field_per_line() {
+fn refs_reverse_without_json_prints_the_holders_name_and_field_per_line() {
     let ran = refs(&fixture("valid/refs"), &["tickets/WF-2.md", "--reverse"]);
 
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
     assert_eq!(ran.stderr, "");
     assert_eq!(
         ran.stdout,
-        "written             field\n\
-         ../tickets/WF-2.md  $body\n\
-         WF-2                blocked_by\n\
-         WF-2                context\n"
+        "document      field\n\
+         notes/a.md    $body\n\
+         default:WF-1  blocked_by\n\
+         default:WF-3  context\n"
     );
 }
 
 /// `--field` in text mode: only the refs held in that field are printed, in either direction
-/// (`field_keeps_only_the_refs_held_in_that_field_in_either_direction`'s own `--json` case).
+/// (`field_keeps_only_the_refs_held_in_that_field_in_either_direction`'s own `--json` case). This
+/// is the forward direction, so `written` still appears as the third column; one of the two refs
+/// (`WF-99`) never resolves, so `document` shows `(unresolved: not-found)` rather than a name.
 #[test]
 fn refs_field_without_json_keeps_only_that_fields_refs() {
     let ran = refs(
@@ -307,9 +318,9 @@ fn refs_field_without_json_keeps_only_that_fields_refs() {
     assert_eq!(ran.stderr, "");
     assert_eq!(
         ran.stdout,
-        "written  field\n\
-         WF-2     blocked_by\n\
-         WF-99    blocked_by\n"
+        "document                 field       written\n\
+         default:WF-2             blocked_by  WF-2\n\
+         (unresolved: not-found)  blocked_by  WF-99\n"
     );
 }
 

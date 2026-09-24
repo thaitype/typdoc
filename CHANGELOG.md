@@ -14,14 +14,20 @@ are left out unless they change something a user of the `typdoc` binary sees.
   labels what it prints — no bare, unlabeled value — including `new`'s coded form and
   `mv --renumber`, which previously printed only a bare key on success; a caller that wants just
   the key now reads it out of `--json` instead.
-- `list`'s table gains a header row above the columns it already prints (`path`, or `key` for a
-  coded collection, then `title`, then each `--where` field), shown whenever the result is
-  non-empty. `--ids` output is unchanged.
-- `refs` and `validate` (plain and `--schemas`) also gain a header row above the columns they
-  already print, matching each command's own `--json` field names: `written`, `field` for `refs`;
-  `path`, `level`, `rule`, `message` for `validate`, whose columns are reordered so `rule` comes
-  before `message`. Shown whenever there is a ref or a finding to print; still nothing at all,
-  header included, when there is none.
+- `list`'s table gains a header row above the columns it already prints (the identity column,
+  then `title`, then each `--where` field), shown whenever the result is non-empty. The identity
+  column reads `path` for an uncoded collection, `key` when every matched document has one, and
+  `document` when the result mixes both (spanning collections with and without a code — neither
+  `key` nor `path` alone would be accurate there). `--ids` output is unchanged.
+- `refs` also gains a header row above the columns it already prints: `document` (the document at
+  the other end — a coded document as `namespace:key`, otherwise its bare path, or
+  `(unresolved: <reason>)`) and `field` always; `written` (the target as actually written) as a
+  third column only for the forward direction, since `--reverse`'s own `written` would only repeat
+  how the holder wrote a reference back to the document already named on the command line. Plain/
+  `--schemas` `validate` also gains a header row, matching its own `--json` field names: `path`,
+  `level`, `rule`, `message`, whose columns are reordered so `rule` comes before `message`. Shown
+  whenever there is a ref or a finding to print; still nothing at all, header included, when there
+  is none.
 - Both forms of `mv` now report what they rewrote: the destination's `get`-shaped block, followed
   by `rewritten: N refs in M documents`, `unrewritten:` (its own count, with one line per entry
   naming the project, document, field, and written form), and `findings:` (its entries, or
