@@ -1,5 +1,10 @@
 # typdoc
 
+> **Public release 0.2 is ready to test.** typdoc is still in active development, so commands,
+> output and file formats may still change between releases. What's there is checked by more than
+> a thousand tests, run on Linux and macOS on every change, so it should behave the way the docs
+> say. If it doesn't, please [open an issue](https://github.com/thaitype/typdoc/issues).
+
 typdoc checks and queries a folder of Markdown files as if it were a small database. You write a
 schema for your tickets, notes or decisions, and typdoc validates the frontmatter, resolves the
 links between documents, and answers questions about them.
@@ -36,15 +41,14 @@ The same folder works for people and for tools, and if you stop using typdoc you
 
 ## Install
 
-typdoc is written in Rust and isn't on crates.io yet. Install it from the release tag:
+typdoc is written in Rust and isn't on crates.io yet. Install the latest version from GitHub:
 
 ```console
-$ git clone --branch v0.2.0 --depth 1 https://github.com/thaitype/typdoc
-$ cd typdoc
-$ cargo install --path crates/typdoc
+$ cargo install --git https://github.com/thaitype/typdoc typdoc
 $ typdoc --version
-typdoc 0.2.0
 ```
+
+To install a specific release instead, add its tag: `--tag v0.2.0`.
 
 It runs on Linux and macOS. Windows isn't supported; WSL works.
 
@@ -193,10 +197,12 @@ survive a `set`. The body is never touched, except that `mv` updates link paths.
 
 ## Try it
 
-The repository ships a small project in `examples/`: three tickets and a schema. From the clone:
+The repository ships a small project in `examples/`: three tickets and a schema. Clone it and try
+a few commands there:
 
 ```console
-$ cd examples
+$ git clone https://github.com/thaitype/typdoc
+$ cd typdoc/examples
 $ typdoc list
 key   title
 WF-1  Set up the example project

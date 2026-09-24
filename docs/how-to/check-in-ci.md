@@ -23,8 +23,9 @@ It suits a pre-commit hook.
 
 ## GitHub Actions
 
-typdoc isn't on crates.io yet, so install it from the release tag. This workflow checks a project
-at the root of the repository:
+typdoc isn't on crates.io yet, so install it from GitHub. Pin a release tag in CI, so a new
+typdoc version can't change what `validate` reports without you choosing to upgrade. This
+workflow checks a project at the root of the repository:
 
 ```yaml
 name: docs

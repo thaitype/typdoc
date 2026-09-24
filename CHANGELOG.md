@@ -65,6 +65,8 @@ are left out unless they change something a user of the `typdoc` binary sees.
   replacing `docs/commands.md` and `docs/projects.md`) and explanation (`docs/explanation/`).
 - An agent skill ships with the repository in `skills/typdoc/`, installable with
   `npx skills add thaitype/typdoc`. It is written for this version and says so on its first line.
+- The README installs the latest version with `cargo install --git`, and says how to pin a
+  release with `--tag`; the CI guide pins one.
 - Examples and docs keep schemas in `.typdoc/schemas/`. A collection may still point at a schema
   anywhere in the project; this is only where the docs suggest putting one.
 - The user docs now state where exact `number` comparison ends: a value past what an `f64` holds
