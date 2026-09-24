@@ -7,7 +7,7 @@ Everything typdoc reads as configuration, and the state it keeps.
 .typdoc/collections/<name>.json   one per collection
 .typdoc/state/<namespace>.json    last number issued, per numbered collection
 .typdoc/locks/                    write locks; don't commit
-<anywhere>.json                   schemas, named by path from a collection
+.typdoc/schemas/<name>.json       schemas (the usual place; any path works)
 ```
 
 typdoc finds the project by walking up from the current directory to the nearest folder holding
@@ -49,7 +49,7 @@ One file per collection in `.typdoc/collections/`. The file name, without `.json
 collection's name.
 
 ```json
-{ "match": "tickets/{key}.md", "schema": "schemas/ticket.json" }
+{ "match": "tickets/{key}.md", "schema": ".typdoc/schemas/ticket.json" }
 ```
 
 | Key | Required | Meaning |
@@ -72,7 +72,8 @@ Two collections can't share a numbered schema.
 
 ## Schemas
 
-A schema is a JSON file anywhere in the project.
+A schema is a JSON file anywhere in the project; collections point at it by path. Without a reason
+to put it elsewhere, keep it in `.typdoc/schemas/`, next to the rest of the configuration.
 
 ```json
 {

@@ -93,7 +93,7 @@ A **schema** says what fields a kind of document has. It's a JSON file you write
 A **collection** says which files a schema applies to:
 
 ```json
-{ "match": "tickets/{key}.md", "schema": "schemas/wayfinder.json" }
+{ "match": "tickets/{key}.md", "schema": ".typdoc/schemas/wayfinder.json" }
 ```
 
 The two are separate on purpose. The schema is the shape of the data. The collection is where
@@ -129,8 +129,8 @@ A **project** is the folder that holds `.typdoc/`:
 ```
 .typdoc/config.json                 {"version": 1}
 .typdoc/collections/wayfinder.json  which files are tickets, and their schema
+.typdoc/schemas/wayfinder.json      the schema
 .typdoc/state/default.json          the last ticket number handed out
-schemas/wayfinder.json              the schema
 tickets/WF-1.md                     your documents, wherever you already keep them
 ```
 

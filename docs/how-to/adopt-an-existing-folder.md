@@ -1,7 +1,7 @@
 # How to add typdoc to a folder you already have
 
 You have a folder of Markdown files with frontmatter, and you want typdoc to check them. typdoc
-doesn't rewrite your files to adopt them: you add a `.typdoc/` folder and some schemas next to
+doesn't rewrite your files to adopt them: you add a `.typdoc/` folder with some schemas in it next to
 them, and fix whatever the checks turn up.
 
 This guide uses a folder of decision records (`decisions/ADR-1.md`, `ADR-2.md`, ...) and some
@@ -10,7 +10,7 @@ notes as the example.
 ## 1. Mark the folder as a project
 
 ```console
-$ mkdir -p .typdoc/collections schemas
+$ mkdir -p .typdoc/collections .typdoc/schemas
 $ echo '{ "version": 1 }' > .typdoc/config.json
 $ echo '.typdoc/locks/' >> .gitignore
 ```
@@ -36,10 +36,10 @@ typdoc to hand out the next ones. Otherwise leave it out and the documents are n
 Then point a collection at the files:
 
 ```json
-{ "match": "decisions/{key}.md", "schema": "schemas/decision.json" }
+{ "match": "decisions/{key}.md", "schema": ".typdoc/schemas/decision.json" }
 ```
 
-For files named freely, use a glob instead: `{ "match": "notes/*.md", "schema": "schemas/note.json" }`.
+For files named freely, use a glob instead: `{ "match": "notes/*.md", "schema": ".typdoc/schemas/note.json" }`.
 
 The [project files reference](../reference/project-files.md) lists every field type and option.
 

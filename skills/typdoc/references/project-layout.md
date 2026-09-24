@@ -10,7 +10,7 @@ page is for understanding an existing project, not for designing one.
 .typdoc/collections/<name>.json   one file per collection: which files, which schema
 .typdoc/state/<namespace>.json    the last key number issued per coded collection (committed)
 .typdoc/locks/                    write locks (not committed)
-<anywhere>/*.json                 schemas; collections name them by path
+.typdoc/schemas/*.json            schemas, usually here; a collection may name any path
 ```
 
 Everything else is documents, arranged however the project already arranges them.
@@ -41,7 +41,7 @@ separate project.
 A collection says which files a schema applies to:
 
 ```json
-{ "match": "tickets/{key}.md", "schema": "schemas/ticket.json" }
+{ "match": "tickets/{key}.md", "schema": ".typdoc/schemas/ticket.json" }
 ```
 
 - `match` is relative to the namespace folder. `*` matches within one name, `**` whole folders,

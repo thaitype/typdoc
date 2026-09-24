@@ -96,7 +96,7 @@ pub fn read_json_body<T: DeserializeOwned>(file: &str) -> Result<T, JsonBodyErro
             // so every field -- `content_type` included -- comes back exactly as written rather
             // than coerced into a type this helper never declared. Left empty/`None` rather than
             // naming a real schema on purpose: nothing here should look like it is standing in
-            // for `schemas/catalog.json`.
+            // for `.typdoc/schemas/catalog.json`.
             let schema = Resolved::new(String::new(), None, BTreeMap::new());
             frontmatter::fields(block, &schema).map_err(JsonBodyError::Frontmatter)?
         }

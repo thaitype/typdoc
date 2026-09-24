@@ -1,1 +1,1 @@
-{ "match": "docs/design/spec/{key}.md", "schema": "schemas/spec.json" }
+{ "match": "docs/design/spec/{key}.md", "schema": ".typdoc/schemas/spec.json" }

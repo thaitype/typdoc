@@ -14,12 +14,14 @@ Make a folder and tell typdoc it's a project:
 ```console
 $ mkdir website && cd website
 $ git init
-$ mkdir -p .typdoc/collections schemas tickets notes
+$ mkdir -p .typdoc/collections .typdoc/schemas tickets notes
 $ echo '{ "version": 1 }' > .typdoc/config.json
 $ echo '.typdoc/locks/' > .gitignore
 ```
 
-`.typdoc/config.json` is what marks the folder as a typdoc project. typdoc creates
+`.typdoc/config.json` is what marks the folder as a typdoc project. We'll keep the schemas in
+`.typdoc/schemas/` so everything typdoc reads sits in one place; a schema can live anywhere in the
+project, though, since collections point at it by path. typdoc creates
 `.typdoc/locks/` while it writes, and it doesn't belong in git, hence the `.gitignore`.
 
 Check that typdoc sees it:
@@ -32,7 +34,7 @@ No output and no error: an empty project is a valid one.
 
 ## 2. Describe a ticket
 
-A schema says what a ticket looks like. Save this as `schemas/ticket.json`:
+A schema says what a ticket looks like. Save this as `.typdoc/schemas/ticket.json`:
 
 ```json
 {
@@ -54,7 +56,7 @@ The `code` makes tickets numbered: they'll be called `TK-1`, `TK-2` and so on.
 Now tell typdoc where tickets live. Save this as `.typdoc/collections/tickets.json`:
 
 ```json
-{ "match": "tickets/{key}.md", "schema": "schemas/ticket.json" }
+{ "match": "tickets/{key}.md", "schema": ".typdoc/schemas/ticket.json" }
 ```
 
 ## 3. Create some tickets
@@ -178,7 +180,7 @@ Clean again.
 
 ## 7. Add notes that link to tickets
 
-Notes don't need numbers, so their schema has no `code`. Save `schemas/note.json`:
+Notes don't need numbers, so their schema has no `code`. Save `.typdoc/schemas/note.json`:
 
 ```json
 { "name": "note", "fields": { "title": { "type": "string", "required": true } } }
@@ -187,7 +189,7 @@ Notes don't need numbers, so their schema has no `code`. Save `schemas/note.json
 and `.typdoc/collections/notes.json`:
 
 ```json
-{ "match": "notes/*.md", "schema": "schemas/note.json" }
+{ "match": "notes/*.md", "schema": ".typdoc/schemas/note.json" }
 ```
 
 A note without a code is named by its path, which you choose:

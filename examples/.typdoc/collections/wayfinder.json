@@ -1,1 +1,1 @@
-{ "match": "tickets/{key}.md", "schema": "schemas/wayfinder.json" }
+{ "match": "tickets/{key}.md", "schema": ".typdoc/schemas/wayfinder.json" }
