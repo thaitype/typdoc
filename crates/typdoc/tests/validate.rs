@@ -440,16 +440,18 @@ fn an_argument_that_names_no_document_stops_before_any_report_and_is_not_a_findi
     assert!(object.get("summary").is_none(), "{object}");
 }
 
-/// Ticket 20: plain `validate` without `--json` prints one line per finding, from the same
-/// finding data `--json` already carries. `error.md`'s broken body link is `body.links` at
-/// `error`, with a known position; `warn.md`'s unknown field is `frontmatter.unknown` at the
-/// default `warn`, with no position, so it prints its bare path (design, the paragraph
-/// beginning "Output.": `path:line:col` when a position is known, `path` alone otherwise, the
-/// same rule `--json` follows for `line`/`col`). Findings are ordered by path (`order`), so
-/// `error.md` prints first. `info` never occurs here: `Severity::Info` is produced only by
-/// `--audit`'s "a rule turned off is reported as info" (`effective_level`), and plain `validate`
-/// has no configurable level that produces it — a golden covering `info` belongs to `--audit`'s
-/// own tests, not here.
+/// Ticket 20: plain `validate` without `--json` prints a header row, then one line per finding,
+/// from the same finding data `--json` already carries (header row and `path, level, rule,
+/// message` column order added by M-16 — matching `finding_json`'s own JSON field names exactly,
+/// `path` even though the printed value can be `path:line:col`). `error.md`'s broken body link is
+/// `body.links` at `error`, with a known position; `warn.md`'s unknown field is
+/// `frontmatter.unknown` at the default `warn`, with no position, so it prints its bare path
+/// (design, the paragraph beginning "Output.": `path:line:col` when a position is known, `path`
+/// alone otherwise, the same rule `--json` follows for `line`/`col`). Findings are ordered by
+/// path (`order`), so `error.md` prints first. `info` never occurs here: `Severity::Info` is
+/// produced only by `--audit`'s "a rule turned off is reported as info" (`effective_level`), and
+/// plain `validate` has no configurable level that produces it — a golden covering `info` belongs
+/// to `--audit`'s own tests, not here.
 #[test]
 fn plain_validate_without_json_prints_one_line_per_finding_at_warn_and_error() {
     let project = Scratch::project(&[
@@ -466,8 +468,9 @@ fn plain_validate_without_json_prints_one_line_per_finding_at_warn_and_error() {
 
     assert_eq!(ran.code, 2, "{}", ran.stderr);
     assert_eq!(ran.stderr, "");
-    let expected = "error.md:1:5  error  link target missing: ./nope.md                  body.links\n\
-        warn.md       warn   the field `extra` is not a field of the schema  frontmatter.unknown\n";
+    let expected = "path          level  rule                 message\n\
+        error.md:1:5  error  body.links           link target missing: ./nope.md\n\
+        warn.md       warn   frontmatter.unknown  the field `extra` is not a field of the schema\n";
     assert_eq!(ran.stdout, expected);
 }
 
@@ -484,10 +487,10 @@ fn a_clean_project_without_json_prints_nothing_and_exits_0() {
     assert_eq!(ran.stderr, "");
 }
 
-/// Ticket 20: `--schemas` alone, without `--json`, uses the same one-line-per-finding shape as
-/// plain `validate` for a schema-only problem (an import alias that collides with a reserved URL
-/// scheme, `schema.valid`, found with `checked.documents` at 0 since `--schemas` checks no
-/// document).
+/// Ticket 20: `--schemas` alone, without `--json`, uses the same header-plus-one-line-per-finding
+/// shape as plain `validate` for a schema-only problem (an import alias that collides with a
+/// reserved URL scheme, `schema.valid`, found with `checked.documents` at 0 since `--schemas`
+/// checks no document).
 #[test]
 fn schemas_alone_without_json_prints_the_same_one_line_per_finding_shape() {
     let project = Scratch::project(&[(
@@ -502,9 +505,10 @@ fn schemas_alone_without_json_prints_the_same_one_line_per_finding_shape() {
 
     assert_eq!(ran.code, 2, "{}", ran.stderr);
     assert_eq!(ran.stderr, "");
-    let expected = ".typdoc/config.json  error  the import name `https` is a URL scheme \
+    let expected = "path                 level  rule          message\n\
+        .typdoc/config.json  error  schema.valid  the import name `https` is a URL scheme \
         (`http`, `https`, `mailto` and `file` are reserved), and the two would be told apart \
-        wrongly  schema.valid\n";
+        wrongly\n";
     assert_eq!(ran.stdout, expected);
 }
 

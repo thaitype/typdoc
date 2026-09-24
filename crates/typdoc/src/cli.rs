@@ -822,14 +822,31 @@ fn list_table(matched: &[Document], listed_len: usize, columns: &[String]) -> St
     header.push("title".to_owned());
     header.extend(columns.iter().cloned());
 
-    let mut widths = vec![0usize; column_count];
-    for row in rows.iter().chain(std::iter::once(&header)) {
+    render_table(&header, &rows, listed_len)
+}
+
+/// The shared column-aligned table shape behind `list_table`, `refs_text` and `validate_text`: a
+/// header row, then up to `listed_len` of `rows`, every column padded to its widest entry across
+/// the whole of `rows` (not only the ones rendered) *and* the header's own labels — see
+/// `list_table`'s doc comment for why widths are measured over every row rather than only the
+/// printed ones. `listed_len == 0` prints nothing at all, not even the header, which is the one
+/// rule every one of these three callers shares: a header with no rows under it is never printed.
+fn render_table(header: &[String], rows: &[Vec<String>], listed_len: usize) -> String {
+    if listed_len == 0 {
+        return String::new();
+    }
+    let mut widths = vec![0usize; header.len()];
+    for row in rows
+        .iter()
+        .map(Vec::as_slice)
+        .chain(std::iter::once(header))
+    {
         for (i, cell) in row.iter().enumerate() {
             widths[i] = widths[i].max(cell.chars().count());
         }
     }
     let mut out = String::new();
-    render_row(&mut out, &header, &widths);
+    render_row(&mut out, header, &widths);
     for row in rows.iter().take(listed_len) {
         render_row(&mut out, row, &widths);
     }
@@ -1216,46 +1233,43 @@ fn validate_outcome(report: &ValidateReport, json: bool) -> Outcome {
     }
 }
 
-/// The text form of plain `validate` and `validate --schemas` (ticket 20; design, the paragraph
-/// beginning "Output.": "One line per finding, `path:line:col  level  message  rule`"), built
-/// from the same finding shape `--json` already carries. A finding with no known position
-/// prints its bare `path`, the same value `--json` gives `line`/`col` when they are absent
-/// (`finding_json`). The design's own worked example is not spaced consistently (`audit_text`'s
-/// own doc comment says the same of its neighbouring table), so the column widths here are this
-/// function's own, deterministic rule: each column padded to its widest entry plus two spaces,
-/// the same rule `audit_text` already uses for its name column. No findings at all is not a
-/// "clean" line — decided (ticket 20, following `list`'s own precedent): this returns an empty
-/// string, and the exit code alone carries a clean result, so nothing prints and nothing needs
-/// deciding here beyond feeding zero findings through the same loop as any other count.
+/// The text form of plain `validate` and `validate --schemas` (ticket 20, header row added by
+/// M-16), built from the same finding shape `--json` already carries. A header row (`path`,
+/// `level`, `rule`, `message` — matching `finding_json`'s own field names exactly; `path` even
+/// though the printed value can be `path:line:col`, since that is still the `path` field with a
+/// position folded in), then one line per finding, rendered with `render_table` — the same
+/// column-aligned, two-space-separated shape `list_table` uses, each column padded to its widest
+/// entry across every finding *and* the header labels. A finding with no known position prints
+/// its bare `path`, the same value `--json` gives `line`/`col` when they are absent
+/// (`finding_json`). No findings at all is not a "clean" line — decided (ticket 20, following
+/// `list`'s own precedent, extended by M-16 to the header too): `render_table` returns an empty
+/// string when there is nothing to list, so neither a header nor any row prints, and the exit
+/// code alone carries a clean result.
 fn validate_text(report: &ValidateReport) -> String {
-    let locations: Vec<String> = report
+    let header = vec![
+        "path".to_owned(),
+        "level".to_owned(),
+        "rule".to_owned(),
+        "message".to_owned(),
+    ];
+    let rows: Vec<Vec<String>> = report
         .findings
         .iter()
-        .map(|finding| match finding.position {
-            Some(Position { line, col }) => format!("{}:{line}:{col}", finding.path),
-            None => finding.path.clone(),
+        .map(|finding| {
+            let path = match finding.position {
+                Some(Position { line, col }) => format!("{}:{line}:{col}", finding.path),
+                None => finding.path.clone(),
+            };
+            vec![
+                path,
+                severity_name(finding.level).to_owned(),
+                finding.rule.to_owned(),
+                finding.message.clone(),
+            ]
         })
         .collect();
-    let location_width = column_width(locations.iter().map(String::as_str));
-    let level_width = column_width(report.findings.iter().map(|f| severity_name(f.level)));
-    let message_width = column_width(report.findings.iter().map(|f| f.message.as_str()));
-    let mut out = String::new();
-    for (finding, location) in report.findings.iter().zip(locations.iter()) {
-        out.push_str(&format!(
-            "{location:location_width$}  {:level_width$}  {:message_width$}  {}\n",
-            severity_name(finding.level),
-            finding.message,
-            finding.rule,
-        ));
-    }
-    out
-}
-
-/// The widest entry, in `char`s (matching how `{:width$}` itself pads a string), or 0 for an
-/// empty iterator — the one shape `validate_text`'s three columns each need, pulled out so the
-/// column-width computation is written once rather than three times over.
-fn column_width<'a>(values: impl Iterator<Item = &'a str>) -> usize {
-    values.map(|value| value.chars().count()).max().unwrap_or(0)
+    let listed_len = rows.len();
+    render_table(&header, &rows, listed_len)
 }
 
 fn validate_json(report: &ValidateReport) -> Json {
@@ -1715,13 +1729,11 @@ fn push_toc_row(out: &mut String, cells: &[String; 4], widths: &[usize; 4]) {
     out.push('\n');
 }
 
-/// `refs`'s text-mode shape (design.md, `typdoc refs`'s own worked example): one line per
-/// reference, the target as it is written (bare key, prefixed reference or path — `written`,
-/// which is exactly what the design's example shows: `chief:WF-7   context`) then the field it
-/// was found in, three spaces apart, in the order `Project::refs` already gives them (respecting
-/// `--reverse` and `--field`, both applied before this function ever sees the report). No header
-/// and no output at all when there are no refs, since `refs` names each one inline rather than
-/// building a table.
+/// `refs`'s text-mode shape (design.md, `typdoc refs`'s own worked example, header row added by
+/// M-16): a header row, then one line per reference — the target as it is written (bare key,
+/// prefixed reference or path — `written`) and the field it was found in — in the order
+/// `Project::refs` already gives them (respecting `--reverse` and `--field`, both applied before
+/// `refs_text` ever sees the report). No header and no output at all when there are no refs.
 fn refs_outcome(report: &RefsReport) -> Outcome {
     Outcome {
         code: 0,
@@ -1730,19 +1742,20 @@ fn refs_outcome(report: &RefsReport) -> Outcome {
     }
 }
 
-/// Renders one `target   field` line per reference, three literal spaces apart (the design's own
-/// example, `chief:WF-7   context`), never padded or column-aligned: unlike `toc_table`'s header
-/// table, this is not a table, so a short target does not stretch to match a longer one on
-/// another line.
+/// A header row (`written`, `field` — matching `reference_json`'s own field names exactly, M-16)
+/// then one `written  field` line per reference, rendered with `render_table` — the same
+/// column-aligned, two-space-separated shape `list_table` uses, each column padded to its widest
+/// entry across every reference *and* the header labels. No header and no output at all when
+/// there are no refs — `render_table` returns an empty string when there is nothing to list.
 fn refs_text(report: &RefsReport) -> String {
-    let mut out = String::new();
-    for reference in &report.refs {
-        out.push_str(&reference.written);
-        out.push_str("   ");
-        out.push_str(&reference.field);
-        out.push('\n');
-    }
-    out
+    let header = vec!["written".to_owned(), "field".to_owned()];
+    let rows: Vec<Vec<String>> = report
+        .refs
+        .iter()
+        .map(|reference| vec![reference.written.clone(), reference.field.clone()])
+        .collect();
+    let listed_len = rows.len();
+    render_table(&header, &rows, listed_len)
 }
 
 /// `refs`' report: the document asked about, `direction`, and its references in the order

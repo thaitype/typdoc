@@ -254,22 +254,31 @@ fn an_argument_that_is_neither_a_path_nor_a_key_exits_1() {
 }
 
 /// The hand-written golden for `refs`'s text-mode shape (design.md, `typdoc refs`'s own worked
-/// example: `chief:WF-7   context` / `learnings/x.md   $body`). `fixtures/valid/refs-worked-example`
-/// is built to reproduce that exact example: `team/doc.md` holds one ref field, `context: chief:WF-7`
-/// (a sibling-namespace key), and one body link, `[x](learnings/x.md)`, so the two lines below are
-/// not a paraphrase of the design's example, they are it.
+/// example: `chief:WF-7   context` / `learnings/x.md   $body`, now with a header row, `written`
+/// / `field`, added by M-16 — matching `reference_json`'s own JSON field names).
+/// `fixtures/valid/refs-worked-example` is built to reproduce that exact example: `team/doc.md`
+/// holds one ref field, `context: chief:WF-7` (a sibling-namespace key), and one body link,
+/// `[x](learnings/x.md)`, so the two data lines below are not a paraphrase of the design's
+/// example, they are it, column-aligned to the widest entry in the `written` column
+/// (`learnings/x.md`, 15 chars).
 #[test]
 fn refs_without_json_prints_the_designs_worked_example() {
     let ran = refs(&fixture("valid/refs-worked-example"), &["team/doc.md"]);
 
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
     assert_eq!(ran.stderr, "");
-    assert_eq!(ran.stdout, "chief:WF-7   context\nlearnings/x.md   $body\n");
+    assert_eq!(
+        ran.stdout,
+        "written         field\n\
+         chief:WF-7      context\n\
+         learnings/x.md  $body\n"
+    );
 }
 
-/// `--reverse` in text mode: same `target   field` shape, for the refs that point at the document
-/// asked about rather than the ones it holds (`reverse_scans_every_namespace_and_orders_by_the_holders_path`'s
-/// `--json` case gives the same three references, in the same order, that this checks in text).
+/// `--reverse` in text mode: same header-plus-`target  field` shape, for the refs that point at
+/// the document asked about rather than the ones it holds
+/// (`reverse_scans_every_namespace_and_orders_by_the_holders_path`'s `--json` case gives the same
+/// three references, in the same order, that this checks in text).
 #[test]
 fn refs_reverse_without_json_prints_target_and_field_per_line() {
     let ran = refs(&fixture("valid/refs"), &["tickets/WF-2.md", "--reverse"]);
@@ -278,9 +287,10 @@ fn refs_reverse_without_json_prints_target_and_field_per_line() {
     assert_eq!(ran.stderr, "");
     assert_eq!(
         ran.stdout,
-        "../tickets/WF-2.md   $body\n\
-         WF-2   blocked_by\n\
-         WF-2   context\n"
+        "written             field\n\
+         ../tickets/WF-2.md  $body\n\
+         WF-2                blocked_by\n\
+         WF-2                context\n"
     );
 }
 
@@ -295,7 +305,24 @@ fn refs_field_without_json_keeps_only_that_fields_refs() {
 
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
     assert_eq!(ran.stderr, "");
-    assert_eq!(ran.stdout, "WF-2   blocked_by\nWF-99   blocked_by\n");
+    assert_eq!(
+        ran.stdout,
+        "written  field\n\
+         WF-2     blocked_by\n\
+         WF-99    blocked_by\n"
+    );
+}
+
+/// The empty case (M-16's own criterion, following `list_table`'s precedent): no refs at all
+/// means no header either — `render_table` returns an empty string, not a bare `written  field`
+/// line with nothing under it.
+#[test]
+fn refs_without_json_prints_nothing_when_there_are_no_refs() {
+    let ran = refs(&fixture("valid/refs"), &["tickets/WF-2.md"]);
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(ran.stderr, "");
+    assert_eq!(ran.stdout, "");
 }
 
 /// The already-fixed error path (contract decision 4): without `--json`, a failure prints plain

@@ -17,6 +17,11 @@ are left out unless they change something a user of the `typdoc` binary sees.
 - `list`'s table gains a header row above the columns it already prints (`path`, or `key` for a
   coded collection, then `title`, then each `--where` field), shown whenever the result is
   non-empty. `--ids` output is unchanged.
+- `refs` and `validate` (plain and `--schemas`) also gain a header row above the columns they
+  already print, matching each command's own `--json` field names: `written`, `field` for `refs`;
+  `path`, `level`, `rule`, `message` for `validate`, whose columns are reordered so `rule` comes
+  before `message`. Shown whenever there is a ref or a finding to print; still nothing at all,
+  header included, when there is none.
 - Both forms of `mv` now report what they rewrote: the destination's `get`-shaped block, followed
   by `rewritten: N refs in M documents`, `unrewritten:` (its own count, with one line per entry
   naming the project, document, field, and written form), and `findings:` (its entries, or

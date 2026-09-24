@@ -2,7 +2,7 @@
 
 Eight commands: `get`, `list`, `refs`, `toc` and `validate` read a project; `new`, `set` and `mv` write one. The [design](archived-design/design.md) is the source of truth; this page is the working reference.
 
-Every command takes `--namespace <list>` to choose which namespaces it reaches, and `--json`. Every command below prints readable text without `--json`: a labeled block, one `name: value` line per field, for `get`, `set`, `new` and both forms of `mv`; a table with a header row for `list` and `toc`; one line per ref for `refs`; one line per finding for `validate`. `--json` prints the same information as a single machine-readable document instead. A write command also takes `--lock-timeout <seconds>` (default 5), how long to wait for the namespace's lock before giving up at exit 4.
+Every command takes `--namespace <list>` to choose which namespaces it reaches, and `--json`. Every command below prints readable text without `--json`: a labeled block, one `name: value` line per field, for `get`, `set`, `new` and both forms of `mv`; a table with a header row for `list`, `toc`, `refs` and `validate` (one line per ref, one line per finding, under that header). `--json` prints the same information as a single machine-readable document instead. A write command also takes `--lock-timeout <seconds>` (default 5), how long to wait for the namespace's lock before giving up at exit 4.
 
 A document is named by its key (`WF-2`) or by its path from the project folder (`tickets/WF-2.md`), told apart by form: a key never ends in `.md`. A prefix reaches further: `story-2:WF-5` a sibling namespace, `memory::LRN-1` an imported project. A path that really begins with a name and a colon is written `./name:file.md`.
 

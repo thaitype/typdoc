@@ -135,9 +135,34 @@ key   title          status  blocked_by
 WF-2  Second ticket  open    WF-1
 ```
 
-**`refs` and plain/`--schemas` `validate` needed no change** to satisfy the labeling principle:
-`refs` already names each ref's field inline, one per line, and `validate` already prints one
-line per finding, using the same finding shape `--json`/`--audit` expose.
+**`refs` and plain/`--schemas` `validate` gain a header row** (M-16), the same way `list` and
+`toc` did: `refs` already named each ref's field inline, one per line, and `validate` already
+printed one line per finding, using the same finding shape `--json`/`--audit` expose — but
+neither had a header naming those columns, which the labeling principle asks for just as much as
+`list` and `toc` did. Both use the same column-aligned, two-space-separated shape as `list`'s
+table: no header, and nothing printed, when there is nothing to show — the same empty-result rule
+`list` and `toc` already follow.
+
+`refs`' two columns are `written`, `field` — matching its `--json` field names exactly.
+
+```console
+$ typdoc refs team/doc.md
+written         field
+chief:WF-7      context
+learnings/x.md  $body
+```
+
+`validate`'s columns are reordered to `path`, `level`, `rule`, `message` — `rule` moves before
+`message` so the column order matches `--json`'s own finding shape (`finding_json`'s field
+order), and the header says `path`, matching `--json`'s `path` field, even though the printed
+value is `path:line:col` when a position is known.
+
+```console
+$ typdoc validate
+path          level  rule                 message
+error.md:1:5  error  body.links           link target missing: ./nope.md
+warn.md       warn   frontmatter.unknown  the field `extra` is not a field of the schema
+```
 
 **Every command's error path prints plain text, not the `--json` error object**, when it fails
 without `--json`: `typdoc: <message>` on stderr. This applies to every command this document
