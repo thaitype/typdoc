@@ -1,7 +1,7 @@
 # 32: M-20 — every printed document name must follow the design's one naming table
 
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None (can start immediately)
 
 **Mild's decision (M-20), 2026-09-24, relayed by Aria, found running a real release build.**
