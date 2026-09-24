@@ -648,3 +648,96 @@ fn set_is_not_refused_by_an_unrelated_pre_existing_cycle_elsewhere() {
     let out = ok_json(&ran);
     assert_eq!(out["document"]["fields"]["title"], json!("Updated"));
 }
+
+// --- ticket 34 (M-21): narrow the write-time `refs.acyclic` check to a write's own change of an
+// `acyclic` field, not merely to a document that happens to sit on a pre-existing cycle for a
+// reason this write never touched ---
+
+/// M-21's repro (Mild's decision, relayed by Aria): `WF-1` and `WF-5` already sit on a cycle
+/// through `blocked_by`, built directly on disk (bypassing `set`'s own write-time check, since
+/// the CLI itself would now refuse to create one). `set WF-1 title=…` never touches
+/// `blocked_by` at all, so it must succeed even though `WF-1` is sitting on that pre-existing
+/// cycle — only a write that itself changes an `acyclic` field is this check's to refuse. A
+/// subsequent `validate` still reports the pre-existing cycle: this write does not fix it, and
+/// this ticket does not change `validate`'s own behavior at all.
+#[test]
+fn set_untouched_by_its_own_acyclic_field_succeeds_despite_a_pre_existing_cycle() {
+    let project = Scratch::project(&WF_ACYCLIC_COLLECTION);
+    project.file(
+        "tickets/WF-1.md",
+        "---\ntitle: One\nblocked_by: [WF-5]\n---\n",
+    );
+    project.file(
+        "tickets/WF-5.md",
+        "---\ntitle: Five\nblocked_by: [WF-1]\n---\n",
+    );
+
+    let ran = run(project.path(), &["set", "WF-1", "title=Updated", "--json"]);
+
+    let out = ok_json(&ran);
+    assert_eq!(out["document"]["fields"]["title"], json!("Updated"));
+
+    let validated = run(project.path(), &["validate", "--json"]);
+    assert_eq!(validated.code, 2, "{}", validated.stderr);
+    let findings = validated.stdout_json()["findings"]
+        .as_array()
+        .cloned()
+        .unwrap();
+    assert!(
+        findings.iter().any(|f| f["rule"] == json!("refs.acyclic")),
+        "{findings:?}"
+    );
+}
+
+/// The explicit "breaks then unrelated write" case the ticket calls out by name: no cycle exists
+/// on disk at all (the field that used to close one is simply not there), and a `set` on an
+/// unrelated field of that formerly-cyclic-shaped document succeeds.
+#[test]
+fn set_on_an_unrelated_field_succeeds_when_no_cycle_exists_at_all() {
+    let project = Scratch::project(&WF_ACYCLIC_COLLECTION);
+    project.file(
+        "tickets/WF-1.md",
+        "---\ntitle: One\nblocked_by: [WF-5]\n---\n",
+    );
+    project.file("tickets/WF-5.md", "---\ntitle: Five\n---\n");
+
+    let ran = run(project.path(), &["set", "WF-1", "title=Updated", "--json"]);
+
+    let out = ok_json(&ran);
+    assert_eq!(out["document"]["fields"]["title"], json!("Updated"));
+}
+
+/// A "different pair through the same field" case: `blocked_by` already sits on a cycle between
+/// `WF-1` and `WF-5` (built directly on disk); `WF-5` also already points at `WF-10` (a
+/// dead-end, since `WF-10` does not point back at anything yet). The write gives `WF-10` its own
+/// `blocked_by` pointing back at `WF-1`, closing a second, three-document cycle
+/// (`WF-1 -> WF-5 -> WF-10 -> WF-1`) that did not exist before this write. `WF-10`'s own change
+/// is what closes it, so it must still be refused.
+#[test]
+fn set_refuses_a_write_that_closes_a_new_cycle_through_a_different_pair_on_the_same_field() {
+    let project = Scratch::project(&WF_ACYCLIC_COLLECTION);
+    project.file(
+        "tickets/WF-1.md",
+        "---\ntitle: One\nblocked_by: [WF-5]\n---\n",
+    );
+    project.file(
+        "tickets/WF-5.md",
+        "---\ntitle: Five\nblocked_by: [WF-1, WF-10]\n---\n",
+    );
+    project.file("tickets/WF-10.md", "---\ntitle: Ten\n---\n");
+    let before = std::fs::read(project.path().join("tickets/WF-10.md")).unwrap();
+
+    let ran = run(
+        project.path(),
+        &["set", "WF-10", "blocked_by=WF-1", "--json"],
+    );
+
+    assert_eq!(ran.code, 2, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
+    let details = ran.stderr_json()["details"].as_array().unwrap().clone();
+    assert!(
+        details.iter().any(|f| f["rule"] == json!("refs.acyclic")),
+        "{details:?}"
+    );
+    let after = std::fs::read(project.path().join("tickets/WF-10.md")).unwrap();
+    assert_eq!(before, after);
+}
