@@ -45,61 +45,21 @@ The same folder works for people and for tools, and if you stop using typdoc you
 
 ## Install
 
-Prebuilt binaries, no Rust toolchain required — macOS and Linux (x86_64 or aarch64):
-
 ```console
 $ curl -fsSL https://typdoc.thaitype.dev/install | sh
-$ typdoc --version
 ```
 
-The script detects your OS and architecture, downloads the matching release archive, and
-verifies its SHA-256 checksum before installing anything — a checksum mismatch or an unsupported
-platform fails loudly and installs nothing. It installs to `~/.local/bin` by default. It never
-edits `PATH` or a shell profile: if the install directory isn't already on `PATH`, it prints how
-to add it — detected from your login shell (`$SHELL`), not the `sh` the script itself runs
-under — and still exits successfully either way.
+Supported platforms:
 
-Both `INSTALL_DIR` and `TYPDOC_VERSION` are read by the installer script, not by `curl` — put
-them after the pipe, right before `sh`, not before `curl`:
+- macOS — x86_64 (Intel) and aarch64 (Apple silicon)
+- Linux — x86_64 and aarch64
 
-```console
-$ curl -fsSL https://typdoc.thaitype.dev/install | INSTALL_DIR="$HOME/bin" sh
-$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.3.1 sh
-```
+Windows is not supported yet.
 
-Every release binary carries a SHA-256 checksum (which the installer checks automatically) and a
-[GitHub artifact attestation](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds),
-independently verifiable with the `gh` CLI:
-
-```console
-$ gh attestation verify typdoc-x86_64-unknown-linux-musl.tar.gz --owner thaitype
-```
-
-macOS does not notarize this binary. If Gatekeeper blocks the first run, clear the quarantine
-flag once:
-
-```console
-$ xattr -d com.apple.quarantine ~/.local/bin/typdoc
-```
-
-Prefer `cargo install` if you already have a Rust toolchain:
-
-```console
-$ cargo install typdoc
-$ typdoc --version
-```
-
-To try unreleased changes from `main` instead:
-
-```console
-$ cargo install --git https://github.com/thaitype/typdoc typdoc
-```
-
-Windows is not supported yet, by either install method above — `cargo install` doesn't build
-there either. WSL is a solid way to run typdoc on Windows in the meantime. CI runs the test
-suite on Windows on every change and reports the result as a non-blocking job, not a
-compatibility guarantee; right now that report says the build does not compile on Windows, the
-first of the two steps (compiles, then pass rate) toward eventual support.
+The script detects your OS and architecture, downloads the matching release from GitHub
+Releases, verifies its SHA-256 checksum, and installs `typdoc` to `~/.local/bin`. To pin a
+version, choose another install directory, or install with `cargo`, see
+[how to install typdoc](docs/how-to/install.md).
 
 If you work with a coding agent, add the typdoc skill too. It teaches Claude Code and other
 skill-aware agents how to find, create, change and move documents in a typdoc project:
@@ -310,6 +270,7 @@ Learn by doing:
 
 Get a specific job done:
 
+- [Install typdoc](docs/how-to/install.md)
 - [Add typdoc to a folder you already have](docs/how-to/adopt-an-existing-folder.md)
 - [Move and rename documents](docs/how-to/move-and-rename.md)
 - [Split work into namespaces](docs/how-to/use-namespaces.md)

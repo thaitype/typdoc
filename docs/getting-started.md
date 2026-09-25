@@ -4,28 +4,8 @@ In this tutorial we'll build a small ticket tracker for a website project, start
 folder. By the end we'll have tickets that block each other, a note that links to them, and a
 project that typdoc checks for us. It takes about ten minutes.
 
-You need typdoc installed (`typdoc --version` should print a version):
-
-```console
-$ curl -fsSL https://typdoc.thaitype.dev/install | sh
-```
-
-That installs a prebuilt binary on macOS or Linux with no Rust toolchain required. Windows isn't
-supported yet, either by that script or by `cargo install`. To pin a version or change the
-install location, put `TYPDOC_VERSION` or `INSTALL_DIR` after the pipe, right before `sh` — the
-installer script reads them, `curl` doesn't:
-
-```console
-$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.3.1 sh
-```
-
-The [README](../README.md#install) covers `INSTALL_DIR`, verifying release provenance, and the
-`cargo install` alternative.
-
-On Linux, the prebuilt `typdoc` binary is statically linked against musl, not glibc, so there's no
-glibc version requirement at all — any distro works as long as its kernel is new enough to run a
-modern Linux binary. This is proven in CI by running the built binary inside a long-EOL
-container image on each architecture.
+You need typdoc installed — see [how to install typdoc](how-to/install.md). `typdoc --version`
+should print a version.
 
 ## 1. Create the project
 
