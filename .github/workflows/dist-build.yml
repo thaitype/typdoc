@@ -1,6 +1,6 @@
 name: dist-build
 
-# Reusable workflow: builds the five prebuilt-binary targets with cargo-dist and uploads each
+# Reusable workflow: builds the four prebuilt-binary targets with cargo-dist and uploads each
 # target's archive + checksum as a workflow artifact. Called by dist-build-check.yml on every
 # relevant PR, and by publish.yml for the real release build (which adds an
 # actions/attest-build-provenance step over this workflow's output — attestation is not
@@ -41,9 +41,6 @@ jobs:
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-24.04-arm
             archive_ext: tar.gz
-          - target: x86_64-pc-windows-msvc
-            runner: windows-latest
-            archive_ext: zip
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
@@ -66,18 +63,12 @@ jobs:
         run: |
           version=$(grep -m1 '^cargo-dist-version' dist-workspace.toml | sed -E 's/.*"([^"]+)".*/\1/')
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - name: Install cargo-dist (unix)
-        if: runner.os != 'Windows'
+      - name: Install cargo-dist
         shell: bash
         run: |
           curl --proto '=https' --tlsv1.2 -LsSf \
             "https://github.com/axodotdev/cargo-dist/releases/download/v${{ steps.dist-version.outputs.version }}/cargo-dist-installer.sh" | sh
-      - name: Install cargo-dist (windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          irm "https://github.com/axodotdev/cargo-dist/releases/download/v${{ steps.dist-version.outputs.version }}/cargo-dist-installer.ps1" | iex
-      # Builds only this job's target (dist-workspace.toml lists all five; --target scopes cargo
+      # Builds only this job's target (dist-workspace.toml lists all four; --target scopes cargo
       # and dist to just this one) and produces the archive + its .sha256 side by side in
       # target/distrib/, plus the staged, unpacked binary this workflow runs next.
       - name: Build archive + checksum

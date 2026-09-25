@@ -98,42 +98,39 @@ class CheckRootRedirectsTests(unittest.TestCase):
 
 
 class RunChecksTests(unittest.TestCase):
-    def test_all_pass_returns_three_ok_lines(self) -> None:
+    def test_all_pass_returns_two_ok_lines(self) -> None:
         fetch = _fake_fetch(
             {
                 "https://example/install": b"sh-bytes",
-                "https://example/install.ps1": b"ps1-bytes",
                 "https://example/": b"redirect to https://github.com/thaitype/typdoc",
             }
         )
-        results = run_checks(fetch, "https://example", b"sh-bytes", b"ps1-bytes")
-        self.assertEqual(len(results), 3)
+        results = run_checks(fetch, "https://example", b"sh-bytes")
+        self.assertEqual(len(results), 2)
 
     def test_stops_at_first_failure_and_names_it(self) -> None:
         fetch = _fake_fetch(
             {
                 "https://example/install": b"WRONG-BYTES",
-                "https://example/install.ps1": b"ps1-bytes",
                 "https://example/": b"redirect to https://github.com/thaitype/typdoc",
             }
         )
         with self.assertRaises(LiveCheckError) as ctx:
-            run_checks(fetch, "https://example", b"sh-bytes", b"ps1-bytes")
+            run_checks(fetch, "https://example", b"sh-bytes")
         self.assertIn("pages/install", str(ctx.exception))
 
     def test_trailing_slash_on_base_url_does_not_double_up(self) -> None:
         fetch = _fake_fetch(
             {
                 "https://example/install": b"sh-bytes",
-                "https://example/install.ps1": b"ps1-bytes",
                 "https://example/": b"redirect to https://github.com/thaitype/typdoc",
             }
         )
         # Must not require "https://example//install" -- a trailing slash on --base-url is an
-        # easy real-world mistake (e.g. copy-pasted from a browser address bar) that must not
+        # easy real-world mistake (e.g. typed by hand from a browser address bar) that must not
         # silently break every check.
-        results = run_checks(fetch, "https://example/", b"sh-bytes", b"ps1-bytes")
-        self.assertEqual(len(results), 3)
+        results = run_checks(fetch, "https://example/", b"sh-bytes")
+        self.assertEqual(len(results), 2)
 
 
 class RetryingTests(unittest.TestCase):
@@ -228,21 +225,18 @@ class UrllibFetchTests(unittest.TestCase):
 
 
 class MainTests(unittest.TestCase):
-    def _write_local_pages(self, tmp_dir: str, install_sh: bytes, install_ps1: bytes) -> None:
+    def _write_local_pages(self, tmp_dir: str, install_sh: bytes) -> None:
         pages_dir = os.path.join(tmp_dir, "pages")
         os.makedirs(pages_dir, exist_ok=True)
         with open(os.path.join(pages_dir, "install"), "wb") as f:
             f.write(install_sh)
-        with open(os.path.join(pages_dir, "install.ps1"), "wb") as f:
-            f.write(install_ps1)
 
     def test_reports_success_when_all_checks_pass(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            self._write_local_pages(tmp, b"sh-bytes", b"ps1-bytes")
+            self._write_local_pages(tmp, b"sh-bytes")
             fake = _fake_fetch(
                 {
                     "https://example/install": b"sh-bytes",
-                    "https://example/install.ps1": b"ps1-bytes",
                     "https://example/": b"redirect to https://github.com/thaitype/typdoc",
                 }
             )
@@ -262,11 +256,10 @@ class MainTests(unittest.TestCase):
 
     def test_content_mismatch_exits_nonzero_and_names_the_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            self._write_local_pages(tmp, b"sh-bytes", b"ps1-bytes")
+            self._write_local_pages(tmp, b"sh-bytes")
             fake = _fake_fetch(
                 {
                     "https://example/install": b"DIFFERENT",
-                    "https://example/install.ps1": b"ps1-bytes",
                     "https://example/": b"redirect to https://github.com/thaitype/typdoc",
                 }
             )

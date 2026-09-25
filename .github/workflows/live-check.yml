@@ -30,11 +30,11 @@ jobs:
       # installer_fixture_server.py).
       - name: Self-test the live-check logic
         run: python scripts/test_check_live_install.py -v
-      # Fetches https://typdoc.thaitype.dev/install and /install.ps1 and confirms both serve
-      # and are byte-identical to pages/install and pages/install.ps1 in this repo, and confirms
-      # the root URL (https://typdoc.thaitype.dev/) actually redirects (per pages/index.html).
-      # Retries a handful of times with a short delay by default, to absorb the brief CDN
-      # propagation lag that can follow a fresh Pages deploy, without masking a real failure.
+      # Fetches https://typdoc.thaitype.dev/install and confirms it serves and is byte-identical
+      # to pages/install in this repo, and confirms the root URL
+      # (https://typdoc.thaitype.dev/) actually redirects (per pages/index.html). Retries a
+      # handful of times with a short delay by default, to absorb the brief CDN propagation lag
+      # that can follow a fresh Pages deploy, without masking a real failure.
       - name: Check typdoc.thaitype.dev matches this repo
         run: |
           python scripts/check_live_install.py \

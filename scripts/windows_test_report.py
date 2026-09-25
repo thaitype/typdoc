@@ -3,16 +3,29 @@
 
 Used by the Windows pass-rate job in .github/workflows/ci.yml. That job is a
 non-blocking measurement, not a gate: it reports how many of the suite's
-tests currently pass on Windows, it does not require that they all do (this
-story does not fix any Windows failure it finds).
+tests currently pass on Windows, it does not require that they all do.
 
 This script is the part of that job that must never itself fail silently: if
 it finds zero "test result:" lines, that means the captured run produced no
-test output at all (a build failure before any test binary ran, a wrong
-working directory, cargo not on PATH, ...), and reporting "0%" for that would
-read as a real, if bad, measurement rather than as "this measurement did not
-happen." That case is refused loudly instead (see ZeroTestsError below), the
-same way scripts/test.sh refuses to report success on a zero count.
+test output at all, and reporting "0%" for that would read as a real, if
+bad, measurement rather than as "this measurement did not happen." That case
+is refused loudly instead (see ZeroTestsError below), the same way
+scripts/test.sh refuses to report success on a zero count.
+
+A zero-test result has two different causes, and the message names which one
+it is instead of using one generic wording for both:
+  - the build never compiled (today's actual state on Windows: typdoc-fs,
+    the crate implementing typdoc_core::Fs, is Unix-only by design and has
+    no Windows branch at all, so `cargo test` fails before any test binary
+    exists to run) -- reported as "does not compile -- 0 tests run";
+  - the build compiled but the captured run still produced no "test result:"
+    lines for some other reason (wrong working directory, cargo not on
+    PATH, a test binary that ran but printed nothing recognizable, ...) --
+    reported with the older, more general "found zero tests" wording.
+Supporting Windows is a two-step ladder: step one is "compiles," step two is
+"pass rate." Today's run is stuck at step one, and this script's job is to
+say exactly that in the step summary, not to blur it into a generic error
+that reads the same whether the build compiled or not.
 
 Run standalone:
     python windows_test_report.py <captured-cargo-test-output-file>
@@ -36,9 +49,23 @@ import sys
 # have no awk.
 _RESULT_LINE = re.compile(r"^test result:.*?(\d+) passed;\s*(\d+) failed", re.MULTILINE)
 
+# Best-effort markers of "the build never compiled," used only to make a zero-test result's
+# error message specific instead of generic. `error[E` matches any rustc diagnostic code, which
+# only appears when compilation itself failed (a passing test run never prints one); the two
+# phrases are cargo's own terminal wording for a build that didn't produce a test binary.
+_COMPILE_FAILURE_MARKERS = ("error: could not compile", "error: aborting due to")
+
+
+def _looks_like_compile_failure(cargo_test_output: str) -> bool:
+    if "error[E" in cargo_test_output:
+        return True
+    return any(marker in cargo_test_output for marker in _COMPILE_FAILURE_MARKERS)
+
 
 class ZeroTestsError(RuntimeError):
-    """Raised when a captured run has no "test result:" lines at all."""
+    """Raised when a captured run has no "test result:" lines at all -- either because the
+    build never compiled, or because it compiled but genuinely produced no test result for some
+    other reason. The message names which one, when it can tell (see compile_failed below)."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -46,6 +73,7 @@ class Summary:
     passed: int
     failed: int
     suite_count: int
+    compile_failed: bool = False
 
     @property
     def total(self) -> int:
@@ -63,17 +91,30 @@ def summarize(cargo_test_output: str) -> Summary:
         passed += int(match.group(1))
         failed += int(match.group(2))
         suites += 1
-    return Summary(passed=passed, failed=failed, suite_count=suites)
+    return Summary(
+        passed=passed,
+        failed=failed,
+        suite_count=suites,
+        compile_failed=_looks_like_compile_failure(cargo_test_output),
+    )
 
 
 def check_nonzero(summary: Summary) -> None:
     """Refuses to treat a zero-test run as a valid measurement -- mirrors
-    scripts/test.sh's own "refuses to report success on a zero count"."""
+    scripts/test.sh's own "refuses to report success on a zero count." The message is specific
+    about *why* there are zero tests: a build that never compiled is a different, earlier
+    failure than one that compiled but happened to run nothing."""
     if summary.total == 0:
+        if summary.compile_failed:
+            raise ZeroTestsError(
+                "does not compile -- 0 tests run. The Windows build failed before any test "
+                "binary could run. Supporting Windows is two steps, compiles then pass rate, "
+                "and this run is stuck at step one -- there is no pass rate to report yet."
+            )
         raise ZeroTestsError(
-            f"found zero tests across {summary.suite_count} suite(s) -- refusing to report "
-            "a pass rate for a run that tested nothing (a silent no-op must not read as a "
-            "valid 0% or 100%)."
+            f"found zero tests across {summary.suite_count} suite(s) -- the build compiled but "
+            "no test binary reported a result; refusing to report a pass rate for a run that "
+            "tested nothing (a silent no-op must not read as a valid 0% or 100%)."
         )
 
 
@@ -117,11 +158,19 @@ def main(argv: list[str]) -> int:
         check_nonzero(summary)
     except ZeroTestsError as exc:
         print(f"windows_test_report: {exc}", file=sys.stderr)
-        _append_step_summary(
-            "## Windows test-suite pass rate\n\n"
-            "**ERROR: zero tests found.** This run did not execute any tests; treat this "
-            "as a failed measurement, not a 0% or 100% pass rate.\n"
-        )
+        if summary.compile_failed:
+            _append_step_summary(
+                "## Windows test-suite pass rate\n\n"
+                "**Does not compile -- 0 tests run.** The Windows build failed before any test "
+                "could execute. Supporting Windows is two steps, compiles then pass rate, and "
+                "this run is stuck at step one; there is no pass rate to report yet.\n"
+            )
+        else:
+            _append_step_summary(
+                "## Windows test-suite pass rate\n\n"
+                "**ERROR: zero tests found.** The build compiled, but this run executed no "
+                "tests; treat this as a failed measurement, not a 0% or 100% pass rate.\n"
+            )
         return 1
 
     print(

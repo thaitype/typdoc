@@ -93,7 +93,7 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   dist-build:
-    name: dist build (5 targets)
+    name: dist build (4 targets)
     needs: gate
     uses: ./.github/workflows/dist-build.yml
 
@@ -122,7 +122,7 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v4
         with:
-          subject-path: "dist-artifacts/typdoc-*.tar.gz,dist-artifacts/typdoc-*.zip"
+          subject-path: "dist-artifacts/typdoc-*.tar.gz"
 
   release:
     name: create GitHub release + upload assets
@@ -188,13 +188,14 @@ jobs:
             --repo "${{ github.repository }}" \
             --clobber
 
-  # Runs the real, user-facing install one-liners (not the local-fixture-server test the `gate`
+  # Runs the real, user-facing install one-liner (not the local-fixture-server test the `gate`
   # job's PR-time installer-check.yml already covers) against whatever this dispatch just made
   # the newest non-pre-release -- see .chief/story-5/_contract/contract.md's "CI: live-URL
   # install check" and .chief/story-5/_tickets/05-live-check-workflow-code.md. No
   # TYPDOC_INSTALL_BASE_URL or TYPDOC_VERSION override here: this deliberately exercises the
   # exact command a real user would run, hitting the real GitHub Releases `releases/latest`
-  # redirect, not a fixture.
+  # redirect, not a fixture. macOS and Linux only -- Windows is not a release target for this
+  # story (see goal.md), so there is no Windows install flow to check here.
   #
   # Written and reviewable now, but not exercised end to end by this loop: no real (or
   # pre-)release exists yet for this dispatch to run against. Its first real execution is a
@@ -211,28 +212,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       # Appending to $GITHUB_PATH (rather than exporting PATH in the shell) is what makes the
       # installed binary visible to the separate "typdoc --version" step below: each `run:`
-      # step is its own shell, but a $GITHUB_PATH edit persists for the rest of the job. Both
-      # installers print this same directory (and, on macOS/Linux, an "add this to your PATH"
-      # line) when it isn't already on PATH; that printed line is not parsed here -- the
-      # install location is the contract's own fixed path
-      # (${INSTALL_DIR:-$HOME/.local/bin} / %LOCALAPPDATA%\typdoc\bin), so this step points
+      # step is its own shell, but a $GITHUB_PATH edit persists for the rest of the job. The
+      # installer prints this same directory (and an "add this to your PATH" line) when it
+      # isn't already on PATH; that printed line is not parsed here -- the install location is
+      # the contract's own fixed path (${INSTALL_DIR:-$HOME/.local/bin}), so this step points
       # $GITHUB_PATH straight at it instead.
       - name: Install typdoc via the live one-liner (pages/install)
-        if: runner.os != 'Windows'
         shell: bash
         run: |
           curl -fsSL https://typdoc.thaitype.dev/install | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Install typdoc via the live one-liner (pages/install.ps1)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          irm https://typdoc.thaitype.dev/install.ps1 | iex
-          "$env:LOCALAPPDATA\typdoc\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
       - name: typdoc --version
         run: typdoc --version

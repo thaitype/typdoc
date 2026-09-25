@@ -1,15 +1,16 @@
 name: installer-check
 
-# Exercises pages/install and pages/install.ps1 end to end on all three OS families, against a
-# local fixture HTTP server seeded from this PR's own dist-build output. See
-# .chief/story-5/_contract/contract.md's Testing Decisions: no release of typdoc exists until
-# 0.3.1 is published, so this can't hit real GitHub Releases yet — that's covered separately,
-# after a real deploy/release, by pages.yml's and publish.yml's own live-URL checks.
+# Exercises pages/install end to end on macOS and Linux, against a local fixture HTTP server
+# seeded from this PR's own dist-build output. See .chief/story-5/_contract/contract.md's
+# Testing Decisions: no release of typdoc exists until 0.3.1 is published, so this can't hit
+# real GitHub Releases yet — that's covered separately, after a real deploy/release, by
+# pages.yml's and publish.yml's own live-URL checks. Windows is not a release target for this
+# story (see .chief/story-5/_goal/goal.md), so there is no Windows leg here.
 #
-# scripts/test_installer_posix.sh and scripts/test_installer_windows.ps1 do the actual work;
-# scripts/installer_fixture_server.py is the local server they point the installer scripts at
-# via TYPDOC_INSTALL_BASE_URL, and has its own self-test (scripts/test_installer_fixture_server.py)
-# that runs first, independent of any real installer script.
+# scripts/test_installer_posix.sh does the actual work; scripts/installer_fixture_server.py is
+# the local server it points pages/install at via TYPDOC_INSTALL_BASE_URL, and has its own
+# self-test (scripts/test_installer_fixture_server.py) that runs first, independent of any real
+# installer script.
 #
 # Path-filtered at the workflow level like dist-build-check.yml and publish-check.yml, for the
 # same reason: `paths:` filters a whole workflow run in GitHub Actions, not a single job.
@@ -26,7 +27,6 @@ on:
       - "scripts/installer_fixture_server.py"
       - "scripts/test_installer_fixture_server.py"
       - "scripts/test_installer_posix.sh"
-      - "scripts/test_installer_windows.ps1"
       - "dist-workspace.toml"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -46,7 +46,7 @@ jobs:
   # workflow artifacts aren't shared across separate workflow files' runs without extra
   # plumbing, and this job's archives only need to exist within this run.
   dist-build:
-    name: dist build (5 targets, for installer testing)
+    name: dist build (4 targets, for installer testing)
     needs: fixture-server-self-test
     uses: ./.github/workflows/dist-build.yml
 
@@ -58,13 +58,11 @@ jobs:
       matrix:
         include:
           # One target per OS family, matching what that installer script actually detects
-          # itself as running on — no need to test all five targets' archives on every OS.
+          # itself as running on — no need to test all four targets' archives on every OS.
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
           - os: macos-latest
             target: aarch64-apple-darwin
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -73,17 +71,6 @@ jobs:
         with:
           name: dist-${{ matrix.target }}
           path: dist-artifacts
-      # ubuntu-latest and macos-latest ship python3; windows-latest does not, same reason
-      # ci.yml's windows-pass-rate job installs it.
-      - uses: actions/setup-python@v5
-        if: runner.os == 'Windows'
-        with:
-          python-version: "3.x"
       - name: Run installer scenarios (pages/install)
-        if: runner.os != 'Windows'
         shell: bash
         run: scripts/test_installer_posix.sh dist-artifacts "${{ matrix.target }}"
-      - name: Run installer scenarios (pages/install.ps1)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: scripts/test_installer_windows.ps1 -ArchiveDir dist-artifacts

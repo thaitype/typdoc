@@ -8,17 +8,16 @@ are left out unless they change something a user of the `typdoc` binary sees.
 
 ### Added
 
-- Prebuilt binaries for five platforms, attached to this release alongside the existing
-  `cargo install typdoc` path: macOS (Apple Silicon and Intel), Linux x86_64 and aarch64 (musl,
-  carrying no glibc-version requirement), and Windows x86_64 (experimental). Install with no Rust
-  toolchain via `curl -fsSL https://typdoc.thaitype.dev/install | sh` on macOS/Linux, or
-  `irm https://typdoc.thaitype.dev/install.ps1 | iex` on Windows.
+- Prebuilt binaries for four platforms, attached to this release alongside the existing
+  `cargo install typdoc` path: macOS (Apple Silicon and Intel) and Linux x86_64 and aarch64
+  (musl, carrying no glibc-version requirement). Install with no Rust toolchain via
+  `curl -fsSL https://typdoc.thaitype.dev/install | sh`. Windows is not supported yet, by this
+  installer or by `cargo install`.
 - Every released binary carries a SHA-256 checksum and a GitHub artifact attestation, checkable
-  independently of either installer with `gh attestation verify`.
+  independently of the installer with `gh attestation verify`.
 - `TYPDOC_VERSION` pins an installer run to a specific release instead of latest; `INSTALL_DIR`
-  overrides the default install location (`~/.local/bin` on macOS/Linux, the per-user directory
-  on Windows). Neither installer edits `PATH` or a shell profile; each prints the one line to run
-  if the install directory isn't already on `PATH`.
+  overrides the default install location (`~/.local/bin`). The installer never edits `PATH` or a
+  shell profile; it prints the one line to run if the install directory isn't already on `PATH`.
 - The `x86_64-apple-darwin` binary is cross-compiled for this release but not executed in CI —
   no matching-arch GitHub-hosted runner is available to this repo — and is named as
   built-but-not-run rather than presented as verified. Every other target is both built and run
@@ -26,7 +25,7 @@ are left out unless they change something a user of the `typdoc` binary sees.
 
 ### Internal
 
-- `dist-workspace.toml` (`cargo-dist` pinned to an exact version) configures the five build
+- `dist-workspace.toml` (`cargo-dist` pinned to an exact version) configures the four build
   targets. A reusable GitHub Actions workflow builds them and produces each target's archive and
   `.sha256` checksum; a PR-triggered caller runs it on every relevant pull request, and
   `publish.yml` calls the same workflow for the real release, then attests build provenance

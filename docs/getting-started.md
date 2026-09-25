@@ -10,10 +10,9 @@ You need typdoc installed (`typdoc --version` should print a version):
 $ curl -fsSL https://typdoc.thaitype.dev/install | sh
 ```
 
-That installs a prebuilt binary on macOS or Linux with no Rust toolchain required (Windows:
-`irm https://typdoc.thaitype.dev/install.ps1 | iex`, experimental). The
-[README](../README.md#install) covers `INSTALL_DIR`, verifying release provenance, and the
-`cargo install` alternative.
+That installs a prebuilt binary on macOS or Linux with no Rust toolchain required. Windows isn't
+supported yet, either by that script or by `cargo install`. The [README](../README.md#install)
+covers `INSTALL_DIR`, verifying release provenance, and the `cargo install` alternative.
 
 On Linux, the prebuilt `typdoc` binary is statically linked against musl, not glibc, so there's no
 glibc version requirement at all — any distro works as long as its kernel meets Rust's own

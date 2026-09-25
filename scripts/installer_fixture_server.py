@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-"""Local fixture HTTP server for pages/install and pages/install.ps1's PR-time test.
+"""Local fixture HTTP server for pages/install's PR-time test.
 
-No release of typdoc exists until 0.3.1 is published, so the installer scripts' PR-time test
+No release of typdoc exists until 0.3.1 is published, so the installer script's PR-time test
 can't hit real GitHub Releases (see .chief/story-5/_contract/contract.md's Testing Decisions).
 Instead this server serves a GitHub-Releases-shaped URL surface from a local fixtures
-directory, and the installer scripts are pointed at it via TYPDOC_INSTALL_BASE_URL:
+directory, and the installer script is pointed at it via TYPDOC_INSTALL_BASE_URL:
 
     /releases/latest/download/<name>   -> 302 redirect to /releases/download/<latest tag>/<name>
     /releases/download/<tag>/<name>    -> serves fixtures_dir/<tag>/<name>, 404 if missing
 
 The fixtures directory holds one subdirectory per release tag, each containing the archive +
-`.sha256` files an installer would download for it. scripts/test_installer_posix.sh and
-scripts/test_installer_windows.ps1 populate it from ticket 01's PR-built dist-build archives
-plus a second fixture tag (reusing the same bytes under a different tag, per the contract's own
-"a second fixture 'version'" wording), to prove TYPDOC_VERSION pins to an explicit tag instead
-of following the latest redirect.
+`.sha256` files an installer would download for it. scripts/test_installer_posix.sh populates
+it from ticket 01's PR-built dist-build archives plus a second fixture tag (reusing the same
+bytes under a different tag, per the contract's own "a second fixture 'version'" wording), to
+prove TYPDOC_VERSION pins to an explicit tag instead of following the latest redirect.
 
 Every request is appended to a log file, one line per request, so a calling test can assert
 which URL shape was actually hit (e.g. that a TYPDOC_VERSION pin used the direct
@@ -22,7 +21,7 @@ which URL shape was actually hit (e.g. that a TYPDOC_VERSION pin used the direct
 file ended up installed.
 
 See scripts/test_installer_fixture_server.py for the self-test that exercises this module's
-routing directly, independent of the installer scripts.
+routing directly, independent of the installer script.
 
 Run standalone:
     installer_fixture_server.py <fixtures_dir> <latest_tag> --log <path> [--port N]

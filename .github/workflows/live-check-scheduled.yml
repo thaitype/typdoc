@@ -1,9 +1,9 @@
 name: live-check-scheduled
 
 # Repeats the same live-URL check pages.yml's post-deploy step runs (scripts/check_live_install.py
-# against pages/install, pages/install.ps1 and the root redirect), but independent of any deploy
-# or release -- on a schedule, to catch drift (cert expiry, DNS, a GitHub Pages outage) that could
-# break the live install flow between deploys, not just at deploy time. See
+# against pages/install and the root redirect), but independent of any deploy or release -- on a
+# schedule, to catch drift (cert expiry, DNS, a GitHub Pages outage) that could break the live
+# install flow between deploys, not just at deploy time. See
 # .chief/story-5/_contract/contract.md's "CI: live-URL install check" and
 # .chief/story-5/_tickets/05-live-check-workflow-code.md.
 #

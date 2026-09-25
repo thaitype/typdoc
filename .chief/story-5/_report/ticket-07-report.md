@@ -26,12 +26,12 @@ done
 ## Notes
 - New `release` job in `publish.yml`, `needs: attest`, gated `if: inputs.dry_run == false` — same
   shape as the existing `cargo publish` step, so a dry run builds+attests but creates nothing
-  public. Confirmed by construction, not by an actual dispatch (this loop never runs one for
-  real).
+  public. True by construction (the job-level `if` gate), not exercised by an actual dispatch
+  (this loop never runs one for real).
 - New `scripts/extract_release_notes.py` (+ its own test file, 10 tests) pulls one version's
   section out of `CHANGELOG.md` by exact `## [<version>]` heading match — the one part of this
   job that could be TDD'd in isolation, since `gh release create`/`upload` themselves need the
-  real GitHub API and were reviewed by hand instead.
+  real GitHub API and were checked by reading the code instead of by a test.
 - Did not build the separate `v0.3.1-rc.1` pre-release workflow (explicitly out of scope for this
   ticket) but left the extraction script reusable as a plain CLI for whoever builds that.
 - Commit `fac62b9` on `story-5-prebuilt-installer` (ticket-07's single commit, fast-forwarded —

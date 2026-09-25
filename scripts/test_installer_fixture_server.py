@@ -3,14 +3,13 @@
 
 Exercises the fixture server's routing logic — the "latest" redirect, direct tag downloads,
 missing files, and its request log — against a real bound HTTP server on 127.0.0.1, independent
-of pages/install or pages/install.ps1. The same "prove the mechanism before trusting it" shape
-as scripts/test_windows_test_report.py's own self-test for scripts/windows_test_report.py.
+of pages/install. The same "prove the mechanism before trusting it" shape as
+scripts/test_windows_test_report.py's own self-test for scripts/windows_test_report.py.
 
 This is the seam .chief/story-5/_contract/contract.md's Testing Decisions names for the
-installer scripts' PR-time test: a local HTTP server serving fixture archives/checksums, pointed
+installer script's PR-time test: a local HTTP server serving fixture archives/checksums, pointed
 at via TYPDOC_INSTALL_BASE_URL. This file proves the server itself is correct before
-scripts/test_installer_posix.sh and scripts/test_installer_windows.ps1 trust it to drive
-pages/install and pages/install.ps1 end to end.
+scripts/test_installer_posix.sh trusts it to drive pages/install end to end.
 
 Run standalone:
     python scripts/test_installer_fixture_server.py -v

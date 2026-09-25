@@ -1,7 +1,7 @@
 [workspace]
 members = ["cargo:."]
 
-# Config for 'dist' (cargo-dist) — builds the five prebuilt-binary targets consumed by
+# Config for 'dist' (cargo-dist) — builds the four prebuilt-binary targets consumed by
 # .github/workflows/dist-build.yml. See that workflow for how these settings are used in CI.
 [dist]
 # Pinned to an exact version (not a range) so upgrading it later is a deliberate, visible change.
@@ -10,20 +10,22 @@ cargo-dist-version = "0.32.0"
 # (.github/workflows/dist-build.yml), not `dist generate`'s own output, so this repo's PR and
 # release jobs can use a fixed runner-per-target rather than dist's own runner defaults.
 ci = "github"
-# Resolved by ticket 03: both `pages/install` and `pages/install.ps1` are hand-written, not
-# this generated output — dist's shell/powershell installers bake one fixed version into
-# themselves at generation time (no runtime version selection at all, no config knob to change
-# that), which can't serve as a single, permanently-hosted script that resolves a version every
-# time it runs. This key is left as-is (harmless) rather than removed: dist-build.yml only ever
-# calls `dist build --artifacts=local --target=<X>`, confirmed by actually running that exact
-# invocation to never produce these installer scripts at all (`--artifacts=local` emits only the
+# Resolved by ticket 03: `pages/install` is hand-written, not this generated output — dist's
+# shell installer bakes one fixed version into itself at generation time (no runtime version
+# selection at all, no config knob to change that), which can't serve as a single,
+# permanently-hosted script that resolves a version every time it runs. This key is left as-is
+# (harmless) rather than removed: dist-build.yml only ever calls
+# `dist build --artifacts=local --target=<X>`, verified by actually running that exact
+# invocation to never produce this installer script at all (`--artifacts=local` emits only the
 # archive + checksum for the given target) — so dist's own installer, with its PATH-modifying
 # default (`NO_MODIFY_PATH` is a runtime env var the generated script reads, not a build-time
 # key here — see ticket 01's report), is never generated or shipped anywhere by this repo's
-# pipeline. Only the two hand-written, PATH-never-editing scripts below ever reach a user.
-installers = ["shell", "powershell"]
+# pipeline. Only the hand-written, PATH-never-editing script below ever reaches a user. Windows
+# is not a release target for this story — see .chief/story-5/_goal/goal.md — so `installers`
+# no longer lists `powershell`.
+installers = ["shell"]
 # Every asset name/extension below must match the contract's naming table exactly.
-targets = ["x86_64-apple-darwin", "aarch64-apple-darwin", "x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl", "x86_64-pc-windows-msvc"]
+targets = ["x86_64-apple-darwin", "aarch64-apple-darwin", "x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]
 # .tar.gz, not dist's own .tar.xz default, per the contract's asset naming table.
 unix-archive = ".tar.gz"
 # This repo's CI is a hand-written reusable workflow (dist-build.yml) with a fixed

@@ -50,6 +50,27 @@ test result: ok. 5 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fini
 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
 """
 
+# Shaped like a real `cargo test` failure on Windows today: typdoc-fs uses
+# std::os::unix::fs unconditionally, so rustc can't resolve `unix` on that target and cargo
+# never produces a test binary at all.
+COMPILE_FAILURE_OUTPUT = """
+   Compiling typdoc-fs v0.3.1 (/home/runner/work/typdoc/typdoc/crates/typdoc-fs)
+error[E0433]: failed to resolve: could not find `unix` in `os`
+  --> crates/typdoc-fs/src/lib.rs:10:16
+   |
+10 | use std::os::unix::fs::MetadataExt;
+   |                ^^^^ could not find `unix` in `os`
+
+error: aborting due to 1 previous error; 1 warning emitted
+
+error: could not compile `typdoc-fs` (lib) due to 1 previous error
+"""
+
+# A zero-test run with no compile-failure markers at all -- stands in for a captured run that
+# compiled cleanly but still produced no "test result:" lines for some other reason (wrong
+# working directory, cargo not on PATH, a test binary that ran but printed nothing recognizable).
+NO_RESULT_LINES_OUTPUT = "no test result lines here\n"
+
 
 class SummarizeTests(unittest.TestCase):
     def test_sums_across_multiple_suites(self) -> None:
@@ -60,11 +81,20 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(summary.total, 12)
 
     def test_no_result_lines_gives_zero_summary(self) -> None:
-        summary = summarize("error: could not compile `typdoc`\n")
+        summary = summarize(COMPILE_FAILURE_OUTPUT)
         self.assertEqual(summary.passed, 0)
         self.assertEqual(summary.failed, 0)
         self.assertEqual(summary.suite_count, 0)
         self.assertEqual(summary.total, 0)
+
+    def test_compile_failure_markers_are_detected(self) -> None:
+        summary = summarize(COMPILE_FAILURE_OUTPUT)
+        self.assertTrue(summary.compile_failed)
+
+    def test_zero_tests_without_compile_markers_is_not_flagged_as_compile_failure(self) -> None:
+        summary = summarize(NO_RESULT_LINES_OUTPUT)
+        self.assertEqual(summary.total, 0)
+        self.assertFalse(summary.compile_failed)
 
     def test_rate_percent_rounds_to_one_decimal(self) -> None:
         summary = summarize(SAMPLE_OUTPUT)
@@ -72,16 +102,24 @@ class SummarizeTests(unittest.TestCase):
         self.assertAlmostEqual(summary.rate_percent, 91.7)
 
     def test_rate_percent_raises_on_zero_total(self) -> None:
-        summary = summarize("no test result lines here\n")
+        summary = summarize(NO_RESULT_LINES_OUTPUT)
         with self.assertRaises(ZeroTestsError):
             _ = summary.rate_percent
 
 
 class CheckNonzeroTests(unittest.TestCase):
-    def test_raises_on_zero_total(self) -> None:
-        summary = summarize("no test result lines here\n")
-        with self.assertRaises(ZeroTestsError):
+    def test_raises_with_compile_failure_wording_when_build_did_not_compile(self) -> None:
+        summary = summarize(COMPILE_FAILURE_OUTPUT)
+        with self.assertRaises(ZeroTestsError) as ctx:
             check_nonzero(summary)
+        self.assertIn("does not compile", str(ctx.exception))
+
+    def test_raises_with_generic_wording_when_build_compiled_but_ran_nothing(self) -> None:
+        summary = summarize(NO_RESULT_LINES_OUTPUT)
+        with self.assertRaises(ZeroTestsError) as ctx:
+            check_nonzero(summary)
+        self.assertIn("found zero tests", str(ctx.exception))
+        self.assertNotIn("does not compile", str(ctx.exception))
 
     def test_does_not_raise_when_total_is_nonzero(self) -> None:
         summary = summarize(
@@ -100,7 +138,7 @@ class RenderStepSummaryTests(unittest.TestCase):
         self.assertIn("never blocks a merge", rendered)
 
     def test_raises_instead_of_rendering_zero_total(self) -> None:
-        summary = summarize("no test result lines here\n")
+        summary = summarize(NO_RESULT_LINES_OUTPUT)
         with self.assertRaises(ZeroTestsError):
             render_step_summary(summary)
 
@@ -141,9 +179,21 @@ class MainTests(unittest.TestCase):
         self.assertIn("11 / 12", stdout)
         self.assertIn("91.7%", summary_text)
 
-    def test_zero_result_lines_errors_loudly(self) -> None:
+    def test_compile_failure_errors_loudly_with_specific_wording(self) -> None:
         with tempfile.NamedTemporaryFile("w", delete=False, suffix=".txt") as f:
-            f.write("error: could not compile `typdoc`\n")
+            f.write(COMPILE_FAILURE_OUTPUT)
+            path = f.name
+        try:
+            code, _stdout, stderr, summary_text = self._run_main(path)
+        finally:
+            os.remove(path)
+        self.assertEqual(code, 1)
+        self.assertIn("does not compile", stderr)
+        self.assertIn("Does not compile -- 0 tests run", summary_text)
+
+    def test_zero_result_lines_without_compile_failure_uses_generic_wording(self) -> None:
+        with tempfile.NamedTemporaryFile("w", delete=False, suffix=".txt") as f:
+            f.write(NO_RESULT_LINES_OUTPUT)
             path = f.name
         try:
             code, _stdout, stderr, summary_text = self._run_main(path)
@@ -152,11 +202,13 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("found zero tests", stderr)
         self.assertIn("ERROR: zero tests found", summary_text)
+        self.assertNotIn("does not compile", stderr)
 
     def test_missing_output_file_is_treated_as_zero_tests_not_a_crash(self) -> None:
         # A test step that never even produced output (e.g. `cargo` not found before
         # it could run) must read the same as zero tests found -- a loud, clear error,
-        # not an uncaught traceback.
+        # not an uncaught traceback. It's not a detected compile failure either (there is
+        # nothing to detect a marker in), so it gets the generic wording.
         missing_path = os.path.join(tempfile.mkdtemp(), "does-not-exist.txt")
         code, _stdout, stderr, summary_text = self._run_main(missing_path)
         self.assertEqual(code, 1)
