@@ -6,8 +6,8 @@ a one-line installer served from this repo's own domain — alongside the existi
 for why.
 
 The story ends with **release 0.3.1** published through `publish.yml` carrying all four binaries,
-their checksums, and their attestations — the first release to do so. Cutting that release is an
-owner action after merge, not loop work — see "After Merge" below for the exact order.
+their checksums, and their attestations — the first release to do so. Cutting that release is a
+manual step after merge, not loop work — see "After Merge" below for the exact order.
 
 From a user's perspective:
 
@@ -66,21 +66,23 @@ Required for the story to be truly done, not optional — just not performable b
 repo:
 
 - **Pages source / custom-domain setting**, set in repo settings on this public repo: done.
-  Source is GitHub Actions, custom domain `typdoc.thaitype.dev`, HTTPS enforced (owner-verified
-  via API). No longer outstanding.
+  Source is GitHub Actions, custom domain `typdoc.thaitype.dev`, HTTPS enforced (verified via
+  API). No longer outstanding.
 - **Cloudflare DNS record** for the install domain (`CNAME` to `thaitype.github.io`, DNS-only):
   outside this repo's automation. Already live, confirmed externally resolving to
   `thaitype.github.io` — no longer outstanding.
-- **`github-pages` deploy environment**: the story branch (`story-5-prebuilt-installer`) has been
-  added to its allowed deploy branches, temporarily, so the full flow can be proven before merge
-  (see "Full-flow proof" below and the pages.yml trigger change in ticket 04). Removing it again
-  is an After Merge item.
+- **`github-pages` deploy environment**: the story branch (`story-5-prebuilt-installer`) is
+  still in its allowed deploy branches, temporarily — used to prove the full flow before merge
+  (see "Full-flow proof" below), via a `pages.yml` trigger that has since been reverted to
+  `main`-only. Removing the branch from the environment's own allow-list is a settings change,
+  not a file this repo controls — the one item left in "After Merge" below.
 
 ## Full-flow proof (after the loop, before the PR is marked ready)
 
-Pages is now configured (source: GitHub Actions, custom domain `typdoc.thaitype.dev`, HTTPS
-enforced) and deploys on push to the story branch too, temporarily — so the full install flow
-can be proven end-to-end before the PR is marked ready, not just after merge:
+Pages is configured (source: GitHub Actions, custom domain `typdoc.thaitype.dev`, HTTPS
+enforced); `pages.yml` deployed on push to the story branch too, temporarily, so the full
+install flow could be proven end-to-end before the PR is marked ready, not just after merge —
+that trigger has since been reverted to `main`-only, its job here done:
 
 1. A GitHub **pre-release `v0.3.1-rc.1`**, carrying the four binaries, their checksums, and their
    attestations — no crates.io publish. Produced by a workflow triggered by a push (e.g. an rc
@@ -98,21 +100,20 @@ at `https://github.com/thaitype/typdoc/releases/tag/v0.3.1-rc.1` (four archives 
 install proof is workflow run `36145328017`, all three legs (`ubuntu-latest`,
 `ubuntu-24.04-arm`, `macos-latest`) succeeded.
 
-## After Merge (owner actions, not loop work)
+## After Merge (not loop work)
 
 The loop's tickets end at "PR open, CI green," and the full-flow proof above happens once more
-after that, before the PR is marked ready. Everything below happens after the PR merges:
+after that, before the PR is marked ready. `pages.yml`'s and `full-flow-proof.yml`'s own
+temporary triggers are already reverted, in this same PR, rather than left for after merge.
+Everything below happens after the PR merges:
 
 1. **Merge** the PR to `main`.
-2. **Remove the story branch** from `pages.yml`'s trigger and from the `github-pages` deploy
-   environment's allowed deploy branches — both were temporary, added only for the full-flow
-   proof above. Also remove `full-flow-proof.yml`'s `push` trigger (its own header comment
-   explains why it's there and that it's safe to drop once `workflow_dispatch` is reachable the
-   normal way, which merging to `main` provides).
+2. **Remove the story branch** from the `github-pages` deploy environment's allowed deploy
+   branches — a settings change, the one thing this repo's files don't already cover.
 3. **Pages deploys** on the push to `main`; the domain continues resolving over HTTPS as it did
    during the full-flow proof.
-4. **Owner dispatches `publish.yml`** for the real `0.3.1` — dry run first, then the real run,
-   same pattern as the last story's release. This is the first time crates.io is touched.
+4. **Dispatch `publish.yml`** for the real `0.3.1` — dry run first, then the real run, same
+   pattern as the last story's release. This is the first time crates.io is touched.
 5. **Post-release live check** runs as part of that same dispatch (ticket 05's post-release
    step) — confirms the live install one-liner works against the actual `0.3.1` release, not
    just the `v0.3.1-rc.1` pre-release.

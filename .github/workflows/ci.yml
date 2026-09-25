@@ -87,14 +87,16 @@ jobs:
     name: Windows test-suite pass rate (non-blocking)
     runs-on: windows-latest
     # This job is a measurement, not a gate: it reports how many of the suite's tests
-    # currently pass on Windows, it does not require that they all do. `continue-on-error`
-    # at the job level means no step below can ever turn a PR red, regardless of outcome —
-    # the `test` job above stays the only required gate. This also runs the suite directly
-    # with `cargo test`, not through scripts/test.sh: that script's memory ceiling is
-    # enforced via systemd-run (Linux) or a vm_stat watchdog (macOS), neither of which
-    # exists on Windows, and this job needs no memory cap of its own — just one run of the
-    # suite and an honest count of the result.
-    continue-on-error: true
+    # currently pass on Windows, it does not require that they all do. It must never turn a
+    # PR red — not achieved with job-level `continue-on-error` (that keeps the *workflow*
+    # green but still shows the *job's own check* as failed, which reads as red on the PR).
+    # Instead, every step here succeeds for either of the two known states (compiled with a
+    # measured rate; did not compile) and only scripts/windows_test_report.py's own exit
+    # code — non-zero for the one genuinely unknown state, compiled but zero tests counted —
+    # can fail this job. This also runs the suite directly with `cargo test`, not through
+    # scripts/test.sh: that script's memory ceiling is enforced via systemd-run (Linux) or a
+    # vm_stat watchdog (macOS), neither of which exists on Windows, and this job needs no
+    # memory cap of its own — just one run of the suite and an honest count of the result.
     steps:
       - uses: actions/checkout@v4
       # rust-toolchain.toml pins the toolchain; rustup (preinstalled on windows-latest)
@@ -113,19 +115,22 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       # `--no-fail-fast` for the same reason as the `test` job above: one red suite must
       # never hide every suite after it. Output is streamed to the terminal and also
-      # captured to a file, so the next step can count what actually ran.
+      # captured to a file, so the next step can count what actually ran. This step's own
+      # exit code is deliberately never checked: `cargo test` returning non-zero (a failing
+      # test, or the build not compiling at all) is a *measured outcome* here, not a step
+      # failure — the reporting step below is what decides pass/fail for this job, based on
+      # what actually happened, not on this command's raw exit code.
       - name: Run test suite (Windows, no memory cap)
         run: |
           $out = Join-Path $env:RUNNER_TEMP "typdoc-test-windows.txt"
           cargo test --workspace --no-fail-fast --features typdoc/test-stand-in 2>&1 | Tee-Object -FilePath $out
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      # scripts/windows_test_report.py sums every "N passed; M failed" out of cargo's own
-      # "test result:" lines and posts passed/total + a percentage to
-      # $GITHUB_STEP_SUMMARY. It refuses (non-zero exit) to report a rate for zero tests
-      # found — mirroring scripts/test.sh's own "refuses to report success on a zero
-      # count" — so a step that silently ran nothing can't be misread as a valid 0% or
-      # 100%. `if: always()` runs this even when the step above found failing tests: this
-      # job measures the pass rate, it does not require a clean run to report one.
+      # scripts/windows_test_report.py distinguishes three states and exits accordingly:
+      # compiled with a measured rate (reports it, exit 0); did not compile (reports "does
+      # not compile -- 0 tests run" plus a ::warning:: annotation, exit 0 -- a known state,
+      # not a failure); compiled but zero tests counted (the one truly unknown/broken state
+      # -- reports it as an error, exit 1, the only way this job can fail). `if: always()`
+      # runs this even when the step above found failing tests or a build that didn't
+      # compile: this job measures what happened, it does not require a clean run to do so.
       - name: Compute and report Windows pass rate
         if: always()
         run: |

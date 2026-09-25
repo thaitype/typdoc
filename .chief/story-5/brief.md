@@ -52,9 +52,9 @@ one-line installer served from `https://typdoc.thaitype.dev/install`.
   PR with CI, and after a deploy the check is made against the live URL
   (`curl -fsSL https://typdoc.thaitype.dev/install`), not against the file in the repo.
 - **DNS is outside the repo.** `thaitype.dev` is on Cloudflare and has no record for `typdoc` yet.
-  The owner adds `CNAME typdoc → thaitype.github.io` (DNS only, not proxied, so GitHub can issue
-  the certificate). Everything up to the live check can be built without it; the live check at
-  the end of the story needs it. Ask for it once, when the Pages setup is merged.
+  A `CNAME typdoc → thaitype.github.io` record gets added (DNS only, not proxied, so GitHub can
+  issue the certificate). Everything up to the live check can be built without it; the live
+  check at the end of the story needs it. Ask for it once, when the Pages setup is merged.
 - The existing gate (`scripts/test.sh` + fmt + clippy on ubuntu and macOS) keeps gating
   publishing. Binaries are built from the same commit the crates are published from.
 - `scripts/test.sh` is bash and its memory cap uses `systemd-run` (Linux) and a `vm_stat`

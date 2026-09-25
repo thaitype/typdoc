@@ -159,18 +159,24 @@ def main(argv: list[str]) -> int:
     except ZeroTestsError as exc:
         print(f"windows_test_report: {exc}", file=sys.stderr)
         if summary.compile_failed:
+            # A known state, not a failure: step one of supporting Windows is "compiles,"
+            # step two is "pass rate," and this run is stuck at step one. The job must stay
+            # green for this (a `::warning::` annotation is how it stays visible on the PR
+            # without turning the check red) -- only a build that compiled yet still
+            # produced no test result is treated as broken, below.
+            print("::warning::Windows build does not compile -- 0 tests run")
             _append_step_summary(
                 "## Windows test-suite pass rate\n\n"
                 "**Does not compile -- 0 tests run.** The Windows build failed before any test "
                 "could execute. Supporting Windows is two steps, compiles then pass rate, and "
                 "this run is stuck at step one; there is no pass rate to report yet.\n"
             )
-        else:
-            _append_step_summary(
-                "## Windows test-suite pass rate\n\n"
-                "**ERROR: zero tests found.** The build compiled, but this run executed no "
-                "tests; treat this as a failed measurement, not a 0% or 100% pass rate.\n"
-            )
+            return 0
+        _append_step_summary(
+            "## Windows test-suite pass rate\n\n"
+            "**ERROR: zero tests found.** The build compiled, but this run executed no "
+            "tests; treat this as a failed measurement, not a 0% or 100% pass rate.\n"
+        )
         return 1
 
     print(

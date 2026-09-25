@@ -5,13 +5,12 @@ name: pages
 # Actions" and the custom domain + HTTPS enforcement are already configured as repo settings —
 # this workflow only needs to produce and publish the deployment, not touch those settings.
 #
-# Triggers on push to BOTH `main` and `story-5-prebuilt-installer` (the story branch) — the
-# branch trigger is temporary. The `github-pages` deploy environment has this story branch
-# added to its allowed deploy branches, temporarily, so the full install flow (see
-# .chief/story-5/_goal/goal.md's "Full-flow proof") can be proven end-to-end against the real
-# custom domain before this story's PR is marked ready, not just after merge. Removing the story
-# branch from this trigger and from the environment's allowed branches is an After Merge item
-# (see goal.md), not this ticket's job.
+# Triggers on push to `main`. The full install flow (see .chief/story-5/_goal/goal.md's
+# "Full-flow proof") was proven end-to-end against the real custom domain from the story
+# branch, through a temporary trigger on this workflow and a temporary allowance in the
+# `github-pages` deploy environment's allowed branches, both since removed — that environment
+# rule is the one piece still outstanding, a settings change tracked in goal.md's After Merge
+# list, not a file this workflow touches.
 #
 # Path-filtered to pages/ (and to this workflow file itself), mirroring publish-check.yml's
 # existing path-filter pattern: `paths:` filters a whole workflow run in GitHub Actions, not a
@@ -23,7 +22,6 @@ on:
   push:
     branches:
       - main
-      - story-5-prebuilt-installer
     paths:
       - "pages/**"
       - ".github/workflows/pages.yml"

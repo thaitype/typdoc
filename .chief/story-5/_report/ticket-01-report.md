@@ -36,7 +36,7 @@ done
 - **Real gap found, not fixed here (correctly, per this ticket's scope):** no ticket in the
   original frontier actually creates a GitHub Release or uploads the built assets to it —
   confirmed live: `v0.3.0`/`v0.2.0`/`v0.1.0` on this repo all have `assets: []`, so release
-  creation has been a manual, out-of-band owner step until now. This story's goal explicitly
+  creation has been a manual, out-of-band step until now. This story's goal explicitly
   requires "release 0.3.1 ... carrying all five binaries" via `publish.yml`, so this is real
   missing scope, not something to leave dropped. **Filed as new ticket 07
   (`07-release-asset-upload.md`), blocked by this ticket, added to the frontier.**

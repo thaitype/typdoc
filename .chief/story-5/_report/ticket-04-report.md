@@ -8,12 +8,11 @@ done
 
 ## Decision
 - **Issue:** the contract's own Pages section says `main` only; the ticket (following the
-  owner's full-flow-proof decision relayed mid-loop) explicitly asks for both `main` and
+  full-flow-proof decision relayed mid-loop) explicitly asks for both `main` and
   `story-5-prebuilt-installer`.
 - **Chosen:** followed the ticket's explicit, more specific instruction over the contract's
-  general line, with the override and its removal-owner (an After Merge item, not this ticket)
-  documented in the workflow's own header comment. Not a judgement call — pre-resolved by the
-  ticket brief.
+  general line, with the override and when it gets reverted (not this ticket's job) documented
+  in the workflow's own header comment. Not a judgement call — pre-resolved by the ticket brief.
 - Minor, non-blocking calls: added a `concurrency` group to serialize deploys (not required by
   ticket/contract, standard practice for a production deploy workflow); used a three-layer
   redirect (meta-refresh + JS + fallback link) instead of picking just one of the contract's

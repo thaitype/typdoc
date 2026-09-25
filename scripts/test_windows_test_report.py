@@ -179,16 +179,23 @@ class MainTests(unittest.TestCase):
         self.assertIn("11 / 12", stdout)
         self.assertIn("91.7%", summary_text)
 
-    def test_compile_failure_errors_loudly_with_specific_wording(self) -> None:
+    def test_compile_failure_is_a_known_state_reported_with_a_warning_annotation_not_a_failure(
+        self,
+    ) -> None:
+        # "Does not compile" is one of the two known states this job must stay green for
+        # (the other being a measured pass rate) -- only a build that compiled yet reported
+        # zero tests is treated as broken (see the next test). exit 0 here is what keeps the
+        # PR check itself from reading red, per the job's own non-blocking requirement.
         with tempfile.NamedTemporaryFile("w", delete=False, suffix=".txt") as f:
             f.write(COMPILE_FAILURE_OUTPUT)
             path = f.name
         try:
-            code, _stdout, stderr, summary_text = self._run_main(path)
+            code, stdout, stderr, summary_text = self._run_main(path)
         finally:
             os.remove(path)
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 0)
         self.assertIn("does not compile", stderr)
+        self.assertIn("::warning::", stdout)
         self.assertIn("Does not compile -- 0 tests run", summary_text)
 
     def test_zero_result_lines_without_compile_failure_uses_generic_wording(self) -> None:
