@@ -119,11 +119,16 @@ jobs:
       # exit code is deliberately never checked: `cargo test` returning non-zero (a failing
       # test, or the build not compiling at all) is a *measured outcome* here, not a step
       # failure — the reporting step below is what decides pass/fail for this job, based on
-      # what actually happened, not on this command's raw exit code.
+      # what actually happened, not on this command's raw exit code. `exit 0` at the end is
+      # required, not decorative: GitHub Actions' pwsh runner fails a step whenever
+      # $LASTEXITCODE is non-zero when the script ends, even with no explicit check for it —
+      # confirmed live (this step showed red with no check present at all, `cargo test`'s own
+      # exit code alone was enough).
       - name: Run test suite (Windows, no memory cap)
         run: |
           $out = Join-Path $env:RUNNER_TEMP "typdoc-test-windows.txt"
           cargo test --workspace --no-fail-fast --features typdoc/test-stand-in 2>&1 | Tee-Object -FilePath $out
+          exit 0
       # scripts/windows_test_report.py distinguishes three states and exits accordingly:
       # compiled with a measured rate (reports it, exit 0); did not compile (reports "does
       # not compile -- 0 tests run" plus a ::warning:: annotation, exit 0 -- a known state,
