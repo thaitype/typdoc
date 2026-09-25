@@ -1,5 +1,5 @@
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None
 
 # Ticket 06 — Windows test-suite pass-rate job
