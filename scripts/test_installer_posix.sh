@@ -94,7 +94,10 @@ python3 "${REPO_ROOT}/scripts/installer_fixture_server.py" \
 SERVER_PID=$!
 
 PORT=""
-for _ in $(seq 1 50); do
+# 200 * 0.1s = 20s: generous margin for a cold python3 start on a loaded runner (macOS
+# GitHub-hosted runners have shown a first-invocation delay past 5s under load; ubuntu-latest
+# has not).
+for _ in $(seq 1 200); do
     if [ -s "$SERVER_OUT" ]; then
         PORT="$(head -n1 "$SERVER_OUT" | tr -d '[:space:]')"
         [ -n "$PORT" ] && break
@@ -107,7 +110,9 @@ for _ in $(seq 1 50); do
     sleep 0.1
 done
 [ -n "$PORT" ] || {
-    echo "error: fixture server never reported a port" 1>&2
+    echo "error: fixture server never reported a port within 20s; see ${WORK_DIR}/server.err" 1>&2
+    cat "${WORK_DIR}/server.err" 1>&2
+    kill "$SERVER_PID" >/dev/null 2>&1 || true
     exit 2
 }
 BASE_URL="http://127.0.0.1:${PORT}"
