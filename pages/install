@@ -27,7 +27,8 @@
 #                             are this variable's only documentation, on purpose.
 #
 # This script never edits PATH or any shell rc file. If the install directory isn't already on
-# PATH, it prints the one line to run and exits 0 anyway — installation still succeeded.
+# PATH, it prints how to add it (detected per the user's login shell -- see path_advice below)
+# and exits 0 anyway — installation still succeeded either way.
 
 set -u
 
@@ -102,6 +103,72 @@ detect_target() {
     esac
 }
 
+# Prints how to add $1 (an install directory just confirmed not on PATH) to PATH -- still
+# print-only, never edits any file (see the header comment's "never edits PATH" decision, which
+# this does not change). The shell is detected from `basename "$SHELL"`, the user's *login*
+# shell -- never from the shell running this script, which under the pipe is always sh
+# regardless of what the user actually uses interactively, so $0 or $- would be the wrong
+# signal here. Relies on detect_target (called earlier in main) having already set $_os to
+# "Linux" or "Darwin", to tell bash's two rc files apart -- see the bash case below.
+path_advice() {
+    _dir="$1"
+
+    # Displayed (and used in the persisted command) as "$HOME/..." when under $HOME -- literal
+    # unexpanded text, produced with a backslash-escaped $ inside double quotes, not the
+    # resolved path -- so the persisted line stays correct even if this account's $HOME differs
+    # from whichever $HOME happened to be set when the installer ran. Anything else (an
+    # INSTALL_DIR outside $HOME) is shown as the plain absolute path.
+    case "$_dir" in
+        "${HOME:-}"/*) _shown_dir="\$HOME${_dir#"${HOME:-}"}" ;;
+        *) _shown_dir="$_dir" ;;
+    esac
+
+    _login_shell=""
+    [ -n "${SHELL:-}" ] && _login_shell="$(basename "$SHELL")"
+
+    say ""
+    say "  ⚠ ${_shown_dir} is not on your PATH yet."
+    say ""
+
+    case "$_login_shell" in
+        zsh)
+            say "  Add it permanently by running:"
+            say "      echo 'export PATH=\"${_shown_dir}:\$PATH\"' >> ~/.zshrc"
+            say "      source ~/.zshrc"
+            ;;
+        bash)
+            # A Terminal.app/iTerm window starts bash as a login shell on macOS, which reads
+            # ~/.bash_profile, not ~/.bashrc -- unlike a typical Linux terminal's non-login
+            # interactive bash, which reads ~/.bashrc. Two real, different files, not a detail
+            # to blur into one.
+            if [ "${_os:-}" = "Darwin" ]; then
+                _bash_rc="~/.bash_profile"
+            else
+                _bash_rc="~/.bashrc"
+            fi
+            say "  Add it permanently by running:"
+            say "      echo 'export PATH=\"${_shown_dir}:\$PATH\"' >> ${_bash_rc}"
+            say "      source ${_bash_rc}"
+            ;;
+        fish)
+            # fish_add_path persists on its own (writes fish's own universal variable store)
+            # and takes effect immediately -- no separate "source" step, and no `export`: that
+            # is not fish syntax.
+            say "  Add it permanently by running:"
+            say "      fish_add_path ${_shown_dir}"
+            ;;
+        *)
+            # $SHELL unset, or a shell this script doesn't have specific advice for -- a
+            # correct but shell-agnostic pointer, plus the one line that works for the current
+            # session regardless of shell.
+            say "  Add ${_shown_dir} to PATH in your shell's startup file to make this permanent."
+            say ""
+            say "  For this session, run:"
+            say "      export PATH=\"${_shown_dir}:\$PATH\""
+            ;;
+    esac
+}
+
 main() {
     need_cmd uname
     need_cmd mktemp
@@ -167,12 +234,7 @@ nothing was installed."
 
     case ":${PATH}:" in
         *":${install_dir}:"*) ;;
-        *)
-            say ""
-            say "${install_dir} is not on your PATH. Add it by running:"
-            say ""
-            say "    export PATH=\"${install_dir}:\$PATH\""
-            ;;
+        *) path_advice "$install_dir" ;;
     esac
 }
 

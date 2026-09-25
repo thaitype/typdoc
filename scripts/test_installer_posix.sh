@@ -6,11 +6,14 @@
 # archive+checksum this PR's own dist-build job just produced for this runner's target, plus a
 # second fixture "version" of the same bytes under a different tag.
 #
-# Four scenarios, matching the contract exactly: default install, INSTALL_DIR override,
-# TYPDOC_VERSION pin, and an intentionally-corrupted checksum that must fail loudly and install
-# nothing. Exercises pages/install itself (not scripts/installer_fixture_server.py, which has
-# its own self-test in scripts/test_installer_fixture_server.py) end to end: real curl/wget
-# downloads, real checksum verification, real tar extraction, real binary execution.
+# The contract's four scenarios (default install, INSTALL_DIR override, TYPDOC_VERSION pin, an
+# intentionally-corrupted checksum that must fail loudly and install nothing), plus three more
+# covering path_advice's shell-specific "not on PATH yet" message (zsh, bash -- rc file depends
+# on this runner's own OS, fish), with the first two scenarios above extended to also assert on
+# the $HOME-relative vs. plain-path display and the neutral unknown-shell fallback. Exercises
+# pages/install itself (not scripts/installer_fixture_server.py, which has its own self-test in
+# scripts/test_installer_fixture_server.py) end to end: real curl/wget downloads, real checksum
+# verification, real tar extraction, real binary execution.
 #
 # GNU-isms checked for, not just assumed absent (same discipline as scripts/test.sh): this file
 # uses `mktemp -d` with an explicit template (BSD/macOS mktemp has no bare-argument default),
@@ -172,6 +175,20 @@ else
     fail "default install did not hit /releases/latest/download/... — request log:
 $(log_lines_after "$BEFORE")"
 fi
+# env -i above never sets SHELL, so this also exercises path_advice's unknown/empty-shell
+# branch, and HOME_1/.local/bin is under $HOME_1, so it also exercises the "$HOME/..." display.
+if printf '%s' "$OUT_1" | grep -qF '⚠ $HOME/.local/bin is not on your PATH yet.'; then
+    pass "PATH advice shows \$HOME-relative form for a dir under \$HOME"
+else
+    fail "PATH advice did not show the \$HOME-relative form — output follows
+${OUT_1}"
+fi
+if printf '%s' "$OUT_1" | grep -qF "to PATH in your shell's startup file"; then
+    pass "PATH advice falls back to the neutral guide when \$SHELL is unset"
+else
+    fail "PATH advice did not use the neutral guide for an unset \$SHELL — output follows
+${OUT_1}"
+fi
 
 # --- Scenario 2: INSTALL_DIR override --------------------------------------------------------
 note "INSTALL_DIR override"
@@ -188,6 +205,18 @@ ${OUT_2}"
 fi
 if [ ! -e "${HOME_1}/.local/bin/typdoc" ] || [ -x "${HOME_1}/.local/bin/typdoc" ]; then
     : # scenario 1 already installed there; not a re-check for this scenario
+fi
+# CUSTOM_DIR is a sibling of $HOME_1, not under it — PATH advice must show the plain absolute
+# path, not a "$HOME/..." shorthand that would be wrong here.
+if printf '%s' "$OUT_2" | grep -qF "⚠ ${CUSTOM_DIR} is not on your PATH yet."; then
+    pass "PATH advice shows the plain absolute path for a dir outside \$HOME"
+else
+    fail "PATH advice did not show the plain path for a non-\$HOME INSTALL_DIR — output follows
+${OUT_2}"
+fi
+if printf '%s' "$OUT_2" | grep -qF '$HOME'; then
+    fail "PATH advice wrongly used \$HOME shorthand for a dir outside \$HOME — output follows
+${OUT_2}"
 fi
 
 # --- Scenario 3: TYPDOC_VERSION pin -----------------------------------------------------------
@@ -236,6 +265,62 @@ if [ ! -e "${CORRUPT_DIR}/typdoc" ]; then
     pass "corrupted checksum installed nothing"
 else
     fail "corrupted checksum still installed a binary at ${CORRUPT_DIR}/typdoc"
+fi
+
+# --- Scenarios 5-7: PATH advice is shell-specific (zsh, bash, fish) -------------------------
+# Same shape as scenario 1's re-run, just with $SHELL set — a fresh $HOME per scenario so each
+# one hits the "not on PATH yet" branch independently of the others.
+
+# --- Scenario 5: zsh ---------------------------------------------------------------------------
+note "PATH advice: zsh"
+HOME_ZSH="${WORK_DIR}/home-zsh"
+mkdir -p "$HOME_ZSH"
+OUT_5="$(env -i HOME="$HOME_ZSH" SHELL="/usr/bin/zsh" PATH="/usr/bin:/bin" TMPDIR="$INSTALLER_TMPDIR" \
+    TYPDOC_INSTALL_BASE_URL="$BASE_URL" \
+    "$INSTALL_SCRIPT" 2>&1)"
+if printf '%s' "$OUT_5" | grep -qF "echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc" \
+    && printf '%s' "$OUT_5" | grep -qF "source ~/.zshrc"; then
+    pass "zsh gets the ~/.zshrc echo + source lines"
+else
+    fail "zsh PATH advice missing the expected ~/.zshrc lines — output follows
+${OUT_5}"
+fi
+
+# --- Scenario 6: bash (rc file depends on this runner's own OS, same as pages/install's logic) -
+note "PATH advice: bash"
+HOME_BASH="${WORK_DIR}/home-bash"
+mkdir -p "$HOME_BASH"
+case "$(uname -s)" in
+    Darwin) EXPECT_BASH_RC="~/.bash_profile" ;;
+    *) EXPECT_BASH_RC="~/.bashrc" ;;
+esac
+OUT_6="$(env -i HOME="$HOME_BASH" SHELL="/bin/bash" PATH="/usr/bin:/bin" TMPDIR="$INSTALLER_TMPDIR" \
+    TYPDOC_INSTALL_BASE_URL="$BASE_URL" \
+    "$INSTALL_SCRIPT" 2>&1)"
+if printf '%s' "$OUT_6" | grep -qF "echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ${EXPECT_BASH_RC}" \
+    && printf '%s' "$OUT_6" | grep -qF "source ${EXPECT_BASH_RC}"; then
+    pass "bash gets the ${EXPECT_BASH_RC} echo + source lines (this runner's own OS)"
+else
+    fail "bash PATH advice did not mention ${EXPECT_BASH_RC} — output follows
+${OUT_6}"
+fi
+
+# --- Scenario 7: fish -----------------------------------------------------------------------
+note "PATH advice: fish"
+HOME_FISH="${WORK_DIR}/home-fish"
+mkdir -p "$HOME_FISH"
+OUT_7="$(env -i HOME="$HOME_FISH" SHELL="/usr/local/bin/fish" PATH="/usr/bin:/bin" TMPDIR="$INSTALLER_TMPDIR" \
+    TYPDOC_INSTALL_BASE_URL="$BASE_URL" \
+    "$INSTALL_SCRIPT" 2>&1)"
+if printf '%s' "$OUT_7" | grep -qF 'fish_add_path $HOME/.local/bin'; then
+    pass "fish gets the fish_add_path line, no export, no source"
+else
+    fail "fish PATH advice did not show fish_add_path — output follows
+${OUT_7}"
+fi
+if printf '%s' "$OUT_7" | grep -q "^\s*export PATH="; then
+    fail "fish PATH advice wrongly showed an export line (not fish syntax) — output follows
+${OUT_7}"
 fi
 
 if [ "$FAILURES" -eq 0 ]; then

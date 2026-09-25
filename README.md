@@ -55,14 +55,15 @@ $ typdoc --version
 The script detects your OS and architecture, downloads the matching release archive, and
 verifies its SHA-256 checksum before installing anything — a checksum mismatch or an unsupported
 platform fails loudly and installs nothing. It installs to `~/.local/bin` by default. It never
-edits `PATH` or a shell profile: if the install directory isn't already on `PATH`, it prints the
-one line to add it and still exits successfully.
+edits `PATH` or a shell profile: if the install directory isn't already on `PATH`, it prints how
+to add it — detected from your login shell (`$SHELL`), not the `sh` the script itself runs
+under — and still exits successfully either way.
 
 Both `INSTALL_DIR` and `TYPDOC_VERSION` are read by the installer script, not by `curl` — put
 them after the pipe, right before `sh`, not before `curl`:
 
 ```console
-$ curl -fsSL https://typdoc.thaitype.dev/install | INSTALL_DIR=/usr/local/bin sh
+$ curl -fsSL https://typdoc.thaitype.dev/install | INSTALL_DIR="$HOME/bin" sh
 $ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.3.1 sh
 ```
 
