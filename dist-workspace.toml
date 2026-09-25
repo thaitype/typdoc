@@ -1,0 +1,30 @@
+[workspace]
+members = ["cargo:."]
+
+# Config for 'dist' (cargo-dist) — builds the five prebuilt-binary targets consumed by
+# .github/workflows/dist-build.yml. See that workflow for how these settings are used in CI.
+[dist]
+# Pinned to an exact version (not a range) so upgrading it later is a deliberate, visible change.
+cargo-dist-version = "0.32.0"
+# CI backend metadata only — the actual CI is a hand-written reusable workflow
+# (.github/workflows/dist-build.yml), not `dist generate`'s own output, so this repo's PR and
+# release jobs can use a fixed runner-per-target rather than dist's own runner defaults.
+ci = "github"
+# Generates the base shell/powershell installer scripts; ticket 03 (`pages/install`,
+# `pages/install.ps1`) decides per-script whether this generated one satisfies the installer
+# contract or a hand-written script is needed instead.
+installers = ["shell", "powershell"]
+# Every asset name/extension below must match the contract's naming table exactly.
+targets = ["x86_64-apple-darwin", "aarch64-apple-darwin", "x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl", "x86_64-pc-windows-msvc"]
+# .tar.gz, not dist's own .tar.xz default, per the contract's asset naming table.
+unix-archive = ".tar.gz"
+# This repo's CI is a hand-written reusable workflow (dist-build.yml) with a fixed
+# runner-per-target, not `dist generate`'s own release.yml — `dist` would otherwise refuse to
+# run at all, insisting that file be regenerated and committed.
+allow-dirty = ["ci"]
+
+# typdoc's own [[bin]] list also declares `typdoc_stand_in`, a test-only binary gated behind a
+# feature dist never enables (see crates/typdoc/Cargo.toml). Without this, dist tries to package
+# it into every archive too and fails when it can't find the binary it never built.
+[dist.binaries]
+"*" = ["typdoc"]

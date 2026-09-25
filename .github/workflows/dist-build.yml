@@ -1,0 +1,103 @@
+name: dist-build
+
+# Reusable workflow: builds the five prebuilt-binary targets with cargo-dist and uploads each
+# target's archive + checksum as a workflow artifact. Called by dist-build-check.yml on every
+# relevant PR, and by publish.yml for the real release build (which adds an
+# actions/attest-build-provenance step over this workflow's output — attestation is not
+# generated here, so a PR build never produces one).
+#
+# Runner-per-target follows the story's contract exactly, not cargo-dist's own runner defaults:
+# `x86_64-apple-darwin` cross-compiles on `macos-latest` and is never executed here — this repo
+# has no matching-arch GitHub-hosted runner for it, and a successful cross-compile is never
+# presented as "verified working." Every other target builds and runs `typdoc --version` on a
+# runner of its own architecture. The two musl targets get an additional old-distro-container
+# run elsewhere (see the story's next ticket); this workflow only proves they start on the
+# runner's own (recent) distro.
+#
+# actions/checkout and actions/upload-artifact are pinned to v7, not the v4 the existing
+# ci.yml/publish.yml gate uses: v4 is simply the version those older files happened to pin at
+# the time, not a repo-wide convention this file needs to match, and v7 is each action's current
+# major version as of when this workflow was written.
+on:
+  workflow_call:
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+            archive_ext: tar.gz
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            archive_ext: tar.gz
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            archive_ext: tar.gz
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            archive_ext: tar.gz
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            archive_ext: zip
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustc --version
+      # Native to both musl targets' own runners (ubuntu-latest for x86_64, the arm64
+      # ubuntu-24.04-arm runner for aarch64) — musl-tools, not a hand-rolled cross toolchain, is
+      # cargo-dist's own standard way of getting a musl-capable linker on either.
+      - name: Install musl-tools
+        if: contains(matrix.target, 'musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+      - name: Add Rust target
+        run: rustup target add ${{ matrix.target }}
+      # Single source of truth for the installed dist version: dist-workspace.toml's own
+      # cargo-dist-version, not a second copy hardcoded into this workflow.
+      - name: Read cargo-dist version pinned in dist-workspace.toml
+        id: dist-version
+        shell: bash
+        run: |
+          version=$(grep -m1 '^cargo-dist-version' dist-workspace.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Install cargo-dist (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf \
+            "https://github.com/axodotdev/cargo-dist/releases/download/v${{ steps.dist-version.outputs.version }}/cargo-dist-installer.sh" | sh
+      - name: Install cargo-dist (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          irm "https://github.com/axodotdev/cargo-dist/releases/download/v${{ steps.dist-version.outputs.version }}/cargo-dist-installer.ps1" | iex
+      # Builds only this job's target (dist-workspace.toml lists all five; --target scopes cargo
+      # and dist to just this one) and produces the archive + its .sha256 side by side in
+      # target/distrib/, plus the staged, unpacked binary this workflow runs next.
+      - name: Build archive + checksum
+        shell: bash
+        run: dist build --artifacts=local --target=${{ matrix.target }}
+      # Proves the binary actually starts on a runner of its own architecture. Skipped only for
+      # x86_64-apple-darwin, which has no matching-arch runner here (see header comment).
+      - name: Run built binary (typdoc --version)
+        if: matrix.target != 'x86_64-apple-darwin'
+        shell: bash
+        run: |
+          if [ "${{ matrix.archive_ext }}" = "zip" ]; then
+            bin="target/distrib/typdoc-${{ matrix.target }}/typdoc.exe"
+          else
+            bin="target/distrib/typdoc-${{ matrix.target }}/typdoc"
+          fi
+          "$bin" --version
+      - name: Upload archive + checksum
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist-${{ matrix.target }}
+          path: |
+            target/distrib/typdoc-${{ matrix.target }}.${{ matrix.archive_ext }}
+            target/distrib/typdoc-${{ matrix.target }}.${{ matrix.archive_ext }}.sha256

@@ -91,3 +91,35 @@ jobs:
         run: cargo publish --workspace
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  dist-build:
+    name: dist build (5 targets)
+    needs: gate
+    uses: ./.github/workflows/dist-build.yml
+
+  attest:
+    name: attest build provenance
+    needs: dist-build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      attestations: write
+      contents: read
+    steps:
+      # Pulls every target's archive + checksum back out of the workflow artifacts dist-build.yml
+      # (called above) uploaded — attestation runs once, here, over the actual release build; a
+      # PR build (dist-build-check.yml) never reaches this job.
+      #
+      # download-artifact and attest-build-provenance are pinned to their current major versions
+      # (v8, v4) as of when this job was written, same reasoning as dist-build.yml's v7 pins —
+      # not an attempt to match the existing gate job's older v4 checkout pin.
+      - name: Download built archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          path: dist-artifacts
+          merge-multiple: true
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: "dist-artifacts/typdoc-*.tar.gz,dist-artifacts/typdoc-*.zip"
