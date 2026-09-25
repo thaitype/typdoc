@@ -54,25 +54,48 @@ From a user's perspective:
 Required for the story to be truly done, not optional — just not performable by a commit in this
 repo:
 
-- **Pages source / custom-domain setting**, set in repo settings on this public repo: requested
-  with the exact setting to flip, not changed silently by this work. Outstanding.
+- **Pages source / custom-domain setting**, set in repo settings on this public repo: done.
+  Source is GitHub Actions, custom domain `typdoc.thaitype.dev`, HTTPS enforced (owner-verified
+  via API). No longer outstanding.
 - **Cloudflare DNS record** for the install domain (`CNAME` to `thaitype.github.io`, DNS-only):
   outside this repo's automation. Already live, confirmed externally resolving to
   `thaitype.github.io` — no longer outstanding.
+- **`github-pages` deploy environment**: the story branch (`story-5-prebuilt-installer`) has been
+  added to its allowed deploy branches, temporarily, so the full flow can be proven before merge
+  (see "Full-flow proof" below and the pages.yml trigger change in ticket 04). Removing it again
+  is an After Merge item.
+
+## Full-flow proof (after the loop, before the PR is marked ready)
+
+Pages is now configured (source: GitHub Actions, custom domain `typdoc.thaitype.dev`, HTTPS
+enforced) and deploys on push to the story branch too, temporarily — so the full install flow
+can be proven end-to-end before the PR is marked ready, not just after merge:
+
+1. A GitHub **pre-release `v0.3.1-rc.1`**, carrying the five binaries, their checksums, and their
+   attestations — no crates.io publish. Produced by a workflow triggered by a push (e.g. an rc
+   tag), not a hand upload, so attestations are generated correctly; reuses ticket 01's reusable
+   build workflow as its build step.
+2. Once that pre-release exists: run the live install one-liner and its PowerShell equivalent on
+   ubuntu, macOS and Windows with `TYPDOC_VERSION=v0.3.1-rc.1` set, confirming each installs and
+   runs. `releases/latest` skips pre-releases, so this proves the full flow without touching what
+   a default (no-`TYPDOC_VERSION`) install resolves to.
+
+This is done once, directly, after the loop's six tickets are all resolved — not itself one of
+those tickets.
 
 ## After Merge (owner actions, not loop work)
 
-The loop's tickets end at "PR open, CI green." Everything below happens afterward, in this exact
-order, outside the loop:
+The loop's tickets end at "PR open, CI green," and the full-flow proof above happens once more
+after that, before the PR is marked ready. Everything below happens after the PR merges:
 
 1. **Merge** the PR to `main`.
-2. **Request the Pages source / custom-domain setting** be flipped (the "Needs from outside the
-   repo" item above) — reported with the exact setting once the merged `pages.yml` is ready to
-   receive it.
-3. **Pages deploys** on that push to `main`; the domain starts resolving over HTTPS.
-4. **Live check**: confirm both installer URLs serve (the post-deploy step from ticket 05 covers
-   this once it runs for real).
-5. **Owner dispatches `publish.yml`** for 0.3.1 — dry run first, then the real run, same pattern
-   as the last story's release.
-6. **Post-release live check** runs as part of that same dispatch (ticket 05's post-release step)
-   — confirms the live install one-liners work against the actual 0.3.1 release.
+2. **Remove the story branch** from `pages.yml`'s trigger and from the `github-pages` deploy
+   environment's allowed deploy branches — both were temporary, added only for the full-flow
+   proof above.
+3. **Pages deploys** on the push to `main`; the domain continues resolving over HTTPS as it did
+   during the full-flow proof.
+4. **Owner dispatches `publish.yml`** for the real `0.3.1` — dry run first, then the real run,
+   same pattern as the last story's release. This is the first time crates.io is touched.
+5. **Post-release live check** runs as part of that same dispatch (ticket 05's post-release
+   step) — confirms the live install one-liners work against the actual `0.3.1` release, not
+   just the `v0.3.1-rc.1` pre-release.
