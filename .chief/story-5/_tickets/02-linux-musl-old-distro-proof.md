@@ -1,5 +1,5 @@
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: 01
 
 # Ticket 02 — Linux minimum-supported-distro proof
