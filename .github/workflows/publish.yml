@@ -123,3 +123,67 @@ jobs:
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: "dist-artifacts/typdoc-*.tar.gz,dist-artifacts/typdoc-*.zip"
+
+  release:
+    name: create GitHub release + upload assets
+    needs: attest
+    # Same gating as the `cargo publish` step above: a dry run builds and attests but must
+    # create nothing public. No release, no tag, no uploaded assets on a dry run.
+    if: ${{ inputs.dry_run == false }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      # Pulls the same archives + checksums the attest job just attested, out of the same
+      # workflow artifacts dist-build.yml uploaded -- never re-built or re-downloaded from a
+      # different source than what was attested.
+      - name: Download built archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          path: dist-artifacts
+          merge-multiple: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      # scripts/test_extract_release_notes.py is this script's own self-test, exercised
+      # against fixed sample changelog text -- the same "prove the mechanism before trusting
+      # it" step the gate job's --self-test and the Windows pass-rate job's self-test already
+      # follow in this repo, run once here before the real extraction below.
+      - name: Self-test the CHANGELOG extraction logic
+        run: python scripts/test_extract_release_notes.py -v
+      # Generates the release body from CHANGELOG.md's own entry for this version, instead of
+      # a hand-written body (how v0.1.0/v0.2.0/v0.3.0 were each done) -- see
+      # scripts/extract_release_notes.py's header for why (the two can never drift apart).
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          python scripts/extract_release_notes.py CHANGELOG.md "${{ inputs.version }}" \
+            > "$RUNNER_TEMP/release-notes.md"
+      # Creates the tag and the release together, pointed at the commit this workflow ran
+      # against, only if a release for this tag doesn't already exist -- re-running this job
+      # (e.g. after the upload step below failed) must not error out trying to recreate it.
+      - name: Create GitHub release if it doesn't already exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="v${{ inputs.version }}"
+          if gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $tag already exists; leaving it as-is."
+          else
+            gh release create "$tag" \
+              --repo "${{ github.repository }}" \
+              --target "${{ github.sha }}" \
+              --title "$tag" \
+              --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
+      # --clobber lets a re-run overwrite a partial upload from a previous failed attempt
+      # instead of erroring on an asset that's already there.
+      - name: Upload archives + checksums as release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="v${{ inputs.version }}"
+          gh release upload "$tag" dist-artifacts/typdoc-* \
+            --repo "${{ github.repository }}" \
+            --clobber
