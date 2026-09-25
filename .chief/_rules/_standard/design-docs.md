@@ -34,3 +34,12 @@ Move only the sections the change touches. Sections nothing touched stay where t
 - `git diff` under `docs/migrating-design/` is deletions only, apart from repointed
   cross-references.
 - Every behavior change in the PR is described in an SPC or a catalog entry.
+
+## Order of work in a story
+
+1. Change `docs/design/` (spec, catalog) to describe the behavior the story wants — it must
+   stay valid at every commit.
+2. Then write the story's goal. The goal is valid only inside its story; the design is not.
+
+`.chief/story-N/` holds only what chief creates (goal, contract, tickets, reports) — no other
+planning files.
