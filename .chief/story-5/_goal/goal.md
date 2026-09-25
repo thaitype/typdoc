@@ -86,13 +86,17 @@ can be proven end-to-end before the PR is marked ready, not just after merge:
    attestations — no crates.io publish. Produced by a workflow triggered by a push (e.g. an rc
    tag), not a hand upload, so attestations are generated correctly; reuses ticket 01's reusable
    build workflow as its build step.
-2. Once that pre-release exists: run the live install one-liner on ubuntu and macOS with
-   `TYPDOC_VERSION=v0.3.1-rc.1` set, confirming each installs and runs. `releases/latest` skips
-   pre-releases, so this proves the full flow without touching what a default
-   (no-`TYPDOC_VERSION`) install resolves to.
+2. Once that pre-release exists: run the live install one-liner on ubuntu-latest,
+   ubuntu-24.04-arm and macos-latest with `TYPDOC_VERSION=v0.3.1-rc.1` set, confirming each
+   installs and runs. `releases/latest` skips pre-releases, so this proves the full flow without
+   touching what a default (no-`TYPDOC_VERSION`) install resolves to.
 
-This is done once, directly, after the loop's six tickets are all resolved — not itself one of
-those tickets.
+Done: `.github/workflows/release-rc.yml` (tag-triggered) and
+`.github/workflows/full-flow-proof.yml` (dispatchable, version-parameterized). The pre-release is
+at `https://github.com/thaitype/typdoc/releases/tag/v0.3.1-rc.1` (four archives + checksums,
+`isPrerelease: true`, `gh attestation verify` confirmed against a downloaded archive); the live
+install proof is workflow run `36145328017`, all three legs (`ubuntu-latest`,
+`ubuntu-24.04-arm`, `macos-latest`) succeeded.
 
 ## After Merge (owner actions, not loop work)
 
@@ -102,7 +106,9 @@ after that, before the PR is marked ready. Everything below happens after the PR
 1. **Merge** the PR to `main`.
 2. **Remove the story branch** from `pages.yml`'s trigger and from the `github-pages` deploy
    environment's allowed deploy branches — both were temporary, added only for the full-flow
-   proof above.
+   proof above. Also remove `full-flow-proof.yml`'s `push` trigger (its own header comment
+   explains why it's there and that it's safe to drop once `workflow_dispatch` is reachable the
+   normal way, which merging to `main` provides).
 3. **Pages deploys** on the push to `main`; the domain continues resolving over HTTPS as it did
    during the full-flow proof.
 4. **Owner dispatches `publish.yml`** for the real `0.3.1` — dry run first, then the real run,
@@ -110,3 +116,5 @@ after that, before the PR is marked ready. Everything below happens after the PR
 5. **Post-release live check** runs as part of that same dispatch (ticket 05's post-release
    step) — confirms the live install one-liner works against the actual `0.3.1` release, not
    just the `v0.3.1-rc.1` pre-release.
+6. **Delete the `v0.3.1-rc.1` pre-release and tag** once the real `0.3.1` release exists — it
+   was only ever a proof artifact, not something meant to stay listed alongside real releases.
