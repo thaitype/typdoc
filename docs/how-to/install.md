@@ -9,7 +9,7 @@ $ curl -fsSL https://typdoc.thaitype.dev/install | sh
 $ typdoc --version
 ```
 
-This works on macOS and Linux, on x86_64 and aarch64, with no Rust toolchain. The script picks
+This works on macOS and Linux, on amd64 and arm64, with no Rust toolchain. The script picks
 the release for your OS and architecture, checks its SHA-256 checksum, and installs `typdoc` to
 `~/.local/bin`. If the download is corrupted or your platform isn't supported, it stops and
 installs nothing.

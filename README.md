@@ -51,14 +51,14 @@ $ curl -fsSL https://typdoc.thaitype.dev/install | sh
 
 Supported platforms:
 
-- macOS — x86_64 (Intel) and aarch64 (Apple silicon)
-- Linux — x86_64 and aarch64
+- macOS — amd64 and arm64
+- Linux — amd64 and arm64
 
 Windows is not supported yet.
 
-The script detects your OS and architecture, downloads the matching release from GitHub
-Releases, verifies its SHA-256 checksum, and installs `typdoc` to `~/.local/bin`. To pin a
-version, choose another install directory, or install with `cargo`, see
+It picks the right build for your machine, checks it against its published SHA-256 checksum,
+and puts `typdoc` in `~/.local/bin`. To pin a version, choose another install directory, or
+install with `cargo`, see
 [how to install typdoc](docs/how-to/install.md).
 
 If you work with a coding agent, add the typdoc skill too. It teaches Claude Code and other
