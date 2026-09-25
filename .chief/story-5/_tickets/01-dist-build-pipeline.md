@@ -1,5 +1,5 @@
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: None
 
 # Ticket 01 — reusable build workflow + release plumbing
