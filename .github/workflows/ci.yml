@@ -82,3 +82,53 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustc --version
       - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  windows-pass-rate:
+    name: Windows test-suite pass rate (non-blocking)
+    runs-on: windows-latest
+    # This job is a measurement, not a gate: it reports how many of the suite's tests
+    # currently pass on Windows, it does not require that they all do. `continue-on-error`
+    # at the job level means no step below can ever turn a PR red, regardless of outcome —
+    # the `test` job above stays the only required gate. This also runs the suite directly
+    # with `cargo test`, not through scripts/test.sh: that script's memory ceiling is
+    # enforced via systemd-run (Linux) or a vm_stat watchdog (macOS), neither of which
+    # exists on Windows, and this job needs no memory cap of its own — just one run of the
+    # suite and an honest count of the result.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml pins the toolchain; rustup (preinstalled on windows-latest)
+      # installs it on first use, same as the ubuntu/macOS jobs above.
+      - run: rustc --version
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      # Proves the counting/reporting script itself works — against fixed sample output,
+      # independent of any real `cargo test` run — before trusting it with a real one
+      # below. Same "prove the mechanism before trusting it" shape as scripts/test.sh's own
+      # --self-test step in the `test` job above.
+      - name: Self-test the pass-rate reporting logic
+        run: |
+          python scripts/test_windows_test_report.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # `--no-fail-fast` for the same reason as the `test` job above: one red suite must
+      # never hide every suite after it. Output is streamed to the terminal and also
+      # captured to a file, so the next step can count what actually ran.
+      - name: Run test suite (Windows, no memory cap)
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "typdoc-test-windows.txt"
+          cargo test --workspace --no-fail-fast --features typdoc/test-stand-in 2>&1 | Tee-Object -FilePath $out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # scripts/windows_test_report.py sums every "N passed; M failed" out of cargo's own
+      # "test result:" lines and posts passed/total + a percentage to
+      # $GITHUB_STEP_SUMMARY. It refuses (non-zero exit) to report a rate for zero tests
+      # found — mirroring scripts/test.sh's own "refuses to report success on a zero
+      # count" — so a step that silently ran nothing can't be misread as a valid 0% or
+      # 100%. `if: always()` runs this even when the step above found failing tests: this
+      # job measures the pass rate, it does not require a clean run to report one.
+      - name: Compute and report Windows pass rate
+        if: always()
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "typdoc-test-windows.txt"
+          python scripts/windows_test_report.py $out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

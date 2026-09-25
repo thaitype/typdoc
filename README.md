@@ -56,7 +56,10 @@ To try unreleased changes from `main` instead:
 $ cargo install --git https://github.com/thaitype/typdoc typdoc
 ```
 
-It runs on Linux and macOS. Windows isn't supported; WSL works.
+It runs on Linux and macOS. Windows isn't supported yet; WSL works in the meantime. Native
+Windows support is planned as **experimental** — CI already tracks a Windows test-suite pass-rate
+baseline (a non-blocking job, not a compatibility guarantee) as the number future work improves
+against.
 
 If you work with a coding agent, add the typdoc skill too. It teaches Claude Code and other
 skill-aware agents how to find, create, change and move documents in a typdoc project:

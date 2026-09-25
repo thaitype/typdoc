@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Parses `cargo test` output and reports a Windows pass-rate summary.
+
+Used by the Windows pass-rate job in .github/workflows/ci.yml. That job is a
+non-blocking measurement, not a gate: it reports how many of the suite's
+tests currently pass on Windows, it does not require that they all do (this
+story does not fix any Windows failure it finds).
+
+This script is the part of that job that must never itself fail silently: if
+it finds zero "test result:" lines, that means the captured run produced no
+test output at all (a build failure before any test binary ran, a wrong
+working directory, cargo not on PATH, ...), and reporting "0%" for that would
+read as a real, if bad, measurement rather than as "this measurement did not
+happen." That case is refused loudly instead (see ZeroTestsError below), the
+same way scripts/test.sh refuses to report success on a zero count.
+
+Run standalone:
+    python windows_test_report.py <captured-cargo-test-output-file>
+
+See scripts/test_windows_test_report.py for the self-test that exercises the
+parsing/rendering logic below against fixed sample output, independent of any
+real `cargo test` run -- the same "prove the mechanism before trusting it"
+shape as scripts/test.sh's own --self-test.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import os
+import re
+import sys
+
+# Sums every "N passed; M failed" out of cargo's own "test result:" lines, one
+# per test binary (unit tests, integration tests, doctests) -- the same shape
+# as scripts/test.sh's awk parsing, ported to Python because Windows runners
+# have no awk.
+_RESULT_LINE = re.compile(r"^test result:.*?(\d+) passed;\s*(\d+) failed", re.MULTILINE)
+
+
+class ZeroTestsError(RuntimeError):
+    """Raised when a captured run has no "test result:" lines at all."""
+
+
+@dataclasses.dataclass(frozen=True)
+class Summary:
+    passed: int
+    failed: int
+    suite_count: int
+
+    @property
+    def total(self) -> int:
+        return self.passed + self.failed
+
+    @property
+    def rate_percent(self) -> float:
+        check_nonzero(self)
+        return round(self.passed / self.total * 100, 1)
+
+
+def summarize(cargo_test_output: str) -> Summary:
+    passed = failed = suites = 0
+    for match in _RESULT_LINE.finditer(cargo_test_output):
+        passed += int(match.group(1))
+        failed += int(match.group(2))
+        suites += 1
+    return Summary(passed=passed, failed=failed, suite_count=suites)
+
+
+def check_nonzero(summary: Summary) -> None:
+    """Refuses to treat a zero-test run as a valid measurement -- mirrors
+    scripts/test.sh's own "refuses to report success on a zero count"."""
+    if summary.total == 0:
+        raise ZeroTestsError(
+            f"found zero tests across {summary.suite_count} suite(s) -- refusing to report "
+            "a pass rate for a run that tested nothing (a silent no-op must not read as a "
+            "valid 0% or 100%)."
+        )
+
+
+def render_step_summary(summary: Summary) -> str:
+    rate = summary.rate_percent
+    return (
+        "## Windows test-suite pass rate\n\n"
+        f"**{summary.passed} / {summary.total}** tests passed (**{rate}%**) "
+        f"across {summary.suite_count} suite(s).\n\n"
+        "This is a baseline measurement, not a gate -- this job never blocks a merge, "
+        "and this story does not fix any Windows failure it finds.\n"
+    )
+
+
+def _append_step_summary(text: str) -> None:
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary_path:
+        return
+    with open(summary_path, "a", encoding="utf-8") as f:
+        f.write(text)
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 2:
+        print("usage: windows_test_report.py <captured-cargo-test-output-file>", file=sys.stderr)
+        return 2
+
+    # A missing or unreadable output file means the test step never even produced output
+    # (e.g. `cargo` wasn't found before it could run) -- that is exactly the same "this
+    # measurement did not happen" case as zero "test result:" lines, not a separate crash.
+    try:
+        with open(argv[1], "r", encoding="utf-8", errors="replace") as f:
+            output = f.read()
+    except OSError as exc:
+        print(f"windows_test_report: could not read '{argv[1]}': {exc}", file=sys.stderr)
+        output = ""
+
+    summary = summarize(output)
+
+    try:
+        check_nonzero(summary)
+    except ZeroTestsError as exc:
+        print(f"windows_test_report: {exc}", file=sys.stderr)
+        _append_step_summary(
+            "## Windows test-suite pass rate\n\n"
+            "**ERROR: zero tests found.** This run did not execute any tests; treat this "
+            "as a failed measurement, not a 0% or 100% pass rate.\n"
+        )
+        return 1
+
+    print(
+        f"windows_test_report: {summary.passed} / {summary.total} passed "
+        f"({summary.rate_percent}%) across {summary.suite_count} suite(s)."
+    )
+    _append_step_summary(render_step_summary(summary))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
