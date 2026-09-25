@@ -8,7 +8,9 @@
   that explains it in `explained_by`.
 
 `docs/archived-design/` is frozen: never edit it.
-`docs/migrating-design/` is a working copy being emptied: never add to it or edit it in place.
+`docs/migrating-design/` is a working copy being emptied: never add to it or edit it in place,
+except to repoint a cross-reference whose target section was moved out, to the SPC that now
+holds it.
 
 ## Every change to behavior updates `docs/design/` in the same PR
 
@@ -29,5 +31,6 @@ Move only the sections the change touches. Sections nothing touched stay where t
 ## Done when
 
 - `typdoc validate` passes on the repo.
-- `git diff` adds no lines under `docs/migrating-design/` (only deletions).
+- `git diff` under `docs/migrating-design/` is deletions only, apart from repointed
+  cross-references.
 - Every behavior change in the PR is described in an SPC or a catalog entry.
