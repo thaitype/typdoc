@@ -23,10 +23,9 @@ The [README](../README.md#install) covers `INSTALL_DIR`, verifying release prove
 `cargo install` alternative.
 
 On Linux, the prebuilt `typdoc` binary is statically linked against musl, not glibc, so there's no
-glibc version requirement at all — any distro works as long as its kernel meets Rust's own
-baseline for the target: kernel 3.2+ on x86_64, kernel 4.1+ on aarch64 (musl targets inherit the
-same kernel floor as their glibc counterparts; they just drop the glibc requirement). This is
-proven in CI by running the built binary inside a long-EOL container image on each architecture.
+glibc version requirement at all — any distro works as long as its kernel is new enough to run a
+modern Linux binary. This is proven in CI by running the built binary inside a long-EOL
+container image on each architecture.
 
 ## 1. Create the project
 

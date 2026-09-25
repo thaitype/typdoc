@@ -14,8 +14,9 @@ story, not a gap in this one.
 The two Linux targets are musl, not gnu. A gnu-linked binary refuses to start on a distro whose
 glibc is older than the one it linked against; musl binaries are statically linked and carry no
 glibc dependency at all, which removes that floor entirely instead of managing it by pinning an
-old build image. The only requirement left is a kernel new enough for Rust's own baseline for
-the target (3.2+ on x86_64, 4.1+ on aarch64) — no glibc version requirement.
+old build image — no glibc version requirement, on any distro whose kernel is new enough to run
+a modern Linux binary at all. Proven in CI, not just asserted: each musl binary also runs inside
+an intentionally old, unrelated distro's container image, on both arches.
 
 ## The installer script
 
