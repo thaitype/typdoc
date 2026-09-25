@@ -154,7 +154,7 @@ note "default install"
 HOME_1="${WORK_DIR}/home1"
 mkdir -p "$HOME_1"
 BEFORE="$(log_line_count)"
-OUT_1="$(env -i HOME="$HOME_1" PATH="/usr/bin:/bin" TMPDIR="$INSTALLER_TMPDIR" \
+OUT_1="$(env -i SHELL="" HOME="$HOME_1" PATH="/usr/bin:/bin" TMPDIR="$INSTALLER_TMPDIR" \
     TYPDOC_INSTALL_BASE_URL="$BASE_URL" \
     "$INSTALL_SCRIPT" 2>&1)"
 CODE_1=$?
@@ -175,8 +175,11 @@ else
     fail "default install did not hit /releases/latest/download/... — request log:
 $(log_lines_after "$BEFORE")"
 fi
-# env -i above never sets SHELL, so this also exercises path_advice's unknown/empty-shell
-# branch, and HOME_1/.local/bin is under $HOME_1, so it also exercises the "$HOME/..." display.
+# SHELL="" above (not just omitted -- env -i alone was observed, on a real macOS runner, to
+# still leave a non-empty $SHELL reaching the script; the mechanism wasn't chased further, an
+# explicit empty value is deterministic regardless of it) exercises path_advice's unknown/
+# empty-shell branch, and HOME_1/.local/bin is under $HOME_1, so it also exercises the
+# "$HOME/..." display.
 if printf '%s' "$OUT_1" | grep -qF '⚠ $HOME/.local/bin is not on your PATH yet.'; then
     pass "PATH advice shows \$HOME-relative form for a dir under \$HOME"
 else
@@ -193,7 +196,7 @@ fi
 # --- Scenario 2: INSTALL_DIR override --------------------------------------------------------
 note "INSTALL_DIR override"
 CUSTOM_DIR="${WORK_DIR}/custom-bin"
-OUT_2="$(env -i HOME="$HOME_1" PATH="/usr/bin:/bin" TMPDIR="$INSTALLER_TMPDIR" \
+OUT_2="$(env -i SHELL="" HOME="$HOME_1" PATH="/usr/bin:/bin" TMPDIR="$INSTALLER_TMPDIR" \
     TYPDOC_INSTALL_BASE_URL="$BASE_URL" \
     INSTALL_DIR="$CUSTOM_DIR" "$INSTALL_SCRIPT" 2>&1)"
 CODE_2=$?
@@ -223,7 +226,7 @@ fi
 note "TYPDOC_VERSION pin"
 PIN_DIR="${WORK_DIR}/pin-bin"
 BEFORE="$(log_line_count)"
-OUT_3="$(env -i HOME="$HOME_1" PATH="/usr/bin:/bin" TMPDIR="$INSTALLER_TMPDIR" \
+OUT_3="$(env -i SHELL="" HOME="$HOME_1" PATH="/usr/bin:/bin" TMPDIR="$INSTALLER_TMPDIR" \
     TYPDOC_INSTALL_BASE_URL="$BASE_URL" \
     TYPDOC_VERSION="$PIN_TAG" INSTALL_DIR="$PIN_DIR" "$INSTALL_SCRIPT" 2>&1)"
 CODE_3=$?
@@ -246,7 +249,7 @@ fi
 # --- Scenario 4: corrupted checksum must fail loudly and install nothing --------------------
 note "corrupted checksum"
 CORRUPT_DIR="${WORK_DIR}/corrupt-bin"
-OUT_4="$(env -i HOME="$HOME_1" PATH="/usr/bin:/bin" TMPDIR="$INSTALLER_TMPDIR" \
+OUT_4="$(env -i SHELL="" HOME="$HOME_1" PATH="/usr/bin:/bin" TMPDIR="$INSTALLER_TMPDIR" \
     TYPDOC_INSTALL_BASE_URL="$BASE_URL" \
     TYPDOC_VERSION="$CORRUPT_TAG" INSTALL_DIR="$CORRUPT_DIR" "$INSTALL_SCRIPT" 2>&1)"
 CODE_4=$?
