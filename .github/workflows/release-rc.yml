@@ -1,0 +1,111 @@
+name: release-rc
+
+# Produces a GitHub pre-release (never a real release, never crates.io) from a pushed tag
+# matching v*-rc*, e.g. v0.3.1-rc.1. Exists to prove the full binary/checksum/attestation/
+# install flow end to end before a real release ever exists — see
+# .chief/story-5/_goal/goal.md's "Full-flow proof" section. Deliberately its own workflow,
+# triggered by a tag push rather than reusing publish.yml's workflow_dispatch: a pre-release
+# must never be reachable through the same dispatch that can also run a real crates.io publish,
+# and attestations need a real workflow run to produce (not a hand upload), which a push trigger
+# satisfies exactly as well as a dispatch does.
+#
+# Mirrors publish.yml's gate -> dist-build -> attest -> release shape, minus any `cargo publish`
+# step (never touches crates.io) and with `prerelease: true` on the created release. The four
+# release targets are the same four this repo ships everywhere else — see dist-build.yml.
+
+on:
+  push:
+    tags:
+      - "v*-rc*"
+
+jobs:
+  gate:
+    name: cargo test + clippy
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustc --version
+      - run: TMPDIR="$RUNNER_TEMP" scripts/test.sh --self-test
+      - run: TMPDIR="$RUNNER_TEMP" scripts/test.sh
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  dist-build:
+    name: dist build (4 targets)
+    needs: gate
+    uses: ./.github/workflows/dist-build.yml
+
+  attest:
+    name: attest build provenance
+    needs: dist-build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      attestations: write
+      contents: read
+    steps:
+      - name: Download built archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          path: dist-artifacts
+          merge-multiple: true
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: "dist-artifacts/typdoc-*.tar.gz"
+
+  release:
+    name: create GitHub pre-release + upload assets
+    needs: attest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download built archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          path: dist-artifacts
+          merge-multiple: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Self-test the CHANGELOG extraction logic
+        run: python scripts/test_extract_release_notes.py -v
+      # The pushed tag is v<version>-rc<N> (e.g. v0.3.1-rc.1); CHANGELOG.md's own heading is
+      # the plain version (## [0.3.1]) -- strip the rc suffix and the leading v to find it.
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          base_version="${tag#v}"
+          base_version="${base_version%-rc*}"
+          python scripts/extract_release_notes.py CHANGELOG.md "$base_version" \
+            > "$RUNNER_TEMP/release-notes.md"
+      - name: Create the pre-release if it doesn't already exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $tag already exists; leaving it as-is."
+          else
+            gh release create "$tag" \
+              --repo "${{ github.repository }}" \
+              --target "${{ github.sha }}" \
+              --title "$tag" \
+              --notes-file "$RUNNER_TEMP/release-notes.md" \
+              --prerelease
+          fi
+      - name: Upload archives + checksums as release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          gh release upload "$tag" dist-artifacts/typdoc-* \
+            --repo "${{ github.repository }}" \
+            --clobber
