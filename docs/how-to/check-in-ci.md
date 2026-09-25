@@ -23,9 +23,8 @@ It suits a pre-commit hook.
 
 ## GitHub Actions
 
-typdoc isn't on crates.io yet, so install it from GitHub. Pin a release tag in CI, so a new
-typdoc version can't change what `validate` reports without you choosing to upgrade. This
-workflow checks a project at the root of the repository:
+Pin a version in CI, so a new typdoc version can't change what `validate` reports without you
+choosing to upgrade. This workflow checks a project at the root of the repository:
 
 ```yaml
 name: docs
@@ -40,7 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install typdoc
-        run: cargo install --locked --git https://github.com/thaitype/typdoc --tag v0.2.0 typdoc
+        run: cargo install --locked typdoc --version 0.3.0
       - name: Check documents
         run: typdoc validate
 ```
