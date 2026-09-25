@@ -89,6 +89,11 @@ echo "0000000000000000000000000000000000000000000000000000000000000000 *${ARCHIV
 
 LOG_PATH="${WORK_DIR}/requests.log"
 SERVER_OUT="${WORK_DIR}/server.out"
+# A freshly-downloaded python3 (e.g. actions/setup-python on a macOS runner) can carry a
+# quarantine attribute that costs several real seconds on its *first* execution only (a one-time
+# Gatekeeper scan, not a slow interpreter) -- absorbed here, synchronously, with no timeout of
+# its own, so it never eats into the background server's own port-wait budget below.
+python3 --version >/dev/null 2>&1 || true
 python3 "${REPO_ROOT}/scripts/installer_fixture_server.py" \
     "$FIXTURES_DIR" "$LATEST_TAG" --log "$LOG_PATH" --port 0 >"$SERVER_OUT" 2>"${WORK_DIR}/server.err" &
 SERVER_PID=$!
