@@ -5,8 +5,10 @@ Live-URL check: real post-deploy step in `pages.yml`, code-only post-release ste
 `publish.yml`, and a scheduled drift check.
 
 ## Outcome
-done (code); the post-deploy step's real-run pass is unproven from an isolated worktree — see
-Decision below, resolved by proceeding to push + open the PR rather than treating it as a stall.
+done. The post-deploy step's real-run pass, unproven from an isolated worktree at build time, is
+now confirmed: after pushing and opening the PR, `pages.yml`'s run on this branch shows both
+`deploy to GitHub Pages` and `verify live install URLs` jobs completed with `conclusion: success`
+(run `36136202000`) — the real proof this ticket needed.
 
 ## Decision
 - **Issue:** the ticket's own acceptance criterion — the post-deploy step in `pages.yml` actually
@@ -36,6 +38,6 @@ Decision below, resolved by proceeding to push + open the PR rather than treatin
   after the review-driven refactor.
 
 ## For the PR / loop close-out
-This was the last ticket in the frontier. Next: push `story-5-prebuilt-installer` to `origin` and
-open the PR — this is also what finally exercises this ticket's post-deploy check for real
-against the live domain, closing its one open question.
+This was the last ticket in the frontier. Pushed `story-5-prebuilt-installer` to `origin`, opened
+`thaitype/typdoc#7` as a draft. The push itself triggered `pages.yml` for real and confirmed the
+open question above.
