@@ -1,5 +1,5 @@
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: 04
 
 # Ticket 05 — live-URL check (post-deploy step runs for real; the rest is code)
