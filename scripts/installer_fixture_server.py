@@ -33,6 +33,7 @@ import argparse
 import http.server
 import os
 import socket
+import socketserver
 import sys
 import threading
 
@@ -104,6 +105,27 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.send_error(404)
 
 
+class _FastBindHTTPServer(http.server.HTTPServer):
+    """`http.server.HTTPServer` minus its own `server_bind()`'s reverse-DNS lookup.
+
+    `HTTPServer.server_bind()` calls `socket.getfqdn(host)` to set `self.server_name` -- useful
+    for a real server that reports its own hostname, but a resolver call this fixture server
+    has no need for and never uses (nothing here reads `server_name`). Confirmed hanging this
+    server indefinitely on a GitHub-hosted macOS runner (diagnosed by instrumenting the calling
+    shell script in a prior commit and reading `ps`: the process had bound and was idling
+    normally, never reaching this class's own `print(server.port)` caller at all -- consistent
+    with being stuck inside `__init__` -> `server_bind()`, before that line is ever reached).
+    `ubuntu-latest` has not shown this; sandboxed/restricted-network reverse-DNS hangs are a
+    known, environment-specific CPython `http.server` gotcha, not unique to this script.
+    """
+
+    def server_bind(self) -> None:
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = host
+        self.server_port = port
+
+
 class FixtureServer:
     """Runs the fixture HTTP server on a background thread.
 
@@ -127,7 +149,7 @@ class FixtureServer:
         self.log_path = log_path
         self.host = host
         self.requested_port = port
-        self._httpd: http.server.HTTPServer | None = None
+        self._httpd: _FastBindHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
     @property
@@ -149,7 +171,7 @@ class FixtureServer:
                 "log_path": self.log_path,
             },
         )
-        self._httpd = http.server.HTTPServer((self.host, self.requested_port), handler)
+        self._httpd = _FastBindHTTPServer((self.host, self.requested_port), handler)
         self._httpd.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
         self._thread.start()

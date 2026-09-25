@@ -107,6 +107,16 @@ class FixtureServerTests(unittest.TestCase):
             self._get("/nonsense")
         self.assertEqual(ctx.exception.code, 404)
 
+    def test_server_bind_skips_the_reverse_dns_lookup(self) -> None:
+        # http.server.HTTPServer's own server_bind() calls socket.getfqdn(host), which has been
+        # observed to hang indefinitely on a sandboxed/restricted-network CI runner (see
+        # _FastBindHTTPServer's own docstring). If that call ever creeps back in, server_name
+        # stops being the literal bind host and becomes whatever the resolver returns instead
+        # (typically not "127.0.0.1" -- often "localhost" or a fully-qualified name) -- this
+        # would not by itself prove a hang can't happen again, but it is the one part of that
+        # regression a fast, always-run unit test can actually catch.
+        self.assertEqual(self.server._httpd.server_name, "127.0.0.1")  # noqa: SLF001
+
     def test_requests_are_logged_for_the_calling_test_to_assert_on(self) -> None:
         self._get("/releases/download/v1.0.0/typdoc-x.tar.gz")
         self._get("/releases/latest/download/typdoc-x.tar.gz")
