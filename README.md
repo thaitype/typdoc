@@ -3,7 +3,6 @@
 [![CI](https://github.com/thaitype/typdoc/actions/workflows/ci.yml/badge.svg)](https://github.com/thaitype/typdoc/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/typdoc.svg)](https://crates.io/crates/typdoc)
 [![License](https://img.shields.io/crates/l/typdoc.svg)](LICENSE)
-[![Rust](https://img.shields.io/crates/msrv/typdoc.svg)](rust-toolchain.toml)
 
 > **Public release 0.3 is ready to test.** typdoc is still in active development, so commands,
 > output and file formats may still change between releases. What's there is checked by more than
