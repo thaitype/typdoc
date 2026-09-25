@@ -14,6 +14,14 @@ on:
       version:
         description: "TYPDOC_VERSION to install, e.g. v0.3.1-rc.1"
         required: true
+  # workflow_dispatch only becomes callable through the API/CLI once this file exists on the
+  # default branch -- not yet true from a story branch. This push trigger, scoped to this file
+  # alone, is how the very first run happens from here; the version below is this story's one
+  # pre-release tag, not a general default. Safe to remove once this workflow is reachable the
+  # normal way (i.e. after this branch merges).
+  push:
+    paths:
+      - ".github/workflows/full-flow-proof.yml"
 
 jobs:
   install:
@@ -29,7 +37,7 @@ jobs:
       - name: Install typdoc via the live one-liner (pages/install), pinned to a specific version
         shell: bash
         env:
-          TYPDOC_VERSION: ${{ inputs.version }}
+          TYPDOC_VERSION: ${{ inputs.version || 'v0.3.1-rc.1' }}
         run: |
           curl -fsSL https://typdoc.thaitype.dev/install | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
