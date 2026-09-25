@@ -92,17 +92,27 @@ pub fn order_locks(
     project_lock: Option<PathBuf>,
     mut namespace_locks: Vec<PathBuf>,
 ) -> Vec<PathBuf> {
-    namespace_locks.sort_by(|a, b| path_bytes(a).cmp(path_bytes(b)));
+    namespace_locks.sort_by_key(|a| path_bytes(a));
     let mut ordered = Vec::with_capacity(namespace_locks.len() + 1);
     ordered.extend(project_lock);
     ordered.extend(namespace_locks);
     ordered
 }
 
-#[cfg(unix)]
-fn path_bytes(path: &Path) -> &[u8] {
-    use std::os::unix::ffi::OsStrExt;
-    path.as_os_str().as_bytes()
+/// Owned rather than borrowed (unlike a `Unix`-only `as_bytes()`) because there is no
+/// zero-copy byte view of a path on every platform: Windows exposes `OsStr` only as UTF-16
+/// code units, not bytes, so getting a `[u8]` at all means building one. `project_hash` above
+/// already uses the same lossy-to-`String` conversion for exactly this reason.
+fn path_bytes(path: &Path) -> Vec<u8> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        path.as_os_str().as_bytes().to_vec()
+    }
+    #[cfg(not(unix))]
+    {
+        path.as_os_str().to_string_lossy().into_owned().into_bytes()
+    }
 }
 
 /// What a lock file holds, read back from an existing one when this process could not create

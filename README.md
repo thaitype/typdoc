@@ -46,17 +46,20 @@ The same folder works for people and for tools, and if you stop using typdoc you
 ## Install
 
 ```console
-$ cargo install typdoc
-$ typdoc --version
+$ curl -fsSL https://typdoc.thaitype.dev/install | sh
 ```
 
-To try unreleased changes from `main` instead:
+Supported platforms:
 
-```console
-$ cargo install --git https://github.com/thaitype/typdoc typdoc
-```
+- macOS — amd64 and arm64
+- Linux — amd64 and arm64
 
-It runs on Linux and macOS. Windows isn't supported; WSL works.
+Windows is not supported yet.
+
+It picks the right build for your machine, checks it against its published SHA-256 checksum,
+and puts `typdoc` in `~/.local/bin`. To pin a version, choose another install directory, or
+install with `cargo`, see
+[how to install typdoc](docs/how-to/install.md).
 
 If you work with a coding agent, add the typdoc skill too. It teaches Claude Code and other
 skill-aware agents how to find, create, change and move documents in a typdoc project:
@@ -267,6 +270,7 @@ Learn by doing:
 
 Get a specific job done:
 
+- [Install typdoc](docs/how-to/install.md)
 - [Add typdoc to a folder you already have](docs/how-to/adopt-an-existing-folder.md)
 - [Move and rename documents](docs/how-to/move-and-rename.md)
 - [Split work into namespaces](docs/how-to/use-namespaces.md)

@@ -7,3 +7,8 @@ edition = "2024"
 rust-version = "1.96"
 license = "MIT"
 repository = "https://github.com/thaitype/typdoc"
+
+# The profile 'dist' (cargo-dist) builds every prebuilt binary with — see dist-workspace.toml.
+[profile.dist]
+inherits = "release"
+lto = "thin"

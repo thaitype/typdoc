@@ -1,0 +1,37 @@
+name: full-flow-proof
+
+# Manual, dispatchable proof that the real live install one-liner works end to end against a
+# specific release (normally the v0.3.1-rc.1 pre-release from release-rc.yml), before the story
+# branch's PR is marked ready — see .chief/story-5/_goal/goal.md's "Full-flow proof" section.
+# Not part of the story's regular CI surface (installer-check.yml already covers the PR-time
+# local-fixture-server test; live-check.yml already covers the deployed-script-matches-the-repo
+# check) -- this is the one check that needs a real, already-published release to point
+# TYPDOC_VERSION at, which only exists for the short window this proof runs in.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "TYPDOC_VERSION to install, e.g. v0.3.1-rc.1"
+        required: true
+
+jobs:
+  install:
+    name: live install (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Same $GITHUB_PATH reasoning as publish.yml's verify-live-release job: the installer's
+      # own fixed install path (${INSTALL_DIR:-$HOME/.local/bin}), not a parsed printed line.
+      - name: Install typdoc via the live one-liner (pages/install), pinned to a specific version
+        shell: bash
+        env:
+          TYPDOC_VERSION: ${{ inputs.version }}
+        run: |
+          curl -fsSL https://typdoc.thaitype.dev/install | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: typdoc --version
+        run: typdoc --version

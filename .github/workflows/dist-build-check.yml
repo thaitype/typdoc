@@ -1,0 +1,24 @@
+name: dist-build-check
+
+# Runs the same 5-target build publish.yml will later run for the real release, on every PR
+# that touches the build-relevant surface — so a PR proves the exact build the release will run,
+# and its archives are available as workflow artifacts for later work (the installer scripts'
+# own PR-time test serves them from a local HTTP server instead of a real GitHub release).
+#
+# Scoped at the workflow level, not as a job inside ci.yml: `paths:` filters a whole workflow
+# run in GitHub Actions, not a single job within one — mirrors publish-check.yml's existing
+# path-filter pattern for the same reason.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - "dist-workspace.toml"
+      - ".github/workflows/dist-build.yml"
+      - ".github/workflows/dist-build-check.yml"
+
+jobs:
+  dist-build:
+    uses: ./.github/workflows/dist-build.yml

@@ -1,0 +1,82 @@
+name: installer-check
+
+# Exercises pages/install end to end on macOS and Linux, against a local fixture HTTP server
+# seeded from this PR's own dist-build output. See .chief/story-5/_contract/contract.md's
+# Testing Decisions: no release of typdoc exists until 0.3.1 is published, so this can't hit
+# real GitHub Releases yet — that's covered separately, after a real deploy/release, by
+# pages.yml's and publish.yml's own live-URL checks. Windows is not a release target for this
+# story (see .chief/story-5/_goal/goal.md), so there is no Windows leg here.
+#
+# scripts/test_installer_posix.sh does the actual work; scripts/installer_fixture_server.py is
+# the local server it points pages/install at via TYPDOC_INSTALL_BASE_URL, and has its own
+# self-test (scripts/test_installer_fixture_server.py) that runs first, independent of any real
+# installer script.
+#
+# Path-filtered at the workflow level like dist-build-check.yml and publish-check.yml, for the
+# same reason: `paths:` filters a whole workflow run in GitHub Actions, not a single job.
+#
+# actions/checkout, actions/download-artifact and actions/setup-python are pinned to v7/v8/v5
+# below — their current major versions as of when this workflow was written, same reasoning as
+# dist-build.yml's v7 pins and publish.yml's v8/v4 pins, not an attempt to match ci.yml's older
+# v4 checkout pin.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "pages/**"
+      - "scripts/installer_fixture_server.py"
+      - "scripts/test_installer_fixture_server.py"
+      - "scripts/test_installer_posix.sh"
+      - "dist-workspace.toml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - ".github/workflows/dist-build.yml"
+      - ".github/workflows/installer-check.yml"
+
+jobs:
+  fixture-server-self-test:
+    name: installer fixture server self-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - run: python3 scripts/test_installer_fixture_server.py -v
+
+  # Reuses ticket 01's build workflow rather than depending on dist-build-check.yml's own run:
+  # workflow artifacts aren't shared across separate workflow files' runs without extra
+  # plumbing, and this job's archives only need to exist within this run.
+  dist-build:
+    name: dist build (4 targets, for installer testing)
+    needs: fixture-server-self-test
+    uses: ./.github/workflows/dist-build.yml
+
+  test-install:
+    name: install (${{ matrix.os }})
+    needs: dist-build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # One target per OS family, matching what that installer script actually detects
+          # itself as running on — no need to test all four targets' archives on every OS.
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: macos-latest
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Download this run's ${{ matrix.target }} archive + checksum
+        uses: actions/download-artifact@v8
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist-artifacts
+      - name: Run installer scenarios (pages/install)
+        shell: bash
+        run: scripts/test_installer_posix.sh dist-artifacts "${{ matrix.target }}"

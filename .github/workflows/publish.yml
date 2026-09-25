@@ -91,3 +91,141 @@ jobs:
         run: cargo publish --workspace
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  dist-build:
+    name: dist build (4 targets)
+    needs: gate
+    uses: ./.github/workflows/dist-build.yml
+
+  attest:
+    name: attest build provenance
+    needs: dist-build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      attestations: write
+      contents: read
+    steps:
+      # Pulls every target's archive + checksum back out of the workflow artifacts dist-build.yml
+      # (called above) uploaded — attestation runs once, here, over the actual release build; a
+      # PR build (dist-build-check.yml) never reaches this job.
+      #
+      # download-artifact and attest-build-provenance are pinned to their current major versions
+      # (v8, v4) as of when this job was written, same reasoning as dist-build.yml's v7 pins —
+      # not an attempt to match the existing gate job's older v4 checkout pin.
+      - name: Download built archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          path: dist-artifacts
+          merge-multiple: true
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: "dist-artifacts/typdoc-*.tar.gz"
+
+  release:
+    name: create GitHub release + upload assets
+    needs: attest
+    # Same gating as the `cargo publish` step above: a dry run builds and attests but must
+    # create nothing public. No release, no tag, no uploaded assets on a dry run.
+    if: ${{ inputs.dry_run == false }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      # Pulls the same archives + checksums the attest job just attested, out of the same
+      # workflow artifacts dist-build.yml uploaded -- never re-built or re-downloaded from a
+      # different source than what was attested.
+      - name: Download built archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          path: dist-artifacts
+          merge-multiple: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      # scripts/test_extract_release_notes.py is this script's own self-test, exercised
+      # against fixed sample changelog text -- the same "prove the mechanism before trusting
+      # it" step the gate job's --self-test and the Windows pass-rate job's self-test already
+      # follow in this repo, run once here before the real extraction below.
+      - name: Self-test the CHANGELOG extraction logic
+        run: python scripts/test_extract_release_notes.py -v
+      # Generates the release body from CHANGELOG.md's own entry for this version, instead of
+      # a hand-written body (how v0.1.0/v0.2.0/v0.3.0 were each done) -- see
+      # scripts/extract_release_notes.py's header for why (the two can never drift apart).
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          python scripts/extract_release_notes.py CHANGELOG.md "${{ inputs.version }}" \
+            > "$RUNNER_TEMP/release-notes.md"
+      # Creates the tag and the release together, pointed at the commit this workflow ran
+      # against, only if a release for this tag doesn't already exist -- re-running this job
+      # (e.g. after the upload step below failed) must not error out trying to recreate it.
+      - name: Create GitHub release if it doesn't already exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="v${{ inputs.version }}"
+          if gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $tag already exists; leaving it as-is."
+          else
+            gh release create "$tag" \
+              --repo "${{ github.repository }}" \
+              --target "${{ github.sha }}" \
+              --title "$tag" \
+              --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
+      # --clobber lets a re-run overwrite a partial upload from a previous failed attempt
+      # instead of erroring on an asset that's already there.
+      - name: Upload archives + checksums as release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="v${{ inputs.version }}"
+          gh release upload "$tag" dist-artifacts/typdoc-* \
+            --repo "${{ github.repository }}" \
+            --clobber
+
+  # Runs the real, user-facing install one-liner (not the local-fixture-server test the `gate`
+  # job's PR-time installer-check.yml already covers) against whatever this dispatch just made
+  # the newest non-pre-release -- see .chief/story-5/_contract/contract.md's "CI: live-URL
+  # install check" and .chief/story-5/_tickets/05-live-check-workflow-code.md. No
+  # TYPDOC_INSTALL_BASE_URL or TYPDOC_VERSION override here: this deliberately exercises the
+  # exact command a real user would run, hitting the real GitHub Releases `releases/latest`
+  # redirect, not a fixture. macOS and Linux only -- Windows is not a release target for this
+  # story (see goal.md), so there is no Windows install flow to check here.
+  #
+  # Written and reviewable now, but not exercised end to end by this loop: no real (or
+  # pre-)release exists yet for this dispatch to run against. Its first real execution is a
+  # `publish.yml` dispatch that reaches `release` with `dry_run: false` (see goal.md's "After
+  # Merge" section, step 4-5, for the real 0.3.1 release, and the "Full-flow proof" section for
+  # the earlier `v0.3.1-rc.1` pre-release run of the plain install flow -- this job only runs
+  # once a *release* -- not a pre-release -- makes `releases/latest` resolve to it).
+  verify-live-release:
+    name: live install check (${{ matrix.os }})
+    needs: release
+    # Same gating as `release` above: a dry run creates no public release to check the live
+    # install flow against, so this must never run for one.
+    if: ${{ inputs.dry_run == false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Appending to $GITHUB_PATH (rather than exporting PATH in the shell) is what makes the
+      # installed binary visible to the separate "typdoc --version" step below: each `run:`
+      # step is its own shell, but a $GITHUB_PATH edit persists for the rest of the job. The
+      # installer prints this same directory (and an "add this to your PATH" line) when it
+      # isn't already on PATH; that printed line is not parsed here -- the install location is
+      # the contract's own fixed path (${INSTALL_DIR:-$HOME/.local/bin}), so this step points
+      # $GITHUB_PATH straight at it instead.
+      - name: Install typdoc via the live one-liner (pages/install)
+        shell: bash
+        run: |
+          curl -fsSL https://typdoc.thaitype.dev/install | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: typdoc --version
+        run: typdoc --version
