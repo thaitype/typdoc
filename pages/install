@@ -11,7 +11,11 @@
 # script that resolves a version every time it runs. cargo-dist still builds and checksums the
 # release archives this script downloads; only the installer itself is hand-written.
 #
-# Environment variables (end-user facing, see README/docs/getting-started.md):
+# Environment variables (end-user facing, see README/docs/getting-started.md). Each one is read
+# by this script, not by curl, so it goes after the pipe, right before sh -- not before curl:
+#
+#   curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.3.1 sh
+#
 #   TYPDOC_VERSION   Install this exact release tag (e.g. "v0.3.1") instead of the latest one.
 #   INSTALL_DIR      Install into this directory instead of the default ("$HOME/.local/bin").
 #

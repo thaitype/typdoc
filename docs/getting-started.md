@@ -11,8 +11,16 @@ $ curl -fsSL https://typdoc.thaitype.dev/install | sh
 ```
 
 That installs a prebuilt binary on macOS or Linux with no Rust toolchain required. Windows isn't
-supported yet, either by that script or by `cargo install`. The [README](../README.md#install)
-covers `INSTALL_DIR`, verifying release provenance, and the `cargo install` alternative.
+supported yet, either by that script or by `cargo install`. To pin a version or change the
+install location, put `TYPDOC_VERSION` or `INSTALL_DIR` after the pipe, right before `sh` — the
+installer script reads them, `curl` doesn't:
+
+```console
+$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.3.1 sh
+```
+
+The [README](../README.md#install) covers `INSTALL_DIR`, verifying release provenance, and the
+`cargo install` alternative.
 
 On Linux, the prebuilt `typdoc` binary is statically linked against musl, not glibc, so there's no
 glibc version requirement at all — any distro works as long as its kernel meets Rust's own

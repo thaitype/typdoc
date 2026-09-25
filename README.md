@@ -54,11 +54,17 @@ $ typdoc --version
 
 The script detects your OS and architecture, downloads the matching release archive, and
 verifies its SHA-256 checksum before installing anything — a checksum mismatch or an unsupported
-platform fails loudly and installs nothing. It installs to `~/.local/bin` by default; set
-`INSTALL_DIR` to install somewhere else. It never edits `PATH` or a shell profile: if the install
-directory isn't already on `PATH`, it prints the one line to add it and still exits successfully.
-Set `TYPDOC_VERSION` (e.g. `TYPDOC_VERSION=v0.3.1`) to install a specific release instead of the
-latest one.
+platform fails loudly and installs nothing. It installs to `~/.local/bin` by default. It never
+edits `PATH` or a shell profile: if the install directory isn't already on `PATH`, it prints the
+one line to add it and still exits successfully.
+
+Both `INSTALL_DIR` and `TYPDOC_VERSION` are read by the installer script, not by `curl` — put
+them after the pipe, right before `sh`, not before `curl`:
+
+```console
+$ curl -fsSL https://typdoc.thaitype.dev/install | INSTALL_DIR=/usr/local/bin sh
+$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.3.1 sh
+```
 
 Every release binary carries a SHA-256 checksum (which the installer checks automatically) and a
 [GitHub artifact attestation](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds),
