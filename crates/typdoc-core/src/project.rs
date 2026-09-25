@@ -34,23 +34,20 @@ use crate::state;
 use crate::template::{Step, Template};
 use crate::validate::{self, DocName, Finding, Severity, ValidateScope};
 
-/// The folder that holds `.typdoc/`: `TYPDOC_DIR` when it is set, and otherwise the nearest one
-/// above the current directory, that directory included. A project is marked by the `.typdoc`
-/// folder existing, not by `config.json` inside it (M-24: `.typdoc/config.json` is optional) —
-/// `.is_dir()` specifically, not `.exists()`, so a plain file named `.typdoc` never counts as a
-/// project.
+/// The folder that holds `.typdoc/config.json`: `TYPDOC_DIR` when it is set, and otherwise
+/// the nearest one above the current directory, that directory included.
 pub fn discover(env: &dyn Env) -> Result<PathBuf, Error> {
     let cwd = env.current_dir().map_err(Error::io_at(Path::new(".")))?;
     if let Some(dir) = env.var("TYPDOC_DIR").filter(|v| !v.is_empty()) {
         let dir = cwd.join(dir);
-        return if dir.join(TYPDOC_DIR).is_dir() {
+        return if config_file(&dir).is_file() {
             Ok(dir)
         } else {
             Err(Error::NoProjectAt { dir })
         };
     }
     cwd.ancestors()
-        .find(|dir| dir.join(TYPDOC_DIR).is_dir())
+        .find(|dir| config_file(dir).is_file())
         .map(Path::to_owned)
         .ok_or(Error::NoProject { from: cwd })
 }

@@ -15,15 +15,11 @@ page is for understanding an existing project, not for designing one.
 
 Everything else is documents, arranged however the project already arranges them.
 
-A project is found by walking up from the current directory to the nearest `.typdoc/` folder, or
-from `TYPDOC_DIR` when it is set. A folder deeper in the tree with its own `.typdoc/` is a
+A project is found by walking up from the current directory to the nearest `.typdoc/config.json`,
+or from `TYPDOC_DIR` when it is set. A folder deeper in the tree with its own `.typdoc/` is a
 separate project.
 
 ## Config
-
-`config.json` is optional: a `.typdoc/` folder with none is read as `{"version": 1}`. A project
-with no collections at all still loads and every command still runs; `validate` warns
-(`collections.empty`) that there's nothing configured to check.
 
 ```json
 {
@@ -34,7 +30,7 @@ with no collections at all still loads and every command still runs; `validate` 
 }
 ```
 
-- `version` is the only required key, and only when `config.json` exists at all.
+- `version` is the only required key.
 - `namespaces`: folders (names or `*` globs) that each hold their own documents. Absent → one
   namespace, `default`, which is the whole folder. An entry prefixed with `!` excludes a folder an
   earlier entry matched (`["story-*", "!story-1"]`); entries apply in list order, so a later entry

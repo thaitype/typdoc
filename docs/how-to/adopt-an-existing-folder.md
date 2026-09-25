@@ -9,9 +9,6 @@ notes as the example.
 
 ## 1. Mark the folder as a project
 
-The `.typdoc/` folder itself is what makes this a project; `config.json` is optional, but writing
-it pins the version:
-
 ```console
 $ mkdir -p .typdoc/collections .typdoc/schemas
 $ echo '{ "version": 1 }' > .typdoc/config.json

@@ -10,15 +10,11 @@ Everything typdoc reads as configuration, and the state it keeps.
 .typdoc/schemas/<name>.json       schemas (the usual place; any path works)
 ```
 
-typdoc finds the project by walking up from the current directory to the nearest folder holding a
-`.typdoc/` folder. Set `TYPDOC_DIR` to start from another folder instead. A folder further down
-with its own `.typdoc/` is a separate project.
+typdoc finds the project by walking up from the current directory to the nearest folder holding
+`.typdoc/config.json`. Set `TYPDOC_DIR` to start from another folder instead. A folder further
+down with its own `.typdoc/` is a separate project.
 
 ## config.json
-
-`config.json` is optional: a `.typdoc/` folder with no `config.json` at all is read the same as
-one holding `{"version": 1}`. `validate` warns (`collections.empty`) when the project has no
-collections at all, whatever else `.typdoc/` holds — but every command still runs.
 
 ```json
 {

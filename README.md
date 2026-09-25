@@ -138,9 +138,7 @@ A **project** is the folder that holds `.typdoc/`:
 tickets/WF-1.md                     your documents, wherever you already keep them
 ```
 
-typdoc finds it the way git finds `.git`: it walks up from the current directory. `.typdoc/`
-itself is what marks the project — `config.json` is optional; a folder with nothing under
-`.typdoc/` yet still validates, just with a warning that there's nothing to check.
+typdoc finds it the way git finds `.git`: it walks up from the current directory.
 
 ### Namespaces
 

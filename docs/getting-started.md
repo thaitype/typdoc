@@ -19,8 +19,7 @@ $ echo '{ "version": 1 }' > .typdoc/config.json
 $ echo '.typdoc/locks/' > .gitignore
 ```
 
-`.typdoc/` itself is what marks the folder as a typdoc project — `config.json` is optional, but
-we'll write it anyway to pin the version explicitly. We'll keep the schemas in
+`.typdoc/config.json` is what marks the folder as a typdoc project. We'll keep the schemas in
 `.typdoc/schemas/` so everything typdoc reads sits in one place; a schema can live anywhere in the
 project, though, since collections point at it by path. typdoc creates
 `.typdoc/locks/` while it writes, and it doesn't belong in git, hence the `.gitignore`.

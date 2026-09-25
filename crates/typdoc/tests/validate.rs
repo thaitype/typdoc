@@ -2397,11 +2397,11 @@ fn the_accounting_invariant_holds_on_every_fixture_project() {
 
 /// A project with zero collections is `collections.empty`, at `warn`, project-level: `path` is
 /// `.typdoc` and `namespace`/`collection`/`key`/`field` are all absent, mirroring `state.retired`'s
-/// shape (contract, M-24).
+/// shape.
 #[test]
 fn a_project_with_no_collections_at_all_is_collections_empty() {
     let project = Scratch::empty();
-    std::fs::create_dir_all(project.path().join(".typdoc")).expect("a folder");
+    project.file(".typdoc/config.json", r#"{ "version": 1 }"#);
 
     let ran = validate(&[], project.path());
 
@@ -2419,7 +2419,7 @@ fn a_project_with_no_collections_at_all_is_collections_empty() {
 }
 
 /// A project with at least one collection, even with no documents in it yet, is silent:
-/// `collections.empty` is not a rule that fires on everything (contract, M-24).
+/// `collections.empty` is not a rule that fires on everything.
 #[test]
 fn a_project_with_a_collection_and_no_documents_leaves_collections_empty_silent() {
     let project = Scratch::project(&common::NOTES);
@@ -2430,12 +2430,12 @@ fn a_project_with_a_collection_and_no_documents_leaves_collections_empty_silent(
     assert_eq!(ran.stdout_json()["findings"], json!([]));
 }
 
-/// The non-fatal proof that actually matters (contract, M-24): a zero-collection project still
-/// returns a normal exit code from `list` and `get` — only `validate` shows the warning.
+/// The non-fatal proof that actually matters: a zero-collection project still returns a normal
+/// exit code from `list` and `get` — only `validate` shows the warning.
 #[test]
 fn a_zero_collection_project_still_lets_list_and_get_run() {
     let project = Scratch::empty();
-    std::fs::create_dir_all(project.path().join(".typdoc")).expect("a folder");
+    project.file(".typdoc/config.json", r#"{ "version": 1 }"#);
 
     let listed = Spawn::args(["list", "--json"]).cwd(project.path()).run();
     assert_eq!(listed.code, 0, "{}", listed.stderr);

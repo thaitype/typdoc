@@ -30,10 +30,10 @@ pub enum Error {
     #[error("{0}")]
     BadArgument(String),
 
-    #[error("no project found: there is no .typdoc/ in {from} or above it")]
+    #[error("no project found: there is no .typdoc/config.json in {from} or above it")]
     NoProject { from: PathBuf },
 
-    #[error("no project found: {dir} has no .typdoc/")]
+    #[error("no project found: {dir} has no .typdoc/config.json")]
     NoProjectAt { dir: PathBuf },
 
     #[error("no document at {path}{}", not_found_hint(*hint, path))]

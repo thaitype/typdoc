@@ -29,15 +29,14 @@ If it is not `0.3.0`, say so to the user before relying on this skill, and prefe
 
 ## 2 · Find the project
 
-typdoc walks up from the current directory to the nearest folder holding `.typdoc/` (a `.typdoc/`
-folder is what marks a project; `config.json` inside it is optional). From anywhere else, point
-at it with `TYPDOC_DIR`:
+typdoc walks up from the current directory to the nearest folder holding `.typdoc/config.json`.
+From anywhere else, point at it with `TYPDOC_DIR`:
 
 ```console
 $ TYPDOC_DIR=path/to/project typdoc list --ids
 ```
 
-No project found is exit 5: `no project found: there is no .typdoc/ in … or above it`.
+No project found is exit 5: `no project found: there is no .typdoc/config.json in … or above it`.
 
 A path argument that does not start with `/`, `./` or `../` is relative to the **project folder**,
 not to the current directory. To learn what a project holds, read `.typdoc/config.json`,

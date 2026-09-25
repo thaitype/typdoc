@@ -4,20 +4,48 @@ status: active
 migrated_from: docs/archived-design/design.md#model
 ---
 
-A project is a folder containing `.typdoc/` — not any one file inside it, so `.typdoc/` with no
-`config.json` is still a project, read as `{"version": 1}`. It is what `imports` points at;
+A project is a folder containing `.typdoc/config.json`. It is what `imports` points at;
 collections and schemas belong to the project, and a file belongs to the nearest project above
 it. A folder with its own `.typdoc/` deeper in the tree is a separate project: a collection's
 `match` never crosses into it, and a file there always belongs to the nearer project. Namespaces
 of one project never nest.
 
+## The `version` number
+
+Decided: one number covers the format of every file typdoc owns — `config.json`, collection
+files, the schema format, `lock.json`, and state files. A local schema is read in its project's
+own version. A remote schema carries no format marker of its own yet; that is decided together
+with remote schemas, not here. `config.json` is required, not optional, because this number must
+always be present somewhere a project can be asked for it — making the file optional would mean
+promising forever that "no file" means version 1 of everything it could ever cover, with no
+version actually visible anywhere in the project. (This was reverted after landing once, before
+any release shipped it — free to undo at that point; doing so after a version ships it would be a
+breaking change.)
+
+Decided: bump the number when an older typdoc would read a new file wrong without saying so, or
+would write it back and lose data — an existing key changes meaning or type, a key is renamed or
+removed, or a file's structure changes.
+
+Decided: no bump when an older typdoc doesn't know about something new but doesn't break on it
+either. A new field in a state entry survives an older typdoc's own write untouched — verified: a
+write patches only the `last` value in place, leaving every other byte of the entry as it was. A
+new key in `config.json` is refused loudly instead, as `config.unknown-key`, rather than being
+silently ignored or silently accepted.
+
+Decided: an unknown number is `config.version` and stops the command; typdoc never guesses at a
+version it doesn't recognize.
+
+**Open, not yet decided (leaning this way):** whether the number only ever goes up by one, and
+whether a newer typdoc reading an older project's files either reads them as they are or says
+exactly how to convert them.
+
 **Discovery.** `typdoc` finds its project by walking up to the nearest folder containing
-`.typdoc/`, starting from the first of these that applies: a document path given as an argument
-that is absolute or begins with `./` or `../`, read from disk as the file it names; the folder
-`TYPDOC_DIR` names, which skips the walk, for an agent that runs from a repository or worktree
-root above the project; the current directory. Any other path argument is relative to the
-project folder — it cannot say which project it is in, so it takes no part in this choice and is
-read after the project is found. There is no `--dir` flag. Config, collection files and local
+`.typdoc/config.json`, starting from the first of these that applies: a document path given as an
+argument that is absolute or begins with `./` or `../`, read from disk as the file it names; the
+folder `TYPDOC_DIR` names, which skips the walk, for an agent that runs from a repository or
+worktree root above the project; the current directory. Any other path argument is relative to
+the project folder — it cannot say which project it is in, so it takes no part in this choice and
+is read after the project is found. There is no `--dir` flag. Config, collection files and local
 schemas are read on every run with no cache; remote schemas are read from their pinned copies.
 
 **Namespaces.** Without `namespaces`, the project is one namespace named `default`, and `match`

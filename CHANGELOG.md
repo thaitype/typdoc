@@ -15,15 +15,7 @@ are left out unless they change something a user of the `typdoc` binary sees.
   `.typdoc/state/<namespace>.json` is left untouched while excluded, so re-including it later
   continues numbering with no reissued codes. `--namespace`/`TYPDOC_NAMESPACE` do not support
   `!`; passing one with a leading `!` still gets a clear syntax error.
-
-### Changed
-
-- `.typdoc/config.json` is now optional: a `.typdoc/` folder with none is read as a project with
-  `{"version": 1}`. `typdoc validate` warns (`collections.empty`) when the project has no
-  collections at all, regardless of what else `.typdoc/` holds.
-- `no project found` errors (`NoProject`/`NoProjectAt`) now say there is no `.typdoc/` at the
-  path in question, instead of no `.typdoc/config.json`, matching config.json no longer being
-  required.
+- `typdoc validate` warns (`collections.empty`) when the project has no collections at all.
 
 ### Fixed
 

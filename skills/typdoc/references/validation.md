@@ -87,7 +87,7 @@ merging key by key:
 | `refs.acyclic` | A cycle runs through an `acyclic` field; reported on every document in the cycle. `set`/`new` refuse a write that would form one, so a cycle here came from a hand edit or a merge | Remove one ref of the cycle (`typdoc set <doc> field=` or set it to the others) |
 | `keys.unique` | Two files share a key | Decide which document keeps the key, then give the other a different key (in a multi-namespace project, `typdoc mv <doc> --renumber <namespace>` issues a fresh one) and re-run `validate` |
 | `collections.overlap` | A file is matched by two collections; it is checked against neither | Change the `match` templates so each file belongs to one |
-| `collections.empty` | (warn) The project has no collections at all, whatever else `.typdoc/` holds (`config.json` is optional — see [project-layout.md](project-layout.md)) | Add a collection, once there is one to check |
+| `collections.empty` | (warn) The project has no collections at all | Add a collection, once there is one to check |
 | `state.missing` | A collection has coded documents in a namespace but no `last` recorded in `.typdoc/state/<namespace>.json`. `new` and `mv --renumber` refuse to issue a number there | Restore the file from version control, or write `{"<collection>": {"last": N}}` with N the highest number ever used |
 | `state.malformed` | A recorded `last` is not a usable whole number (text, null, negative, fraction, too large) | Set it to the highest number ever issued |
 | `state.behind` | (warn) `last` is lower than the highest existing key. Allocation is still right; the record is not | Raise `last` to the highest existing number, or just run the next `typdoc new`, which records it |
