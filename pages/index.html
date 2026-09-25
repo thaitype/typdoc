@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<!--
+  Root page for https://typdoc.thaitype.dev/ — GitHub Pages serves static files only (no
+  server-side redirect available), so this redirects to the GitHub repo via a meta-refresh, with
+  a JS redirect as a backup for the rare case a user agent doesn't honor meta-refresh, and a
+  plain link as the final fallback if both are somehow blocked.
+
+  This is the site's ONLY page other than the two installer scripts (`install`, `install.ps1`)
+  served from this same `pages/` directory — the domain is never a bare 404.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="refresh" content="0; url=https://github.com/thaitype/typdoc" />
+    <title>typdoc</title>
+    <link rel="canonical" href="https://github.com/thaitype/typdoc" />
+    <script>
+      window.location.replace("https://github.com/thaitype/typdoc");
+    </script>
+  </head>
+  <body>
+    <p>Redirecting to <a href="https://github.com/thaitype/typdoc">github.com/thaitype/typdoc</a>&hellip;</p>
+  </body>
+</html>

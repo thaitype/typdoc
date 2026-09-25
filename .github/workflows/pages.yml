@@ -1,0 +1,60 @@
+name: pages
+
+# Deploys pages/ (the install one-liner scripts + the root redirect page) to GitHub Pages
+# (typdoc.thaitype.dev) via actions/deploy-pages. Pages source is already set to "GitHub
+# Actions" and the custom domain + HTTPS enforcement are already configured as repo settings —
+# this workflow only needs to produce and publish the deployment, not touch those settings.
+#
+# Triggers on push to BOTH `main` and `story-5-prebuilt-installer` (the story branch) — the
+# branch trigger is temporary. The `github-pages` deploy environment has this story branch
+# added to its allowed deploy branches, temporarily, so the full install flow (see
+# .chief/story-5/_goal/goal.md's "Full-flow proof") can be proven end-to-end against the real
+# custom domain before this story's PR is marked ready, not just after merge. Removing the story
+# branch from this trigger and from the environment's allowed branches is an After Merge item
+# (see goal.md), not this ticket's job.
+#
+# Path-filtered to pages/ (and to this workflow file itself), mirroring publish-check.yml's
+# existing path-filter pattern: `paths:` filters a whole workflow run in GitHub Actions, not a
+# single job, so this stays its own workflow rather than a job inside ci.yml.
+#
+# A merge here is a production deploy per the story brief, so it goes through a normal PR with
+# CI like everything else — no separate approval step beyond that.
+on:
+  push:
+    branches:
+      - main
+      - story-5-prebuilt-installer
+    paths:
+      - "pages/**"
+      - ".github/workflows/pages.yml"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment should ever be in flight at a time; never cancel one that's already
+# publishing mid-deploy.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # actions/checkout, actions/upload-pages-artifact and actions/deploy-pages are pinned to
+    # their current major versions (v7/v3/v4) as of when this workflow was written, same
+    # reasoning as dist-build.yml's v7 pins and publish.yml's v8/v4 pins.
+    steps:
+      - uses: actions/checkout@v7
+      - name: Upload pages/ as the Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
