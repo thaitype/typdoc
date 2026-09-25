@@ -93,7 +93,14 @@ SERVER_OUT="${WORK_DIR}/server.out"
 # quarantine attribute that costs several real seconds on its *first* execution only (a one-time
 # Gatekeeper scan, not a slow interpreter) -- absorbed here, synchronously, with no timeout of
 # its own, so it never eats into the background server's own port-wait budget below.
-python3 --version >/dev/null 2>&1 || true
+#
+# Diagnostic only, temporary: this hasn't been enough on its own on macOS in prior runs, with no
+# visible cause (the backgrounded process stays alive, per `kill -0`, but writes nothing to
+# either stream for the full wait window). Timed and reported so the next failure's log actually
+# shows whether the warm-up itself is what's slow, rather than guessing again.
+WARMUP_START="$(date +%s)"
+python3 --version || echo "warm-up python3 --version itself failed" 1>&2
+echo "diag: python3 warm-up took $(( $(date +%s) - WARMUP_START ))s" 1>&2
 python3 "${REPO_ROOT}/scripts/installer_fixture_server.py" \
     "$FIXTURES_DIR" "$LATEST_TAG" --log "$LOG_PATH" --port 0 >"$SERVER_OUT" 2>"${WORK_DIR}/server.err" &
 SERVER_PID=$!
@@ -116,7 +123,16 @@ for _ in $(seq 1 200); do
 done
 [ -n "$PORT" ] || {
     echo "error: fixture server never reported a port within 20s; see ${WORK_DIR}/server.err" 1>&2
+    echo "diag: server.err ---" 1>&2
     cat "${WORK_DIR}/server.err" 1>&2
+    echo "diag: server.out ---" 1>&2
+    cat "$SERVER_OUT" 1>&2
+    echo "diag: ls -la of both files ---" 1>&2
+    ls -la "$SERVER_OUT" "${WORK_DIR}/server.err" 1>&2 || true
+    echo "diag: ps for SERVER_PID=${SERVER_PID} ---" 1>&2
+    ps -p "$SERVER_PID" -o pid,ppid,etime,stat,command 1>&2 || echo "diag: ps found no such pid" 1>&2
+    echo "diag: a fresh, separate python3 invocation right now ---" 1>&2
+    timeout 5 python3 -c "print('probe-ok')" 1>&2 2>&1 || echo "diag: fresh python3 probe itself failed or hung past 5s" 1>&2
     kill "$SERVER_PID" >/dev/null 2>&1 || true
     exit 2
 }
