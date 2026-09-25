@@ -6,11 +6,14 @@ migrated_from: docs/archived-design/design.md#validation-rules
 
 Every rule `typdoc validate` can report falls into one of two groups.
 
-**Always on.** Fourteen rules — `schema.valid`, `frontmatter.parse`, `frontmatter.types`,
+**Always on.** Fifteen rules — `schema.valid`, `frontmatter.parse`, `frontmatter.types`,
 `frontmatter.transitions`, `refs.resolve`, `refs.target`, `refs.acyclic`, `keys.unique`,
-`collections.overlap`, `state.missing`, `state.malformed`, `state.behind`, `state.retired`, and
-`files.unreadable` — cannot be turned off or reconfigured. Queries and writes depend on the
-correctness they guarantee, so there is no `validation` key that changes their level.
+`collections.overlap`, `collections.empty`, `state.missing`, `state.malformed`, `state.behind`,
+`state.retired`, and `files.unreadable` — cannot be turned off or reconfigured. Queries and
+writes depend on the correctness they guarantee, so there is no `validation` key that changes
+their level. `collections.empty` fires once, at `warn`, when the project has no collections at
+all, regardless of what else `.typdoc/` holds — it is a finding of `validate`'s, not a config
+error, so it never stops another command from running.
 
 **Configurable.** Nine rules — `body.links`, `body.anchors`, `body.mentions`,
 `refs.codedByPath`, `refs.moved`, `names.shadowed`, `frontmatter.unknown`, `filename.pattern`,

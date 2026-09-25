@@ -37,7 +37,7 @@ explained_by: [SPC-6]
     },
     {
       "id": "config.state-orphan",
-      "reported_when": "a file in `.typdoc/state/` matches no current namespace (the message names the file and says to delete or rename it)"
+      "reported_when": "a file in `.typdoc/state/` matches neither a current namespace nor one a `!` entry is currently excluding (the message names the file and says to delete or rename it)"
     },
     {
       "id": "config.namespaces-entry",
