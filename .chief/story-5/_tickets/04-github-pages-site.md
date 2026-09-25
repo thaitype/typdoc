@@ -1,5 +1,5 @@
 Type: implementation
-Status: open
+Status: claimed
 Blocked by: 03
 
 # Ticket 04 — GitHub Pages site + deploy workflow
