@@ -12,7 +12,7 @@ use crate::argument::DocumentArg;
 use crate::body::{self, Heading};
 use crate::config::{
     CONFIG_FILE, Collection, Config, LEFTOVER_TEMP_FILE, Level, LockMode, Namespace, RefBase,
-    Report, Rules, config_file,
+    Report, Rules, TYPDOC_DIR, config_file,
 };
 use crate::document::{Document, Value};
 use crate::env::{Deps, Env};
@@ -2626,6 +2626,13 @@ impl Project {
             } else {
                 None
             };
+            // `collections.empty` (M-24): project-wide, independent of scope or of what else
+            // `.typdoc/` holds — `self.collections` is every collection the project's config
+            // has, complete regardless of `--namespace`/`TYPDOC_NAMESPACE` (collections are not
+            // namespace-scoped), so this checks it once here rather than per namespace.
+            if self.collections.is_empty() {
+                findings.push(validate::collections_empty_finding(TYPDOC_DIR));
+            }
             validate::order(&mut findings);
             return Ok(ValidateReport {
                 scope: ValidateScope::All,
@@ -4074,6 +4081,18 @@ impl Project {
         // Decision 12: identity before anything else. A refusal here writes nothing and needs no
         // lock to be right about, so it is checked first; the authoritative check, under the
         // lock, is decision 15's own (below).
+        //
+        // `same_file` (device+inode identity) is true both when `from`/`to` are the literal same
+        // path and when they are a genuine case-only rename — those are different situations for
+        // a user to understand, so string equality is checked first and gets its own message
+        // (story-4, ticket 4); the case-only wording is kept for when `same_file` is true but the
+        // paths differ as strings.
+        if from_path == to_path {
+            return Err(Error::AlreadyExists {
+                path: to_path.clone(),
+                message: format!("`{to_path}` already names this document: nothing to move"),
+            });
+        }
         if deps
             .fs
             .same_file(&from_file, &to_full)
@@ -5783,7 +5802,9 @@ fn ref_name_in(
 /// up yet, a broken config at a real location will not fix itself by installing more machines,
 /// and folding it into `imports.absent` would hide a mistake the design gives no way to catch.
 /// Every namespace's state file, read once: `config.state-orphan` for a file in `.typdoc/state/`
-/// that matches no current namespace, and `config.state-uncoded` for an entry that names a
+/// that matches neither a current namespace nor one `namespaces` currently excludes (an excluded
+/// namespace's own state file is left untouched, never read here, but is not an orphan either),
+/// and `config.state-uncoded` for an entry that names a
 /// collection this project has whose schema has no code (decision 13 narrows it to exactly this:
 /// an entry naming a collection the project does not have at all is `state.retired` instead, a
 /// finding rather than a config error, found later from `self.state` once `validate` runs, so
@@ -5809,7 +5830,7 @@ fn read_state(
     // for this case, a retired entry never stops a command, reads included).
     let known_collections: BTreeSet<&str> =
         loaded.iter().map(|found| found.name.as_str()).collect();
-    for orphan in state::orphans(root, &config.namespaces)? {
+    for orphan in state::orphans(root, &config.namespaces, &config.excluded)? {
         report.add(
             "config.state-orphan",
             &orphan,

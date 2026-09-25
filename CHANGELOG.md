@@ -4,6 +4,34 @@ All notable, user-visible changes to typdoc are documented here. Internal reorga
 example, how the project's own design documents are structured and read in its own test suite)
 are left out unless they change something a user of the `typdoc` binary sees.
 
+## [0.3.0] - 2026-09-24
+
+### Added
+
+- `namespaces` entries can now carry `!`-prefixed exclusions in the same list, gitignore-style
+  (`["story-*", "!story-1", "!story-2"]`): patterns apply in list order, and the last pattern
+  that matches a folder decides whether it's a namespace. An excluded namespace is fully
+  invisible — not validated, not queried, a ref into it resolves as not found — and its
+  `.typdoc/state/<namespace>.json` is left untouched while excluded, so re-including it later
+  continues numbering with no reissued codes. `--namespace`/`TYPDOC_NAMESPACE` do not support
+  `!`; passing one with a leading `!` still gets a clear syntax error.
+- `typdoc validate` warns (`collections.empty`) when the project has no collections at all.
+
+### Fixed
+
+- `mv a.md a.md` (source and destination are the identical path) now gets its own message
+  instead of reusing the case-only-rename wording. Exit code is unchanged (7).
+
+### Internal
+
+- `Cargo.toml` gains the metadata crates.io requires (`license`, `repository`, and each
+  published crate's own `description`), and every published crate's version moves to `0.3.0`.
+  Two new workflows: `publish-check.yml` runs `cargo publish --workspace --dry-run` on every
+  push/PR that touches a manifest, alongside `ci.yml`'s existing jobs; `publish.yml`
+  (`workflow_dispatch` only) gates a real `cargo publish --workspace` behind its own
+  test/clippy run and a version-check step. Triggering the real publish is a separate,
+  manual step after this release merges.
+
 ## [0.2.0] - 2026-09-24
 
 ### Changed

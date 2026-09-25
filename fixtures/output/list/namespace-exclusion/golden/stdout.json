@@ -1,0 +1,26 @@
+{
+  "documents": [
+    {
+      "path": "story-2/notes/a.md",
+      "namespace": "story-2",
+      "code": null,
+      "collection": "notes",
+      "schema": "note",
+      "fields": {
+        "title": "Visible note in story-2"
+      }
+    },
+    {
+      "path": "story-3/notes/a.md",
+      "namespace": "story-3",
+      "code": null,
+      "collection": "notes",
+      "schema": "note",
+      "fields": {
+        "title": "Visible note in story-3"
+      }
+    }
+  ],
+  "total": 2,
+  "truncated": false
+}

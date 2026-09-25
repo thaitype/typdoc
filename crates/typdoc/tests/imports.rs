@@ -653,7 +653,7 @@ fn validate_with_machine_file(project: &Scratch, machine: &str) -> Ran {
 
 #[test]
 fn an_alias_the_machine_file_supplies_is_refused_when_it_is_a_url_scheme() {
-    let project = Scratch::project(&[]);
+    let project = Scratch::project(&NOTES);
 
     let ran = validate_with_machine_file(&project, r#"{ "mailto": "/nowhere" }"#);
 
@@ -680,7 +680,7 @@ fn an_alias_the_machine_file_supplies_is_refused_when_it_is_a_url_scheme() {
 
 #[test]
 fn an_alias_named_by_the_project_and_the_machine_file_is_refused_once_at_the_project() {
-    let project = Scratch::project(&[]);
+    let project = Scratch::project(&NOTES);
     project.file(
         ".typdoc/config.json",
         r#"{ "version": 1, "imports": { "file": "/nowhere" } }"#,

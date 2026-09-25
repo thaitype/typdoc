@@ -195,6 +195,43 @@ fn a_name_that_is_no_namespace_of_the_project_is_bad_arguments_and_names_the_ori
     }
 }
 
+const EXCLUSION: &str = "valid/namespace-exclusion";
+
+/// `story-1` is excluded by `!story-1` in this fixture's `namespaces`, so it never reaches
+/// `config.namespaces`: `select` sees it exactly as it would see a namespace that never existed.
+#[test]
+fn a_flag_naming_an_excluded_namespace_explicitly_is_not_a_namespace_of_this_project() {
+    let excluded = Project::load(&path(EXCLUSION), &no_vars()).expect("the fixture loads");
+
+    let error = excluded
+        .scope(None, Some("story-1"), &env(EXCLUSION, &[]))
+        .unwrap_err();
+
+    assert!(matches!(error, Error::BadArgument(_)), "{error}");
+    let text = error.to_string();
+    assert!(text.contains("story-1"), "{text}");
+    assert!(text.contains("not a namespace of this project"), "{text}");
+}
+
+/// `!` is `namespaces`-only this story: `--namespace`/`TYPDOC_NAMESPACE` reject a leading `!`
+/// outright, through the same `plain_name` check `glob_match` already runs on every item
+/// (`scope.rs:164-190`), rather than reading it as a literal name or silently dropping it.
+#[test]
+fn a_flag_with_a_leading_bang_is_not_a_namespace_name_or_a_glob() {
+    let excluded = Project::load(&path(EXCLUSION), &no_vars()).expect("the fixture loads");
+
+    let error = excluded
+        .scope(None, Some("!story-1"), &env(EXCLUSION, &[]))
+        .unwrap_err();
+
+    assert!(matches!(error, Error::BadArgument(_)), "{error}");
+    let text = error.to_string();
+    assert!(
+        text.contains("not a namespace name or a glob"),
+        "a leading `!` is a clear syntax error, not a silent misread: {text}"
+    );
+}
+
 #[test]
 fn a_list_that_is_malformed_is_bad_arguments() {
     let outside = env(SEVERAL, &[]);

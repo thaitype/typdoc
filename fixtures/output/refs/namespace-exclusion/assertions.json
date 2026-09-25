@@ -1,0 +1,8 @@
+{
+  "/document/path": "story-2/notes/a.md",
+  "/document/namespace": "story-2",
+  "/direction": "out",
+  "/refs/0/path": "story-3/notes/a.md",
+  "/refs/0/namespace": "story-3",
+  "/refs/0/field": "$body"
+}

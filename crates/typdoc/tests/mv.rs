@@ -111,8 +111,12 @@ fn a_destination_that_already_exists_is_refused_at_exit_7_and_nothing_changes() 
     assert_eq!(project.read("b.md"), "---\ntitle: B\n---\n");
 }
 
+/// `same_file` (device+inode identity) is true both for this literal-same-path case and for a
+/// genuine case-only rename (`AA.md` -> `aa.md` on a case-insensitive file system) — but only
+/// this one has no case difference to explain, so it gets its own message rather than reusing
+/// "the file system does not tell the two names apart" (story-4, ticket 4).
 #[test]
-fn the_same_path_given_twice_is_one_file_and_is_refused_at_exit_7() {
+fn the_same_path_given_twice_is_refused_at_exit_7_with_its_own_message() {
     let project = Scratch::project(&NOTES);
     project.file("a.md", "---\ntitle: A\n---\n");
 
@@ -120,6 +124,14 @@ fn the_same_path_given_twice_is_one_file_and_is_refused_at_exit_7() {
 
     assert_eq!(ran.code, 7, "{}", ran.stderr);
     assert_eq!(project.read("a.md"), "---\ntitle: A\n---\n");
+    assert!(
+        ran.stderr_json()["error"]
+            .as_str()
+            .unwrap()
+            .contains("already names this document"),
+        "the identical-path case gets its own wording, not the case-only-rename message: {}",
+        ran.stderr
+    );
 }
 
 #[test]

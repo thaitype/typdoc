@@ -4,7 +4,7 @@
 
 **typdoc** — a CLI that treats a folder of Markdown files as typed, linked documents: it validates frontmatter against JSON schemas, and resolves, queries and checks refs between documents. Every command has `--json` output and meaningful exit codes, because the main users are agents.
 
-Design source of truth: `docs/archived-design/design.md` (original: `typdoc — Generic Markdown CLI Design.md`, 2026-09-19; archived 2026-09-24 per story 3, ticket 13 — a working copy being progressively emptied into `docs/design/spec/`/`docs/design/catalog/` lives at `docs/migrating-design/`).
+Design source of truth: `docs/design/` (`spec/` for prose, `catalog/` for the JSON-body reference documents typdoc itself validates). Content not yet migrated out still lives at `docs/migrating-design/design.md`, progressively emptied as each piece moves; `docs/archived-design/design.md` (original: `typdoc — Generic Markdown CLI Design.md`, 2026-09-19) is the frozen original, archived 2026-09-24 per story 3, ticket 13, and is never edited again.
 
 ## Development Commands
 

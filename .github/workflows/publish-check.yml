@@ -1,0 +1,37 @@
+name: publish-check
+
+# Runs only when a manifest actually changes, so a PR that doesn't touch versions never re-runs
+# a dry-run against an already-published version. Scoped at the workflow level, not as a job
+# inside ci.yml, because `paths:` filters a whole workflow run in GitHub Actions, not a single
+# job within one — putting this in ci.yml would stop test/fmt/clippy running on any PR that
+# doesn't touch a manifest.
+on:
+  push:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/*/Cargo.toml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/*/Cargo.toml"
+
+jobs:
+  publish-dry-run:
+    name: cargo publish --dry-run
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml at the repo root pins the toolchain; rustup, preinstalled on
+      # GitHub-hosted runners, reads it and installs the matching toolchain on first use.
+      - run: rustc --version
+      # A dry run builds and packages every publishable crate the way the real upload would,
+      # in dependency order, and skips any crate marked `publish = false` — no
+      # CARGO_REGISTRY_TOKEN is touched.
+      - run: cargo publish --workspace --dry-run

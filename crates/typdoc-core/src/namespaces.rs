@@ -11,11 +11,17 @@ use crate::error::Error;
 use crate::schema::reserved_url_scheme;
 use crate::template::Segment;
 
-/// What the entries of `namespaces` came to: the namespaces, and the entries a glob reached and
-/// skipped.
+/// What the entries of `namespaces` came to: the namespaces, the entries a glob reached and
+/// skipped, and the names a `!` excluded.
 pub(crate) struct Resolved {
     pub namespaces: Vec<Namespace>,
     pub skipped: Vec<Skipped>,
+    /// Names a plain or glob entry matched and a later `!` then removed, and that no later plain
+    /// entry re-matched — the config's own patterns having actually reached and excluded them,
+    /// not "every folder on disk". A folder a `!` entry names but that matches nothing (deleted,
+    /// misspelled) never enters this set: matching, not text, is what puts a name here, so its
+    /// leftover state file still reads as a genuine orphan rather than a known-but-excluded one.
+    pub excluded: BTreeSet<String>,
 }
 
 /// The namespace `default`, or the folders that the entries name. A folder that an entry
@@ -33,15 +39,31 @@ pub(crate) fn resolve(
                 folder: String::new(),
             }],
             skipped: Vec::new(),
+            excluded: BTreeSet::new(),
         });
     };
     let mut matched: BTreeMap<String, PathBuf> = BTreeMap::new();
+    let mut excluded: BTreeSet<String> = BTreeSet::new();
     let mut skipped: BTreeSet<Skipped> = BTreeSet::new();
     if !entries.is_empty() {
         let listing = folders(root)?;
         for entry in entries {
-            let found = entry_folders(entry, &listing, report);
-            matched.extend(found.folders);
+            let (negate, pattern) = match entry.strip_prefix('!') {
+                Some(rest) => (true, rest),
+                None => (false, entry.as_str()),
+            };
+            let found = entry_folders(entry, pattern, negate, &listing, report);
+            if negate {
+                for (name, _) in &found.folders {
+                    matched.remove(name);
+                    excluded.insert(name.clone());
+                }
+            } else {
+                for (name, _) in &found.folders {
+                    excluded.remove(name);
+                }
+                matched.extend(found.folders);
+            }
             skipped.extend(found.skipped);
         }
     }
@@ -69,6 +91,7 @@ pub(crate) fn resolve(
     Ok(Resolved {
         namespaces,
         skipped: skipped.into_iter().collect(),
+        excluded,
     })
 }
 
@@ -130,26 +153,38 @@ struct Reached {
 /// names no folder, is reported. A folder whose name begins with `.` is reached by an entry of
 /// plain text and by no wildcard, the same answer a collection's `match` gives. A link that an
 /// entry of plain text names is refused; a link to a folder that a glob reaches is skipped.
-fn entry_folders(entry: &str, listing: &[Folder], report: &mut Report) -> Reached {
+///
+/// `display` is the full original config entry (`!story-9`, not `story-9`), used only for the
+/// wording of a report — matching itself runs against `pattern`, the entry with any leading `!`
+/// already stripped by the caller. `negate` forks only the empty-match report at the bottom: a
+/// `!` entry that names no folder is always silent, exact name or glob alike, unlike a plain
+/// entry naming an exact name that matches nothing, which is still reported.
+fn entry_folders(
+    display: &str,
+    pattern: &str,
+    negate: bool,
+    listing: &[Folder],
+    report: &mut Report,
+) -> Reached {
     let refuse = |report: &mut Report, why: &str| {
         report.add(
             "config.namespaces-entry",
             CONFIG_FILE,
-            format!("the entry `{entry}` of `namespaces` {why}"),
+            format!("the entry `{display}` of `namespaces` {why}"),
         );
         Reached::default()
     };
-    if entry.contains('/') || entry.contains("**") {
+    if pattern.contains('/') || pattern.contains("**") {
         return refuse(
             report,
             "is more than one path segment: `/` and `**` are not allowed",
         );
     }
-    let segment = match Segment::parse_glob(entry) {
+    let segment = match Segment::parse_glob(pattern) {
         Ok(segment) => segment,
         Err(e) => return refuse(report, &format!("cannot be read: {e}")),
     };
-    let glob = entry.contains('*');
+    let glob = pattern.contains('*');
     let mut reached = Reached::default();
     for candidate in listing.iter().filter(|c| segment.matches_folder(&c.name)) {
         if candidate.symlink {
@@ -176,8 +211,173 @@ fn entry_folders(entry: &str, listing: &[Folder], report: &mut Report) -> Reache
                 .push((candidate.name.clone(), candidate.path.clone()));
         }
     }
-    if reached.folders.is_empty() && !glob {
+    if reached.folders.is_empty() && !glob && !negate {
         return refuse(report, "names a folder that does not exist");
     }
     reached
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::config::Report;
+
+    /// The checked-in `fixtures/valid/namespace-exclusion/` project root: real `story-1`,
+    /// `story-2` and `story-3` folders on disk, so `resolve` has something real to
+    /// `fs::read_dir`. Reused rather than a folder created for the test at run time: this crate
+    /// changes nothing directly, not even in a test (`clippy.toml`'s own `disallowed-methods`
+    /// list has no exception for one), and a folder made through the injected `Fs` seam cannot
+    /// be reached from a unit test inside this crate's own build in the first place — the seam's
+    /// real implementation, `typdoc_fs::SystemFs`, comes from a dev-dependency that itself
+    /// depends on this crate, so its `Fs` does not unify with this crate's own (the same
+    /// conflict `namespace_lock.rs`'s test section documents for `Fs`/`Clock`-backed tests).
+    /// `resolve` itself only reads (`fs::read_dir`, never through `Fs`), so the fixed, static
+    /// fixture folder is all a test here ever needs, with no seam or fake involved.
+    fn fixture_root() -> PathBuf {
+        typdoc_testkit::fixtures::path("valid/namespace-exclusion")
+    }
+
+    fn names_of(resolved: &Resolved) -> Vec<String> {
+        let mut names: Vec<String> = resolved.namespaces.iter().map(|n| n.name.clone()).collect();
+        names.sort();
+        names
+    }
+
+    fn entries(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn a_later_exclusion_removes_what_an_earlier_wildcard_included() {
+        let root = fixture_root();
+        let mut report = Report::default();
+        let resolved = resolve(
+            &root,
+            Some(&entries(&["story-*", "!story-1", "!story-2"])),
+            &mut report,
+        )
+        .unwrap();
+        assert_eq!(names_of(&resolved), vec!["story-3"]);
+        assert!(
+            report.errors().is_empty(),
+            "excluding matched folders is not itself an error"
+        );
+    }
+
+    #[test]
+    fn a_later_plain_entry_re_includes_what_an_earlier_exclusion_removed() {
+        let root = fixture_root();
+        let mut report = Report::default();
+        let resolved = resolve(
+            &root,
+            Some(&entries(&["story-*", "!story-1", "story-1"])),
+            &mut report,
+        )
+        .unwrap();
+        assert_eq!(
+            names_of(&resolved),
+            vec!["story-1", "story-2", "story-3"],
+            "the last pattern that matches a folder decides, so the later plain `story-1` wins"
+        );
+        assert!(report.errors().is_empty());
+    }
+
+    #[test]
+    fn excluded_holds_the_names_a_bang_actually_matched_and_removed() {
+        let root = fixture_root();
+        let mut report = Report::default();
+        let resolved = resolve(
+            &root,
+            Some(&entries(&["story-*", "!story-1", "!story-2"])),
+            &mut report,
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.excluded,
+            BTreeSet::from(["story-1".to_owned(), "story-2".to_owned()])
+        );
+    }
+
+    #[test]
+    fn a_later_re_inclusion_clears_the_name_from_excluded() {
+        let root = fixture_root();
+        let mut report = Report::default();
+        let resolved = resolve(
+            &root,
+            Some(&entries(&["story-*", "!story-1", "story-1"])),
+            &mut report,
+        )
+        .unwrap();
+        assert!(
+            resolved.excluded.is_empty(),
+            "story-1 is back in `namespaces` itself; it is not also excluded: {:?}",
+            resolved.excluded
+        );
+    }
+
+    #[test]
+    fn an_exclusion_matching_no_folder_by_exact_name_is_silent() {
+        let root = fixture_root();
+        let mut report = Report::default();
+        let resolved = resolve(&root, Some(&entries(&["!story-9"])), &mut report).unwrap();
+        assert!(names_of(&resolved).is_empty());
+        assert!(
+            report.errors().is_empty(),
+            "a `!` entry naming an exact name that matches nothing is always silent"
+        );
+        assert!(
+            resolved.excluded.is_empty(),
+            "matching, not text, puts a name in `excluded`: `!story-9` matched no folder"
+        );
+    }
+
+    #[test]
+    fn an_exclusion_matching_no_folder_by_glob_is_silent() {
+        let root = fixture_root();
+        let mut report = Report::default();
+        let resolved = resolve(&root, Some(&entries(&["!old-*"])), &mut report).unwrap();
+        assert!(names_of(&resolved).is_empty());
+        assert!(
+            report.errors().is_empty(),
+            "a `!` entry naming a glob that matches nothing is silent, same as a plain glob"
+        );
+    }
+
+    #[test]
+    fn a_plain_entry_matching_no_folder_by_exact_name_is_still_reported() {
+        let root = fixture_root();
+        let mut report = Report::default();
+        let resolved = resolve(&root, Some(&entries(&["story-9"])), &mut report).unwrap();
+        assert!(names_of(&resolved).is_empty());
+        assert_eq!(report.errors().len(), 1);
+        assert_eq!(report.errors()[0].id, "config.namespaces-entry");
+        assert!(report.errors()[0].message.contains("story-9"));
+    }
+
+    #[test]
+    fn a_plain_entry_matching_no_folder_by_glob_is_still_silent() {
+        let root = fixture_root();
+        let mut report = Report::default();
+        let resolved = resolve(&root, Some(&entries(&["old-*"])), &mut report).unwrap();
+        assert!(names_of(&resolved).is_empty());
+        assert!(
+            report.errors().is_empty(),
+            "unchanged today's behavior: a glob matching nothing is silent"
+        );
+    }
+
+    #[test]
+    fn the_exclusion_error_message_quotes_the_full_entry_with_its_bang() {
+        let root = fixture_root();
+        let mut report = Report::default();
+        // A malformed exclusion (more than one path segment) must still report, quoting the
+        // original `!a/b` text and not the bare `a/b` pattern, so a user can find the offending
+        // config line.
+        let resolved = resolve(&root, Some(&entries(&["!a/b"])), &mut report).unwrap();
+        assert!(names_of(&resolved).is_empty());
+        assert_eq!(report.errors().len(), 1);
+        assert!(report.errors()[0].message.contains("!a/b"));
+    }
 }

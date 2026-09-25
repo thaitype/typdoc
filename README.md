@@ -48,7 +48,7 @@ $ cargo install --git https://github.com/thaitype/typdoc typdoc
 $ typdoc --version
 ```
 
-To install a specific release instead, add its tag: `--tag v0.2.0`.
+To install a specific release instead, add its tag: `--tag v0.3.0`.
 
 It runs on Linux and macOS. Windows isn't supported; WSL works.
 
@@ -281,7 +281,7 @@ Understand the design:
 
 ## Status
 
-This is 0.2.0. Everything in this README works. Two things from the design aren't built yet:
+This is 0.3.0. Everything in this README works. Two things from the design aren't built yet:
 schemas fetched from a URL (and the `pull` command that updates them), and `refs --reverse`
 following refs from inside a project you import. The [changelog](CHANGELOG.md) lists what changed
 in each release.

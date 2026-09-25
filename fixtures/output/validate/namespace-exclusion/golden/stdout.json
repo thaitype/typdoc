@@ -1,0 +1,19 @@
+{
+  "summary": {
+    "scope": "all",
+    "strict": false,
+    "checked": {
+      "namespaces": [
+        "story-2",
+        "story-3"
+      ],
+      "documents": 2
+    },
+    "findings": {
+      "error": 0,
+      "warn": 0,
+      "info": 0
+    }
+  },
+  "findings": []
+}

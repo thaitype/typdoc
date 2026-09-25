@@ -1,7 +1,10 @@
 [package]
 name = "typdoc-core"
-version = "0.2.0"
+version = "0.3.0"
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Reads a typdoc project and answers questions about it. It changes nothing."
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std"] }

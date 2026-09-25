@@ -1,6 +1,6 @@
 # Exit codes
 
-typdoc 0.2.0. Every command ends with one of these. A new code exists only where the caller has to
+typdoc 0.3.0. Every command ends with one of these. A new code exists only where the caller has to
 act differently, so the code alone says what kind of next step makes sense.
 
 ## Where the output goes
@@ -82,7 +82,7 @@ fresh one.
 ### 5 — not found
 
 The document, key, path or file the command was asked to act on does not exist — including
-`no project found: there is no .typdoc/config.json in … or above it`. When a project-relative
+`no project found: there is no .typdoc/ in … or above it`. When a project-relative
 path names nothing but a file of that name exists relative to the current directory, the message
 says `./name` exists (a suggestion only).
 

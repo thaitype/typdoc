@@ -1724,6 +1724,13 @@ fn a_names_shadowed_finding_carries_no_namespace_collection_or_key() {
         ".typdoc/config.json",
         r#"{ "version": 1, "namespaces": ["shadow_ns"], "imports": { "shadow_ns": "../elsewhere" } }"#,
     );
+    // A collection that matches nothing here, only so the project is not also
+    // `collections.empty` — this test is about `names.shadowed` alone.
+    project.file(
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "notes/*.md", "schema": "note.json" }"#,
+    );
+    project.file("note.json", r#"{ "name": "note", "fields": {} }"#);
     project.file("shadow_ns/a.md", "");
 
     let ran = validate(&[], project.path());
@@ -2384,4 +2391,60 @@ fn the_accounting_invariant_holds_on_every_fixture_project() {
         }
     }
     assert!(checked_any, "no fixture project was found to check");
+}
+
+// --- `collections.empty` (M-24): a project with no collections at all, warn, not fatal ---
+
+/// A project with zero collections is `collections.empty`, at `warn`, project-level: `path` is
+/// `.typdoc` and `namespace`/`collection`/`key`/`field` are all absent, mirroring `state.retired`'s
+/// shape.
+#[test]
+fn a_project_with_no_collections_at_all_is_collections_empty() {
+    let project = Scratch::empty();
+    project.file(".typdoc/config.json", r#"{ "version": 1 }"#);
+
+    let ran = validate(&[], project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let findings = ran.stdout_json()["findings"].as_array().unwrap().clone();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    let finding = &findings[0];
+    assert_eq!(finding["rule"], json!("collections.empty"));
+    assert_eq!(finding["level"], json!("warn"));
+    assert_eq!(finding["path"], json!(".typdoc"));
+    assert!(finding["namespace"].is_null(), "{finding}");
+    assert!(finding["collection"].is_null(), "{finding}");
+    assert!(finding["key"].is_null(), "{finding}");
+    assert!(finding["field"].is_null(), "{finding}");
+}
+
+/// A project with at least one collection, even with no documents in it yet, is silent:
+/// `collections.empty` is not a rule that fires on everything.
+#[test]
+fn a_project_with_a_collection_and_no_documents_leaves_collections_empty_silent() {
+    let project = Scratch::project(&common::NOTES);
+
+    let ran = validate(&[], project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout_json()["findings"], json!([]));
+}
+
+/// The non-fatal proof that actually matters: a zero-collection project still returns a normal
+/// exit code from `list` and `get` — only `validate` shows the warning.
+#[test]
+fn a_zero_collection_project_still_lets_list_and_get_run() {
+    let project = Scratch::empty();
+    project.file(".typdoc/config.json", r#"{ "version": 1 }"#);
+
+    let listed = Spawn::args(["list", "--json"]).cwd(project.path()).run();
+    assert_eq!(listed.code, 0, "{}", listed.stderr);
+    assert_eq!(listed.stdout_json()["total"], json!(0));
+
+    // No document exists to `get`, so this is the ordinary not-found exit (5), never the config
+    // error exit (2) `collections.empty`'s predecessor as a config error would have produced.
+    let got = Spawn::args(["get", "anything.md", "--json"])
+        .cwd(project.path())
+        .run();
+    assert_eq!(got.code, 5, "{}", got.stderr);
 }

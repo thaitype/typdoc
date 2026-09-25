@@ -264,6 +264,34 @@ fn typdoc_dir_naming_a_folder_without_a_config_is_no_project_and_names_the_confi
     assert!(message.contains("elsewhere"), "{message}");
 }
 
+/// A plain file named `.typdoc` (no extension, the same name the folder would have) is not a
+/// project: `config_file()` joins `config.json` onto it and finds nothing there either way, but
+/// this pins the case down explicitly rather than leaving it as an accident of path-joining.
+/// Covers the ancestor-walk branch of `discover()`.
+#[test]
+fn a_plain_file_named_dot_typdoc_is_not_a_project_via_the_ancestor_walk() {
+    let only = Scratch::empty();
+    only.file(".typdoc", "not a directory");
+
+    let ran = get_a(&only);
+
+    no_project_error(&ran);
+}
+
+/// The same plain-file-named-`.typdoc` case, through the `TYPDOC_DIR` branch of `discover()`.
+#[test]
+fn a_plain_file_named_dot_typdoc_is_not_a_project_via_typdoc_dir() {
+    let project = Scratch::empty();
+    project.file("elsewhere/.typdoc", "not a directory");
+
+    let ran = Spawn::args(["get", "a.md", "--json"])
+        .var("TYPDOC_DIR", "elsewhere")
+        .cwd(project.path())
+        .run();
+
+    no_project_error(&ran);
+}
+
 #[test]
 fn a_collection_file_that_cannot_be_parsed_or_is_the_wrong_shape_is_config_collection_parse() {
     for text in [

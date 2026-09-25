@@ -28,9 +28,12 @@ Check that typdoc sees it:
 
 ```console
 $ typdoc validate
+path     level  rule               message
+.typdoc  warn   collections.empty  this project has no collections: nothing is configured to validate
 ```
 
-No output and no error: an empty project is a valid one.
+Exit code 0, so nothing is broken — but a warning, since there's nothing to check yet. That
+warning goes away as soon as the first collection exists, next.
 
 ## 2. Describe a ticket
 

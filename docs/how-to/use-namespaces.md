@@ -27,6 +27,41 @@ state file in `.typdoc/state/`.
 
 A namespace folder's name may use letters, digits, `-` and `_`.
 
+## Adopt namespaces one folder at a time
+
+Prefix an entry with `!` to exclude a folder a wildcard would otherwise match:
+
+```json
+{ "version": 1, "namespaces": ["story-*", "!story-1", "!story-2"] }
+```
+
+Entries apply in list order, gitignore-style: the last entry that matches a folder decides
+whether it's a namespace. A later `!` excludes what an earlier entry included, and a later plain
+entry can re-include what an earlier `!` excluded:
+
+```json
+{ "version": 1, "namespaces": ["story-*", "!story-1", "story-1"] }
+```
+
+— here `story-1` ends up included again, since the plain entry comes last.
+
+An excluded namespace is fully invisible: `validate`, `list`, `get` and `refs` all act as if its
+folder does not exist, a `--namespace`/`TYPDOC_NAMESPACE` naming it explicitly fails the same way
+naming a namespace that never existed does, and so does a write into it (`new`, `mv --renumber`).
+Its `.typdoc/state/<name>.json`, if it already has one from before it was excluded, is left
+untouched — nothing reads or writes it while the namespace stays excluded, so re-including it
+later continues numbering from where it left off. This makes `!` a way to migrate a project to
+namespaces one folder at a time, without moving every matching folder in the same commit.
+
+An entry that starts with `!` and matches no folder — because the name is misspelled, or the
+folder does not exist yet — is always silent, whether it's an exact name or a glob: it produces
+no finding, unlike a plain entry naming an exact name that matches nothing (which still reports
+`config.namespaces-entry`).
+
+`!` is `namespaces`-only: `--namespace` and `TYPDOC_NAMESPACE` do not support a leading `!` — it
+fails as a syntax error (`is not a namespace name or a glob`) rather than being read literally or
+silently ignored.
+
 ## Create a document in a namespace
 
 With more than one namespace, typdoc won't guess where a new document goes:

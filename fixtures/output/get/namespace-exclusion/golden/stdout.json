@@ -1,0 +1,12 @@
+{
+  "document": {
+    "path": "story-2/notes/a.md",
+    "namespace": "story-2",
+    "code": null,
+    "collection": "notes",
+    "schema": "note",
+    "fields": {
+      "title": "Visible note in story-2"
+    }
+  }
+}
