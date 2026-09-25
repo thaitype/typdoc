@@ -4,24 +4,61 @@ status: active
 migrated_from: docs/archived-design/design.md#model
 ---
 
-A project is a folder containing `.typdoc/`. The folder itself is what marks a project — not
-any one file inside it, so `.typdoc/` with no `config.json` is still a project, read as
-`{"version": 1}`. `typdoc` finds its project by walking up to the nearest folder containing
+A project is a folder containing `.typdoc/` — not any one file inside it, so `.typdoc/` with no
+`config.json` is still a project, read as `{"version": 1}`. It is what `imports` points at;
+collections and schemas belong to the project, and a file belongs to the nearest project above
+it. A folder with its own `.typdoc/` deeper in the tree is a separate project: a collection's
+`match` never crosses into it, and a file there always belongs to the nearer project. Namespaces
+of one project never nest.
+
+**Discovery.** `typdoc` finds its project by walking up to the nearest folder containing
 `.typdoc/`, starting from the first of these that applies: a document path given as an argument
 that is absolute or begins with `./` or `../`, read from disk as the file it names; the folder
-`TYPDOC_DIR` names, which skips the walk; the current directory. A folder with its own `.typdoc/`
-deeper in the tree is a separate project: a collection's `match` never crosses into it, and a
-file there always belongs to the nearer project.
+`TYPDOC_DIR` names, which skips the walk, for an agent that runs from a repository or worktree
+root above the project; the current directory. Any other path argument is relative to the
+project folder — it cannot say which project it is in, so it takes no part in this choice and is
+read after the project is found. There is no `--dir` flag. Config, collection files and local
+schemas are read on every run with no cache; remote schemas are read from their pinned copies.
 
-**Namespaces.** Without `namespaces`, the project is one namespace named `default`. With it,
-each entry of the list is either a plain name or a glob (`*` only), or the same prefixed with
-`!` to exclude what it matches. Entries apply in list order, gitignore-style: the last entry
-that matches a folder decides whether it is a namespace, so a later `!` can exclude what an
-earlier entry included, and a later plain entry can re-include what an earlier `!` excluded. A
-`!` entry that matches no folder — a name or a glob alike — is always silent, unlike a plain
-entry: a plain exact name matching nothing is still a config error (`config.namespaces-entry`),
-but a `!` entry is never reported for matching nothing, since excluding zero folders is not a
-mistake the way naming a missing one is.
+**Namespaces.** Without `namespaces`, the project is one namespace named `default`, and `match`
+counts from the folder that holds `.typdoc`. With it, each entry of the list is one of three
+kinds: a plain name, a glob (`*` only), or either prefixed with `!` to exclude what it matches.
+Entries apply in list order, gitignore-style: the last entry that matches a folder decides
+whether it is a namespace, so a later `!` can exclude what an earlier entry included, and a
+later plain entry can re-include what an earlier `!` excluded. Every folder still standing after
+all entries are applied is one namespace, named by its folder, with `match` counting from that
+folder.
+
+- An entry is one path segment. `/` and `**` are config errors, because a namespace name has to
+  show where it ends in a path reference such as `chief::story-3/_tickets/WF-5.md`. Anything
+  deeper is grouped by placing `.typdoc` deeper.
+- A name uses only ASCII letters, digits, `-` and `_`. `*` never matches a folder starting with
+  `.`. A matched folder with any other name is a config error that names the folder; it is never
+  skipped.
+- `default` is reserved: a folder may not use it.
+- A plain entry without a glob must exist. A `!` entry matching no folder — exact name or glob
+  alike — is always silent: excluding zero folders is not a mistake the way naming a missing one
+  is, so it is never a config error, unlike a plain entry.
+- A matched folder that holds its own `.typdoc` is a config error: namespaces do not nest.
+- A glob that reaches a folder that is a symbolic link skips it, and the run reports it under
+  `files.unreadable`, the same as a `match` that reaches a link. An entry that names a symbolic
+  link in plain text is a config error (`config.namespaces-entry`) that says to name the folder
+  it points to. A link is a second name for a folder that is already there, so following it would
+  count one set of documents twice under two paths, which breaks the accounting and the rule that
+  a path names one document; a folder whose name begins with `.` is a folder of its own that no
+  other name reaches, which is why it is entered when it is named and a link is not.
+- Collections, schemas and rule levels are shared by every namespace of a project. A code may be
+  used in every namespace; each namespace numbers its own keys, and a key is unique within its
+  namespace, not across them.
+- A ref or mention with no prefix means the namespace of the document that holds it, whatever the
+  working directory. Prefixes are described under Refs.
+- Files outside every namespace folder belong to no namespace; a relative path can still point at
+  them. A ref or a body link that reaches such a file resolves like any other: the file exists,
+  so the answer is never `not-found`, and the command goes on. The file is named by its path
+  alone: `refs` and a `ref.*` or `refby.*` condition treat it as a document with no namespace,
+  and `--json` leaves the `namespace` field out, the way it leaves out `key` for a document that
+  has none.
+- Any other key in `config.json`, `name` included, is an unknown key and a config error.
 
 **An excluded namespace is fully invisible.** It is not validated, not queried, and a ref into
 it resolves as not found — the same answer as a namespace that was never configured at all.
