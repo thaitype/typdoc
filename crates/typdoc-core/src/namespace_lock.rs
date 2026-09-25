@@ -92,7 +92,7 @@ pub fn order_locks(
     project_lock: Option<PathBuf>,
     mut namespace_locks: Vec<PathBuf>,
 ) -> Vec<PathBuf> {
-    namespace_locks.sort_by(|a, b| path_bytes(a).cmp(&path_bytes(b)));
+    namespace_locks.sort_by_key(|a| path_bytes(a));
     let mut ordered = Vec::with_capacity(namespace_locks.len() + 1);
     ordered.extend(project_lock);
     ordered.extend(namespace_locks);
