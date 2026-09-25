@@ -40,6 +40,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
       - run: python3 scripts/test_installer_fixture_server.py -v
 
   # Reuses ticket 01's build workflow rather than depending on dist-build-check.yml's own run:
@@ -66,6 +69,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
       - name: Download this run's ${{ matrix.target }} archive + checksum
         uses: actions/download-artifact@v8
         with:
