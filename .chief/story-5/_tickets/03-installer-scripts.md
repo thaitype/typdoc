@@ -1,5 +1,5 @@
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: 01
 
 # Ticket 03 — installer scripts (`pages/install`, `pages/install.ps1`)
