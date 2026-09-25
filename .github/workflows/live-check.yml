@@ -1,0 +1,42 @@
+name: live-check
+
+# Reusable workflow: the live-URL check (self-test, then the real check against
+# https://typdoc.thaitype.dev) that both pages.yml's post-deploy job and
+# live-check-scheduled.yml's scheduled job need identically. Factored out here rather than
+# duplicated in both callers -- the same `workflow_call` pattern already used in this repo
+# (dist-build.yml, called from both publish.yml and dist-build-check.yml). See
+# .chief/story-5/_contract/contract.md's "CI: live-URL install check" and
+# .chief/story-5/_tickets/05-live-check-workflow-code.md.
+#
+# Never triggered directly (no `push`/`schedule`/`pull_request` of its own) -- only reachable
+# via `uses: ./.github/workflows/live-check.yml` from another workflow's job.
+
+on:
+  workflow_call: {}
+
+jobs:
+  verify-live:
+    name: verify live install URLs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      # Proves the comparison/redirect-detection logic (and the real HTTP-fetch mechanism it's
+      # built on) before trusting it with the real check below -- same "prove the mechanism
+      # before trusting it" shape as scripts/test.sh's own --self-test and this repo's other
+      # self-tested scripts (windows_test_report.py, extract_release_notes.py,
+      # installer_fixture_server.py).
+      - name: Self-test the live-check logic
+        run: python scripts/test_check_live_install.py -v
+      # Fetches https://typdoc.thaitype.dev/install and /install.ps1 and confirms both serve
+      # and are byte-identical to pages/install and pages/install.ps1 in this repo, and confirms
+      # the root URL (https://typdoc.thaitype.dev/) actually redirects (per pages/index.html).
+      # Retries a handful of times with a short delay by default, to absorb the brief CDN
+      # propagation lag that can follow a fresh Pages deploy, without masking a real failure.
+      - name: Check typdoc.thaitype.dev matches this repo
+        run: |
+          python scripts/check_live_install.py \
+            --base-url https://typdoc.thaitype.dev \
+            --repo-root .

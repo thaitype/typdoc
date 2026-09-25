@@ -1,0 +1,36 @@
+name: live-check-scheduled
+
+# Repeats the same live-URL check pages.yml's post-deploy step runs (scripts/check_live_install.py
+# against pages/install, pages/install.ps1 and the root redirect), but independent of any deploy
+# or release -- on a schedule, to catch drift (cert expiry, DNS, a GitHub Pages outage) that could
+# break the live install flow between deploys, not just at deploy time. See
+# .chief/story-5/_contract/contract.md's "CI: live-URL install check" and
+# .chief/story-5/_tickets/05-live-check-workflow-code.md.
+#
+# Scoped to the page-serving check only -- not the release install one-liner. That's covered
+# separately (and only after a real dispatch) by publish.yml's own post-release
+# verify-live-release job; this workflow's job is catching drift in what typdoc.thaitype.dev
+# itself serves, independent of whether a new release has shipped, which is exactly what the
+# goal's cert-expiry/DNS/Pages-outage framing describes.
+#
+# GitHub only runs a `schedule`-triggered workflow from whatever file exists on the repo's
+# default branch, regardless of which other branches also carry this file -- so, like the
+# publish.yml step above, this is written and reviewable now but only starts actually firing on
+# its own schedule once this file lands on `main`.
+#
+# `workflow_dispatch` is included so it can also be run on demand (e.g. right after a DNS or
+# Pages-settings change) without waiting for the next scheduled tick.
+on:
+  schedule:
+    # 06:17 UTC every Monday. Off a round number on purpose, to avoid piling onto the
+    # top-of-hour queue other scheduled Actions workflows tend to compete for.
+    - cron: "17 6 * * 1"
+  workflow_dispatch: {}
+
+# Calls the same reusable live-check.yml workflow pages.yml's post-deploy job calls, rather than
+# duplicating its steps here -- same `workflow_call` pattern this repo already uses for
+# dist-build.yml (called from both publish.yml and dist-build-check.yml).
+jobs:
+  verify-live:
+    name: live-URL check (scheduled)
+    uses: ./.github/workflows/live-check.yml

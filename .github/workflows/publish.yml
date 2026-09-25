@@ -187,3 +187,52 @@ jobs:
           gh release upload "$tag" dist-artifacts/typdoc-* \
             --repo "${{ github.repository }}" \
             --clobber
+
+  # Runs the real, user-facing install one-liners (not the local-fixture-server test the `gate`
+  # job's PR-time installer-check.yml already covers) against whatever this dispatch just made
+  # the newest non-pre-release -- see .chief/story-5/_contract/contract.md's "CI: live-URL
+  # install check" and .chief/story-5/_tickets/05-live-check-workflow-code.md. No
+  # TYPDOC_INSTALL_BASE_URL or TYPDOC_VERSION override here: this deliberately exercises the
+  # exact command a real user would run, hitting the real GitHub Releases `releases/latest`
+  # redirect, not a fixture.
+  #
+  # Written and reviewable now, but not exercised end to end by this loop: no real (or
+  # pre-)release exists yet for this dispatch to run against. Its first real execution is a
+  # `publish.yml` dispatch that reaches `release` with `dry_run: false` (see goal.md's "After
+  # Merge" section, step 4-5, for the real 0.3.1 release, and the "Full-flow proof" section for
+  # the earlier `v0.3.1-rc.1` pre-release run of the plain install flow -- this job only runs
+  # once a *release* -- not a pre-release -- makes `releases/latest` resolve to it).
+  verify-live-release:
+    name: live install check (${{ matrix.os }})
+    needs: release
+    # Same gating as `release` above: a dry run creates no public release to check the live
+    # install flow against, so this must never run for one.
+    if: ${{ inputs.dry_run == false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Appending to $GITHUB_PATH (rather than exporting PATH in the shell) is what makes the
+      # installed binary visible to the separate "typdoc --version" step below: each `run:`
+      # step is its own shell, but a $GITHUB_PATH edit persists for the rest of the job. Both
+      # installers print this same directory (and, on macOS/Linux, an "add this to your PATH"
+      # line) when it isn't already on PATH; that printed line is not parsed here -- the
+      # install location is the contract's own fixed path
+      # (${INSTALL_DIR:-$HOME/.local/bin} / %LOCALAPPDATA%\typdoc\bin), so this step points
+      # $GITHUB_PATH straight at it instead.
+      - name: Install typdoc via the live one-liner (pages/install)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          curl -fsSL https://typdoc.thaitype.dev/install | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install typdoc via the live one-liner (pages/install.ps1)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          irm https://typdoc.thaitype.dev/install.ps1 | iex
+          "$env:LOCALAPPDATA\typdoc\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: typdoc --version
+        run: typdoc --version

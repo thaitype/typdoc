@@ -58,3 +58,19 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  # This is the actual acceptance check for the live-URL install flow (see
+  # .chief/story-5/_contract/contract.md's "CI: live-URL install check" and
+  # .chief/story-5/_tickets/05-live-check-workflow-code.md): it runs for real, right after every
+  # real deploy above, against the real typdoc.thaitype.dev -- not against a PR's code, and not
+  # a rehearsal. A failure here blocks this pages.yml run, genuinely: something the deploy just
+  # published doesn't match what's in this repo, or the domain itself is broken.
+  #
+  # Calls the reusable live-check.yml workflow rather than duplicating its steps here: the same
+  # check also runs, independently, from live-check-scheduled.yml's own scheduled job -- same
+  # `workflow_call` pattern this repo already uses for dist-build.yml (called from both
+  # publish.yml and dist-build-check.yml).
+  verify-live:
+    name: verify live install URLs
+    needs: deploy
+    uses: ./.github/workflows/live-check.yml
