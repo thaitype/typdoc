@@ -45,6 +45,47 @@ The same folder works for people and for tools, and if you stop using typdoc you
 
 ## Install
 
+Prebuilt binaries, no Rust toolchain required — macOS and Linux (x86_64 or aarch64):
+
+```console
+$ curl -fsSL https://typdoc.thaitype.dev/install | sh
+$ typdoc --version
+```
+
+Windows (x86_64), **experimental**:
+
+```powershell
+> irm https://typdoc.thaitype.dev/install.ps1 | iex
+```
+
+Both scripts detect your OS and architecture, download the matching release archive, and verify
+its SHA-256 checksum before installing anything — a checksum mismatch or an unsupported platform
+fails loudly and installs nothing. They install to `~/.local/bin` (Windows:
+`%LOCALAPPDATA%\typdoc\bin`) by default; set `INSTALL_DIR` to install somewhere else. Neither
+script ever edits `PATH` or a shell profile: if the install directory isn't already on `PATH`,
+the script prints the one line to add it and still exits successfully. Set `TYPDOC_VERSION`
+(e.g. `TYPDOC_VERSION=v0.3.1`) to install a specific release instead of the latest one.
+
+Every release binary carries a SHA-256 checksum (which the installers check automatically) and a
+[GitHub artifact attestation](https://docs.github.com/en/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds),
+independently verifiable with the `gh` CLI:
+
+```console
+$ gh attestation verify typdoc-x86_64-unknown-linux-musl.tar.gz --owner thaitype
+```
+
+macOS does not notarize this binary. If Gatekeeper blocks the first run, clear the quarantine
+flag once:
+
+```console
+$ xattr -d com.apple.quarantine ~/.local/bin/typdoc
+```
+
+A `.zip` downloaded through a browser (rather than the installer above) may trigger a Windows
+SmartScreen warning, since the binary isn't code-signed — choose "More info", then "Run anyway".
+
+Prefer `cargo install` if you already have a Rust toolchain:
+
 ```console
 $ cargo install typdoc
 $ typdoc --version
@@ -56,10 +97,9 @@ To try unreleased changes from `main` instead:
 $ cargo install --git https://github.com/thaitype/typdoc typdoc
 ```
 
-It runs on Linux and macOS. Windows isn't supported yet; WSL works in the meantime. Native
-Windows support is planned as **experimental** — CI already tracks a Windows test-suite pass-rate
-baseline (a non-blocking job, not a compatibility guarantee) as the number future work improves
-against.
+It runs on Linux and macOS; Windows support is new and experimental (WSL remains a solid
+fallback). CI tracks a Windows test-suite pass-rate baseline (a non-blocking job, not a
+compatibility guarantee) as the number future work improves against.
 
 If you work with a coding agent, add the typdoc skill too. It teaches Claude Code and other
 skill-aware agents how to find, create, change and move documents in a typdoc project:

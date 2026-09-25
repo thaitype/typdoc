@@ -10,9 +10,17 @@ cargo-dist-version = "0.32.0"
 # (.github/workflows/dist-build.yml), not `dist generate`'s own output, so this repo's PR and
 # release jobs can use a fixed runner-per-target rather than dist's own runner defaults.
 ci = "github"
-# Generates the base shell/powershell installer scripts; ticket 03 (`pages/install`,
-# `pages/install.ps1`) decides per-script whether this generated one satisfies the installer
-# contract or a hand-written script is needed instead.
+# Resolved by ticket 03: both `pages/install` and `pages/install.ps1` are hand-written, not
+# this generated output — dist's shell/powershell installers bake one fixed version into
+# themselves at generation time (no runtime version selection at all, no config knob to change
+# that), which can't serve as a single, permanently-hosted script that resolves a version every
+# time it runs. This key is left as-is (harmless) rather than removed: dist-build.yml only ever
+# calls `dist build --artifacts=local --target=<X>`, confirmed by actually running that exact
+# invocation to never produce these installer scripts at all (`--artifacts=local` emits only the
+# archive + checksum for the given target) — so dist's own installer, with its PATH-modifying
+# default (`NO_MODIFY_PATH` is a runtime env var the generated script reads, not a build-time
+# key here — see ticket 01's report), is never generated or shipped anywhere by this repo's
+# pipeline. Only the two hand-written, PATH-never-editing scripts below ever reach a user.
 installers = ["shell", "powershell"]
 # Every asset name/extension below must match the contract's naming table exactly.
 targets = ["x86_64-apple-darwin", "aarch64-apple-darwin", "x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl", "x86_64-pc-windows-msvc"]
