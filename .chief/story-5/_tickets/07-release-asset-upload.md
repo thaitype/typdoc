@@ -1,5 +1,5 @@
 Type: implementation
-Status: open
+Status: claimed
 Blocked by: 01
 
 # Ticket 07 — GitHub Release creation + asset upload (found gap, added mid-loop)
