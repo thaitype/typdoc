@@ -15,7 +15,8 @@ From a reader's perspective, when the story ends:
   describing what the code does today, and is deleted from `docs/migrating-design/`.
 - A test file that covers an SPC says so once, at its top (`//! Covers SPC-7.`). Source cites
   an SPC only where the code would otherwise be changed wrongly.
-- Doc comments on items that appear on docs.rs are still there; they may be shorter.
+- Doc comments on items that appear on docs.rs are still there, possibly shorter, unless they only
+  restated the item's name or its `#[error]` message, which docs.rs shows anyway.
 - Every place where a comment and the code disagree is listed, with what the comment claims,
   what the code does, and where, and has a decision. None of them is fixed in this story.
 - The two rules that make this hold for later changes are in `.chief/_rules/_standard/`:

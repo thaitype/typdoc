@@ -8,8 +8,9 @@ decided with the `comment-review` skill: keep, reduce, remove, or investigate.
 
 - **Doc comments on items that appear on docs.rs** — public items reachable from the root of
   `typdoc-core`, `typdoc-fs` or `typdoc`, not `#[doc(hidden)]`, and the crate-level `//!` of
-  those crates: may be shortened, never emptied. Decided: what `cargo doc --no-deps` renders for
-  a published crate is the test when it is unclear. `typdoc-testkit` is `publish = false`, so
+  those crates: may be shortened; may be removed when they only restate the item's name or its
+  `#[error]` message, which docs.rs shows anyway. Decided: what `cargo doc --no-deps` renders
+  for a published crate is the test when it is unclear. `typdoc-testkit` is `publish = false`, so
   none of its items count.
 - **Everything else:** the skill in full, including removing a doc comment entirely.
 

@@ -6,7 +6,8 @@ or investigate.
 
 - `//` comments, and doc comments on items that do not appear on docs.rs: the skill applies in
   full.
-- Doc comments on items that appear on docs.rs: may be shortened, never emptied.
+- Doc comments on items that appear on docs.rs: may be shortened; may be removed when they only
+  restate the item's name or its `#[error]` message, which docs.rs shows anyway.
 - Cite design by SPC key, as in `design-docs.md`. A test file that covers an SPC says so once,
   at its top (`//! Covers SPC-7.`); a test file that covers none says nothing. Source cites an
   SPC only where the code would otherwise be changed wrongly. Do not tag every item.
