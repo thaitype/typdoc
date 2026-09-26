@@ -77,7 +77,7 @@ what the file is for. It is the finding `state.retired`, at `warn`, which names 
 stops nothing, and no command ever removes an entry from a state file. An entry naming a
 collection that does exist but whose schema has no code is a different thing — a configuration
 that cannot be acted on — and stays the config error `config.state-uncoded`. Worktrees that work
-on different namespaces never change the same state file; see Concurrency for two on the same
+on different namespaces never change the same state file; see `SPC-10` for two on the same
 one.
 
 `docs/design/catalog/config-errors.md` and `docs/design/catalog/rules.md` hold the

@@ -47,7 +47,7 @@ reference or relative path). It writes no file outside this project. A body link
 form too: a destination written `<…>` stays that way, one written with `%20` stays
 percent-encoded, and if the new path contains a space, a `<` or unbalanced parentheses and the
 link used neither, it is written `<…>`. It takes the lock of every namespace it writes, in a
-fixed order (see Concurrency). Within its namespace a coded document keeps its key. A coded
+fixed order (`SPC-10`, Lock order). Within its namespace a coded document keeps its key. A coded
 document cannot move to another namespace, because its key belongs to the namespace that issued
 it: the command fails, says so, and
 suggests `--renumber`. A document without a code can move between the namespaces of one project,
