@@ -1668,8 +1668,7 @@ fn a_symbolic_link_a_match_reaches_is_files_unreadable_and_every_other_file_is_s
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
-              name; APFS on macOS refuses to create one at all (EILSEQ), confirmed on a real \
-              macos-latest CI run, 2026-09-24"
+              name; APFS on macOS refuses to create one at all (EILSEQ)"
 )]
 #[test]
 fn a_file_name_that_is_not_valid_utf8_is_files_unreadable_and_the_rest_is_still_checked() {
@@ -1697,8 +1696,7 @@ fn a_file_name_that_is_not_valid_utf8_is_files_unreadable_and_the_rest_is_still_
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
-              name; APFS on macOS refuses to create one at all (EILSEQ), confirmed on a real \
-              macos-latest CI run, 2026-09-24"
+              name; APFS on macOS refuses to create one at all (EILSEQ)"
 )]
 #[test]
 fn a_folder_name_that_is_not_valid_utf8_is_files_unreadable_and_the_rest_is_still_checked() {

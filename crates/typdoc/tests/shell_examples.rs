@@ -299,9 +299,9 @@ fn spawn(
         .output()
         .unwrap_or_else(|e| {
             panic!(
-                "{shell} is one of the shells the design lists and this run could not start it: {e}. \
-                 Install {shell} on this host, or remove its row from the design's shell list \
-                 (Quoting in the shell) if it is not meant to be covered."
+                "{shell} is one of the shells SPC-13 lists and this run could not start it: {e}. \
+                 Install {shell} on this host, or remove it from the shell list in SPC-13 if it \
+                 is not meant to be covered."
             )
         })
 }

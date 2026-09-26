@@ -356,8 +356,7 @@ fn a_collection_file_name_with_anything_but_ascii_letters_digits_dash_and_unders
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
-              name; APFS on macOS refuses to create one at all (EILSEQ), confirmed on a real \
-              macos-latest CI run, 2026-09-24"
+              name; APFS on macOS refuses to create one at all (EILSEQ)"
 )]
 #[test]
 fn a_collection_file_named_only_by_its_extension_or_by_bytes_that_are_not_utf8_is_named_wrongly() {

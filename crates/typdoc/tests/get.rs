@@ -463,8 +463,7 @@ fn a_file_below_the_project_folder_is_not_in_a_collection_that_matches_names_the
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
-              name; APFS on macOS refuses to create one at all (EILSEQ), confirmed on a real \
-              macos-latest CI run, 2026-09-24"
+              name; APFS on macOS refuses to create one at all (EILSEQ)"
 )]
 #[test]
 fn a_name_that_is_not_utf8_and_that_a_collection_matches_is_skipped() {
@@ -482,8 +481,7 @@ fn a_name_that_is_not_utf8_and_that_a_collection_matches_is_skipped() {
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
-              name; APFS on macOS refuses to create one at all (EILSEQ), confirmed on a real \
-              macos-latest CI run, 2026-09-24"
+              name; APFS on macOS refuses to create one at all (EILSEQ)"
 )]
 #[test]
 fn a_name_that_is_not_utf8_and_that_no_collection_matches_is_left_alone() {

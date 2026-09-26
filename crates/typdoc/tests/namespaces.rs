@@ -501,8 +501,7 @@ fn a_link_named_in_plain_text_is_an_error_where_the_same_link_under_a_glob_is_a_
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
-              name; APFS on macOS refuses to create one at all (EILSEQ), confirmed on a real \
-              macos-latest CI run, 2026-09-24"
+              name; APFS on macOS refuses to create one at all (EILSEQ)"
 )]
 #[test]
 fn a_folder_whose_name_is_not_valid_utf8_that_a_glob_reaches_is_skipped_and_reported() {
