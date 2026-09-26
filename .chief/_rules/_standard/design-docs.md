@@ -46,8 +46,8 @@ planning files.
 
 ## A comment that cites design moves that design too
 
-Code comments cite design by SPC key (`SPC-7`), never by path, heading, ticket, decision
-number, or brief. When a comment's reasoning lives only in `docs/migrating-design/` or `.chief/`:
+`comments.md` says how a comment cites design. When a comment's reasoning lives only in
+`docs/migrating-design/` or `.chief/`:
 
 1. It is design (what typdoc does, or why) → move it into an SPC as in item 2 of "Every change
    to behavior updates `docs/design/` in the same PR", describing what the code does today, then
