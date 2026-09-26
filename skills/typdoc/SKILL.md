@@ -17,14 +17,34 @@ has `--json` and meaningful exit codes, because its main users are agents.
 This skill describes how typdoc works and what each way of doing a thing does to the files. It
 does not decide for you.
 
-## 1 · Check the version first
+## 1 · Check that typdoc is installed, and which version
 
 ```console
 $ typdoc --version
 typdoc 0.3.1
 ```
 
-If it is not `0.3.1`, say so to the user before relying on this skill, and prefer what
+**Not found** (`command not found`, exit 127): typdoc is not installed, or its directory is not
+on `PATH`. Try `~/.local/bin/typdoc --version` first, because the install script puts it there and
+never edits `PATH`. If that works, call it by that path, or add the directory for this session:
+`export PATH="$HOME/.local/bin:$PATH"`.
+
+**Not installed:** installing is the user's decision, since it downloads and runs a script from the
+internet. Tell the user, and install only when they agree. This installs the version this skill
+is written for:
+
+```console
+$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.3.1 sh
+```
+
+- macOS and Linux, amd64 and arm64, with no Rust toolchain. The script checks the SHA-256
+  checksum and installs to `~/.local/bin`; `INSTALL_DIR` changes the directory.
+- Put the variables after the pipe, right before `sh`. Written before `curl`, they never reach
+  the script, and you get the latest release in the default directory.
+- With a Rust toolchain instead: `cargo install typdoc --version 0.3.1`.
+- Windows is not supported yet, by the script or by `cargo install`. Use WSL.
+
+**A different version:** say so to the user before relying on this skill, and prefer what
 `typdoc <command> --help` says wherever the two disagree.
 
 ## 2 · Find the project
