@@ -16,6 +16,8 @@ done
   unchanged.
 - Also in this PR, as its own commit: the `[reverse-scope]` entry of `KNOWN_GAPS` no longer points
   at the design; its meaning is unchanged. The proof reports that string and nothing else.
+- One listed mismatch is fixed in this PR: SPC-2 no longer says `mv --renumber` prints only the
+  new key (a docs commit). The other three are deferred by decision.
 - The PR's citation table has one row per hunk the citation audit lists (46), and lists the
   citations the audit's pattern misses.
 - Gates at head: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
