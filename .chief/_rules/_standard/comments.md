@@ -12,5 +12,5 @@ or investigate.
   at its top (`//! Covers SPC-7.`); a test file that covers none says nothing. Source cites an
   SPC only where the code would otherwise be changed wrongly. Do not tag every item.
 - No history: no ticket, decision, or brief numbers, no dates, no story paths.
-- A comment that disagrees with the code is not fixed in either direction during a cleanup; it
-  is listed for a decision.
+- A comment the code clearly contradicts is corrected to the code. When it is unclear which is
+  right, neither changes and it is listed for a decision.

@@ -41,7 +41,8 @@ cases, decided by what the cited text says, not by its form:
    any reasoning in the rest of the comment that still holds on its own.
 
 If the text being moved disagrees with the code, neither side changes: both stay as they are, and
-the mismatch goes on the Investigate list. Only the sections a comment cites move.
+the mismatch goes on the Investigate list. A comment is different: one the code clearly
+contradicts is corrected to the code (see "Every PR also shows"). Only the sections a comment cites move.
 
 **Where a citation goes:** a test file that covers an SPC says so once, at its top
 (`//! Covers SPC-7.` or `//! Covers SPC-7, SPC-9.`); a test file that covers none says nothing.
@@ -113,5 +114,9 @@ In every PR body, as a script anyone can rerun on this repository at the base an
   repointed to the SPC that now holds their target.
 - Every SPC section moved in has `migrated_from:` and describes today's behavior.
 - The public-text rule holds for everything added.
-- An **Investigate** list in the PR body: for each comment or moved text that disagrees with the
-  code, what it claims, what the code does, and `file:line`. Nothing on it is fixed.
+- **Corrected comments** in the PR body: each comment the code clearly contradicted, what it
+  claimed, what the code does, and `file:line`. It is corrected to the code, or removed if
+  nothing non-obvious is left.
+- An **Investigate** list in the PR body: each mismatch where it is unclear which side is right
+  (a comment or moved text against the code, or a test name against its assertion), what it
+  claims, what the code does, and `file:line`. Nothing on it is fixed.

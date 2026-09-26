@@ -17,8 +17,9 @@ From a reader's perspective, when the story ends:
   an SPC only where the code would otherwise be changed wrongly.
 - Doc comments on items that appear on docs.rs are still there, possibly shorter, unless they only
   restated the item's name or its `#[error]` message, which docs.rs shows anyway.
-- Every place where a comment and the code disagree is listed, with what the comment claims,
-  what the code does, and where, and has a decision. None of them is fixed in this story.
+- A comment the code clearly contradicts is corrected to the code. Where it is unclear which
+  side is right, the mismatch is listed, with what the comment claims, what the code does, and
+  where, and has a decision; neither side is changed in this story.
 - The two rules that make this hold for later changes are in `.chief/_rules/_standard/`:
   a new section in `design-docs.md`, and a new `comments.md`.
 
@@ -26,7 +27,8 @@ No behavior changes. A Rust change in this story is a comment change only.
 
 ## Out of Scope
 
-- Fixing any bug or mismatch the review uncovers. It is listed for a decision, not fixed.
+- Fixing any bug the review uncovers, or changing code to match a comment. It is listed for a
+  decision, not fixed.
 - A checker that validates SPC keys cited in source. Citations are checked by reading, at the
   end of each batch.
 - Moving `docs/migrating-design/` sections that no comment cites.
