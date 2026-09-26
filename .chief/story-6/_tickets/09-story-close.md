@@ -17,4 +17,9 @@ Known so far: `crates/typdoc-core/src/json_body.rs`, the test named
 `MissingContentType` (pilot batch). Fixed in the ticket 03 PR: the test is renamed to name what it
 asserts.
 
+From the ticket 03 PR, deferred by decision to later work (the design text stays in
+`docs/migrating-design/`): the `git-common` lock mode, which `mv` does not check; reverse scans
+across imported projects (`refs --reverse`, `refby`, `mv`); query scope across imported projects;
+`body.mentions` with imported projects; the loose lock taken for a file inside a namespace folder.
+
 Done when: that record is reported. The story is accepted outside the loop.

@@ -1,5 +1,5 @@
 Type: implementation
-Status: open
+Status: claimed
 Blocked by: 03, and the batch before it has merged, and the pilot's judgment is accepted
 
 # Ticket 04 — `typdoc-core` write path
