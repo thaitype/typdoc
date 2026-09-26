@@ -1,6 +1,7 @@
-//! `typdoc new`, through the built binary. Every case that writes runs on a `Scratch` project,
-//! never on a fixture in the repository's own tree (`common::Scratch` always makes a fresh
-//! temporary folder outside it).
+//! Covers SPC-2, SPC-5, SPC-8, SPC-13.
+//!
+//! Every case that writes runs on a `Scratch` project, never on a fixture in the repository's
+//! own tree.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -20,9 +21,6 @@ fn ok_json(ran: &Ran) -> serde_json::Value {
     ran.stdout_json()
 }
 
-/// A coded schema with a default, an enum with no default, and no `auto` field: the shape
-/// `new`'s own golden already exercises for defaults and allocation, reused here by hand so each
-/// test can vary the state file and the documents already on disk.
 const WF_SCHEMA: &str = r#"{
   "name": "ticket",
   "code": "WF",
@@ -58,11 +56,8 @@ fn wf_project(state_last: Option<u64>, existing: &[&str]) -> Scratch {
     project
 }
 
-// --- allocation: the larger of the highest existing number and the state file's `last` ---
+// --- Allocation ---
 
-/// The ordinary case, through the binary rather than through the golden: the number allocated is
-/// one past the larger of the highest existing number and `last`, and the state file is updated
-/// to it.
 #[test]
 fn new_allocates_one_past_the_larger_of_the_highest_existing_number_and_last() {
     let project = wf_project(Some(1), &["tickets/WF-1.md"]);
@@ -86,9 +81,6 @@ fn new_allocates_one_past_the_larger_of_the_highest_existing_number_and_last() {
     assert!(state.contains("\"last\": 2"), "{state}");
 }
 
-/// A file created by hand with a higher number than `last` is respected: allocation reads it as
-/// the highest existing number, which wins the `max`, and the numbers in between stay unissued
-/// (design, `typdoc new`).
 #[test]
 fn a_hand_made_file_with_a_higher_number_than_last_is_respected() {
     let project = wf_project(Some(1), &["tickets/WF-1.md", "tickets/WF-5.md"]);
@@ -102,13 +94,6 @@ fn a_hand_made_file_with_a_higher_number_than_last_is_respected() {
     assert_eq!(out["document"]["key"], json!("WF-6"));
 }
 
-/// The number is never reused after a document is deleted: the real counterpart to
-/// `crates/typdoc/tests/state.rs`'s `the_measurement_behind_decision_13_deriving_last_reissues_a_retired_key_silently`,
-/// which simulates `new`'s two effects by hand because `new` did not exist yet when it was
-/// written. This runs `new` itself, twice, with a deletion between the two: the first `new`
-/// allocates `WF-2` and records `last: 2`; `WF-2.md` is then deleted, exactly as a user would;
-/// the second `new` must allocate `WF-3`, not `WF-2` again, because allocation reads `last` from
-/// the state file rather than deriving it from what exists on disk (decision 13).
 #[test]
 fn new_never_reissues_a_number_whose_document_was_deleted() {
     let project = wf_project(Some(1), &["tickets/WF-1.md"]);
@@ -151,10 +136,8 @@ fn new_never_reissues_a_number_whose_document_was_deleted() {
     );
 }
 
-// --- exit 7: a destination that already exists (decision 15), both of its `new` cases ---
+// --- Exit 7: a destination that already exists ---
 
-/// `new <path>` where the path already exists: exit 7, and the file that was there is untouched,
-/// down to the byte.
 #[test]
 fn a_path_given_on_the_command_line_that_exists_is_refused_at_exit_7_untouched() {
     let project = Scratch::project(&NOTES);
@@ -184,23 +167,10 @@ fn a_path_given_on_the_command_line_that_exists_is_refused_at_exit_7_untouched()
     );
 }
 
-/// `new <CODE> "<title>"` where the name the `match` template produces already exists: decision
-/// 15's own "should not be reachable" case. `Project::new_coded` reads "the highest existing
-/// number" from the same index every command loads at the start of its own run, so a file simply
-/// dropped at the path a run's own allocation is about to compute is not actually unreachable —
-/// that same run's own `Project::load` already saw it and allocated past it, which is the
-/// evidence this file's own doc comment gives for why that read does not have to be redone under
-/// the lock. To reach the case for real inside one run, the file has to be invisible to the
-/// index while still sitting on disk: a second collection whose `match` overlaps `tickets/WF-2.md`
-/// exactly makes `Index::build` treat the path as `collections.overlap` and drop it out of
-/// `entries` (the map `highest_existing` reads), while `deps.fs.exists` — asked about the literal
-/// path, not the index — still finds it there.
-///
-/// Exit 7, the file that was already there is untouched, and — the part a mere "the document is
-/// unharmed" check would miss — the state file's own bytes are unchanged too: the number that
-/// would have been burned on this collision is not, because `Project::new_coded` checks the
-/// destination before raising `last` (see its own doc comment for why this is not merely relying
-/// on `O_EXCL`).
+/// Allocation goes past every file the index holds, so a file can be in the way only when the
+/// index does not see it: a second collection overlapping `tickets/WF-2.md` drops that path from
+/// the index (`collections.overlap`) while the file stays on disk. The destination is checked
+/// before `last` is raised, so the refusal leaves the state file's bytes as they were.
 #[test]
 fn a_name_a_template_produces_that_exists_is_refused_at_exit_7_with_last_unchanged() {
     let files = [
@@ -209,9 +179,7 @@ fn a_name_a_template_produces_that_exists_is_refused_at_exit_7_with_last_unchang
             r#"{ "match": "tickets/{key}.md", "schema": "wf.json" }"#,
         ),
         ("wf.json", WF_SCHEMA),
-        // Overlaps `tickets/WF-2.md` exactly, the path `new`'s own allocation (`max(1, 1) + 1`)
-        // is about to compute, so that path is invisible to `highest_existing` (`Index::build`
-        // removes an overlapping path from `entries`) even though a file sits there.
+        // `tickets/WF-2.md` is the next number: `max(1, 1) + 1`.
         (
             ".typdoc/collections/collides.json",
             r#"{ "match": "tickets/WF-2.md", "schema": "note.json" }"#,
@@ -254,11 +222,8 @@ fn a_name_a_template_produces_that_exists_is_refused_at_exit_7_with_last_unchang
     );
 }
 
-// --- state.missing / state.malformed refuse `new` before anything is written ---
+// --- `state.missing` and `state.malformed` ---
 
-/// A coded collection with documents already in the namespace and no state file at all is
-/// `state.missing`: `new` refuses at exit 2, and nothing is written — no document, and (there was
-/// none to begin with) no state file either.
 #[test]
 fn state_missing_refuses_new_with_nothing_written() {
     let project = wf_project(None, &["tickets/WF-1.md"]);
@@ -292,8 +257,6 @@ fn state_missing_refuses_new_with_nothing_written() {
     assert_eq!(entries, vec![std::ffi::OsString::from("WF-1.md")]);
 }
 
-/// A `last` that is present but not a whole number is `state.malformed`: `new` refuses at exit 2
-/// with the state file's own bytes untouched.
 #[test]
 fn state_malformed_refuses_new_with_the_state_file_untouched() {
     let files = [
@@ -334,11 +297,8 @@ fn state_malformed_refuses_new_with_the_state_file_untouched() {
     );
 }
 
-// --- validation refuses a bad candidate before anything is written, and burns no number ---
+// --- Validation, before anything is written ---
 
-/// A required field the `--set` list never gives is `frontmatter.types`, refused at exit 2 with
-/// nothing written: no document, and the state file's own bytes are unchanged (the number this
-/// would have allocated is not burned on a validation failure).
 #[test]
 fn a_missing_required_field_refuses_new_and_burns_no_number() {
     let project = wf_project(Some(1), &["tickets/WF-1.md"]);
@@ -361,8 +321,6 @@ fn a_missing_required_field_refuses_new_and_burns_no_number() {
     assert_eq!(before_state, after_state);
 }
 
-/// Writing an `auto` field directly through `--set` is refused, the same as `set` refuses it
-/// (`new`'s own `--set` shares the grammar): exit 2, nothing written.
 #[test]
 fn writing_an_auto_field_directly_through_set_is_refused() {
     let files = [
@@ -402,9 +360,8 @@ fn writing_an_auto_field_directly_through_set_is_refused() {
     assert!(!project.path().join("tickets/WF-1.md").exists());
 }
 
-/// `auto: create` is stamped by `new`: presence and shape are checked (the running binary's own
-/// clock is the real one, so the exact instant cannot be pinned in a test the way the golden's
-/// clockless fixture sidesteps it).
+/// The binary runs on the real clock, so only the shape of the stamp can be checked, not its
+/// instant.
 #[test]
 fn auto_create_is_stamped_with_a_value_that_looks_like_a_datetime() {
     let files = [
@@ -439,8 +396,6 @@ fn auto_create_is_stamped_with_a_value_that_looks_like_a_datetime() {
         "the stamped value should carry an offset: {stamped}"
     );
 }
-
-// --- a scope holding more than one namespace exits 1 with the choices ---
 
 #[test]
 fn a_scope_holding_more_than_one_namespace_exits_1_with_the_choices() {
@@ -488,9 +443,8 @@ fn a_scope_holding_more_than_one_namespace_exits_1_with_the_choices() {
     assert_eq!(out["document"]["path"], json!("story-1/tickets/WF-1.md"));
 }
 
-// --- the path-identified form ---
+// --- The path form ---
 
-/// The path form fills defaults and validates the same way, and writes exactly the path given.
 #[test]
 fn the_path_form_creates_at_the_given_path_with_defaults_filled() {
     let project = Scratch::project(&NOTES);
@@ -513,7 +467,6 @@ fn the_path_form_creates_at_the_given_path_with_defaults_filled() {
     assert!(project.path().join("a-new-note.md").is_file());
 }
 
-/// A path that matches no collection at all is bad arguments, exit 1, nothing written.
 #[test]
 fn a_path_matching_no_collection_is_bad_arguments() {
     let project = Scratch::project(&NOTES);
@@ -526,8 +479,6 @@ fn a_path_matching_no_collection_is_bad_arguments() {
     assert_eq!(ran.code, 1, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
 }
 
-/// A path that matches a *coded* collection's `match` is refused with a message naming the coded
-/// form instead, rather than silently trying to write a key-shaped path by hand.
 #[test]
 fn a_path_matching_a_coded_collection_names_the_coded_form_instead() {
     let project = wf_project(Some(0), &[]);
@@ -545,12 +496,9 @@ fn a_path_matching_a_coded_collection_names_the_coded_form_instead() {
     );
 }
 
-// --- text-mode output (ticket 16): the shared labeled block, and the error-path fix ---
+// --- Text output ---
 
-/// The hand-written golden for `new <path>`'s text-mode shape (contract, text-output shapes: the
-/// same labeled block `get` prints, for the newly created document). No `key` line, since a
-/// path-identified document has none; fields print in the order `--set` gave them, the order the
-/// write path wrote them in.
+/// Fields print in the order `--set` gave them, which is the order they were written in.
 #[test]
 fn new_path_without_json_prints_the_labeled_block() {
     let project = Scratch::project(&NOTES);
@@ -580,13 +528,8 @@ fn new_path_without_json_prints_the_labeled_block() {
     );
 }
 
-/// The hand-written golden for `new <CODE>`'s text-mode shape — **the deliberate, accepted
-/// replacement (M-10(f)) of today's bare-key output**: the same labeled block, `key` included.
-/// `WF_SCHEMA`'s only field with a default (`status`) is written first (`new_block` fills
-/// defaults before `--set`), then `title` and `kind` in the order `new`'s own `--set` list (title
-/// first, always; `kind` from `--set kind=task`) adds them — the same field order the existing
-/// `--json` golden (`fixtures/output/new/coded/golden/stdout.json`) already pins for this exact
-/// case.
+/// `status` prints first because defaults are filled before `--set`, and `title` comes before
+/// every `--set` field; `fixtures/output/new/coded/golden/stdout.json` pins the same order.
 #[test]
 fn new_coded_without_json_prints_the_labeled_block_not_the_bare_key() {
     let project = wf_project(Some(1), &["tickets/WF-1.md"]);
@@ -611,12 +554,9 @@ fn new_coded_without_json_prints_the_labeled_block_not_the_bare_key() {
     );
 }
 
-// ---------------------------------------------------------------------------------------------
-// Ticket 31 (M-19): `--set`'s escaping grammar applies through `new` too, since `apply_ops` is
-// shared between `set` and `new`.
-// ---------------------------------------------------------------------------------------------
+// --- `--set` escaping: `new` and `set` share one parser (`apply_ops`), so `set.rs` holds the
+// full set of cases ---
 
-/// `\*` in a `new --set` value is a literal `*`, exactly as it is for `set`.
 #[test]
 fn news_own_set_unescapes_a_backslash_star_to_a_literal_star() {
     let project = Scratch::project(&NOTES);
@@ -630,7 +570,6 @@ fn news_own_set_unescapes_a_backslash_star_to_a_literal_star() {
     assert_eq!(out["document"]["fields"]["title"], json!("a*b"));
 }
 
-/// A bare unescaped `*` through `new --set` is refused too, and creates nothing.
 #[test]
 fn news_own_set_refuses_a_bare_unescaped_star_and_creates_nothing() {
     let project = Scratch::project(&NOTES);
@@ -647,11 +586,6 @@ fn news_own_set_refuses_a_bare_unescaped_star_and_creates_nothing() {
     );
 }
 
-/// The bug this ticket fixes, kept as the regression it was found as (testing-decisions, "Text
-/// output"): before this ticket, `typdoc new` with a target that is neither a code nor a path
-/// printed the raw `--json` error object on stderr even without `--json`, because
-/// `parse_new_target`'s error (`cli.rs`, around line 200) called `failure` with a hard-coded
-/// `true`. Now it prints plain text.
 #[test]
 fn a_bad_target_without_json_prints_a_plain_text_error_not_the_json_object() {
     let project = Scratch::project(&NOTES);
@@ -667,8 +601,6 @@ fn a_bad_target_without_json_prints_a_plain_text_error_not_the_json_object() {
     );
 }
 
-/// The other pre-flag-check parse error in `new` (`cli.rs`, around line 220: a malformed `--set`
-/// argument) also prints plain text without `--json`, not the `--json` error object.
 #[test]
 fn a_malformed_set_argument_without_json_prints_a_plain_text_error() {
     let project = wf_project(Some(0), &[]);
@@ -687,8 +619,6 @@ fn a_malformed_set_argument_without_json_prints_a_plain_text_error() {
     );
 }
 
-/// `new`'s own "duplicate-target refusal" (ticket 16's own example), without `--json`: exit 7,
-/// plain text on stderr, and the file that was already there untouched.
 #[test]
 fn a_duplicate_target_without_json_prints_a_plain_text_error() {
     let project = Scratch::project(&NOTES);
@@ -712,15 +642,6 @@ fn a_duplicate_target_without_json_prints_a_plain_text_error() {
     assert_eq!(before, after);
 }
 
-// --- round trip: the key can be read out of `--json` and fed back to `get` ---
-//
-// Before ticket 16, `new <CODE>` without `--json` printed the bare key and nothing else, and
-// this round trip captured that bare key straight off stdout. The contract's text-output table
-// (M-10(f)) deliberately replaces that with the same labeled block `get` prints — "a caller that
-// wants just the key uses `--json`" — so the round trip below reads `--json`'s own `key` field
-// instead. `new_coded_without_json_prints_the_labeled_block_not_the_bare_key`, above, is what
-// pins the replacement itself.
-
 #[test]
 fn the_key_from_json_can_be_captured_and_fed_back_to_get() {
     let project = wf_project(Some(0), &[]);
@@ -739,7 +660,7 @@ fn the_key_from_json_can_be_captured_and_fed_back_to_get() {
     assert_eq!(out["document"]["fields"]["title"], json!("Round trip"));
 }
 
-// --- ticket 30 (M-18): `new` refuses a write-time cycle on an `acyclic` field ---
+// --- `refs.acyclic` at write time ---
 
 const WF_ACYCLIC_SCHEMA: &str = r#"{
   "name": "ticket",
@@ -750,12 +671,8 @@ const WF_ACYCLIC_SCHEMA: &str = r#"{
   }
 }"#;
 
-/// Creating a new document whose own `acyclic` field value would close a cycle with an existing
-/// document: `WF-1` already has `blocked_by: [WF-2]` — dangling today, since `WF-2` does not
-/// exist yet — and `new WF` is about to allocate exactly `WF-2` (state's `last` is `1`). Giving
-/// the new document `blocked_by: [WF-1]` closes `WF-1 -> WF-2 -> WF-1` the moment it is created,
-/// and must be refused the same way `set` is: exit 2, `refs.acyclic` in `details`, nothing
-/// written (no document, `last` not burned) — not merely caught by a later `validate` run.
+/// `WF-1` holds a dangling `blocked_by: [WF-2]`, and `WF-2` is the number `new` allocates next,
+/// so the new document closes `WF-1 -> WF-2 -> WF-1` as it is created.
 #[test]
 fn new_refuses_a_write_that_would_close_a_cycle_with_an_existing_document() {
     let files = [
@@ -800,9 +717,6 @@ fn new_refuses_a_write_that_would_close_a_cycle_with_an_existing_document() {
     );
 }
 
-/// The mirror "no false refusal" case for `new`: creating a document with no `acyclic` value at
-/// all succeeds normally even though an unrelated, pre-existing cycle already sits elsewhere in
-/// the project, through the same field, on documents this write does not touch.
 #[test]
 fn new_is_not_refused_by_an_unrelated_pre_existing_cycle_elsewhere() {
     let files = [
