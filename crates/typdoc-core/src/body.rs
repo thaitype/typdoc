@@ -16,10 +16,9 @@ pub struct Heading {
     pub end: usize,
 }
 
-/// The headings of a whole file, in the order of `line`. The frontmatter is cut first and the
-/// body parsed alone, with the offset of the body added back so that lines count from the top
-/// of the file. Headings in fenced code are not headings to the parser; those in block quotes
-/// and list items are.
+/// The headings of a whole file, in the order of `line`, which counts from the top of the file,
+/// frontmatter included. Headings in fenced code are not headings; those in block quotes and
+/// list items are.
 pub fn headings(file: &str) -> Result<Vec<Heading>, String> {
     let body_at = frontmatter::split(file)?.body;
     let map = LineMap::new(file);

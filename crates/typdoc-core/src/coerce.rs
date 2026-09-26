@@ -27,11 +27,10 @@ pub fn coerce(kind: &FieldType, written: &Value) -> Option<Value> {
     }
 }
 
-/// Whether `value`, already read by `coerce` or kept as written, is what `kind` asks for.
-/// `coerce` returns the written value unchanged when nothing fits, so a field that is not one
-/// of the typed variants below is a value that did not coerce: `fits` and `coerce` agree by
-/// construction, without redoing the parse. `Other`, a type name the format does not have, is
-/// read tolerantly and always fits.
+/// Whether `value`, read by `coerce` or kept as written, is what `kind` asks for. A value that
+/// did not coerce stays as written, so it is not one of the typed variants: `fits` agrees with
+/// `coerce` without redoing the parse. `Other`, a type name the format does not have, always
+/// fits.
 pub fn fits(kind: &FieldType, value: &Value) -> bool {
     matches!(
         (kind, value),
