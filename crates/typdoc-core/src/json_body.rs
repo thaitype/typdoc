@@ -1,6 +1,4 @@
-//! Reading a catalog document's JSON body. How the body is read is decided by the document's
-//! own `content_type` field and never by its path or its schema's name (SPC-11), and every
-//! other outcome is its own [`JsonBodyError`], never a fallback to reading the body as prose.
+//! Reading a catalog document's JSON body (SPC-11).
 
 use std::collections::BTreeMap;
 
@@ -14,8 +12,7 @@ const CONTENT_TYPE: &str = "content_type";
 
 const JSON: &str = "json";
 
-/// Why [`read_json_body`] could not read a document's body into the type it was asked for. Each
-/// case is its own variant, so a caller tells them apart without parsing a message.
+/// Why [`read_json_body`] could not read a document's body into the type it was asked for.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum JsonBodyError {
     /// The frontmatter block could not be read at all (for example, never closed). Reported as
@@ -23,7 +20,6 @@ pub enum JsonBodyError {
     #[error("the frontmatter block could not be read: {0}")]
     Frontmatter(String),
 
-    /// No `content_type` field is present in the frontmatter block at all.
     #[error("the document has no `content_type` field")]
     MissingContentType,
 
@@ -45,8 +41,6 @@ pub enum JsonBodyError {
     InvalidJson(String),
 }
 
-/// Describes a non-`json` `content_type` value in a form that reads after "is": `` `yaml` ``,
-/// `an empty field`, `a list`.
 fn describe(value: &Value) -> String {
     match value {
         Value::Text(text) => format!("`{text}`"),
@@ -60,16 +54,12 @@ fn describe(value: &Value) -> String {
 }
 
 /// Reads `file` (a whole document, frontmatter block and body, exactly as it sits on disk) into
-/// `T`, deciding from the document's own `content_type` field alone. No path is ever given, so
-/// nothing about the result can depend on where the file lives.
+/// `T`, deciding from the document's own `content_type` field alone.
 pub fn read_json_body<T: DeserializeOwned>(file: &str) -> Result<T, JsonBodyError> {
     let split = frontmatter::split(file).map_err(JsonBodyError::Frontmatter)?;
     let fields = match split.block {
         Some(block) => {
-            // `frontmatter::fields` reads only `schema.field(name)`, which an empty field map
-            // answers with `None`, so every field comes back as written rather than coerced.
-            // Empty rather than a real schema on purpose: nothing here stands in for
-            // `.typdoc/schemas/catalog.json`.
+            // An empty schema leaves every field as written, uncoerced.
             let schema = Resolved::new(String::new(), None, BTreeMap::new());
             frontmatter::fields(block, &schema).map_err(JsonBodyError::Frontmatter)?
         }
@@ -133,9 +123,6 @@ mod tests {
 
     #[test]
     fn a_content_type_field_with_no_value_is_unrecognized_not_missing() {
-        // `content_type:` with nothing after it is present (a field with a name), just not
-        // `json` -- told apart from an absent field the same way the rest of typdoc-core tells
-        // `Value::Empty` apart from a field that was never written at all.
         let file = "---\ntitle: Bare content type\ncontent_type:\n---\n\n{}\n";
 
         let error = read_json_body::<serde_json::Value>(file).unwrap_err();
@@ -198,8 +185,6 @@ mod tests {
 
     #[test]
     fn dispatch_never_looks_at_a_path_because_none_is_ever_given() {
-        // The function's only input is the file's text, so the proof is structural: content
-        // that implies unrelated paths changes nothing.
         let a = "---\ntitle: docs/design/catalog/rules.md\ncontent_type: json\n---\n\n[1]\n";
         let b = "---\ntitle: totally/unrelated/path.md\ncontent_type: json\n---\n\n[1]\n";
 
