@@ -18,8 +18,9 @@ done
   change-narration from SPC-5 and repoints three references to `design.md` sections (SPC-2,
   SPC-7, SPC-8) to the SPCs that hold them.
 - The PR's citation table has one row per hunk the citation audit lists (58).
-- Two string literals still mention a decision number or the design and are left as they are:
-  `src/namespace_lock.rs` and `tests/namespace_lock.rs`.
+- Also in this PR, as its own commit: a test assertion message in `src/namespace_lock.rs` no
+  longer names a decision number; its reason is unchanged. The proof reports that difference and
+  nothing else. A message in `tests/namespace_lock.rs` that mentions the design is left as it is.
 - Gates at head: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
   `scripts/test.sh` (1057 passed, 0 failed, 1 ignored), `typdoc validate` at every commit, the
   comment-only proof (19 files, 0 differ). No `trybuild` expectation changed.
