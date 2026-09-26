@@ -6,23 +6,27 @@ migrated_from: docs/archived-design/design.md#concurrency
 
 ## Atomic writes
 
-Each file typdoc writes, `lock.json` and the files in `vendor/` included, is written to a temp
-file in the same directory and then renamed over the original, so a reader sees the old file or
+Each file typdoc writes is written to a temp file in the same directory and then renamed over
+the original, so a reader sees the old file or
 the new one whole. What v1 promises is that a document is never left damaged. It does not promise
 that no temp file is left behind: `SIGKILL` and a power cut cannot be intercepted, so a promise of
 no leftover would be false in ordinary circumstances, and a promise that ordinary events make
 false is worse than none. Atomicity is not durability: without an `fsync` before the rename a
 power cut can leave the new file in place and empty, and whether typdoc syncs before renaming is
-not decided.
+not decided. `lock.json` and the files in `vendor/` are written the same way once `pull` writes
+them; nothing writes them today.
 
 ## Temp files
 
-A temp file's name follows a reserved shape, `.typdoc-tmp-<pid>-<random>`, and a file whose name
-has that shape is never a document, whatever any `match` says. The walker skips such a name by
+A temp file's name is `.typdoc-tmp-<pid>-<random><count>`: the process id, 16 hexadecimal digits
+drawn at random, and a count of the temp files the process has made, in hexadecimal, with no
+separator between the last two. A file whose name starts with `.typdoc-tmp-` is never a document,
+whatever any `match` says. The walker skips such a name by
 rule, before `match` is consulted, because a name cannot be made safe by falling outside a glob:
 `*` matches a leading dot in a file name, and a project may write `match` as `*`, which matches
-everything. The pid and the random part are there so that two writers working at the same instant
-cannot choose one name. A leftover that a run meets is skipped and reported as a finding at
+everything. The process id keeps two processes apart, the count keeps
+two writes of one process apart, and the random part keeps a write apart from a leftover whose
+process id has been given out again. A leftover that a run meets is skipped and reported as a finding at
 `warn`, and it is counted in an audit among the entries that were not read, beside the symbolic
 links and the names that are not valid UTF-8.
 
