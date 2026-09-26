@@ -20,9 +20,11 @@ done
   for a document with no frontmatter block is renamed to say so. It is the one Rust change in the
   story that is not a comment; the comment-only proof reports that file alone, and only that
   function name differs.
-- Seen and not changed, since they are code or string literals, not comments: three
-  `AlreadyExists` messages a user sees end in a decision number; an `#[allow]` reason string says
-  `body.mentions` is not built by `mv`, which is out of date; `mv_lock` builds `local` lock paths
-  without checking the lock mode, while `set` and `new` refuse `git-common`.
+- Also in this PR, as its own commit: three `AlreadyExists` messages a user sees no longer end in
+  a decision number, and an `#[allow]` reason string that described `body.mentions` as not built
+  is brought up to date. The proof reports these and the test rename, and nothing else.
+- Seen and not changed: `mv_lock` builds `local` lock paths without checking the lock mode, while
+  `set` and `new` refuse `git-common`; the design text for reverse `refs` includes imported
+  projects, and `Project::refs` scans only this project. Both are left for later work.
 - Gates at head: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
   `scripts/test.sh` (1057 passed, 0 failed, 1 ignored), `typdoc validate`, all green.
