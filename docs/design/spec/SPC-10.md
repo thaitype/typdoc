@@ -66,6 +66,37 @@ changing them needs privilege typdoc does not have, and access control lists and
 attributes are not carried either. A file that did not exist has no mode to carry and gets the
 default.
 
+## Taking a lock
+
+A lock is a file created with `O_EXCL`, holding the process id, the hostname and the time it was
+taken. A process that finds the file already there retries with backoff until a timeout, five
+seconds unless `--lock-timeout` says otherwise, and then exits 4. typdoc never deletes or takes
+over a lock that another process created, whatever its age and whether or not that process is
+still running: there is no age threshold.
+
+## When a lock is not acquired
+
+The exit-4 message gives the lock's path, the process id, host and age recorded in it, and what
+typdoc can tell about the owner. An owner still running on this machine: wait, or run again with
+a longer timeout; no way to remove the lock is suggested. An owner no longer running on this
+machine: the lock is stale, and the path to delete is shown. An owner on another host cannot be
+checked, so the message says to delete the lock only once that process is known to have stopped.
+Checking the process id only chooses the wording; it never decides whether a lock is valid. A
+hostname is taken to mean one set of processes, so a container that shares the folder and reuses
+the host's hostname makes the status unreliable.
+
+## The window when a lock is taken
+
+The handler for interrupt signals is registered before the first lock file is created, not when
+the first lock is wanted, so a run never holds a lock it has not arranged to release. What remains
+is the instant inside the creating call itself: the file system makes the lock file, and the
+process records that it holds it when the call returns. An interrupt in between leaves a lock file
+that no list in the process names, and typdoc does not remove it, because in that instant it has
+no evidence the file is its own, and removing a lock on no evidence is the takeover typdoc never
+does. The result is a lock with no owner in one namespace. The next run that wants it waits,
+times out and exits 4, and the message says the owner is no longer running and which file to
+delete. No document is written and none is damaged; the window is left open knowingly.
+
 ## Lock order
 
 A command that takes more than one lock takes the project lock first, then every namespace lock in
@@ -96,3 +127,8 @@ does not compile, and every command reaches its locks through the one acquisitio
 also the path that registers the lock for release on an interrupt. A `set` on a file that no
 collection matches needs such a value as much as any other write, which is why it takes
 `locks/.loose.lock` rather than writing without a lock.
+
+The lock is released when that value is dropped, so a command cannot hold a lock past the scope
+that acquired it, even one that never calls the release. The lints of `typdoc-core` forbid
+`File::create_new` with the rest of the writing half of `std::fs`, so a lock file cannot be
+created anywhere but behind the write seam.

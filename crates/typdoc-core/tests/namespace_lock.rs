@@ -1,8 +1,7 @@
-//! `acquire`, `release`, and the message a timeout produces (ticket 3's "done when" (b) and
-//! (d)): the lock file made with `O_EXCL`, the identity check before removal, and the exit that
-//! maps to code 4. Decision 3's ordering and decision 14's project hash are pure functions and
-//! are tested beside the code, in `src/namespace_lock.rs`; what is here needs a fake file
-//! system and so cannot live there (see the note at the top of that module's own test section).
+//! Covers SPC-10.
+//!
+//! The parts of the lock that need a fake file system. The lock order and the project hash are
+//! tested beside the code, in `src/namespace_lock.rs`.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -20,8 +19,6 @@ fn foreign_lock(fake: &FakeFs, path: &Path, pid: u32, host: &str, timestamp: &st
         format!(r#"{{"pid":{pid},"host":"{host}","timestamp":"{timestamp}"}}"#).into_bytes();
     fake.put(path, &bytes, 0o100_644);
 }
-
-// ---- acquiring and releasing, the happy path ----
 
 #[test]
 fn acquiring_an_uncontended_lock_stamps_pid_host_and_the_clock_s_time() {
@@ -62,8 +59,6 @@ fn a_lock_dropped_without_calling_release_is_released_anyway() {
     let path = PathBuf::from("/project/.typdoc/locks/default.lock");
     {
         let _lock = acquire(&fake, &clock, path.clone(), HOST, AMPLE).expect("nothing holds it");
-        // Dropped here, at the end of the block, with `release` never called: decision 6's "a
-        // command cannot hold a lock past the scope that acquired it" holds even then.
     }
 
     assert_eq!(
@@ -72,8 +67,6 @@ fn a_lock_dropped_without_calling_release_is_released_anyway() {
         "the lock outlived the scope that acquired it"
     );
 }
-
-// ---- done when (d): a lock another process created is never removed, at any age ----
 
 #[test]
 fn acquire_times_out_against_a_lock_it_did_not_create_and_never_touches_it_however_young() {
@@ -125,9 +118,7 @@ fn a_lock_taken_away_and_replaced_is_reported_and_the_replacement_is_left_alone(
     let path = PathBuf::from("/project/.typdoc/locks/default.lock");
     let lock = acquire(&fake, &clock, path.clone(), HOST, AMPLE).expect("nothing holds it");
 
-    // Someone else removes what this process holds and puts their own file at the same path,
-    // entirely outside this module: the fake models exactly what a lock's release has to
-    // notice on a real file system, without needing two real processes to do it.
+    // Another process replaces the lock file with its own.
     fake.remove_file(&path).expect("the path existed");
     foreign_lock(
         &fake,
@@ -148,9 +139,6 @@ fn a_lock_taken_away_and_replaced_is_reported_and_the_replacement_is_left_alone(
     );
 }
 
-// ---- ticket 4: the registry the signal-triggered cleanup thread reads, since the boxed
-// handle inside a `NamespaceLock` cannot cross a thread the way `acquire`'s own caller can ----
-
 #[test]
 fn release_all_for_signal_removes_every_lock_this_process_still_holds() {
     let fake = FakeFs::new();
@@ -164,8 +152,7 @@ fn release_all_for_signal_removes_every_lock_this_process_still_holds() {
 
     assert_eq!(fake.bytes(&one), None, "the first lock was not removed");
     assert_eq!(fake.bytes(&two), None, "the second lock was not removed");
-    // Kept alive until here on purpose, so neither value's own `Drop` runs before the
-    // assertions above; the drop that follows is a second, harmless no-op release.
+    // Alive until here, so no `Drop` runs before the assertions; this second release is a no-op.
     drop(lock_one);
     drop(lock_two);
 }
@@ -176,9 +163,7 @@ fn release_all_for_signal_never_touches_a_lock_taken_away_and_replaced() {
     let clock = FixedClock::new();
     let path = PathBuf::from("/project/.typdoc/locks/default.lock");
     let lock = acquire(&fake, &clock, path.clone(), HOST, AMPLE).expect("nothing holds it");
-    // Someone else removes what this process holds and puts their own file at the same path,
-    // the same substitution `a_lock_taken_away_and_replaced_is_reported...` above models for
-    // the ordinary release path; this is the same property proved for the signal path instead.
+    // Another process replaces the lock file with its own.
     fake.remove_file(&path).expect("the path existed");
     foreign_lock(
         &fake,
@@ -200,16 +185,10 @@ fn release_all_for_signal_never_touches_a_lock_taken_away_and_replaced() {
     drop(lock);
 }
 
-// The two tests below show the public pipeline (`acquire` then `release`, or `acquire` then a
-// plain drop) leaves nothing for `release_all_for_signal` to touch afterward, through a foreign
-// file at the same path exactly as the identity-mismatch test above uses. They cannot, on their
-// own, tell a properly deregistered entry apart from a merely leaked one that happens to be
-// harmless: `typdoc_testkit::fake`'s own `fresh_identity` never repeats a value, so a leaked
-// entry's cached identity can never coincide with a later file's, and the identity check alone
-// already protects the foreign file either way. What actually proves `Drop` calls `deregister`
-// is `namespace_lock::tests::dropping_a_namespace_lock_deregisters_it_even_when_release_is_never_called`,
-// a unit test beside the code that reads the registry's own length directly, which is not
-// reachable from here.
+// The two tests below cannot tell a removed registry entry from a leaked one: the fake never
+// repeats an identity, so a leaked entry is refused anyway.
+// `namespace_lock::tests::dropping_a_namespace_lock_deregisters_it_even_when_release_is_never_called`
+// proves the removal.
 
 #[test]
 fn a_lock_released_normally_leaves_a_later_file_at_the_same_path_untouched() {
@@ -238,8 +217,6 @@ fn a_lock_dropped_without_releasing_leaves_a_later_file_at_the_same_path_untouch
     let path = PathBuf::from("/project/.typdoc/locks/default.lock");
     {
         let _lock = acquire(&fake, &clock, path.clone(), HOST, AMPLE).expect("nothing holds it");
-        // Dropped here, exactly as `a_lock_dropped_without_calling_release_is_released_anyway`
-        // already covers for the ordinary path.
     }
     foreign_lock(&fake, &path, 4242, HOST, &clock.now().to_rfc3339());
     let unrelated = fake.bytes(&path).expect("the foreign lock is there");
@@ -254,17 +231,8 @@ fn a_lock_dropped_without_releasing_leaves_a_later_file_at_the_same_path_untouch
     );
 }
 
-// The message a timeout produces when the competing lock's content can actually be read is
-// tested in `crates/typdoc-fs/tests/namespace_lock_timeout.rs`, not here: reading it goes
-// through `std::fs::read` directly (this crate reads nothing through `Fs`, which is a write
-// seam — see `fs.rs`'s own module doc), so a lock file the fake only holds in memory is
-// invisible to it and every message-content assertion below would see the fallback text
-// instead. The two tests just above this note stay here because they do not depend on the
-// message's content, only on the error's kind and on the file being untouched, both of which
-// the fake answers for correctly.
-
-// ---- retry-with-backoff, and whether a caller can tell a lock apart from one never
-// contended ----
+// The timeout message is tested in `crates/typdoc-fs/tests/namespace_lock_timeout.rs`: the
+// owner is read with `std::fs::read`, which cannot see a lock file the fake holds in memory.
 
 #[test]
 fn an_uncontended_lock_is_acquired_well_before_the_timeout() {

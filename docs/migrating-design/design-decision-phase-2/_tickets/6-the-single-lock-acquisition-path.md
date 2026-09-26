@@ -49,11 +49,6 @@ Story 1's test strategy sends a real signal to a shipped binary holding a lock. 
 something about every command only if every command reaches a lock through the same code, and a
 rule that lives in someone's memory is not a rule.
 
-**Two things already in place hold the floor under it.** `typdoc-core`'s `clippy.toml` bans
-`File::create_new` along with the rest of the writing half of `std::fs`, so a lock file cannot be
-created anywhere but behind the write seam. And the lock's release is tied to the value's own
-end of life, so a command cannot hold a lock past the scope that acquired it.
-
 **What the test then proves.** With one path, the signal test in the shipped binary is a test of
 every command, which is what story 1's strategy was counting on and what this decision supplies.
 

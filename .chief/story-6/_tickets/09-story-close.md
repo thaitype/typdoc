@@ -17,4 +17,14 @@ Known so far: `crates/typdoc-core/src/json_body.rs`, the test named
 `MissingContentType` (pilot batch). Fixed in the ticket 03 PR: the test is renamed to name what it
 asserts.
 
+From the ticket 03 PR, deferred by decision to later work (the design text stays in
+`docs/migrating-design/`): the `git-common` lock mode, which `mv` does not check; reverse scans
+across imported projects (`refs --reverse`, `refby`, `mv`); query scope across imported projects;
+`body.mentions` with imported projects; the loose lock taken for a file inside a namespace folder.
+
+From the ticket 04 PR: `pid_alive` has no `/proc` on macOS, so a live lock owner is reported as
+stale. Deferred by decision (fix right after the story). The release result that is discarded
+while the design text says a lock taken away is reported: deferred by decision; the design text
+stays in `docs/migrating-design/`.
+
 Done when: that record is reported. The story is accepted outside the loop.

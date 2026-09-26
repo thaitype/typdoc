@@ -1,18 +1,11 @@
-//! The goal's second criterion, deterministic half (contract, testing decision 2): two
-//! allocations, on two threads, racing for the same namespace lock, proved to never issue one
-//! key — not because the runs happened not to overlap, but because the second is forced to wait
-//! for the first's whole read-decide-write window before it can read `last` at all.
+//! Covers SPC-10.
 //!
-//! `state::read` (`crates/typdoc-core/src/state.rs`) reads with a raw `std::fs::read`, not
-//! through the injected [`Fs`]: reading a project deliberately does not go through the seam
-//! (`crates/typdoc-core/src/fs.rs`'s own doc comment, "Reading a project does not go through
-//! here"). A purely in-memory fake cannot stand in for the project root here, because a write
-//! `state::write` makes through it would be invisible to `state::read`'s own real-disk read. So
-//! this test runs against a real temporary directory, backed by [`typdoc_fs::SystemFs`], wrapped
-//! only enough to pause a thread at the one seam call inside the allocation window
-//! (`Project::new_coded`'s own `deps.fs.exists(&file)`, between reading `last` and writing it
-//! back) and to notice the instant a second, real, concurrent attempt at the same lock file is
-//! turned away.
+//! Two allocations racing for one namespace lock never issue one key: the second waits for the
+//! first's whole read-decide-write window before it can read `last`, and this is forced, not
+//! left to timing.
+//!
+//! Real disk, not the in-memory fake: `state::read` reads with `std::fs::read`, not through the
+//! seam, so a state write made through the fake would be invisible to it.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -28,8 +21,6 @@ use typdoc_testkit::fake::FixedClock;
 
 use common::{FixedEnv, WF_SCHEMA, write_file};
 
-/// A project on real disk with one coded collection (`WF`, `tickets/{key}.md`) and nothing in
-/// it yet: the smallest project `new_coded`'s own allocation window can be raced over.
 fn scratch_project() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("a scratch folder");
     write_file(
@@ -51,21 +42,16 @@ struct Gate {
     release: Receiver<()>,
 }
 
-/// Wraps the real file system to (a) pause each of the two allocations' `exists` calls, in turn,
-/// at the point `Project::new_coded` reaches it inside its allocation window, and (b) notice the
-/// moment a `create_new` on the namespace's own lock file is turned away because another thread
-/// already holds it — hard evidence that a real, concurrent attempt happened while the first
-/// thread was paused, not merely that it was scheduled.
+/// The real file system, pausing each allocation at its `exists` call, which
+/// `Project::new_coded` makes between reading `last` and writing it, and reporting the first
+/// `create_new` of the lock file that is refused: evidence that a second attempt met the first
+/// still holding the lock.
 struct RaceFs {
     inner: typdoc_fs::SystemFs,
     lock_path: PathBuf,
-    /// One [`Gate`] per `exists` call this test cares about, drawn in order: the first call to
-    /// `exists` takes the first, the second call takes the second. Any further call (there is
-    /// none in this test's own path) passes straight through.
+    /// Drawn in order, one per `exists` call; a further call passes straight through.
     gates: Mutex<Vec<Gate>>,
-    /// Sends once, the first time a `create_new` on `lock_path` fails because it is already
-    /// there: proof that a second attempt at the same lock genuinely met the first one still
-    /// holding it, not a fact this test would otherwise have to assume from timing.
+    /// Sends once, on the first refused `create_new` of `lock_path`.
     contention: Mutex<Option<Sender<()>>>,
 }
 
@@ -138,20 +124,13 @@ fn target(title: &str) -> NewTarget {
     }
 }
 
-/// What both threads share to build their own [`Deps`] from: bundled into one type, rather than
-/// three references passed and rebuilt separately, the same reason `Deps` itself exists.
-/// Concrete types, not `Deps`'s own `&dyn Trait` fields, which is what lets this cross the
-/// thread boundary at all — `Deps<'_>` is not `Sync` (its fields carry no such bound), so a
-/// value built from it cannot be shared by reference the way this one is; each thread instead
-/// builds its own `Deps` from this bundle, on its own side of the boundary.
+/// Concrete types, because [`Deps`] is not `Sync`: each thread builds its own `Deps` from this.
 struct Ctx<'a> {
     fs: &'a RaceFs,
     env: &'a FixedEnv,
     clock: &'a FixedClock,
 }
 
-/// Allocates one document through the real seam, on the current thread, returning the key it
-/// was given.
 fn allocate(project: &Project, ctx: &Ctx, title: &str) -> String {
     let deps = Deps {
         env: ctx.env,
@@ -166,13 +145,8 @@ fn allocate(project: &Project, ctx: &Ctx, title: &str) -> String {
         .expect("a coded allocation always returns a key")
 }
 
-/// **Contract testing decision 2, "Deterministically, through the seam."** Two allocations, on
-/// two threads, against one real project: the first is paused, by the fake, at the instant
-/// between reading `last` and writing it back; the second is spawned while the first is still
-/// paused there, and is proved — not assumed — to have been turned away by the real lock at
-/// least once before the first is let go. Only then is the first released, and the second is
-/// tracked to the very same seam a second time before it, too, is released. If the lock did not
-/// cover this whole window, both could compute the same `next` from the same stale `last`.
+/// If the lock did not cover the whole window, both threads could compute the same next number
+/// from the same `last`.
 #[test]
 fn two_threads_racing_the_same_lock_never_issue_the_same_key() {
     let scratch = scratch_project();
@@ -202,9 +176,7 @@ fn two_threads_racing_the_same_lock_never_issue_the_same_key() {
         contention: Mutex::new(Some(contention_tx)),
     };
 
-    // Two separate `Project` values, both loaded before either allocates, standing for two
-    // callers that each read the project once and then raced for the lock — the same shape a
-    // real second process would have.
+    // Two `Project`s, both loaded before either allocates, as two processes would be.
     let ctx = Ctx {
         fs: &fs,
         env: &env,
@@ -216,27 +188,20 @@ fn two_threads_racing_the_same_lock_never_issue_the_same_key() {
     let (key_a, key_b) = std::thread::scope(|scope| {
         let handle_a = scope.spawn(|| allocate(&project_a, &ctx, "First"));
 
-        // Thread A has reached (and is now parked inside) its own `exists` call, the instant
-        // between reading `last` and writing it back.
+        // A is parked between reading `last` and writing it.
         reached_a_rx.recv().expect("thread A reaches the pause");
 
         let handle_b = scope.spawn(|| allocate(&project_b, &ctx, "Second"));
 
-        // Real, hard evidence that thread B's own attempt at the same lock file met thread A's
-        // still standing there and was refused — not a timing guess: this recv blocks until it
-        // happens, and it is guaranteed to happen, because thread A has not been released yet,
-        // so its lock file cannot have gone anywhere in the meantime.
+        // Blocks until B's attempt at the lock is refused, which must happen while A is parked.
         contention_rx
             .recv()
             .expect("thread B's own attempt at the lock is turned away while A still holds it");
 
-        // Now, and only now, let thread A finish: write its state, create its document, and
-        // drop its lock.
+        // Only now does A finish and drop its lock.
         release_a_tx.send(()).expect("thread A is still parked");
 
-        // Thread B's own retry succeeds once A's lock is gone; it reads a fresh `last` (A's own
-        // write), computes its own `next`, and reaches the very same seam a second time — proof
-        // the second allocation really did go through the identical, locked path, not around it.
+        // B reaches the same pause, so it too went through the locked path, reading A's `last`.
         reached_b_rx
             .recv()
             .expect("thread B reaches the same pause");

@@ -1,6 +1,4 @@
-// PASS: `write_atomically` called with a genuine `NamespaceLock` compiles and runs. Paired
-// with `write_without_lock.rs`, which must not compile: together they show the failure there is
-// the missing lock, not something wrong with the fixture harness.
+// PASS: the compiling twin of `write_without_lock.rs`.
 
 use typdoc_testkit::fake::{FakeFs, FixedClock};
 

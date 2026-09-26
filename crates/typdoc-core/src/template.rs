@@ -1,6 +1,5 @@
 //! Match templates: what `match` in a collection file and an entry of `namespaces` are read as.
 
-/// One piece of a path segment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Part {
     Literal(String),
@@ -81,7 +80,7 @@ impl Segment {
     }
 
     /// The substring `{key}` captures from `name`, if this segment has that placeholder and
-    /// `name` fits the segment as a whole. The same shape as `matches`.
+    /// `name` fits the segment as a whole.
     fn capture_key(&self, name: &str) -> Option<String> {
         if name.is_empty() {
             return None;
@@ -98,11 +97,8 @@ impl Segment {
         }
     }
 
-    /// This segment rendered as a literal name, with `key` standing in for `{key}`: the inverse
-    /// of `capture_key`, for `typdoc new` to name the file it allocated a key for. `None` for a
-    /// segment holding `*` or an unbound `{key}`, neither of which a coded, bound template ever
-    /// has (`Template::bind` refuses a wildcard once a code is given, and binds every `{key}` to
-    /// it).
+    /// The inverse of `capture_key`, for `typdoc new` to name the file of a key it issued.
+    /// `None` for `*` or an unbound `{key}`, which a bound coded template never holds.
     fn render(&self, key: &str) -> Option<String> {
         let mut out = String::new();
         for part in &self.parts {
@@ -126,9 +122,8 @@ fn fits(parts: &[Part], name: &str) -> bool {
     fits_capture(parts, name).is_some()
 }
 
-/// Whether `name` fits `parts` and, if it does, the substring `{key}` captured along the way:
-/// `None` when `parts` holds no `{key}`, `Some` when it does. The same shape as `fits`, so a
-/// change to one rule cannot drift from the other.
+/// `None` when `name` does not fit; otherwise the substring `{key}` captured, if `parts` has one.
+/// `fits` is built on this, so the two cannot drift apart.
 fn fits_capture(parts: &[Part], name: &str) -> Option<Option<String>> {
     let Some((first, rest)) = parts.split_first() else {
         return name.is_empty().then_some(None);
@@ -157,7 +152,6 @@ fn fits_capture(parts: &[Part], name: &str) -> Option<Option<String>> {
     }
 }
 
-/// One step of a template.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
     /// `**`: any number of folders, none included.
@@ -223,10 +217,9 @@ impl Template {
         &self.steps
     }
 
-    /// Whether the last step holds `{key}`, the shape `filename.pattern` scans a folder for: a
-    /// file directly beside a matched one that fits no collection there. A coded template can
-    /// also hold `{key}` in an earlier step (`{key}/index.md`); that shape is not this rule's,
-    /// since there is no one folder to list files in (doubt: not generalised here).
+    /// Whether the last step holds `{key}`, the shape `filename.pattern` scans a folder for. A
+    /// `{key}` in an earlier step (`{key}/index.md`) is not this rule's: there is no one folder
+    /// to list.
     pub fn key_in_last_step(&self) -> bool {
         matches!(
             self.steps.last(),
@@ -234,9 +227,8 @@ impl Template {
         )
     }
 
-    /// The literal folder every step before the last one names, when each is plain text with no
-    /// `*` (always true of a bound coded template, since `bind` refuses a wildcard once a code
-    /// is given); `None` for a template with one step, or with `**` before the last.
+    /// The folder the steps before the last name, when each is plain text, as in every bound
+    /// coded template; `None` for a template of one step.
     pub fn literal_folder(&self) -> Option<Vec<&str>> {
         let (_, prefix) = self.steps.split_last()?;
         prefix
@@ -270,7 +262,6 @@ impl Template {
             .collect()
     }
 
-    /// The last step's segment, for testing whether a file name fits it.
     pub fn last_segment(&self) -> Option<&Segment> {
         match self.steps.last()? {
             Step::Name(segment) => Some(segment),
@@ -291,13 +282,9 @@ impl Template {
             })
     }
 
-    /// Whether `below`, a path counted from the namespace folder, fits this template as a whole
-    /// — every step matched, in order, with nothing left over on either side. Reads the template
-    /// the same way [`crate::index::Index::build`]'s own walk does (a name before the last step
-    /// is asked with [`Segment::matches_folder`], the last with [`Segment::matches`], and `**`
-    /// consumes any number of components, none included), but against a path already in hand
-    /// rather than by reading a directory: `mv`'s destination may not exist on disk yet, so there
-    /// is nothing there for a walk to find.
+    /// Whether `below`, counted from the namespace folder, fits the whole template. Read as
+    /// [`crate::index::Index::build`]'s walk reads it, but against a path in hand: `mv`'s
+    /// destination may not exist yet, so there is nothing to walk.
     pub(crate) fn matches_path(&self, below: &str) -> bool {
         let components: Vec<&str> = if below.is_empty() {
             Vec::new()
@@ -307,11 +294,8 @@ impl Template {
         fits_steps(&self.steps, &components)
     }
 
-    /// The path this template names for `key`, counted from the namespace folder: every step
-    /// rendered as a literal name, `{key}` replaced by `key` wherever it occurs, joined by `/`
-    /// (the inverse of [`Template::key`], for `typdoc new` to name the file a coded schema's
-    /// allocated key belongs at). `None` for a template holding `**`, `*` or an unbound `{key}`,
-    /// none of which a coded, bound template ever has.
+    /// The inverse of [`Template::key`], for `typdoc new` to name the file of a key it issued.
+    /// `None` for `**`, `*` or an unbound `{key}`, none of which a bound coded template holds.
     pub fn render(&self, key: &str) -> Option<String> {
         let mut parts = Vec::with_capacity(self.steps.len());
         for step in &self.steps {
@@ -324,9 +308,7 @@ impl Template {
     }
 }
 
-/// The recursive half of [`Template::matches_path`], split out so `**` can backtrack over how
-/// many components it consumes, the same shape [`fits_capture`] already uses for `*` within one
-/// segment.
+/// Recursive, so that `**` can backtrack over how many components it takes.
 fn fits_steps(steps: &[Step], components: &[&str]) -> bool {
     let Some((step, rest_steps)) = steps.split_first() else {
         return components.is_empty();

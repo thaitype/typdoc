@@ -1,14 +1,8 @@
-//! The namespace lock, and the one function that creates or releases one.
+//! Namespace and project locks. Not `lock.rs`, which reads `.typdoc/lock.json`, the pin file.
 //!
-//! Not `lock.rs`: that name is taken by the reader of `.typdoc/lock.json`, the pin file, which
-//! this module has nothing to do with. This one is a mutex on a namespace (or on the project,
-//! for the pins a later story writes), backed by a file made with `O_EXCL`.
-//!
-//! A held lock is [`NamespaceLock`], a value with no public constructor and no public field.
-//! [`acquire`] is the only function that returns one, and it is the only function that creates
-//! a lock file. A function that writes takes a `&NamespaceLock` (decision 6): there is nothing
-//! to remember, because a write attempted without one does not compile — proved in
-//! `tests/namespace_lock_compile_fail.rs`, not merely asserted here.
+//! [`acquire`] is the only way to get a [`NamespaceLock`], and every function that writes takes
+//! one, so a write without a lock does not compile (SPC-10; proved in
+//! `tests/namespace_lock_compile_fail.rs`).
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -24,7 +18,7 @@ use crate::clock::Clock;
 use crate::error::Error;
 use crate::fs::{FileId, Fs};
 
-/// `.typdoc/locks/<namespace>.lock`, the `local` mode of the lock table.
+/// A namespace's lock file in the `local` lock mode.
 pub fn local_namespace_lock_path(project_root: &Path, namespace: &str) -> PathBuf {
     project_root
         .join(".typdoc/locks")
@@ -36,10 +30,8 @@ pub fn local_project_lock_path(project_root: &Path) -> PathBuf {
     project_root.join(".typdoc/locks/.project.lock")
 }
 
-/// `$(git rev-parse --git-common-dir)/typdoc/<project-hash>-<namespace>.lock`. `git_common_dir`
-/// is taken already canonicalized: obtaining it, and running `git` at all, is outside this
-/// module, which has no way to spawn a process and no need to, since the caller that resolves a
-/// project's lock mode is the one place that already knows the worktree it is running in.
+/// A namespace's lock file in the `git-common` lock mode. `git_common_dir` must already be
+/// canonicalized: this crate cannot run `git`.
 pub fn git_common_namespace_lock_path(
     git_common_dir: &Path,
     project_hash: &str,
@@ -50,15 +42,15 @@ pub fn git_common_namespace_lock_path(
         .join(format!("{project_hash}-{namespace}.lock"))
 }
 
-/// `<project-hash>.lock`, beside the namespace locks in the same `typdoc/` folder.
+/// The project lock file in the `git-common` lock mode.
 pub fn git_common_project_lock_path(git_common_dir: &Path, project_hash: &str) -> PathBuf {
     git_common_dir
         .join("typdoc")
         .join(format!("{project_hash}.lock"))
 }
 
-/// The SHA-256 of `relative`, brought to one form first (`/` separators, no trailing one),
-/// truncated to its first 16 hexadecimal characters (decision 14).
+/// The `<project-hash>` of a project folder's path relative to its worktree root. Changing how
+/// it is computed is a breaking change: a new binary would not see a lock an old one holds.
 pub fn project_hash_of(relative: &str) -> String {
     let normalized = relative.replace('\\', "/");
     let normalized = normalized.trim_end_matches('/');
@@ -70,9 +62,8 @@ pub fn project_hash_of(relative: &str) -> String {
         .collect()
 }
 
-/// `<project-hash>`: the project folder's path relative to the root of the worktree, hashed as
-/// [`project_hash_of`] does it. `None` when `project_folder` is not under `worktree_root` at
-/// all, which is a caller error rather than a hash this function can produce.
+/// The [`project_hash_of`] `project_folder`'s path relative to `worktree_root`, or `None` when
+/// it is not under it.
 pub fn project_hash(worktree_root: &Path, project_folder: &Path) -> Option<String> {
     let relative = project_folder.strip_prefix(worktree_root).ok()?;
     let joined = relative
@@ -83,11 +74,9 @@ pub fn project_hash(worktree_root: &Path, project_folder: &Path) -> Option<Strin
     Some(project_hash_of(&joined))
 }
 
-/// Orders lock files the way decision 3 fixes: the project lock first when there is one, then
-/// every namespace lock in the order of the lock files' own paths, compared byte by byte as
-/// absolute paths. Not [`Path`]'s own ordering, which compares components and so does not agree
-/// with a byte comparison on every input (two paths differing only by a doubled separator are
-/// one component sequence and so equal to `Path`, and two different byte strings to this rule).
+/// Orders lock files as SPC-10 requires: the project lock first, then the namespace locks by
+/// the bytes of their paths. Not [`Path`]'s own ordering, which compares components: `a//b` and
+/// `a/b` are equal to it and different here.
 pub fn order_locks(
     project_lock: Option<PathBuf>,
     mut namespace_locks: Vec<PathBuf>,
@@ -99,10 +88,7 @@ pub fn order_locks(
     ordered
 }
 
-/// Owned rather than borrowed (unlike a `Unix`-only `as_bytes()`) because there is no
-/// zero-copy byte view of a path on every platform: Windows exposes `OsStr` only as UTF-16
-/// code units, not bytes, so getting a `[u8]` at all means building one. `project_hash` above
-/// already uses the same lossy-to-`String` conversion for exactly this reason.
+/// Owned: Windows has no byte view of a path, so one has to be built.
 fn path_bytes(path: &Path) -> Vec<u8> {
     #[cfg(unix)]
     {
@@ -115,8 +101,6 @@ fn path_bytes(path: &Path) -> Vec<u8> {
     }
 }
 
-/// What a lock file holds, read back from an existing one when this process could not create
-/// its own.
 #[derive(Debug, Clone, Deserialize)]
 struct Owner {
     pid: u32,
@@ -124,7 +108,6 @@ struct Owner {
     timestamp: String,
 }
 
-/// What this process writes into a lock file it creates.
 #[derive(Debug, Clone, Serialize)]
 struct Stamp<'a> {
     pid: u32,
@@ -132,8 +115,6 @@ struct Stamp<'a> {
     timestamp: String,
 }
 
-/// What [`acquire`] records for a lock it just created, and what the signal-triggered cleanup
-/// thread reads back (see the module doc below the registry's own functions).
 #[derive(Debug, Clone)]
 struct Registered {
     id: u64,
@@ -141,24 +122,12 @@ struct Registered {
     expected: FileId,
 }
 
-/// Every lock this process currently holds, by the path it lives at and the identity [`acquire`]
-/// read from the handle right after creating it.
+/// Every lock this process holds, for the cleanup an interrupt starts on another thread.
+/// [`NamespaceLock`] is not `Send` (it holds `&dyn Fs` and a boxed handle), so that thread
+/// cannot call [`release`]; it gets the path and the identity [`acquire`] read from the handle.
 ///
-/// This exists because [`NamespaceLock`] cannot cross a thread: it holds `&dyn Fs` and a boxed
-/// `WriteHandle` with no `Send` bound, so a cleanup thread spawned for `SIGINT`/`SIGTERM`
-/// (decision 6) cannot call [`release`] on a lock the acquiring thread still owns. What the
-/// identity check needs is not the open handle itself, only the two things a `stat` can be
-/// compared against — the path, and the device/inode/link-count `acquire` already read from the
-/// handle once — so that is what crosses the thread instead, under this mutex.
-///
-/// Caching the identity at creation rather than reading it fresh at cleanup time loses nothing
-/// this check needs: the device and inode of a still-open file do not change for as long as the
-/// handle stays open, whatever happens to the path, so a `stat` on the path that still shows the
-/// same device and inode at cleanup time is exactly the evidence [`release_checked`] itself
-/// would have found from a fresh `fstat`. The one case that only a live `fstat` could catch — the
-/// same path relinked back to the exact same, still-open inode with the link count read as zero
-/// in between — cannot happen while this process keeps the handle open, because the kernel does
-/// not free an inode, and so never reuses its number, while any handle still refers to it.
+/// The cached identity is as good as a fresh `fstat`: while this process keeps the handle open,
+/// the kernel does not free the inode, so its device and inode cannot change or be reused.
 static REGISTRY: Mutex<Vec<Registered>> = Mutex::new(Vec::new());
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -178,16 +147,11 @@ fn deregister(id: u64) {
     guard.retain(|entry| entry.id != id);
 }
 
-/// Removes every lock this process still holds, for the cleanup thread `typdoc`'s own binary
-/// spawns off the `SIGINT`/`SIGTERM` handler (decisions 5 and 6): the same identity check
-/// [`release_checked`] runs, read from the registry above instead of from an open handle, since
-/// the handle cannot reach this thread. A lock whose path no longer shows the identity `acquire`
-/// recorded — taken away and replaced by something else, or simply gone — is left alone, the
-/// same refusal [`release_checked`] already makes: this process never removes a lock it did not
-/// create, on the signal path any more than on the ordinary one.
+/// Removes every lock this process still holds, for the cleanup that runs on `SIGINT` or
+/// `SIGTERM` (SPC-10). A lock whose path no longer shows the identity [`acquire`] recorded is
+/// left alone, as [`release`] leaves it.
 ///
-/// Nothing here removes an entry from the registry: the process ends by the signal right after
-/// this runs (`typdoc`'s own cleanup thread), so there is no later caller left to confuse.
+/// Entries stay in the registry: the process ends by the signal right after this runs.
 pub fn release_all_for_signal(fs: &dyn Fs) {
     let entries: Vec<Registered> = {
         let guard = REGISTRY
@@ -203,40 +167,29 @@ pub fn release_all_for_signal(fs: &dyn Fs) {
     }
 }
 
-/// The design's own identity check, shared by [`release_checked`] (a live `fstat` on the
-/// handle) and [`release_all_for_signal`] (the `FileId` `acquire` cached, since the signal
-/// path's cleanup thread cannot reach the handle itself): `held` still names a file with at
-/// least one link, and `current` — a `stat` on the lock's path — names that same file.
 fn identity_matches(held: FileId, current: Option<FileId>) -> bool {
     held.links > 0 && current.is_some_and(|id| id.device == held.device && id.inode == held.inode)
 }
 
-/// A namespace's lock (or the project's), held for as long as this value lives.
+/// A held lock, released when this value is dropped (SPC-10).
 ///
-/// No public constructor and no public field: [`acquire`] is the only function that makes one.
-/// It keeps the lock file's handle open from creation to release, which is what lets [`release`]
-/// tell its own file from whatever the path leads to by the time it is asked to remove it — the
-/// design's identity check, `stat` on the path against `fstat` on this handle.
+/// It keeps the lock file open until release, so [`release`] can tell its own file from
+/// whatever the path leads to by then: `stat` on the path against `fstat` on the handle.
 pub struct NamespaceLock<'a> {
     fs: &'a dyn Fs,
     path: PathBuf,
     handle: Box<dyn crate::fs::WriteHandle>,
     released: bool,
-    /// This lock's own entry in [`REGISTRY`], removed on [`release`] or on [`Drop`], whichever
-    /// runs first.
     registry_id: u64,
 }
 
 impl NamespaceLock<'_> {
-    /// The lock file's path, for a caller that needs to name it (a message, a second lock in
-    /// the order decision 3 fixes).
     pub fn path(&self) -> &Path {
         &self.path
     }
 }
 
-/// Named by its path alone: `fs` and `handle` are trait objects with no `Debug` of their own,
-/// and the path is what a test failure or a log needs to say which lock this was.
+/// `fs` and `handle` have no `Debug`, and the path says which lock this is.
 impl std::fmt::Debug for NamespaceLock<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NamespaceLock")
@@ -250,31 +203,24 @@ impl std::fmt::Debug for NamespaceLock<'_> {
 pub enum Released {
     /// The path was still this handle's own file, and it is gone now.
     ByUs,
-    /// The path no longer names this handle's file, or the handle's own link count was zero:
-    /// removing anything on that evidence would be exactly the takeover the design forbids, so
-    /// nothing was removed. The lock this process thought it held was taken away during the
-    /// operation.
+    /// The path no longer names this handle's file, or that file has no link left, so nothing
+    /// was removed: the lock was taken away during the operation, and removing what is there now
+    /// would take over another process's lock (SPC-10).
     TakenByAnother,
 }
 
 impl Drop for NamespaceLock<'_> {
     fn drop(&mut self) {
         if !self.released {
-            // A command that forgets to call `release` still cannot hold the lock past its own
-            // scope (decision 6): dropping does the same identity-checked release, silently,
-            // since there is no channel left to report through by the time this runs.
+            // The same check as `release`, silently: a drop has nowhere to report to (SPC-10).
             let _ = release_checked(self.fs, &self.path, self.handle.as_ref());
         }
-        // Runs whichever way this value's life ended, so the registry the signal-triggered
-        // cleanup thread reads never outlives the lock it describes.
+        // Always, so the signal cleanup never sees a lock that is gone.
         deregister(self.registry_id);
     }
 }
 
-/// Releases `lock`, reporting whether the file removed was still this process's own.
-///
-/// This is the one place a lock file is ever removed: [`acquire`] never removes one it did not
-/// just create, and a lock dropped without calling this runs the same check, silently.
+/// Releases `lock`, removing the lock file only if it is still this lock's own file.
 pub fn release(mut lock: NamespaceLock<'_>) -> io::Result<Released> {
     let outcome = release_checked(lock.fs, &lock.path, lock.handle.as_ref())?;
     lock.released = true;
@@ -296,19 +242,15 @@ fn release_checked(
     }
 }
 
-/// Creates `path` with `O_EXCL`, retrying with backoff until `timeout` elapses, then returns
-/// [`Error::LockTimeout`]. Never deletes or takes over a lock another process created, whatever
-/// its age (design, Concurrency: "no takeover ... whatever its age").
+/// Creates `path` with `O_EXCL`, retrying with backoff until `timeout`, then fails with
+/// [`Error::LockTimeout`]. A lock another process created is never removed or taken over,
+/// whatever its age (SPC-10).
 ///
-/// `host` is what this process would stamp into the lock file, and what a timeout message
-/// compares a competing lock's recorded host against to say whether it can tell the owner has
-/// stopped. Nothing in this module reads the machine's own hostname; the caller that first
-/// wires a command to this function has to source one (`Env` reaches the environment for
-/// everything else this crate reads, and has no such method yet).
+/// `host` is stamped into the lock file, and compared with a competing lock's host to word the
+/// timeout message.
 ///
-/// The directory that will hold `path` is created first (decision 3: "the directory is created
-/// before the first lock is taken"), so the first lock a project ever takes does not fail with
-/// a plain "not found" for a `.typdoc/locks/` nobody has made yet.
+/// The folder that holds `path` is created first (SPC-10), so the first lock a project takes
+/// does not fail on a missing `.typdoc/locks/`.
 pub fn acquire<'a>(
     fs: &'a dyn Fs,
     clock: &dyn Clock,
@@ -327,11 +269,8 @@ pub fn acquire<'a>(
     loop {
         match fs.create_new(&path) {
             Ok(mut handle) => {
-                // Registered as soon as the handle can say what it is, so the window between
-                // the kernel's own creation of the file and this process recording that it
-                // holds it is as small as it can be made. It is not closed: a signal delivered
-                // before this line finds a lock file no list in the process yet names, exactly
-                // the residual window decision 6 writes down rather than promises away.
+                // Registered at once: an interrupt before this line leaves a lock file nothing
+                // names, the window SPC-10 leaves open.
                 let identity = handle.identity().map_err(|source| Error::Io {
                     file: path.clone(),
                     source,
@@ -374,9 +313,8 @@ pub fn acquire<'a>(
     }
 }
 
-/// Builds the exit-4 error: the path always, and pid/host/age when the competing lock file can
-/// still be read and parsed (it may have gone, or been replaced, in the instant between the
-/// last failed create and this read, which this function does not treat as a reason to fail).
+/// The competing lock may have gone by the time it is read; the message then names only the
+/// path.
 fn timeout_error(path: &Path, our_host: &str, now: DateTime<FixedOffset>) -> Error {
     let message = match read_owner(path) {
         Some(owner) => owner_message(path, &owner, our_host, now),
@@ -423,12 +361,8 @@ fn owner_message(path: &Path, owner: &Owner, our_host: &str, now: DateTime<Fixed
     )
 }
 
-/// Whether `pid` names a process this machine still has, checked the way that costs nothing to
-/// ask and never decides whether a lock is valid, only the wording of a message about it
-/// (design: "The pid check only chooses the wording; it never decides whether a lock is
-/// valid"). `/proc` is Linux's, which is the platform this is run and claimed on; on a platform
-/// without it the answer is always "not running", the same conservative wording an unreadable
-/// `/proc` already gets below.
+/// This only chooses the wording of the timeout message; it never decides whether a lock is
+/// valid (SPC-10). `/proc` is Linux's: elsewhere every process reads as not running.
 fn pid_alive(pid: u32) -> bool {
     Path::new("/proc").join(pid.to_string()).exists()
 }
@@ -444,14 +378,9 @@ fn format_age(age: chrono::TimeDelta) -> String {
     }
 }
 
-// The tests of `acquire`, `release` and the timeout message live in
-// `tests/namespace_lock.rs`, not here: they need `typdoc_testkit::fake`, a dev-dependency that
-// itself depends on this crate, and a `#[cfg(test)]` module inside `src/` is compiled as part
-// of this crate's own build, which is a different instantiation of `typdoc_core` from the one
-// `typdoc_testkit` was built against — the two `Fs`/`Clock` traits then do not unify. An
-// integration test in `tests/` depends on the finished crate from the outside and has no such
-// conflict, which is the same reason every other fake-backed test in this workspace lives
-// there and not beside the code it tests.
+// `acquire`, `release` and the timeout message are tested in `tests/namespace_lock.rs`: they
+// need `typdoc_testkit::fake`, which depends on this crate, and in a `#[cfg(test)]` module here
+// its `Fs` and `Clock` would come from a different build of `typdoc_core` and not unify.
 
 #[cfg(test)]
 mod tests {
@@ -459,13 +388,8 @@ mod tests {
 
     use super::*;
 
-    // ---- ticket 4: the registry itself, proven directly here rather than through a fake file
-    // system's file removal: `typdoc_testkit::fake`'s own `fresh_identity` never repeats a
-    // value, so no fake-backed test can tell a leaked registry entry apart from a properly
-    // deregistered one by which files end up removed — both look the same from there, since the
-    // identity check alone already refuses a leaked entry's mismatched device/inode. This is a
-    // unit test of `register`/`deregister` against `REGISTRY` itself, which is why it lives here
-    // and not in `tests/namespace_lock.rs` (no `Fs` or `Clock` needed).
+    // The registry is tested here, not through the fake: the fake never repeats an identity, so
+    // from outside a leaked entry and a removed one leave the same files behind.
 
     fn registry_len() -> usize {
         REGISTRY
@@ -474,10 +398,8 @@ mod tests {
             .len()
     }
 
-    /// `cargo test` runs this module's tests concurrently on several threads by default, and
-    /// `REGISTRY` is one static shared by the whole process: every test below that reads a
-    /// count relative to its own `before` holds this for its length, so two of them can never
-    /// interleave their register/deregister calls and see each other's.
+    /// `REGISTRY` is shared by tests running at the same time; each test that counts entries
+    /// holds this.
     static REGISTRY_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
@@ -505,9 +427,6 @@ mod tests {
         );
     }
 
-    /// A minimal `Fs`/`WriteHandle` pair for the one test below that needs a real
-    /// [`NamespaceLock`] value to drop — every method but the two `identity` calls is
-    /// unreachable, since a plain drop touches nothing else.
     struct NoopHandle;
 
     impl crate::fs::WriteHandle for NoopHandle {
@@ -540,9 +459,7 @@ mod tests {
         }
 
         fn remove_file(&self, _path: &Path) -> io::Result<()> {
-            // The drop below finds its own identity still matching (`identity_at` returns the
-            // same device/inode `NoopHandle::identity` does), so this is reached and only needs
-            // to succeed.
+            // Reached: the drop finds its identity still matching.
             Ok(())
         }
 
@@ -575,12 +492,7 @@ mod tests {
         }
     }
 
-    /// The one property `deregister_removes_exactly_the_entry_register_returned_the_id_for`
-    /// does not reach: that [`NamespaceLock`]'s own `Drop` actually calls `deregister`, not
-    /// only that `deregister` works when called directly. Built by hand rather than through
-    /// [`acquire`], which this module's own doc already explains is not a way around decision
-    /// 6's "no public constructor" — nothing outside this module can do the same, since these
-    /// fields are private to it.
+    /// Built by hand, which only this module can do: the fields are private to it (SPC-10).
     #[test]
     fn dropping_a_namespace_lock_deregisters_it_even_when_release_is_never_called() {
         let _exclusive = REGISTRY_TEST_LOCK
@@ -613,8 +525,6 @@ mod tests {
         );
     }
 
-    // ---- decision 3: one order for taking more than one lock ----
-
     #[test]
     fn the_project_lock_sorts_first_whatever_the_namespace_paths_are() {
         let ordered = order_locks(
@@ -637,10 +547,6 @@ mod tests {
 
     #[test]
     fn namespace_locks_sort_by_the_raw_bytes_of_the_path_and_not_by_path_s_own_ordering() {
-        // `Path`'s own `Ord` walks components, which treats a doubled separator as the same
-        // component sequence as a single one; a byte comparison does not. If this ever sorted
-        // by `Path::cmp` instead of raw bytes, this assertion would still pass by accident on
-        // most inputs, which is exactly why it is built to tell the two apart.
         let doubled = PathBuf::from("/project/.typdoc/locks//a.lock");
         let single = PathBuf::from("/project/.typdoc/locks/a.lock");
         assert_eq!(
@@ -651,8 +557,7 @@ mod tests {
 
         let ordered = order_locks(None, vec![doubled.clone(), single.clone()]);
 
-        // A byte comparison sees `/` (0x2f) repeat, so `//` sorts before `/a`: the doubled
-        // path's next byte after the shared prefix is `/`, the single path's is `a`.
+        // `//` sorts before `/a`: `/` (0x2f) is below `a`.
         assert_eq!(ordered, vec![doubled, single]);
     }
 
@@ -674,8 +579,6 @@ mod tests {
             ]
         );
     }
-
-    // ---- done when (c): the git-common project hash ----
 
     #[test]
     fn two_worktrees_holding_the_project_at_the_same_relative_path_hash_the_same() {
@@ -710,7 +613,7 @@ mod tests {
         assert_ne!(
             same_relative_hash, elsewhere_hash,
             "a worktree keeping the project at a different relative path is a different \
-             project under decision 14, and must take a different lock"
+             project, and must take a different lock"
         );
     }
 
@@ -751,9 +654,8 @@ mod tests {
 
     #[test]
     fn the_hash_is_a_known_value_pinned_by_hand() {
-        // SHA-256("docs/project") = 830d630585793d774fa445bae677f79f4dd3fe14102f750678d495feb1ccb6ff,
-        // from `sha256sum` (not from this crate's own output); the first 16 hex characters are
-        // what decision 14 keeps.
+        // From `sha256sum`, not from this crate: SHA-256("docs/project") =
+        // 830d630585793d774fa445bae677f79f4dd3fe14102f750678d495feb1ccb6ff.
         assert_eq!(project_hash_of("docs/project"), "830d630585793d77");
     }
 }

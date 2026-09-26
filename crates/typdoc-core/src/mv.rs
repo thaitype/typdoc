@@ -1,8 +1,6 @@
-//! The parts of `mv` that touch no file and no index: recomputing a path ref's written form
-//! after its target moves, and splicing a body link's destination in place while keeping its
-//! own written form (design.md, `typdoc mv`: "each ref keeping its written form... A body link
-//! keeps its own form too"). Kept apart from `project.rs`'s orchestration so each rule here has
-//! its own narrow test, with no project, no index and no file system to stand up first.
+//! The parts of `mv` that need no project, index or file system: a path ref's written form after
+//! its target moves, and a body link's destination spliced in place, each keeping the form it
+//! was written in (SPC-2).
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -14,9 +12,7 @@ use crate::namespace_lock::NamespaceLock;
 use crate::project::RefsReference;
 use crate::validate::Finding;
 
-/// Why a ref `mv` found still points at the old name is one of the three the design gives: held
-/// by a project this one imports, which is read-only (decision 2); a plain-text mention, which
-/// `mv` never rewrites; or a body link in a document whose own `body.links` rule is off.
+/// Why `mv` left a ref it found pointing at the old name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnrewrittenReason {
     ImportedProject,
@@ -24,19 +20,15 @@ pub enum UnrewrittenReason {
     LinksRuleOff,
 }
 
-/// One ref `mv` did not rewrite: the reference itself, in the shape `refs --reverse` already
-/// gives one (the document that holds it, `field`, `written` and a position), plus why.
+/// A ref `mv` did not rewrite, in the shape `refs --reverse` gives one, and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnrewrittenRef {
     pub reference: RefsReference,
     pub reason: UnrewrittenReason,
 }
 
-/// One ref `mv`/`mv --renumber` did rewrite: the holder's project-relative path (`document`,
-/// matching `UnrewrittenRef`'s own use of "the document that holds it"), the field it lives in
-/// (`"$body"` for a body link, the same convention `RefsReference::field` already uses), and its
-/// written form before and after (ticket 21, `mv --json`'s new `rewritten`: `{document, field,
-/// before, after}`).
+/// A ref `mv` rewrote: the project-relative path of the document that holds it, its field
+/// (`$body` for a body link), and its written form before and after (SPC-12).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RewrittenRef {
     pub document: String,
@@ -45,10 +37,8 @@ pub struct RewrittenRef {
     pub after: String,
 }
 
-/// What a successful `mv` reports: the document under its new name, every ref it did rewrite
-/// (ticket 21), the refs it could not rewrite and why, and what the destination's schema rejects
-/// when the move landed the document somewhere its fields do not satisfy (decision 16: carried
-/// out and reported, not refused).
+/// What a successful `mv` reports. `findings` is what the destination's schema rejects: a move
+/// onto a schema the document does not satisfy is carried out and reported, not refused (SPC-2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MvReport {
     pub document: Document,
@@ -57,26 +47,18 @@ pub struct MvReport {
     pub findings: Vec<Finding>,
 }
 
-/// One file whose content changes in full: the bytes to write at `path` (an absolute path on
-/// disk), prepared as a temp file beside it and not renamed into place until every other content
-/// change [`commit`] is given is also ready.
+/// A file whose content [`commit`] replaces in full; `path` is absolute.
 pub struct ContentChange {
     pub path: PathBuf,
     pub bytes: Vec<u8>,
 }
 
-/// Runs every one of `changes` and then moves `from` to `to`, in the two-phase order decision 1
-/// fixes: a temp file for each content change is prepared first (in the order given), and only
-/// once every one of them exists does any rename happen — each content change's rename, in the
-/// order given, and the document's own move last of all, since "the document itself is always
-/// moved last" is the property a re-run's recovery rests on.
+/// Replaces the content of every one of `changes`, then moves `from` to `to` (SPC-2): a temp file
+/// for every change is prepared before any rename, and the document moves last, since a re-run's
+/// recovery rests on it still being at `from`.
 ///
-/// A failure at any point stops here and leaves every rename not yet reached exactly as it was;
-/// that is decision 1's residual window, not closed by this function. `_lock` is not inspected:
-/// it is here so this cannot be called without one (decision 6), the same as
-/// [`crate::fs::write_atomically`]; which of a caller's possibly several held locks this is, and
-/// whether it is the right one for every path touched, is the caller's property, not this
-/// function's.
+/// A failure stops at once and leaves every rename not yet reached undone; that window is not
+/// closed. `_lock` is not inspected: it makes a call without a lock fail to compile (SPC-10).
 pub fn commit(
     fs: &dyn Fs,
     _lock: &NamespaceLock<'_>,
@@ -95,13 +77,9 @@ pub fn commit(
     fs.rename(from, to)
 }
 
-/// A path relative to the project folder, made relative to `base` instead (a folder, itself
-/// relative to the project folder, empty for the project root): the folders `base` and `target`
-/// do not share, walked back with `..`, then the rest of `target`. This is what a written,
-/// unprefixed ref (`refBase: file` or `refBase: namespace`) is recomputed against once its
-/// target's path changes; the result is not necessarily the path a human would have chosen, only
-/// one that reads back to `target` when joined against `base` the way `refs::resolve_one` already
-/// joins one.
+/// `target`, relative to the project folder, made relative to the folder `base`, as an
+/// unprefixed ref is written. The result is not necessarily the one a person would choose, only
+/// one that `refs::resolve_one` resolves back to `target`.
 pub(crate) fn relative_to(base: &str, target: &str) -> String {
     let base_parts: Vec<&str> = base.split('/').filter(|s| !s.is_empty()).collect();
     let target_parts: Vec<&str> = target.split('/').filter(|s| !s.is_empty()).collect();
@@ -123,11 +101,7 @@ pub(crate) fn relative_to(base: &str, target: &str) -> String {
     }
 }
 
-/// The namespace `path` (relative to the project folder) falls under: the one namespace when
-/// there is only `default` (whose folder is empty, so it covers every path), or the namespace
-/// whose folder is the path's first component, when one matches. `None` when the project has
-/// several named namespaces and `path`'s first component names none of them — a file outside
-/// every namespace folder (story 1's decision, reachable by a ref, kept by a write the same way).
+/// `None` for a file outside every namespace folder, which a ref can still reach (SPC-7).
 pub(crate) fn namespace_of(namespaces: &[Namespace], path: &str) -> Option<usize> {
     if namespaces.len() == 1 && namespaces[0].folder.is_empty() {
         return Some(0);
@@ -136,11 +110,9 @@ pub(crate) fn namespace_of(namespaces: &[Namespace], path: &str) -> Option<usize
     namespaces.iter().position(|ns| ns.folder == first)
 }
 
-/// Whether `written` is a sibling-namespace-prefixed form (`name:rest`) rather than a bare
-/// relative path: the same reading `refs::classify` gives it, without needing that module's
-/// `Ctx` — a leading `./` or `../` escapes a colon that is part of the path, and `::` is the
-/// import form, never reached here since a ref that resolved to a document of this project was
-/// never one (an import prefix routes to a different project entirely).
+/// The reading `refs::classify` gives, without its `Ctx`: a leading `./` or `../` makes a colon
+/// part of the path, and `::` never reaches here, since an import prefix leads to another
+/// project.
 fn sibling_prefix<'a>(written: &'a str, namespaces: &[Namespace]) -> Option<(&'a str, &'a str)> {
     if written.starts_with("./") || written.starts_with("../") || written.contains("::") {
         return None;
@@ -152,26 +124,15 @@ fn sibling_prefix<'a>(written: &'a str, namespaces: &[Namespace]) -> Option<(&'a
         .then_some((prefix, rest))
 }
 
-/// The written form a ref to the document now at `new_target` should take, keeping the category
-/// (key, sibling-namespace-prefixed, or bare relative path) `written` already used, as design.md
-/// asks ("keeping each ref's written form (key, prefixed reference or relative path)").
-/// `holder_namespace`/`holder_path` are the document that holds the ref; `ref_base` is its
-/// collection's own. When `written` was sibling-prefixed and `new_target` no longer falls inside
-/// any namespace (it left every namespace folder), the prefixed form falls back to a bare
-/// relative path, since there is no longer a namespace name to prefix it with.
+/// The written form a ref to the document now at `new_target` takes, keeping the kind of form
+/// `written` used: key, sibling-prefixed or relative path (SPC-2). A prefixed form whose target
+/// has left every namespace falls back to a relative path: there is no namespace left to name.
 ///
-/// `key_rewrite` is `Some((old_key, new_key))` only from `mv --renumber`, which is the only
-/// caller that can ever reach a key-form `written`: a plain `mv` never moves a coded document
-/// (refused before this is reached), and a key never ends in `.md`, so a path-form `written` can
-/// never equal `old_key` by coincidence (design.md, Arguments that name a document: "a key never
-/// ends in `.md` and a document is always a `.md` file"). `written` reaching this function has
-/// already been confirmed, by the reverse scan that found it, to resolve to the document being
-/// moved — so a bare `written` equal to `old_key`, or a sibling-prefixed one whose part after the
-/// colon is, is that document's own key form, never another document's that merely shares the
-/// same digits. A bare key form is always promoted to the target's own sibling prefix: `refs.rs`'s
-/// own module doc says a bare form always means the writing document's own namespace, and
-/// `--renumber` always crosses one (decision 11 refuses the one case where it would not), so a
-/// bare key can never stay bare and correct after this move.
+/// `key_rewrite` comes only from `mv --renumber`, the one caller that meets a key form: a plain
+/// `mv` never moves a coded document, and a key never ends in `.md`, so a path form cannot equal
+/// `old_key` by chance. `written` already resolves to the moved document, so a form equal to
+/// `old_key` is that document's own key. A bare key is always given the target's prefix: it
+/// means the holder's own namespace, and `--renumber` always moves to another one (SPC-2).
 pub(crate) fn rewritten_path_ref(
     written: &str,
     ref_base: RefBase,
@@ -205,12 +166,7 @@ pub(crate) fn rewritten_path_ref(
     relative_to(&base, new_target)
 }
 
-/// The folder a project-relative path sits in, or the project folder itself for a path with no
-/// folder of its own. The same rule `refs::folder_of` already reads a ref's own base by (kept as
-/// a second, small copy rather than made `pub(crate)` there: `refs.rs`'s copy is reached only
-/// through `Ctx`, built from a document already being read, and duplicating four lines here costs
-/// less than threading a `Ctx` through code that has no ref-resolution context of its own to
-/// build one from).
+/// A copy of `refs::folder_of`, which is reached only through a `Ctx` this code cannot build.
 fn folder_of(path: &str) -> String {
     match path.rsplit_once('/') {
         Some((folder, _)) => folder.to_owned(),
@@ -218,24 +174,10 @@ fn folder_of(path: &str) -> String {
     }
 }
 
-/// Whether `text` holds an unequal number of `(` and `)`: design.md's own condition for a body
-/// link that needs `<…>` wrapping even though it holds no space and no `<`.
 fn unbalanced_parens(text: &str) -> bool {
     text.chars().filter(|&c| c == '(').count() != text.chars().filter(|&c| c == ')').count()
 }
 
-/// The written form of a body link's destination once its target's path becomes `new_path`,
-/// keeping the source text's own convention: a destination written `<…>` stays that way; one
-/// written with a literal `%20` keeps its spaces spelled that way; and a destination written
-/// plain, whose new path now holds a space, a `<` or unbalanced parentheses, is written `<…>`
-/// (design.md, `typdoc mv`, the paragraph beginning "Moves a file"). Returns the text to put
-/// between the parentheses, `<…>` included when it is used.
-/// The written form of a body link's destination once its target's path becomes `new_path`,
-/// keeping the source text's own convention: a destination written `<…>` stays that way; one
-/// written with a literal `%20` keeps its spaces spelled that way; and a destination written
-/// plain, whose new path now holds a space, a `<` or unbalanced parentheses, is written `<…>`
-/// (design.md, `typdoc mv`, the paragraph beginning "Moves a file"). Returns the text to put
-/// between the parentheses, `<…>` included when it is used.
 fn rewritten_body_destination(
     was_bracketed: bool,
     was_percent_encoded: bool,
@@ -253,17 +195,11 @@ fn rewritten_body_destination(
     new_path.to_owned()
 }
 
-/// Splices the new path `new_path` into `line` in place of the old destination `old_written`,
-/// found right after the `](` that begins at or after `link_col` (1-based,
-/// [`crate::lines::Position`]'s own convention: the column of the link's opening `[` or `!`).
-/// Whether the old destination was written `<…>` or held a literal `%20` is read from the line
-/// itself, never guessed, and the new one keeps the same convention (`rewritten_body_destination`).
-/// `None` when the line does not hold `](` at or after that column, or the text right after it
-/// does not match `old_written` exactly (bracket-wrapped or not) — a defensive refusal rather
-/// than a corrupted splice, for a line whose shape this function did not expect. The one
-/// construction that does not fit: a link whose own text holds the literal three characters
-/// `](`, which would be found first and is out of scope here (design.md leaves no case for it,
-/// and no fixture in this story's corpus holds one).
+/// Replaces `old_written` with `new_path` in the destination after the first `](` at or after
+/// `link_col` (1-based: the column of the link's `[` or `!`), keeping its `<…>` or `%20` form.
+/// `None`, rather than a damaged line, when the text there is not `old_written`.
+///
+/// A link whose own text holds `](` is not handled: that `](` is found first.
 pub(crate) fn splice_body_destination(
     line: &str,
     link_col: usize,
@@ -297,10 +233,7 @@ pub(crate) fn splice_body_destination(
     ))
 }
 
-/// The byte offset of the `chars`-th character of `line` (0-based), for a 1-based column already
-/// turned into a 0-based count by the caller: [`crate::lines::Position`]'s `col` counts Unicode
-/// scalar values, not bytes, so a line holding non-ASCII text before the link needs this rather
-/// than indexing `line` by `chars` directly.
+/// [`crate::lines::Position`]'s `col` counts characters, not bytes.
 fn char_byte_offset(line: &str, chars: usize) -> Option<usize> {
     line.char_indices()
         .nth(chars)
@@ -308,9 +241,7 @@ fn char_byte_offset(line: &str, chars: usize) -> Option<usize> {
         .or_else(|| (chars == line.chars().count()).then_some(line.len()))
 }
 
-/// The byte range of `line_number` (1-based, [`crate::lines::Position`]'s own convention) within
-/// `text`, its line ending excluded, so a caller can replace exactly that range without touching
-/// how the line ends. `None` when `text` has fewer lines than `line_number`.
+/// The range excludes the line ending, so replacing it keeps how the line ends.
 pub(crate) fn line_span(text: &str, line_number: usize) -> Option<(usize, usize)> {
     let mut start = 0;
     for _ in 1..line_number {
@@ -433,8 +364,6 @@ mod tests {
 
     #[test]
     fn a_bare_key_ref_is_promoted_to_the_targets_sibling_prefix_after_renumbering() {
-        // A bare key always means the holder's own namespace (`refs.rs`'s own module doc), and
-        // `--renumber` always crosses one, so a bare key can never stay bare and correct.
         let namespaces = ns(&[("story-1", "story-1"), ("story-3", "story-3")]);
         let new = rewritten_path_ref(
             "WF-5",
@@ -473,15 +402,8 @@ mod tests {
     #[test]
     fn a_sibling_prefixed_key_ref_into_the_holders_own_namespace_keeps_the_prefix_rather_than_downgrading_to_bare()
      {
-        // The document moves into the same namespace `holder.md` itself lives in (`story-1`);
-        // the rewritten form still carries `story-1:`'s own prefix rather than downgrading to a
-        // bare key. This mirrors the pre-existing, already-tested policy for a sibling-prefixed
-        // PATH ref (`a_sibling_prefixed_written_ref_keeps_the_prefix_form_and_updates_it`,
-        // above): once a ref is written in prefixed form, `mv`/`mv --renumber` keep that
-        // category rather than minimizing it to the bare form a human might have chosen instead
-        // — design.md's own words are "keeping each ref's written form", not "keeping it in its
-        // shortest form". `story-1:WF-1` is self-referencing but not wrong: a document in
-        // `story-1` resolves a `story-1:` prefix onto itself fine.
+        // Kept prefixed, as each ref keeps its written form (SPC-2); a `story-1:` prefix
+        // resolves inside `story-1` too.
         let namespaces = ns(&[("story-1", "story-1"), ("story-9", "story-9")]);
         let new = rewritten_path_ref(
             "story-9:WF-5",
@@ -497,9 +419,6 @@ mod tests {
 
     #[test]
     fn a_path_shaped_written_ref_is_untouched_by_key_rewrite_even_when_a_move_is_also_a_renumber() {
-        // Defensive: a key never ends in `.md`, so this should never actually be reachable, but
-        // `key_rewrite` must not mistake a path for a key merely because the digits after a dash
-        // happen to match, if one ever did.
         let namespaces = ns(&[("story-1", "story-1"), ("story-3", "story-3")]);
         let new = rewritten_path_ref(
             "tickets/WF-5.md",
@@ -561,9 +480,8 @@ mod tests {
     #[test]
     fn splice_body_destination_keeps_percent_encoding_read_from_the_line_itself() {
         let line = "[img](old%20file.md)";
-        // `old_written` is the raw text as authored, `%20` included — the same form
-        // `BodyLink::written` carries (design.md, References: percent-encoding is never
-        // decoded on the way to `written`, only `target` is).
+        // `old_written` is the text as written, `%20` included, as `BodyLink::written` holds it
+        // (SPC-12).
         let spliced = splice_body_destination(line, 1, "old%20file.md", "new file.md").unwrap();
         assert_eq!(spliced, "[img](new%20file.md)");
     }

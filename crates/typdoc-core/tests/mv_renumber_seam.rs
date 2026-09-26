@@ -1,13 +1,9 @@
-//! `mv --renumber`'s own ordering rule (decision 13): the destination namespace's state is
-//! written before the document appears under its new key. Proved deterministically, the same
-//! technique `mv_seam.rs` already uses for `mv::commit`'s own promise: a fake file system
-//! stopped at an exact operation count, this time stopped right after the state write, before
-//! `mv::commit` runs at all.
+//! Covers SPC-2.
 //!
-//! `Project::mv_renumber` calls `state::write` (re-exported as `write_state`) and then
-//! `mv::commit` as two separate steps against the same lock, with nothing else of its own
-//! between them that touches the file system — so staging a stop that lands exactly there is
-//! what the seam is for; no `Project` needs to be stood up to show it.
+//! `mv --renumber` writes the destination's `last` before the document appears under its new
+//! key. `Project::mv_renumber` calls `write_state` and then `mv::commit` under one lock, with no
+//! file operation between them, so a fake stopped at an exact operation count shows it without
+//! a `Project`.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -33,13 +29,7 @@ fn changes() -> Vec<ContentChange> {
     }]
 }
 
-/// The state write itself runs to completion (nothing is staged yet), recording `last: 1` for
-/// `story-3`'s `tickets` — the number this run is about to spend on the key `WF-1`. Then the run
-/// that would rewrite the holder and move the document is stopped at its very first operation:
-/// nothing of `mv::commit`'s own work happens at all. The number is skipped, not reused: `last`
-/// still reads what the state write recorded, and the document never arrived under `WF-1` —
-/// exactly the "a re-run (or `validate`) sees a written `last` and a document not yet moved"
-/// state decision 1 describes as ordinary and recoverable, not a partial-write bug.
+/// A skipped number is ordinary, not a partial write to repair.
 #[test]
 fn a_stop_right_after_the_state_write_skips_the_number_and_leaves_the_document_unmoved() {
     let fake = FakeFs::new();
@@ -95,11 +85,6 @@ fn a_stop_right_after_the_state_write_skips_the_number_and_leaves_the_document_u
     );
 }
 
-/// The same stop, moved one operation later, inside `mv::commit`'s own prepare phase: the state
-/// write is still complete and unaffected, and now the holder's content change is prepared (a
-/// temp file exists) but not yet renamed into place, and the document itself has not moved —
-/// `mv::commit`'s own promise (`mv_seam.rs`) about the run of renames, composed with decision
-/// 13's ordering rule about the state write that precedes it.
 #[test]
 fn a_stop_during_commits_own_prepare_phase_still_leaves_the_spent_number_recorded_once() {
     let fake = FakeFs::new();
@@ -118,9 +103,7 @@ fn a_stop_during_commits_own_prepare_phase_still_leaves_the_spent_number_recorde
     write_state(&fake, &lock, Path::new("/project"), "story-3", "tickets", 1)
         .expect("the state write itself is not staged to fail");
 
-    // One fake operation into `commit`'s own prepare phase (reading the holder's mode to carry):
-    // enough to show the state write is unaffected by however far into `commit` a stop lands,
-    // not only at the very first instant.
+    // One operation into `commit`: the holder's mode has been read, and nothing written.
     fake.arm(Stage::StopAfter(1));
     let err = commit(
         &fake,

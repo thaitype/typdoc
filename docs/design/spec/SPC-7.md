@@ -79,7 +79,7 @@ folder.
   used in every namespace; each namespace numbers its own keys, and a key is unique within its
   namespace, not across them.
 - A ref or mention with no prefix means the namespace of the document that holds it, whatever the
-  working directory. Prefixes are described under Refs.
+  working directory. Prefixes are described in `SPC-14`.
 - Files outside every namespace folder belong to no namespace; a relative path can still point at
   them. A ref or a body link that reaches such a file resolves like any other: the file exists,
   so the answer is never `not-found`, and the command goes on. The file is named by its path

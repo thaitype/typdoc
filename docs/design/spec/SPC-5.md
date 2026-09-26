@@ -24,9 +24,8 @@ key: WF-2
 title: Decide the numbering scheme
 ```
 
-This is a deliberate change for the coded form of `new`, which used to print only the bare key
-on stdout. A caller that wants just the key now reads it out of `--json` instead, the same as any
-other field — `new`'s `--json` shape is unchanged.
+The coded form of `new` prints this block too, not a bare key. A caller that wants just the key
+reads it out of `--json`, the same as any other field.
 
 **`toc` is a table with a header row:** `line`, `end`, `level`, `heading`, one row per heading
 down to `--depth`, columns separated by two spaces and padded to the widest value in that column
@@ -108,10 +107,9 @@ unrewritten: none
 findings: none
 ```
 
-**`mv --json` gains `rewritten`**, additive to its existing shape — the full list behind the
-text summary's count, one entry per rewritten ref: `{document, field, before, after}`. Every
-field `mv --json` already printed keeps printing, unchanged; `rewritten` sits between `document`
-and `unrewritten`.
+**`mv --json` carries `rewritten`**, the full list behind the text summary's count, one entry
+per rewritten ref: `{document, field, before, after}`. It sits between `document` and
+`unrewritten`.
 
 ```console
 $ typdoc mv notes/first.md notes/renamed.md --json
@@ -122,19 +120,16 @@ $ typdoc mv notes/first.md notes/renamed.md --json
 There is no `--verbose` flag: the detail lives in `--json`, and a human at a terminal already has
 it in `git diff`.
 
-**`list` gains a header row** above the table it already printed: the identity column, `title`,
-then each `--where`/`--fields` column, in that order. The identity column is labeled `key` when
-every matched document has one (a coded collection), `path` when none does, and `document` when
-the matched set is a genuine mix of both (spanning collections with and without a code) — a
-header must not claim a column holds something a row in it plainly doesn't, and once even one row
-of each shape is present, neither `key` nor `path` alone is accurate; the cell itself is already
-"key when coded, else path" per row (`table_row`'s own `doc.key.unwrap_or(doc.path)`), so
-`document` is the label that fits every row rather than misdescribing some of them (ticket 29,
-correcting M-16's own `any`-based rule, which said `key` for a mixed result). Widths are computed
-over every matched document, not only the rows `--limit` prints, so a column's width never moves
-when `--limit` does. No header, and nothing printed, when the result is empty — matching `list`'s
-own long-standing empty-result precedent, which this row does not change. `--ids` is unchanged:
-one key or path per line, no header.
+**`list` prints a header row** above its table: the identity column, `title`, then each
+`--where`/`--fields` column, in that order. The identity column is labeled `key` when every matched
+document has one (a coded collection), `path` when none does, and `document` when the matched set is
+a genuine mix of both (spanning collections with and without a code) — a header must not claim a
+column holds something a row in it plainly doesn't, and once even one row of each shape is present,
+neither `key` nor `path` alone is accurate; the cell itself is already "key when coded, else path"
+per row (`table_row`'s own `doc.key.unwrap_or(doc.path)`), so `document` is the label that fits
+every row rather than misdescribing some of them. Widths are computed over every matched document,
+not only the rows `--limit` prints, so a column's width never moves when `--limit` does. No header,
+and nothing printed, when the result is empty. `--ids` prints one key or path per line, no header.
 
 ```console
 $ typdoc list --collection tickets --where status=open --where 'ref.all(blocked_by).status=done'
@@ -151,27 +146,23 @@ WF-1        Ticket one
 notes/a.md  A note
 ```
 
-**`refs` and plain/`--schemas` `validate` gain a header row** (M-16), the same way `list` and
-`toc` did: `refs` already named each ref's field inline, one per line, and `validate` already
-printed one line per finding, using the same finding shape `--json`/`--audit` expose — but
-neither had a header naming those columns, which the labeling principle asks for just as much as
-`list` and `toc` did. Both use the same column-aligned, two-space-separated shape as `list`'s
-table: no header, and nothing printed, when there is nothing to show — the same empty-result rule
-`list` and `toc` already follow.
+**`refs` and plain/`--schemas` `validate` print a header row**, as `list` and `toc` do: `refs`
+prints one ref per line with its field, and `validate` one line per finding, in the finding shape
+`--json`/`--audit` expose, and the labeling principle asks for a header naming those columns.
+Both use the same column-aligned, two-space-separated shape as `list`'s table: no header, and
+nothing printed, when there is nothing to show, the same empty-result rule `list` and `toc`
+follow.
 
-`refs`' first two columns are always `document` — the document at the other end, the same
-identity `list`'s own `document`/`key`/`path` column names (a coded document as its bare key when
-the project has exactly one namespace, `namespace:key` when it has several — ticket 32, M-20:
-qualification tracks whether the project genuinely needs it, not unconditional either way —
-otherwise its bare path, with a `project::` prefix for an imported project's document), or
-`(unresolved: <reason>)` when a forward ref did not resolve — and `field`. A third column,
-`written`, appears only for the forward direction (no `--reverse`): `written` can genuinely differ
-from the resolved `document` there (an alias, a relative form), so it is real information.
+`refs`' first two columns are always `document` — the document at the other end, the same identity
+`list`'s own `document`/`key`/`path` column names (a coded document as its bare key when the project
+has exactly one namespace and `namespace:key` when it has several, so a key is qualified only when
+the project needs it; otherwise its bare path, with a `project::` prefix for an imported project's
+document), or `(unresolved: <reason>)` when a forward ref did not resolve — and `field`. A third
+column, `written`, appears only for the forward direction (no `--reverse`): `written` can genuinely
+differ from the resolved `document` there (an alias, a relative form), so it is real information.
 `--reverse` answers "who points at this document", and there `written` is only how the holder
 happened to write the reference back to the very document already named on the command line — it
-tells the reader nothing `document` doesn't already say, so it is dropped, header included
-(ticket 29, correcting M-16's own shape, which put `written` first and printed it for both
-directions without ever naming the other document at all).
+tells the reader nothing `document` doesn't already say, so it is dropped, header included.
 
 ```console
 $ typdoc refs team/doc.md
@@ -200,5 +191,4 @@ warn.md       warn   frontmatter.unknown  the field `extra` is not a field of th
 
 **Every command's error path prints plain text, not the `--json` error object**, when it fails
 without `--json`: `typdoc: <message>` on stderr. This applies to every command this document
-covers, including the error paths that used to be unreachable without `--json` and became
-reachable once each command's text mode was built.
+covers.

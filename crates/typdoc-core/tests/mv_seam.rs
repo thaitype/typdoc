@@ -1,10 +1,7 @@
-//! `mv::commit`'s two-phase promise (decision 1): every content change is prepared first, then
-//! the renames happen in one run, the document itself last of all. A stop partway through the
-//! renames leaves every rename not yet reached exactly as it was — proved deterministically with
-//! a fake staged to stop after a fixed number of operations, the same way `crates/typdoc-fs/
-//! tests/write_seam.rs` already proves `write_atomically`'s own promise; no real project is
-//! needed for this, since `commit` reads no index and no config, only the paths and bytes it is
-//! given.
+//! Covers SPC-2.
+//!
+//! Where `mv::commit` can stop, and what each stop leaves, with a fake staged to stop after a
+//! fixed number of operations.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -23,8 +20,6 @@ fn a_lock(fake: &FakeFs) -> NamespaceLock<'_> {
     .expect("nothing holds it yet")
 }
 
-/// `holder-a.md` and `holder-b.md` hold refs to `old.md`; `holder-a.md`'s content change and the
-/// document's own move are the two renames this table cares about telling apart.
 fn seed(fake: &FakeFs) {
     fake.put(
         Path::new("/project/old.md"),
@@ -91,12 +86,8 @@ fn a_full_run_prepares_every_change_and_renames_the_document_last() {
     );
 }
 
-/// Each content change's prepare is four fake operations (read the mode to carry, create the
-/// temp, set its mode, write its bytes), so preparing both holders is eight; stopped right after
-/// the ninth (the first content rename, `holder-a.md`'s) but before the tenth (`holder-b.md`'s)
-/// or the eleventh (the document's own move): `holder-a.md` already reads the new form,
-/// `holder-b.md` and the document itself are exactly as they were before the run — decision 1's
-/// own description of the window, produced on purpose rather than described.
+/// A prepare is four operations (read the mode, create the temp file, set its mode, write), so
+/// both holders take eight and the ninth is `holder-a.md`'s rename.
 #[test]
 fn a_stop_between_two_renames_leaves_the_earlier_one_done_and_the_rest_untouched() {
     let fake = FakeFs::new();
@@ -136,10 +127,7 @@ fn a_stop_between_two_renames_leaves_the_earlier_one_done_and_the_rest_untouched
     );
 }
 
-/// Stopped partway through preparing the first content change (before its bytes are even
-/// written): neither holder nor the document is touched, and the run's own cleanup removes the
-/// one temp file it had started — the "nothing renamed yet" state a stop during prepare always
-/// leaves, decision 4's leftover when that cleanup itself cannot run.
+/// Stops after three operations, inside the first prepare, before its bytes are written.
 #[test]
 fn a_stop_during_prepare_renames_nothing_at_all() {
     let fake = FakeFs::new();
@@ -171,10 +159,8 @@ fn a_stop_during_prepare_renames_nothing_at_all() {
     );
 }
 
-/// The same table, run to completion, with the document's own final rename staged to fail: every
-/// content change is committed, and only the move is left undone — the exact state a re-run of
-/// the same `mv` command finds and finishes (rediscovering nothing to rewrite, since every ref
-/// now names the new path, and only the document itself still needs to move).
+/// The state a re-run of the same `mv` finishes: every ref already names the new path, and only
+/// the document is left to move.
 #[test]
 fn a_stop_at_the_documents_own_move_leaves_every_content_change_already_committed() {
     let fake = FakeFs::new();
