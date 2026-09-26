@@ -1,14 +1,9 @@
-//! `SIGINT` and `SIGTERM` sent to the shipped binary while it holds a namespace lock (ticket 4's
-//! own "done when"), and the one case exit 4 has never been produced through a command before
-//! this: a run that meets a lock file nobody owns.
+//! Covers SPC-3, SPC-10.
 //!
-//! **Holding the lock long enough to signal, with no test-only code in the binary.** `new`'s own
-//! validation checks every document the namespace already holds for a ref cycle
-//! (`Project::prescan_refs`, reading each one from disk), under the lock, before the document it
-//! is creating is written. That is real work every `new` and every `set` already does, not
-//! something added for this test; given enough documents it keeps the lock held for a stretch of
-//! real, wall-clock time, which is what these tests wait on instead of a sleep or a flag. No
-//! command here has a "hold the lock and wait" mode, and none needs one.
+//! Under the lock, before it writes, `new` reads every document already there from disk for its
+//! ref checks (`Project::prescan_refs`). With enough documents that holds the lock for a real
+//! stretch of time, which these tests wait on instead of a sleep: the binary has no mode that
+//! holds a lock and waits, and needs none.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -17,14 +12,9 @@ use common::{
     LOCK_APPEARS_WITHIN, Scratch, Spawn, WF_COLLECTION, large_project, lock_path, wait_for_file,
 };
 
-/// How many documents the namespace holds before a test sends a signal. Large enough that
-/// `Project::prescan_refs`'s read-every-document loop measurably holds the lock on every machine
-/// this suite has been run on (a single real run at this size took low seconds on this one); the
-/// test does not wait that long in practice, because it sends the signal as soon as the lock
-/// file appears, which is before that loop even starts.
+/// Large enough that the scan holds the lock for seconds. Each test signals as soon as the lock
+/// file appears, before the scan starts.
 const DOCUMENT_COUNT: u32 = 20_000;
-
-// ---- done when (a): a real SIGINT and a real SIGTERM, sent while the lock is held ----
 
 #[test]
 fn sigint_sent_while_the_lock_is_held_removes_it_and_ends_the_process_by_the_signal() {
@@ -80,8 +70,6 @@ fn sigterm_sent_while_the_lock_is_held_removes_it_and_ends_the_process_by_the_si
     assert!(!lock.exists(), "the lock file was not removed");
 }
 
-// ---- done when (b): a second signal during the cleanup does not cut it short ----
-
 #[test]
 fn a_second_signal_arriving_right_behind_the_first_does_not_cut_the_cleanup_short() {
     let project = large_project(DOCUMENT_COUNT);
@@ -119,9 +107,8 @@ fn a_second_signal_arriving_right_behind_the_first_does_not_cut_the_cleanup_shor
     );
 }
 
-// ---- done when (c): a run meeting a lock file nobody owns stops at exit 4 with the file
-// named (closes UNPRODUCED_EXIT_CODES's `4` entry) ----
-
+/// The test that makes the binary exit 4, which is why `registry::UNPRODUCED_EXIT_CODES` does not
+/// list it.
 #[test]
 fn a_run_that_meets_a_lock_file_nobody_owns_stops_at_exit_4_with_the_file_named() {
     let project = Scratch::project(&WF_COLLECTION);
@@ -156,8 +143,6 @@ fn a_run_that_meets_a_lock_file_nobody_owns_stops_at_exit_4_with_the_file_named(
         message.contains(&lock.display().to_string()),
         "the message must name the lock file: {message}"
     );
-    // The lock file this run never made is still exactly the one nobody here owns: a run that
-    // times out must never touch it.
     assert!(
         lock.is_file(),
         "a lock this process did not create must never be removed"

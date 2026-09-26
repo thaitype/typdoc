@@ -1,11 +1,8 @@
-//! `state.missing`, `state.malformed`, `state.behind` and `state.retired` through the built
-//! binary, beyond the single trip each rule's `fixtures/broken/` folder shows through the
-//! generic coverage harness: the cases the design and the contract name by name, and, for
-//! `state.behind` and `state.retired`, the measurement decision 13 is built on (why these rules
-//! report and never repair). `config.state-orphan` and `config.state-uncoded` are config
-//! errors: `fixtures/broken/config.state-orphan` and `fixtures/broken/config.state-uncoded`
-//! cover them through that same harness, since every config error's shape (exit 2, the error
-//! object) is already checked generically in `config.rs`.
+//! Covers SPC-8.
+//!
+//! The cases beyond the one trip each rule's `fixtures/broken/` folder gives through the
+//! coverage harness. `config.state-orphan` and `config.state-uncoded` are config errors, covered
+//! by their own `fixtures/broken/` folders and by `config.rs`.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -34,8 +31,6 @@ fn state_missing(ran: &Ran) -> serde_json::Value {
     findings[0].clone()
 }
 
-/// The state file's own file, missing entirely, while the collection has a document: the
-/// simplest of the three cases, and the one `fixtures/broken/state.missing` also shows.
 #[test]
 fn no_state_file_at_all_while_documents_exist_is_state_missing() {
     let project = Scratch::project(&TICKETS_SCHEMA);
@@ -49,8 +44,6 @@ fn no_state_file_at_all_while_documents_exist_is_state_missing() {
     assert!(finding.get("key").is_none(), "{finding}");
 }
 
-/// The state file exists, and holds entries for other collections, but not this one: still
-/// `state.missing`, so a state file that is merely incomplete is not read as "recorded".
 #[test]
 fn a_state_file_that_exists_without_this_collections_entry_is_state_missing() {
     let files = [
@@ -77,11 +70,8 @@ fn a_state_file_that_exists_without_this_collections_entry_is_state_missing() {
     assert_eq!(finding["collection"], json!("tickets"));
 }
 
-/// A coded collection with no documents at all in the namespace, and no record of it either, is
-/// new: nothing is reported (design, State: "A collection with no coded documents in the
-/// namespace and no record is new, and nothing is reported"). Proof this is read, not merely
-/// unwritten: a document of the collection is added in the next test and the same project turns
-/// red.
+/// The next test adds one document to the same project and turns it red, so this silence is the
+/// rule's answer and not an absence of checking.
 #[test]
 fn a_coded_collection_with_no_documents_and_no_record_reports_nothing() {
     let project = Scratch::project(&TICKETS_SCHEMA);
@@ -102,7 +92,6 @@ fn the_same_project_with_a_document_added_turns_red() {
     assert_eq!(ran.code, 2, "{}", ran.stderr);
 }
 
-/// A `last` recorded for the collection clears the finding.
 #[test]
 fn a_recorded_last_makes_the_project_clean() {
     let files = [
@@ -142,10 +131,8 @@ fn warn_only(ran: &Ran, rule: &str) -> serde_json::Value {
     findings[0].clone()
 }
 
-// --- `state.malformed`: present but unusable, told apart from `state.missing` (decision 13) ---
+// --- `state.malformed` ---
 
-/// A `last` that is text is `state.malformed`, at `error`, not `state.missing`: the record is
-/// there, and reporting it as absent would send a user to restore a file that is not lost.
 #[test]
 fn a_last_that_is_text_is_state_malformed_not_state_missing() {
     let files = [
@@ -169,8 +156,7 @@ fn a_last_that_is_text_is_state_malformed_not_state_missing() {
     assert_eq!(finding["level"], json!("error"));
 }
 
-/// `state.malformed` does not need a document of the collection to be present: the record is
-/// wrong on its own account, unlike `state.missing`, which only fires once a document exists.
+/// Unlike `state.missing`, the record is wrong on its own account.
 #[test]
 fn a_malformed_last_is_reported_with_no_document_of_the_collection_at_all() {
     let files = [
@@ -191,8 +177,6 @@ fn a_malformed_last_is_reported_with_no_document_of_the_collection_at_all() {
     assert_eq!(finding["collection"], json!("tickets"));
 }
 
-/// A valid `last` leaves `state.malformed` silent (the counterpart already shown for
-/// `state.missing` by `a_recorded_last_makes_the_project_clean` covers this the same way).
 #[test]
 fn a_valid_last_leaves_state_malformed_silent() {
     let files = [
@@ -215,11 +199,8 @@ fn a_valid_last_leaves_state_malformed_silent() {
     assert_eq!(ran.stdout_json()["findings"], json!([]));
 }
 
-// --- `state.behind`: `last` lower than the highest existing number, at `warn` (decision 13) ---
+// --- `state.behind` ---
 
-/// A recorded `last` lower than the highest existing number is `state.behind`, at `warn`:
-/// allocation still gives the right number (the larger of the two), but the record itself is
-/// telling the reader something untrue.
 #[test]
 fn a_last_lower_than_the_highest_existing_number_is_state_behind() {
     let files = [
@@ -252,8 +233,6 @@ fn a_last_lower_than_the_highest_existing_number_is_state_behind() {
     );
 }
 
-/// A `last` equal to the highest existing number leaves `state.behind` silent: it is not lower,
-/// so nothing is wrong yet.
 #[test]
 fn a_last_equal_to_the_highest_existing_number_leaves_state_behind_silent() {
     let files = [
@@ -278,9 +257,7 @@ fn a_last_equal_to_the_highest_existing_number_leaves_state_behind_silent() {
     assert_eq!(ran.stdout_json()["findings"], json!([]));
 }
 
-/// A `last` higher than every existing number (a gap kept on purpose, after a deletion) also
-/// leaves `state.behind` silent: keeping the gap is decision 13's whole point, not a fault of
-/// its own.
+/// A gap left by a deletion is kept on purpose, so it is not a fault.
 #[test]
 fn a_last_higher_than_every_existing_number_leaves_state_behind_silent() {
     let files = [
@@ -304,10 +281,8 @@ fn a_last_higher_than_every_existing_number_leaves_state_behind_silent() {
     assert_eq!(ran.stdout_json()["findings"], json!([]));
 }
 
-// --- `state.retired`: an entry for a collection the project no longer has (decision 13) ---
+// --- `state.retired` ---
 
-/// A state entry naming a collection this project no longer has at all is `state.retired`, at
-/// `warn`, and is kept: the read still succeeds.
 #[test]
 fn an_entry_for_a_collection_the_project_no_longer_has_is_state_retired() {
     let files = [
@@ -329,7 +304,6 @@ fn an_entry_for_a_collection_the_project_no_longer_has_is_state_retired() {
     assert_eq!(finding["collection"], json!("tickets"));
 }
 
-/// No stray entry, no finding: `state.retired` is not a rule that fires on everything.
 #[test]
 fn no_stray_entry_leaves_state_retired_silent() {
     let files = [
@@ -348,12 +322,9 @@ fn no_stray_entry_leaves_state_retired_silent() {
     assert_eq!(ran.stdout_json()["findings"], json!([]));
 }
 
-/// The contrast decision 13 asks to be shown: an entry for a collection this project no longer
-/// has used to be `config.state-uncoded`, a config error, which stops every command including a
-/// plain read (exit 2, even for `get` on an unrelated file). Now it is `state.retired`, a
-/// `validate` finding, and the same read succeeds: the two projects here differ only in whether
-/// the state file's stray entry names a collection the project still has (uncoded, still a
-/// config error) or one it does not have at all (retired, no longer one).
+/// The two projects differ only in whether the entry names a collection the project has, with
+/// no code (`config.state-uncoded`, a config error that stops every command, a read included), or
+/// none at all (`state.retired`, a finding that stops nothing).
 #[test]
 fn state_retired_does_not_stop_a_read_where_its_predecessor_as_a_config_error_did() {
     let notes_collection = (
@@ -362,7 +333,6 @@ fn state_retired_does_not_stop_a_read_where_its_predecessor_as_a_config_error_di
     );
     let note_schema = ("note.json", r#"{ "name": "note", "fields": {} }"#);
 
-    // Retired: `tickets` is not a collection of this project at all.
     let retired = Scratch::project(&[
         notes_collection,
         note_schema,
@@ -373,9 +343,6 @@ fn state_retired_does_not_stop_a_read_where_its_predecessor_as_a_config_error_di
     ]);
     retired.file("note.md", "");
 
-    // Uncoded: `notes` is a collection of this project, and its schema has no code — the case
-    // `config.state-uncoded` still is (`fixtures/broken/config.state-uncoded` covers the trip
-    // itself; this asserts the exit code contrast directly, beside `state.retired`'s).
     let uncoded = Scratch::project(&[
         notes_collection,
         note_schema,
@@ -402,23 +369,13 @@ fn state_retired_does_not_stop_a_read_where_its_predecessor_as_a_config_error_di
     );
 }
 
-// --- The measurement decision 13 is built on: why these rules report and never repair ---
+// --- Why these rules report and never repair ---
 
-/// Records the comparison decision 13 measures. A project has `WF-1` (linking to `WF-3.md`),
-/// `WF-2` and `WF-3`, with `last: 3`. `WF-3` is deleted.
-///
-/// Keeping the gap (`last` stays `3`, the highest number *ever issued* rather than the highest
-/// that still exists) gives a `body.links` finding: the link now names a file that is not
-/// there, which is exactly what a reader needs to know.
-///
-/// Deriving `last` from the files instead would set it to `2`, the highest that *exists* after
-/// the deletion — and the next `new` would issue `WF-3` again, since allocation is one past the
-/// larger of the highest existing number and `last`. This is simulated here without running
-/// `new` itself, by recreating `WF-3.md` as a *different* document by hand, the way a freshly
-/// issued `WF-3` would be: the link is well formed, the document exists, and `validate` reports
-/// nothing about it at all — the silent wrong answer decision 13 is written to prevent. The same
-/// measurement run through `new` itself, for real, is
-/// `crates/typdoc/tests/new.rs`'s `new_never_reissues_a_number_whose_document_was_deleted`.
+/// `WF-3` is deleted from a project whose `WF-1` links to it. Keeping the gap (`last` stays `3`)
+/// leaves a `body.links` finding that says where to look. Deriving `last` from the files would set
+/// it to `2`, and the next `new` would issue `WF-3` again to a different document, after which
+/// `validate` reports nothing. `new.rs`'s `new_never_reissues_a_number_whose_document_was_deleted`
+/// runs `new` itself.
 #[test]
 fn the_measurement_behind_decision_13_deriving_last_reissues_a_retired_key_silently() {
     let schema = r#"{ "name": "wf", "code": "WF", "fields": { "title": { "type": "string" } } }"#;
@@ -461,13 +418,8 @@ fn the_measurement_behind_decision_13_deriving_last_reissues_a_retired_key_silen
         target_missing[0]
     );
 
-    // Deriving `last` from the files: right after the deletion this would set it to `2`, the
-    // highest that still exists, and the next `new` allocates one past the larger of that and
-    // `last` — `3` again — records it as the new `last` (decision 13's own wording) and issues
-    // `WF-3` to a document that is not the one `WF-1` was written about. Both of its effects (the
-    // file and the state file) are put in place by hand here, exactly as `new` would leave them,
-    // so this test stays a `validate`-only measurement: `last` ends at `3`, not `2`, which is the
-    // point — the file says nothing is wrong any more, because as far as it knows nothing is.
+    // Deriving `last` from the files: the next `new` issues `WF-3` again to another document and
+    // records `last: 3`. Both effects are put in place by hand, as `new` would leave them.
     let derived_from_files = Scratch::project(&[
         (
             ".typdoc/collections/tickets.json",

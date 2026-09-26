@@ -1,5 +1,4 @@
-//! Match templates: which files a collection holds, for globs with `*` and `**` and for the
-//! key placeholder of a coded schema.
+//! Covers SPC-17.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -16,8 +15,6 @@ fn collection_of(ran: &Ran) -> Value {
     ran.stdout_json()["document"]["collection"].clone()
 }
 
-/// A project with one collection, `notes`, whose `match` is `pattern`, over the schema of
-/// `NOTES`, and an empty document at each of `files`.
 fn with_match(pattern: &str, files: &[&str]) -> Scratch {
     let project = Scratch::project(&NOTES);
     project.file(
@@ -158,8 +155,6 @@ fn a_glob_does_not_enter_a_folder_whose_name_begins_with_a_dot() {
     }
 }
 
-/// The leading-dot rule is about folders, not file names: a file is named by the template that
-/// reaches it rather than found by walking into it.
 #[test]
 fn a_star_matches_a_leading_dot_in_a_file_name() {
     let project = with_match("**/*.md", &[".hidden.md", "a/.d.md", "a/e.md"]);
@@ -178,8 +173,6 @@ fn a_literal_segment_enters_a_folder_whose_name_begins_with_a_dot() {
     assert!(!found(&project, "docs/a.md"));
 }
 
-/// The pair that tells the two halves of the rule apart: one folder, reached by a segment that
-/// holds a `*` and by one that is plain text.
 #[test]
 fn a_folder_segment_with_a_star_does_not_enter_a_dot_folder_a_literal_one_enters() {
     let glob = with_match(".*/x.md", &[".a/x.md"]);
@@ -189,8 +182,6 @@ fn a_folder_segment_with_a_star_does_not_enter_a_dot_folder_a_literal_one_enters
     assert!(found(&literal, ".a/x.md"));
 }
 
-/// `.gitignore` is not read: what a version control system hides is a different question from
-/// what a project declares.
 #[test]
 fn a_gitignore_does_not_keep_a_file_out_of_a_collection() {
     let project = with_match("*.md", &["a.md"]);
@@ -225,8 +216,6 @@ fn a_folder_with_a_typdoc_folder_and_no_config_is_not_a_project() {
     assert!(found(&project, "inner/c.md"));
 }
 
-/// A symbolic link to a folder is not followed, so a run cannot leave the project or read one
-/// file twice under two names; the file behind the link keeps its own name and its own answer.
 #[test]
 fn a_symbolic_link_to_a_folder_that_a_double_star_would_enter_is_not_followed() {
     let project = with_match("**/*.md", &["real/a.md"]);
@@ -267,9 +256,8 @@ fn a_folder_whose_name_is_not_utf8_under_a_double_star_is_skipped() {
     assert!(found(&project, "a.md"));
 }
 
-/// The design never settles a `collections.overlap` by precedence, so `get` has no collection to
-/// answer with and refuses the file, however the two collections reach it (`validate` reports
-/// the overlap instead, as a finding: `crates/typdoc/tests/validate.rs`).
+/// No precedence settles `collections.overlap`, so `get` has no collection to answer with;
+/// `validate` reports the overlap as a finding instead (`validate.rs`).
 #[test]
 fn a_file_two_collections_reach_is_refused_by_get_however_they_reach_it() {
     let project = with_match("**/*.md", &["a/b.md"]);

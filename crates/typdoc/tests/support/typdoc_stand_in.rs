@@ -1,6 +1,6 @@
 //! Stand-in for `typdoc` on the shell examples harness's `PATH`. It is never the real CLI:
 //! it does nothing but record what it was called with, so a test can compare that with what
-//! the design says a shell must pass through. The harness places it on `PATH` under the name
+//! an example expects a shell to pass through. The harness places it on `PATH` under the name
 //! `typdoc`, and points it at an output file with the environment variable `STAND_IN_OUT_FILE`.
 //! It records its arguments and every environment variable whose name starts with `TYPDOC_`,
 //! as one JSON object: `{ "args": [...], "env": { ... } }`.

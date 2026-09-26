@@ -15,9 +15,9 @@ pub fn fixture(relative: &str) -> PathBuf {
 }
 
 /// Loads the fixture for `rule` in `dir`, stages it (a write runs on a copy; a read runs in
-/// `dir` unchanged, exactly as before `typdoc_testkit::staging` existed), and spawns its
-/// declared command with the environment it declares. The spec is returned alongside the run,
-/// since a caller checking the rules tripped needs the declared `trips` too.
+/// `dir` unchanged), and spawns its declared command with the environment it declares. The spec
+/// is returned alongside the run, since a caller checking the rules tripped needs the declared
+/// `trips` too.
 pub fn spawn_fixture(
     dir: &Path,
     rule: &str,
@@ -87,10 +87,8 @@ impl Spawn {
         self
     }
 
-    /// Builds the command every entry point below runs, so that `Command::new` itself appears
-    /// exactly once in this crate's tests (`../clippy.toml`'s own comment: "exactly two
-    /// places", this and the shell examples harness), whichever of those entry points a test
-    /// calls.
+    /// The one place the CLI tests' helper calls `Command::new`; `clippy.toml` allows it only
+    /// here and in the shell examples harness.
     #[allow(
         clippy::disallowed_methods,
         reason = "the one place a test starts a process, so that the environment it gets is decided here"
@@ -122,9 +120,7 @@ impl Spawn {
         }
     }
 
-    /// Starts the process without waiting for it, for a test that has to act on it while it
-    /// runs — sending it a real signal — rather than only see it once it has ended, which
-    /// [`run`](Self::run) alone cannot do.
+    /// Starts the process without waiting, for a test that acts on it while it runs.
     pub fn spawn(self) -> RunningChild {
         let home = tempfile::tempdir().expect("a fresh HOME");
         let mut command = self.command(home.path());
@@ -157,23 +153,16 @@ impl RunningChild {
         assert_eq!(sent, 0, "kill(2) failed: {}", io::Error::last_os_error());
     }
 
-    /// This process's own pid, for a caller that needs to tell it apart from another running
-    /// child (or from whatever a lock file names).
     pub fn pid(&self) -> u32 {
         self.child.id()
     }
 
-    /// Whether this process is still running, checked without blocking: `Child::try_wait`
-    /// itself, the standard library's own non-blocking form of [`RunningChild::wait`], reaping
-    /// the child and recording its exit if it has already ended, and changing nothing if it has
-    /// not. A caller that needs the exit details afterward still calls
-    /// [`wait`](RunningChild::wait); this is only ever "has it ended yet", asked while still
-    /// holding the value.
+    /// Checked without blocking (`Child::try_wait`); a caller still calls
+    /// [`wait`](RunningChild::wait) for how it ended.
     pub fn is_alive(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
     }
 
-    /// Waits for the process to end, whichever way it ends, and returns what it left behind.
     pub fn wait(self) -> Ended {
         let output = self
             .child
@@ -188,10 +177,8 @@ impl RunningChild {
     }
 }
 
-/// What a [`RunningChild`] left behind once it ended. `code` and `signal` are each an `Option`
-/// rather than one number chosen for the caller: a process a test signals ends by the signal,
-/// with no exit code of its own, and `code` is `None` exactly then — [`std::process::ExitStatus`]'s
-/// own documented rule on POSIX, not something this helper decides.
+/// `code` is `None` exactly when the process ended by a signal, which is
+/// [`std::process::ExitStatus`]'s own rule on POSIX.
 pub struct Ended {
     pub code: Option<i32>,
     pub signal: Option<i32>,
@@ -234,8 +221,6 @@ impl Scratch {
         std::os::unix::fs::symlink(target, self.dir.path().join(link)).expect("a symbolic link");
     }
 
-    /// The text of a file below the project folder, for a test that wrote or expects to read
-    /// one, panicking with the path on any failure (never valid UTF-8, missing, and so on).
     pub fn read(&self, path: &str) -> String {
         std::fs::read_to_string(self.dir.path().join(path))
             .unwrap_or_else(|e| panic!("{path}: {e}"))
@@ -263,9 +248,7 @@ pub const NOTES: [(&str, &str); 2] = [
     ("note.json", r#"{ "name": "note", "fields": {} }"#),
 ];
 
-/// A coded schema, `WF`, for the tests that need a shipped binary to hold a namespace lock for
-/// a real stretch of wall-clock time: shared by every test that reuses ticket 4's own mechanism
-/// (see [`large_project`]) rather than building a second way to do it.
+/// The coded schema `WF`, for the tests that hold a namespace lock through [`large_project`].
 pub const WF_SCHEMA: &str = r#"{
   "name": "ticket",
   "code": "WF",
@@ -290,17 +273,11 @@ pub const WF_COLLECTION: [(&str, &str); 2] = [
 /// more than this to be valid.
 pub const FILLER: &str = "---\ntitle: Filler\nstatus: open\nkind: research\n---\n";
 
-/// A project with `document_count` documents already filed under the `WF` collection and its
-/// state file caught up to them: real input built for a test, not a fixture read from the
-/// repository (a fixture this size does not belong there). Making the shipped binary hold a
-/// namespace lock long enough to be observed, signalled or contended needs no code change to any
-/// command: a write command's own real validation (`Project::prescan_refs`, part of checking
-/// `refs.acyclic`) already reads every document already in the namespace from disk,
-/// unconditionally, under the lock, before the document it is creating is written — cost that
-/// scales with document count and was there before ticket 4, which measured this at ~2.7s for
-/// 30,000 documents. First built for ticket 4's own signal tests
-/// (`crates/typdoc/tests/signals.rs`); reused, not reinvented, by every test after it that needs
-/// the same mechanism.
+/// A project with `document_count` documents in the `WF` collection and its state file caught up
+/// to them, built for the test since a fixture this size does not belong in the repository. A
+/// write reads every document already there from disk under the lock (`Project::prescan_refs`,
+/// for `refs.acyclic`), so enough documents hold the lock long enough to be observed, signalled or
+/// contended, with no code in the binary for it.
 pub fn large_project(document_count: u32) -> Scratch {
     let state_text = format!("{{ \"tickets\": {{ \"last\": {document_count} }} }}");
     let mut files: Vec<(&str, &str)> = WF_COLLECTION.to_vec();
