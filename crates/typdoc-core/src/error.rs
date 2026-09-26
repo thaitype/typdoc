@@ -10,14 +10,13 @@ pub enum ErrorKind {
     NotFound,
     Io,
     LockTimeout,
-    /// A `set --if` condition was false; nothing was written (design, Exit codes: "3 | An
-    /// `--if` condition was false; nothing written").
+    /// A `set --if` condition was false; nothing was written.
     IfFalse,
     AlreadyExists,
 }
 
-/// One config error: the id from the design's table, the configuration file it is about
-/// relative to the project folder, and a message.
+/// One config error: its id (SPC-6), the configuration file it is about relative to the
+/// project folder, and a message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigError {
     pub id: &'static str,
@@ -39,7 +38,6 @@ pub enum Error {
     #[error("no document at {path}{}", not_found_hint(*hint, path))]
     NotFound { path: String, hint: bool },
 
-    /// A key that names a document in more than one namespace in scope.
     #[error("`{key}` is a key in more than one namespace: {}", candidates.join(", "))]
     AmbiguousKey {
         key: String,
@@ -53,7 +51,7 @@ pub enum Error {
         complete: bool,
     },
 
-    /// A fault in the configuration that has no id yet.
+    /// A fault in the configuration that has no config error id of its own.
     #[error("{}: {message}", file.display())]
     Config { file: PathBuf, message: String },
 
@@ -68,16 +66,13 @@ pub enum Error {
     },
 
     /// A namespace or project lock not acquired within `--lock-timeout`. `message` names the
-    /// path, pid, host and age, built where the lock was attempted, which is the one place
-    /// that knows enough about the failed attempt and the competing lock to say it.
+    /// path, pid, host and age; it is built where the lock was attempted, the one place that
+    /// knows both the attempt and the competing lock.
     #[error("{message}")]
     LockTimeout { path: PathBuf, message: String },
 
-    /// A write command's own validation refused the write before anything was written: a value
-    /// that does not fit its type, an enum value not in the schema, a transition `transitions`
-    /// does not allow, a ref that does not resolve, or a field the schema marks `auto` given
-    /// directly. `findings` is never empty; every problem found is reported, not only the first
-    /// (the design's error object: "`details` holds findings").
+    /// A write command's own validation refused the write before anything was written.
+    /// `findings` is never empty and holds every problem found, not only the first (SPC-3).
     #[error("{}", finding_summary(findings))]
     Invalid { findings: Vec<Finding> },
 
@@ -86,18 +81,15 @@ pub enum Error {
     #[error("{}", finding_summary(findings))]
     IfFalse { findings: Vec<Finding> },
 
-    /// `new`'s scope holds more than one namespace, and it writes into exactly one (design,
-    /// `typdoc new`: "if the scope holds more than one, it exits 1 with the choices"). Not
-    /// `AmbiguousKey`: no key was given here, only namespaces to choose among.
+    /// Raised by `new`, which writes into exactly one namespace. Not `AmbiguousKey`: no key was
+    /// given, only namespaces to choose among.
     #[error("the scope holds more than one namespace: {}", candidates.join(", "))]
     AmbiguousScope { candidates: Vec<String> },
 
-    /// The destination of a write already exists, and nothing was written (design, exit codes:
-    /// "The destination already exists: the write would replace a file that is there", exit 7 —
-    /// decision 15): a same-file identity match (decision 12), a path given on the command line,
-    /// or a name a `match` template produced, refused alike — checked under the namespace's lock
-    /// and, for a create, enforced by the file system (`O_EXCL`) rather than typdoc remembering
-    /// to look first. `message` is built by the caller, which knows which of these it is.
+    /// The destination of a write already exists, and nothing was written: a destination that is
+    /// the source file itself, a path given on the command line, or a name a `match` template
+    /// produced, refused alike (SPC-2, SPC-10). `message` is built by the caller, which knows
+    /// which of these it is.
     #[error("{message}")]
     AlreadyExists { path: String, message: String },
 }
@@ -150,11 +142,8 @@ fn summary(errors: &[ConfigError]) -> String {
     }
 }
 
-/// `Error::Invalid` and `Error::IfFalse` share this: the top-level `error` string is the one
-/// finding's own message when there is one (design's own error object example, `frontmatter.
-/// transitions`: `"error"` is exactly the finding's `message`, not a wrapping phrase), and a
-/// count with the first message otherwise, the same shape `summary` above already gives
-/// `ConfigErrors`.
+/// The top-level `error` of `Error::Invalid` and `Error::IfFalse`: the one finding's own
+/// message, not a wrapping phrase (SPC-3), or a count with the first message.
 fn finding_summary(findings: &[Finding]) -> String {
     let Some(first) = findings.first() else {
         return "nothing to report".to_owned();

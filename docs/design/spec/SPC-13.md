@@ -9,6 +9,21 @@ candidate's own fields, and a `ref.*` or `refby.*` condition follows arrows to o
 and tests them. The same expressions serve `--if` on `set`, and, with the differences below,
 `--set`.
 
+## Grammar
+
+```
+expr     = ref-expr | plain
+ref-expr = dir "." quant "(" f ")" [ "." plain ]   ; "all" requires the "." plain part
+dir      = "ref" | "refby"
+quant    = "all" | "any" | "none"
+f        = field | "$body"                         ; a ref or ref[] field, or $body
+plain    = field op value
+field    = [A-Za-z_][A-Za-z0-9_-]*                 ; or a pseudo-field
+op       = "!=" | "<=" | ">=" | "=" | "<" | ">"    ; longest match at the first operator after the field
+value    = item { "," item }                       ; one comparison value only for < <= > >=
+item     = { char | "*" | "\" ( "," | "*" | "\" ) }  ; "\" before anything else is an error
+```
+
 ## Omitting the condition
 
 Omitting `.EXPR` tests only whether arrows exist: `ref.any(blocked_by)` is "I have a blocker",
@@ -64,3 +79,27 @@ whole expression in single quotes so the shell leaves `\`, `*`, `<` and `>` alon
 The same rules apply to `--where`, `--if` and `--set`, with two differences in `--set`: an
 unescaped `*` is an error, since a value that is written has no glob, and `,` splits a value only
 for an array field, being an ordinary character in the value of any other field.
+
+## Syntax
+
+An expression is read whole, as one argument: spaces belong to names and values, so
+`status = open` is an error, with the hint `did you mean status=open?`. Field names, values, globs
+and enum values are case-sensitive. An empty value is an error in `--where` and `--if` (use `k!=*`
+to test for absent or empty); in `--set`, `k=` removes the field. On an array field `=` means some
+element matches and `!=` means no element does. The condition after `ref.*(f).` is a plain
+condition; another `ref.*` inside it is an error, as is anything after `)` that is not `.EXPR`. The
+ordering comparisons take one value, so `k<a,b` is an error. In a list, each value is coerced by
+the field's type on its own, and one that cannot be coerced makes the whole expression an error.
+
+## Coercion
+
+Values are coerced by the field's type. A value outside an `enum` is an error, so a typo fails
+loudly. A glob, and `*` alone, are never coerced: they are matched against the value as text.
+
+## Comparisons
+
+`<`, `<=`, `>` and `>=` apply to `number`, `date` and `datetime` only; on any other type they are an
+error. `datetime` values compare as instants, offsets included. A date-only value compared with a
+`datetime` field compares against the field's date part. A document without the field, or whose
+value does not fit the field's type, satisfies no ordering comparison. Always quote the expression:
+`<` and `>` are shell redirections.

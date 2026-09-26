@@ -1,4 +1,5 @@
-//! Reads a typdoc project and answers questions about it. It changes nothing.
+//! Reads a typdoc project, answers questions about it, and writes its documents through the
+//! `Fs` seam.
 
 // A panic in the code that ships needs its reason written where it stands. Test code is left alone.
 #![cfg_attr(

@@ -288,6 +288,17 @@ and the other arguments are still checked. `--schemas` and `--audit` describe th
 each in its own way, so combining either with arguments, or the two with each other, is bad
 arguments (exit 1).
 
+**`--audit`.** `validate` is a gate: it respects the configured levels and fails, so CI, hooks and
+agents can stop a bad change. `--audit` answers a different question, what would have to be fixed
+to adopt typdoc here, and is meant for writing a config for existing files. It runs the same
+checks, with these differences:
+
+- A rule set to `off` is reported at `info`, where `validate` skips it.
+- The exit code is 0 unless the config itself is invalid, where `validate` exits 2 on any error.
+- Files in no collection are listed, with a count, where `validate` does not report them.
+- Files with no frontmatter are grouped separately, where `validate` reports the fields their
+  schema requires (`SPC-12`, Audit).
+
 ## Cost of a run
 
 Every run builds its index from the files with no cache, so the time of a run grows with the

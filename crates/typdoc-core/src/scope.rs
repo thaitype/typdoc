@@ -1,5 +1,4 @@
-//! The namespaces a command reads: chosen from a prefix on an argument, `--namespace`,
-//! `TYPDOC_NAMESPACE` and the current directory, in that order.
+//! The namespaces a command reads, chosen in the order SPC-7 gives.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -25,10 +24,8 @@ pub struct Scope {
     pub source: Source,
     /// The namespaces of this project in scope, sorted by name.
     pub namespaces: Vec<String>,
-    /// The imports in scope, each with the namespaces of that import chosen: only `--namespace`/
-    /// `TYPDOC_NAMESPACE` can name one (`alias::pattern`, e.g. `'chief::*'`); a document
-    /// argument's own prefix and the current directory never reach an import, so every other
-    /// source of a `Scope` leaves this empty. Sorted by alias, each once.
+    /// The imports in scope, each with its chosen namespaces, sorted by alias. Only `--namespace`
+    /// and `TYPDOC_NAMESPACE` can name one (`'chief::*'`); every other source leaves this empty.
     pub imports: Vec<(String, Vec<String>)>,
 }
 
@@ -38,24 +35,17 @@ impl Scope {
     }
 }
 
-/// One import `--namespace`/`TYPDOC_NAMESPACE` can name (`alias::pattern`): the alias and the
-/// namespace names of the project it resolves to, or `None` when it is absent on this machine.
-/// Naming an absent import explicitly is refused rather than silently giving no documents, since
-/// the request was explicit (unlike a ref, which `imports.absent` treats as a warning by
-/// default): the design's escape for a required import is CI setting `imports.absent` to
-/// `error`, and an explicit `--namespace 'alias::*'` deserves the same loudness without waiting
-/// for that configuration.
+/// An import `--namespace`/`TYPDOC_NAMESPACE` can name, with `None` for one absent on this
+/// machine. Naming an absent import is refused rather than giving no documents: the request is
+/// explicit, unlike a ref, which `imports.absent` reports as a warning by default (SPC-14).
 pub(crate) struct ImportListing<'a> {
     pub alias: &'a str,
     pub namespaces: Option<&'a [String]>,
 }
 
-/// The scope of a command in the project at `root`. `prefix` is the namespace an argument
-/// names, and `flag` is the value of `--namespace`. `imports` lists every alias this project
-/// configures, for `--namespace`/`TYPDOC_NAMESPACE` items of the form `alias::pattern`; a
-/// document argument's own prefix never reaches an import this way (an import prefix on an
-/// argument is a separate mechanism, resolved directly against that import, never through a
-/// `Scope`), so `imports` is read only in the `flag` and `TYPDOC_NAMESPACE` branches below.
+/// `prefix` is the namespace an argument names, and `flag` the value of `--namespace`. `imports`
+/// is read only for `--namespace` and `TYPDOC_NAMESPACE`: an import prefix on an argument is
+/// resolved against that import directly, never through a `Scope`.
 pub(crate) fn choose(
     namespaces: &[Namespace],
     root: &Path,
@@ -114,12 +104,9 @@ fn names(namespaces: &[Namespace]) -> Vec<String> {
 /// (`alias::pattern`), its alias with the namespace names chosen inside it.
 type Selected = (Vec<String>, Vec<(String, Vec<String>)>);
 
-/// The names in `list`, `,` between them, as names and globs with `*` only, that fit the
-/// namespaces of the project, and the imports named `alias::pattern` (each once, its namespace
-/// patterns merged), when `imports` names one. A name that is none of them is refused; a glob may
-/// match none. The `prefix` origin never reaches this with an import form (`Project::scope`'s own
-/// caller never asks it to), so passing an empty `imports` for that origin is safe and is what
-/// `choose` above already does.
+/// The namespaces and the imports (`alias::pattern`, patterns merged per alias) that `list`
+/// names. The `prefix` origin passes no `imports`, since an argument's import prefix never
+/// reaches a `Scope`.
 fn select(
     namespaces: &[Namespace],
     list: &str,
@@ -158,9 +145,6 @@ fn select(
     Ok((chosen.into_iter().collect(), imports))
 }
 
-/// One `,`-separated item (a name or a glob with `*` only) matched against `available`: refused
-/// when it is not the shape of a name or a glob, and when it names nothing and carries no `*`
-/// (a glob may legitimately match none).
 fn glob_match(
     item: &str,
     available: &[String],

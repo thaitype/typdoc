@@ -27,4 +27,15 @@ stale. Deferred by decision (fix right after the story). The release result that
 while the design text says a lock taken away is reported: deferred by decision; the design text
 stays in `docs/migrating-design/`.
 
+From the ticket 05 PR. Deferred by decision (bug fix after the story): a body link under
+`refBase: namespace` resolves against the namespace folder while the design says a body link is
+relative to the document; `mv` neither rewrites nor reports reference-style links and their
+definitions; `config.state-orphan` stops the command with exit 2 while SPC-8 and SPC-6 say it
+stops nothing (the code is to change). Deferred by decision, design text left in
+`docs/migrating-design/`: a relative `extends` in a pinned schema resolves against the project
+folder rather than its URL; the text audit prints no finding lines while the design's audit table
+says it does; machine-file errors do not name the lookup step. Fixed in the ticket 05 PR: SPC-4
+no longer says a `frontmatter.parse` finding has a position; the `refs.rs` test named as if the
+import form were not read is renamed for what it asserts.
+
 Done when: that record is reported. The story is accepted outside the loop.

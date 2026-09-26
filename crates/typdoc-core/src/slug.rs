@@ -1,4 +1,4 @@
-//! Heading anchors as GitHub makes them.
+//! Heading anchors as GitHub makes them (SPC-14).
 
 use std::collections::HashMap;
 
@@ -11,9 +11,6 @@ pub struct Slugger {
 }
 
 impl Slugger {
-    /// The anchor for a heading whose plain text is `text`: the slug of the text, with
-    /// `-1`, `-2` and so on added when an earlier heading has it, skipping every result
-    /// already taken.
     pub fn slug(&mut self, text: &str) -> String {
         let base = slug_of(text);
         let mut result = base.clone();
@@ -27,8 +24,6 @@ impl Slugger {
     }
 }
 
-/// Lowercased, with every character that is not a letter, a digit, a mark, `-`, `_` or a
-/// space deleted, and each space turned into `-`.
 fn slug_of(text: &str) -> String {
     text.to_lowercase()
         .chars()
@@ -37,9 +32,6 @@ fn slug_of(text: &str) -> String {
         .collect()
 }
 
-/// Deleted: other numbers, punctuation other than the connector `_`, symbols, controls,
-/// private-use, format and unassigned characters, and separators other than a space; unless
-/// the character is alphabetic or is `-`.
 fn is_deleted(c: char) -> bool {
     if c == ' ' || c == '-' || c.is_alphabetic() {
         return false;

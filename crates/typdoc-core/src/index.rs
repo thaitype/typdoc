@@ -21,7 +21,6 @@ pub struct Entry {
     /// The position in the slice of namespaces the index was built from.
     pub namespace: usize,
     pub file: PathBuf,
-    /// The key this document carries, for a coded collection only.
     pub key: Option<String>,
 }
 
@@ -30,20 +29,14 @@ pub struct Entry {
 #[derive(Debug, Default)]
 pub struct Index {
     entries: BTreeMap<String, Entry>,
-    /// Every path a key was bound to, in the namespace it was found in, in the order the walk
-    /// found them. More than one path for one `(namespace, key)` is `keys.unique`'s finding;
-    /// `key` keeps returning the first so `get` by key still resolves to one document.
+    /// Every path a key was bound to, in walk order. More than one is `keys.unique`'s finding;
+    /// `key` returns the first, so `get` by key still resolves to one document.
     keys: BTreeMap<(usize, String), Vec<String>>,
-    /// A path matched by more than one collection: its namespace and the name of every
-    /// collection that matched it, in the order the walk found them. The design settles this by
-    /// no precedence at all, so such a path is removed from `entries` once found (below) — there
-    /// is no one collection to answer `get` or `toc` with, and `collections.overlap`'s finding
-    /// is built from this map instead of from an entry.
+    /// A path matched by more than one collection: its namespace and every collection that
+    /// matched it, in walk order.
     overlaps: BTreeMap<String, (usize, Vec<String>)>,
-    /// Every directory entry a `match` reached and the walk could not read: its path from the
-    /// project folder, its namespace and why. `files.unreadable`'s finding is built from this,
-    /// and the entry itself is in none of the maps above, since nothing was read from it. The
-    /// same entry is reached once per collection whose template covers it and is recorded once.
+    /// Directory entries a `match` reached and the walk could not read, for `files.unreadable`.
+    /// Such an entry is in no other map, and is recorded once however many templates reach it.
     unreadable: BTreeMap<String, (usize, &'static str)>,
 }
 
@@ -52,16 +45,14 @@ impl Index {
         self.entries.get(path)
     }
 
-    /// Every document of the project, by its path, in no particular order (the caller sorts
-    /// what it needs sorted). Never includes a path matched by more than one collection.
+    /// Never includes a path matched by more than one collection.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &Entry)> {
         self.entries
             .iter()
             .map(|(path, entry)| (path.as_str(), entry))
     }
 
-    /// The path of the document that carries `key` in the namespace at `namespace`: the first
-    /// found, when more than one does.
+    /// The first found, when more than one document carries `key`.
     pub fn key(&self, namespace: usize, key: &str) -> Option<&str> {
         self.keys
             .get(&(namespace, key.to_owned()))
@@ -69,35 +60,26 @@ impl Index {
             .map(String::as_str)
     }
 
-    /// Every path that carries `key` in the namespace at `namespace`, in the order found: more
-    /// than one is `keys.unique`'s finding.
     pub fn key_group(&self, namespace: usize, key: &str) -> Option<&[String]> {
         self.keys
             .get(&(namespace, key.to_owned()))
             .map(Vec::as_slice)
     }
 
-    /// The namespace and the name of every collection that matched `path`, when more than one
-    /// did: `resolve` reads the collections to refuse a direct read of such a path (there is no
-    /// one collection to read it with); `validate`'s argument scope reads both, to report
-    /// `collections.overlap` for it without a document to check.
     pub fn overlap(&self, path: &str) -> Option<(usize, &[String])> {
         self.overlaps
             .get(path)
             .map(|(namespace, names)| (*namespace, names.as_slice()))
     }
 
-    /// Every overlapping path found, with its namespace and the collections that matched it, for
-    /// `validate`'s whole-project scan to turn into `collections.overlap` findings (such a path
-    /// is not in `entries`, so the ordinary per-document walk never reaches it).
+    /// An overlapping path is not in `entries`, so `validate` reports `collections.overlap` from
+    /// this.
     pub fn overlaps(&self) -> impl Iterator<Item = (&str, usize, &[String])> {
         self.overlaps
             .iter()
             .map(|(path, (namespace, names))| (path.as_str(), *namespace, names.as_slice()))
     }
 
-    /// Every entry a `match` reached and the walk could not read, by path, with its namespace
-    /// and the reason, for `files.unreadable`'s findings.
     pub fn unreadable(&self) -> impl Iterator<Item = (&str, usize, &str)> {
         self.unreadable
             .iter()
@@ -105,10 +87,9 @@ impl Index {
     }
 
     /// Walks each namespace folder once for each collection, following only the folders its
-    /// template names. A file matched by more than one collection is never settled by
-    /// precedence, as the design asks: it is recorded in `overlaps` and, once every collection
-    /// has been walked, removed from `entries` (and from its key's group, if it carried one), so
-    /// there is no collection left to answer a direct read of it with.
+    /// template names. A file matched by more than one collection is never settled by precedence
+    /// (SPC-17): it goes to `overlaps` and is removed from `entries` and its key's group, so no
+    /// collection answers a direct read of it.
     pub fn build(
         root: &Path,
         namespaces: &[Namespace],
@@ -181,13 +162,10 @@ impl Index {
     }
 }
 
-/// `filename.pattern`'s candidates: the path (relative to the project folder) and namespace name
-/// of every file directly inside a coded collection's folder that fits no collection's `match`
-/// there. Several coded collections can share one folder (the design's own example, `WF` and
-/// `RFC` both under `tickets/{key}.md`), so a file is a candidate only when it fits none of the
-/// collections that share the folder. Left unchecked, by decision: a coded template whose
-/// `{key}` is not the last step (`{key}/index.md`) has no one folder to scan, and generalising
-/// to that shape is not done here (`Template::key_in_last_step`).
+/// `filename.pattern`'s candidates: every file directly inside a coded collection's folder that
+/// fits no collection's `match` there. Coded collections can share a folder (SPC-17), so a file
+/// is a candidate only when it fits none of them. A template whose `{key}` is not the last step
+/// (`{key}/index.md`) has no one folder to scan and is not checked.
 pub(crate) fn stray_files(
     root: &Path,
     namespaces: &[Namespace],
@@ -228,8 +206,7 @@ pub(crate) fn stray_files(
                 let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
                     continue;
                 };
-                // A leftover is never a document and never a stray file either: it is a file
-                // the user did not write, not one that fits no template (decision 4).
+                // A leftover is not a stray file: the user did not write it (SPC-10).
                 if is_temp_name(&name) {
                     continue;
                 }
@@ -255,21 +232,11 @@ pub(crate) fn stray_files(
     Ok(found)
 }
 
-/// Every `.md` file below a namespace folder that a run reads, by its path from the project
-/// folder and the namespace it belongs to: for `validate --audit`'s `uncollected` list, which
-/// asks which files no collection covers, and so cannot be built from what a collection's own
-/// `match` template already names — it has to be an independent walk of the folder itself. It
-/// answers "which files a run reads" the same way the per-collection `walk` below does, so the
-/// two read one way everywhere in this crate: a folder whose name begins with `.` is entered
-/// only where a `match` writes that name out as plain text (`literal_folder_names`, gathered
-/// from `members` here), a file whose name begins with `.` is listed like any other, a symbolic
-/// link is neither
-/// followed nor listed, a name that is not valid UTF-8 is skipped, a name of the reserved
-/// temp-file shape is skipped, and a folder that holds its own `.typdoc/config.json` is a
-/// separate project and is never entered. A symbolic link, a name that is not UTF-8 and a
-/// leftover temp file are skipped silently here and reported only where a `match` reaches them
-/// (`files.unreadable` or the leftover's own rule, whose row in the design's table is about an
-/// entry a `match` reaches), so this walk adds no finding of its own.
+/// Every `.md` file a run reads below a namespace folder, for `validate --audit`'s `uncollected`
+/// list. That list asks which files no collection covers, so it cannot come from the templates:
+/// it walks the folders itself, by the same rules as `walk`. A symbolic link, a name that is not
+/// valid UTF-8 and a leftover temp file are skipped silently: they are reported only where a
+/// `match` reaches them, so this walk adds no finding.
 pub(crate) fn all_markdown_files(
     root: &Path,
     namespaces: &[Namespace],
@@ -292,8 +259,6 @@ pub(crate) fn all_markdown_files(
     Ok(found)
 }
 
-/// The namespace `walk_every_file` is walking: what stays the same all the way down the
-/// recursion, so that only the folder and its path below the namespace change from call to call.
 struct Walked<'a> {
     /// The namespace folder, as a path from the project folder; empty for `default`.
     folder: &'a str,
@@ -336,7 +301,6 @@ fn walk_every_file(
     Ok(())
 }
 
-/// An entry of a folder, as `read_dir` gives it.
 struct Listed {
     name: String,
     utf8: bool,
@@ -364,20 +328,15 @@ fn list(dir: &Path) -> Result<Vec<Listed>, Error> {
     Ok(listed)
 }
 
-/// What one walk of one template gathers: the files its last step matched, by their path below
-/// the namespace folder, and the entries it reached and could not read, by the same path.
+/// What one walk of one template gathers, by path below the namespace folder.
 #[derive(Default)]
 struct Found {
     files: BTreeMap<String, PathBuf>,
     unreadable: BTreeMap<String, &'static str>,
 }
 
-/// Adds the files below `dir` that the rest of a template matches, by their path below the
-/// namespace folder. What a run reads is decided here: a folder whose name begins with `.` is
-/// entered by a plain-text segment and by no wildcard, a `*` in the last step matches a leading
-/// dot in a file name, a folder that holds its own project is not entered, and an entry the
-/// template reaches that is a symbolic link or whose name is not valid UTF-8 is skipped and
-/// recorded for `files.unreadable` rather than stopping the run.
+/// Adds the files below `dir` that the rest of a template matches. Which files a run reads is
+/// decided here (SPC-17).
 fn walk(dir: &Path, prefix: &str, steps: &[Step], found: &mut Found) -> Result<(), Error> {
     let Some((step, rest)) = steps.split_first() else {
         return Ok(());
@@ -418,9 +377,8 @@ fn is_link_to_folder(entry: &Listed) -> bool {
     entry.symlink && fs::metadata(&entry.path).is_ok_and(|meta| meta.is_dir())
 }
 
-/// The path of `entry` below the namespace folder. A name that is not valid UTF-8 is written
-/// with replacement characters, which is what `Listed::name` already holds: such a path only
-/// ever names an entry in a `files.unreadable` finding, and nothing is opened by it.
+/// A name that is not valid UTF-8 holds replacement characters here: such a path only names an
+/// entry in a `files.unreadable` finding, and nothing is opened by it.
 fn below(prefix: &str, entry: &Listed) -> String {
     if prefix.is_empty() {
         entry.name.clone()
@@ -429,15 +387,12 @@ fn below(prefix: &str, entry: &Listed) -> String {
     }
 }
 
-/// Records an entry the template reached and the walk is not reading, with the reason.
 fn skip(entry: &Listed, prefix: &str, why: &'static str, found: &mut Found) {
     found.unreadable.insert(below(prefix, entry), why);
 }
 
-/// A file that the last step of a template matched. A folder is not a document. The reserved
-/// temp-file shape is checked first and does not depend on what the step's own glob would have
-/// matched on its own: `*` matches a leading dot, and a leftover is never a document whatever a
-/// project's `match` says (decision 4).
+/// The temp-file shape is checked first, whatever the step's glob matched: `*` matches a leading
+/// dot, and a leftover is never a document (SPC-10).
 fn take(entry: &Listed, prefix: &str, found: &mut Found) {
     if entry.file && is_temp_name(&entry.name) {
         skip(entry, prefix, LEFTOVER_TEMP_FILE, found);
@@ -450,9 +405,8 @@ fn take(entry: &Listed, prefix: &str, found: &mut Found) {
     }
 }
 
-/// A folder that a step before the last matched. It asks the two reasons in a different order
-/// from `take`, and the check between them is why: a matched entry that is not a folder at all
-/// is left alone rather than reported, since nothing would have been read from it either way.
+/// A matched entry that is not a folder is left alone rather than reported: nothing would have
+/// been read from it either way.
 fn enter(entry: &Listed, prefix: &str, rest: &[Step], found: &mut Found) -> Result<(), Error> {
     if entry.symlink {
         skip(entry, prefix, SYMBOLIC_LINK, found);

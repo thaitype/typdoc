@@ -1,6 +1,4 @@
-//! Lines and columns as the design counts them: a line ends at a line feed, at a carriage
-//! return and a line feed together, or at a carriage return alone; a line ending at the end
-//! of the file begins no other line; a column counts Unicode scalar values.
+//! Covers SPC-1.
 
 use serde::Deserialize;
 use typdoc_core::{LineMap, Position};

@@ -1,6 +1,4 @@
-//! Lines and columns, counted as the design says: a line ends at a line feed, at a carriage
-//! return and a line feed together, or at a carriage return alone; a line ending at the end
-//! of the text begins no other line; a column counts Unicode scalar values.
+//! Lines and columns, counted as SPC-1 gives.
 
 use std::num::NonZeroUsize;
 

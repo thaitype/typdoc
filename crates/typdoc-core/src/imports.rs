@@ -1,8 +1,4 @@
-//! Machine-specific imports: `imports.json`, found through `TYPDOC_CONFIG_DIR`, then
-//! `XDG_CONFIG_HOME`, then the platform default, merged under the project's own `imports`; and
-//! `${NAME}` substitution in an import path, the same rule for both sources. Every reading of
-//! the environment here goes through `Env`, never the standard library directly (contract item
-//! 6; `clippy.toml` bans `std::env::var`, `std::env::var_os` and `std::env::home_dir`).
+//! The machine file `imports.json`, and `${NAME}` substitution in an import path (SPC-14).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -13,8 +9,7 @@ use crate::error::Error;
 
 const IMPORTS_FILE_NAME: &str = "imports.json";
 
-/// Why an import cannot be read on this machine right now, for `imports.absent`'s message and
-/// for the `import-absent` reason a ref into it gets.
+/// Why an import is absent on this machine, for `imports.absent`'s message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Absence {
     /// `${name}` in the import's path is unset or empty.
@@ -37,12 +32,9 @@ impl Absence {
     }
 }
 
-/// `${NAME}` in `raw` replaced by the environment. A variable that is unset or set to an empty
-/// value is never replaced by an empty string (design, "Environment variables in import paths"):
-/// `Err` names the first such variable, left to right, for the caller to report as `imports.
-/// absent`. A `${` with no closing `}` is not a variable reference and is kept as written, since
-/// the design gives no syntax for that case and treating it as one would refuse a path that
-/// happens to contain a literal `${`.
+/// A variable that is unset or empty is never replaced by an empty string: `Err` names the first
+/// such variable. A `${` with no closing `}` is kept as written, so that a path holding a literal
+/// `${` is not refused.
 pub(crate) fn substitute(raw: &str, env: &dyn Env) -> Result<String, String> {
     let mut out = String::new();
     let mut rest = raw;
@@ -67,14 +59,10 @@ pub(crate) fn substitute(raw: &str, env: &dyn Env) -> Result<String, String> {
     Ok(out)
 }
 
-/// The path of the machine file `imports.json`, found in the order the design gives: `Ok(None)`
-/// when no step applies (there are no machine-specific imports); a `config.config-dir` finding,
-/// added to `report`, when `TYPDOC_CONFIG_DIR` is set but is not an absolute path to a directory
-/// that exists — "it was set on purpose". Neither `TYPDOC_CONFIG_DIR` nor `XDG_CONFIG_HOME` is
-/// read as set when its value is empty (the design states this for `XDG_CONFIG_HOME`; the same
-/// reading is carried to `TYPDOC_CONFIG_DIR` for consistency with how this crate already treats
-/// every other environment variable that chooses something, `TYPDOC_DIR` and `TYPDOC_NAMESPACE`
-/// included).
+/// Where the machine file is (SPC-14); `None` when no step applies. A `TYPDOC_CONFIG_DIR` that is
+/// not an absolute path to an existing directory is `config.config-dir`, since it was set on
+/// purpose. An empty `TYPDOC_CONFIG_DIR` counts as unset, as an empty `XDG_CONFIG_HOME`,
+/// `TYPDOC_DIR` or `TYPDOC_NAMESPACE` does.
 pub(crate) fn imports_file_path(env: &dyn Env, report: &mut Report) -> Option<PathBuf> {
     if let Some(dir) = env.var("TYPDOC_CONFIG_DIR").filter(|v| !v.is_empty()) {
         let dir = PathBuf::from(dir);
@@ -105,16 +93,10 @@ pub(crate) fn imports_file_path(env: &dyn Env, report: &mut Report) -> Option<Pa
     )
 }
 
-/// The machine file's own `imports`, read from the path `imports_file_path` already found (found
-/// separately, and before this runs, so a `config.config-dir` fault joins the project's other
-/// config errors in one `Report` before any file is read — `Report::finish` must not have run
-/// yet when that search happens). `None` (the search found no path) or a file that does not
-/// exist both mean there are no machine-specific imports, not an error. A file that exists and
-/// cannot be read as an object of alias to text path has no id of its own in the design's table
-/// (unlike `config.json`, it is never committed, so no fixture in a public repository exercises
-/// it); it is reported the same way a config fault with no id yet already is elsewhere in this
-/// crate (ticket 4's report on `collections.overlap` and a missing schema): `Error::Config`, exit
-/// 2, `details: []`.
+/// `path` is found by `imports_file_path` while the project's `Report` is still open, so that a
+/// `config.config-dir` joins its other config errors. A machine file that cannot be read as an
+/// object of alias to text path has no id in the config errors catalog (SPC-6), and is
+/// `Error::Config`.
 pub(crate) fn read_machine_file(path: Option<&PathBuf>) -> Result<BTreeMap<String, String>, Error> {
     let Some(path) = path else {
         return Ok(BTreeMap::new());
@@ -152,10 +134,8 @@ pub(crate) fn read_machine_file(path: Option<&PathBuf>) -> Result<BTreeMap<Strin
     Ok(imports)
 }
 
-/// The message for an alias that names no import of this project: shared so the wording agrees
-/// wherever one is refused — a `project::` argument prefix (`Project::imported`) and a
-/// `--namespace`/`TYPDOC_NAMESPACE` item (`scope::select`) both read an unknown alias the same
-/// way, and now say so in the same words as each other too.
+/// Shared so that a `project::` argument prefix and a `--namespace` item refuse an unknown alias
+/// in the same words.
 pub(crate) fn unknown_alias_message(alias: &str, known: &[&str]) -> String {
     format!(
         "`{alias}` is not an import of this project, which has: {}",
@@ -163,11 +143,8 @@ pub(crate) fn unknown_alias_message(alias: &str, known: &[&str]) -> String {
     )
 }
 
-/// The project's own `imports` (`config.json`, committed) and the machine file's (uncommitted),
-/// merged: the design says the machine file is "merged under the project's own imports", read
-/// here as the project's own committed entry winning when both name the same alias, since it is
-/// the one every teammate and CI sees and the machine file exists only to add what is not
-/// committed, not to override what is.
+/// The project's own entry wins over the machine file's for the same alias (SPC-14): it is the
+/// one every teammate and CI sees, and the machine file only adds what is not committed.
 pub(crate) fn merge(
     project: &BTreeMap<String, String>,
     machine: BTreeMap<String, String>,

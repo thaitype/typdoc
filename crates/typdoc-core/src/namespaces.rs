@@ -11,22 +11,17 @@ use crate::error::Error;
 use crate::schema::reserved_url_scheme;
 use crate::template::Segment;
 
-/// What the entries of `namespaces` came to: the namespaces, the entries a glob reached and
-/// skipped, and the names a `!` excluded.
+/// What the entries of `namespaces` came to.
 pub(crate) struct Resolved {
     pub namespaces: Vec<Namespace>,
     pub skipped: Vec<Skipped>,
-    /// Names a plain or glob entry matched and a later `!` then removed, and that no later plain
-    /// entry re-matched — the config's own patterns having actually reached and excluded them,
-    /// not "every folder on disk". A folder a `!` entry names but that matches nothing (deleted,
-    /// misspelled) never enters this set: matching, not text, is what puts a name here, so its
-    /// leftover state file still reads as a genuine orphan rather than a known-but-excluded one.
+    /// Names an entry matched and a later `!` removed, with no later plain entry matching them
+    /// again. Matching, not text, puts a name here, so the state file of a folder that a `!`
+    /// names and that does not exist is still an orphan (SPC-7).
     pub excluded: BTreeSet<String>,
 }
 
-/// The namespace `default`, or the folders that the entries name. A folder that an entry
-/// matches and that cannot be a namespace is reported and never skipped; an entry a glob
-/// reaches that is a symbolic link or whose name is not valid UTF-8 is skipped and recorded.
+/// The namespace `default`, or the folders that the entries name, applied as SPC-7 gives.
 pub(crate) fn resolve(
     root: &Path,
     entries: Option<&[String]>,
@@ -110,7 +105,7 @@ fn name_problem(name: &str) -> Option<String> {
     None
 }
 
-/// A directory entry of the project folder: its name, its path, and whether it is a folder.
+/// A directory entry of the project folder, which need not be a folder.
 struct Folder {
     name: String,
     name_is_utf8: bool,
@@ -142,23 +137,17 @@ fn links_to_folder(link: &Path) -> bool {
     fs::metadata(link).is_ok_and(|meta| meta.is_dir())
 }
 
-/// What one entry reached: the folders it names, by name, and the entries a glob skipped.
 #[derive(Default)]
 struct Reached {
     folders: Vec<(String, PathBuf)>,
     skipped: Vec<Skipped>,
 }
 
-/// The folders one entry names, by name. An entry that is not one segment, or a name that
-/// names no folder, is reported. A folder whose name begins with `.` is reached by an entry of
-/// plain text and by no wildcard, the same answer a collection's `match` gives. A link that an
-/// entry of plain text names is refused; a link to a folder that a glob reaches is skipped.
+/// The folders one entry names. A folder whose name begins with `.` is reached by an entry of
+/// plain text and never by a wildcard, as with a collection's `match`.
 ///
-/// `display` is the full original config entry (`!story-9`, not `story-9`), used only for the
-/// wording of a report — matching itself runs against `pattern`, the entry with any leading `!`
-/// already stripped by the caller. `negate` forks only the empty-match report at the bottom: a
-/// `!` entry that names no folder is always silent, exact name or glob alike, unlike a plain
-/// entry naming an exact name that matches nothing, which is still reported.
+/// `display` is the entry as written, `!` included, for the wording of a report; `pattern` is the
+/// entry without its `!`.
 fn entry_folders(
     display: &str,
     pattern: &str,
@@ -224,17 +213,9 @@ mod tests {
     use super::*;
     use crate::config::Report;
 
-    /// The checked-in `fixtures/valid/namespace-exclusion/` project root: real `story-1`,
-    /// `story-2` and `story-3` folders on disk, so `resolve` has something real to
-    /// `fs::read_dir`. Reused rather than a folder created for the test at run time: this crate
-    /// changes nothing directly, not even in a test (`clippy.toml`'s own `disallowed-methods`
-    /// list has no exception for one), and a folder made through the injected `Fs` seam cannot
-    /// be reached from a unit test inside this crate's own build in the first place — the seam's
-    /// real implementation, `typdoc_fs::SystemFs`, comes from a dev-dependency that itself
-    /// depends on this crate, so its `Fs` does not unify with this crate's own (the same
-    /// conflict `namespace_lock.rs`'s test section documents for `Fs`/`Clock`-backed tests).
-    /// `resolve` itself only reads (`fs::read_dir`, never through `Fs`), so the fixed, static
-    /// fixture folder is all a test here ever needs, with no seam or fake involved.
+    /// A checked-in fixture rather than folders made at run time: `clippy.toml` forbids this crate
+    /// to write directly, even in a test, and `typdoc_fs::SystemFs` cannot serve a unit test
+    /// here, since its `Fs` comes from a second build of this crate and does not unify.
     fn fixture_root() -> PathBuf {
         typdoc_testkit::fixtures::path("valid/namespace-exclusion")
     }
@@ -364,7 +345,7 @@ mod tests {
         assert!(names_of(&resolved).is_empty());
         assert!(
             report.errors().is_empty(),
-            "unchanged today's behavior: a glob matching nothing is silent"
+            "a glob matching nothing is silent"
         );
     }
 
@@ -372,9 +353,6 @@ mod tests {
     fn the_exclusion_error_message_quotes_the_full_entry_with_its_bang() {
         let root = fixture_root();
         let mut report = Report::default();
-        // A malformed exclusion (more than one path segment) must still report, quoting the
-        // original `!a/b` text and not the bare `a/b` pattern, so a user can find the offending
-        // config line.
         let resolved = resolve(&root, Some(&entries(&["!a/b"])), &mut report).unwrap();
         assert!(names_of(&resolved).is_empty());
         assert_eq!(report.errors().len(), 1);

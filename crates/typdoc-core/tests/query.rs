@@ -1,10 +1,8 @@
-//! The scalar half of the query language: the grammar of a plain condition, its escaping and
-//! glob, coercion by the field's type, the pseudo-fields, and the rules for absence and
-//! negation, plus the grammar of `ref.*`/`refby.*` (parsing only — the errors the grammar names
-//! for it, and the shape a successful parse takes). Every error below is one the grammar names
-//! (`docs/design.md`, Query); the schemas and documents are built by hand, never read from a
-//! fixture, since none of this touches a file. Evaluating a `ref.*`/`refby.*` condition needs a
-//! project's whole ref graph, which `tests/ref_query.rs` tests against fixtures instead.
+//! Covers SPC-13.
+//!
+//! The plain condition, and the parsing of `ref.*`/`refby.*`. Schemas and documents are built by
+//! hand, since none of this touches a file; evaluating a `ref.*`/`refby.*` condition needs a
+//! project's ref graph, and `tests/ref_query.rs` tests it.
 
 use std::collections::BTreeMap;
 
@@ -13,9 +11,8 @@ use typdoc_core::{
     QueryError, RefField, Resolved, Value, evaluate, parse_query as parse,
 };
 
-/// `parse`, for a test that expects a plain condition: every call site here is testing the
-/// plain-condition grammar or its evaluation, and a `ref.*`/`refby.*` result would only mean the
-/// text under test stopped being what it looks like.
+/// `parse` for a plain condition: a `ref.*`/`refby.*` result would mean the text under test is
+/// not what it looks like.
 fn plain(expr: &str) -> PlainCondition {
     match parse(expr).unwrap() {
         Condition::Plain(condition) => condition,
@@ -57,9 +54,6 @@ fn number(n: i64) -> Value {
     Value::Number(Number::read(&n.to_string()).expect("a JSON number"))
 }
 
-/// A document with no code and no key, in a namespace of one, holding `fields`. Individual
-/// tests override `path`, `key` and `code` with struct-update syntax where a pseudo-field is
-/// what is under test.
 fn doc(fields: &[(&str, Value)]) -> Document {
     Document {
         path: "doc.md".to_owned(),
@@ -322,8 +316,7 @@ fn a_document_without_the_field_fails_an_ordering_comparison() {
 #[test]
 fn a_value_that_never_coerced_to_its_type_fails_an_ordering_comparison_the_same_as_absence() {
     let schema = schema(&[("due", field(FieldType::Date))]);
-    // Kept as written, as ticket 5 decided: a value that does not fit its field's type stays
-    // text instead of the typed `Value::Date`, exactly what `frontmatter::fields` leaves it as.
+    // A value that does not fit its field's type stays `Text`, as the reader leaves it.
     let misfit_due = doc(&[("due", Value::Text("not-a-date".to_owned()))]);
 
     let is_before = plain("due<2026-01-01");
@@ -331,12 +324,9 @@ fn a_value_that_never_coerced_to_its_type_fails_an_ordering_comparison_the_same_
     assert!(!evaluate(&is_before, &schema, &misfit_due).unwrap());
 }
 
-/// The exception the design names in the same breath as the absence rule: `<`, `<=`, `>`, `>=`
-/// are not paired the way `=`/`!=` are, so a complementary pair of ordering conditions does NOT
-/// split a set with none left over. A document without the field, or whose stored value never
-/// coerced to the field's type, fails both halves and is left out of both, unlike the `=`/`!=`
-/// pairs above (`split`'s `is_eq != is_ne` invariant does not hold here, so this test does not
-/// use that helper).
+/// `<`, `<=`, `>` and `>=` are the exception to the absence rule: a document without the field,
+/// or whose value never coerced, fails both halves of an ordering pair, so `split` does not
+/// apply.
 #[test]
 fn a_pair_of_ordering_conditions_leaves_a_document_without_the_field_out_of_both_halves() {
     let schema = schema(&[("due", field(FieldType::Date))]);
@@ -381,9 +371,6 @@ fn a_pair_of_ordering_conditions_leaves_a_document_without_the_field_out_of_both
 
     assert_eq!(matched_before, ["early.md"]);
     assert_eq!(matched_on_or_after, ["late.md"]);
-    // The exception in practice: unlike an `=`/`!=` pair, the two ordering halves do not cover
-    // the whole set on their own — the document with no `due` and the one whose `due` never
-    // coerced are both left out of both halves.
     assert_eq!(in_neither, ["no-due.md", "misfit-due.md"]);
     assert_eq!(
         matched_before.len() + matched_on_or_after.len() + in_neither.len(),
@@ -423,13 +410,11 @@ fn a_pseudo_field_is_read_from_the_document_itself_not_from_the_schema() {
 }
 
 // -------------------------------------------------------------------------------------------
-// Absence and negation: `!=` is exactly NOT `=`, and a complementary pair splits a set of
-// documents in two with none left over and none counted twice.
+// Absence and negation.
 // -------------------------------------------------------------------------------------------
 
-/// Runs `eq` and its complement `ne` against every document, checks the two never agree (the
-/// defining property of "`!=` is exactly NOT `=`"), and returns which documents fell into each
-/// half.
+/// Runs `eq` and its complement `ne` over every document, checks that the two never agree, and
+/// returns the two halves.
 fn split<'a>(
     schema: &Resolved,
     docs: &'a [Document],
@@ -515,8 +500,7 @@ fn present_and_absent_split_a_set_with_an_empty_value_counted_as_absent() {
 }
 
 // -------------------------------------------------------------------------------------------
-// `ref.*`/`refby.*`: grammar only (`ref-expr = dir "." quant "(" f ")" [ "." plain ]`).
-// Evaluating one needs a project, so it belongs to `tests/ref_query.rs`, not here.
+// `ref.*`/`refby.*`: grammar only.
 // -------------------------------------------------------------------------------------------
 
 fn ref_condition(expr: &str) -> typdoc_core::RefCondition {

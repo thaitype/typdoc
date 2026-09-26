@@ -1,6 +1,5 @@
-//! The rules and config errors the binary has, by id, and the ones it does not have yet.
+//! The rules and config errors the binary has, by id, and those the catalog names that it lacks.
 
-/// The always-on rules.
 pub const ALWAYS_ON: &[&str] = &[
     "schema.valid",
     "frontmatter.parse",
@@ -80,7 +79,6 @@ pub const RULES: &[&str] = &[
     "files.unreadable",
 ];
 
-/// Ids the design names and the binary does not report yet. Each is a difference between
-/// the design and the binary, with the story expected to deliver it as a comment. The list only shrinks: an id leaves it
-/// when it enters `RULES`, and it is empty when v1 is finished.
+/// Ids the catalog names that the binary does not report. The list only shrinks: an id leaves
+/// it when it enters `RULES`.
 pub const UNIMPLEMENTED_RULES: &[&str] = &[];

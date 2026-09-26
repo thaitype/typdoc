@@ -1,4 +1,4 @@
-//! The headings of a file: which are listed, their levels, texts, slugs and line ranges.
+//! Covers SPC-1, SPC-14.
 
 use typdoc_core::{Heading, headings};
 

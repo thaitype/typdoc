@@ -1,7 +1,6 @@
 //! An argument that names a document: a path or a key, told apart by its form and never
-//! guessed. `Argument::parse` reads only the string; an on-disk path is not turned into a
-//! `DocumentArg` until `discover_for` runs, because finding the project is part of what an
-//! on-disk path decides, and that needs the environment.
+//! guessed (SPC-2). An on-disk path becomes a `DocumentArg` only in `discover_for`, because it
+//! also decides which project it is in.
 
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
@@ -13,12 +12,9 @@ use crate::project::discover;
 
 /// The argument of a command that names a document, once the project is known. A path or a
 /// key may carry a namespace prefix (`story-2:notes/x.md`, `story-2:WF-5`), an import prefix
-/// (`memory::precedents/x.md`), or both together when the import has several namespaces
-/// (`chief::story-3:WF-5`). A namespace prefix only chooses scope; it never changes what the
-/// path is read against, which stays the project folder (see `Project::resolve`; ticket 4
-/// already decided a path is not narrowed by scope). An import prefix does change which
-/// project the rest is read against entirely (`Project::get`/`toc`/`refs` each check
-/// `project_prefix` first).
+/// (`memory::precedents/x.md`), or both (`chief::story-3:WF-5`). A namespace prefix only
+/// chooses scope: a path is still read against the project folder (SPC-2). An import prefix
+/// changes which project the rest is read against.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocumentArg {
     /// Relative to the project the document belongs to (this one, or, with `project` set, the
@@ -28,8 +24,7 @@ pub enum DocumentArg {
         namespace: Option<String>,
         path: String,
     },
-    /// The namespace a prefix on it named, if any (`story-2:WF-5`), and the project an import
-    /// prefix named, if any (`memory::WF-5`, `chief::story-3:WF-5`).
+    /// A key, with the namespace and the import its prefixes named, if any.
     Key {
         project: Option<String>,
         namespace: Option<String>,
@@ -38,8 +33,8 @@ pub enum DocumentArg {
 }
 
 impl DocumentArg {
-    /// The namespace a `namespace:` prefix on the argument named, if it had one — present or
-    /// absent independently of `project_prefix` (`chief::story-3:WF-5` carries both).
+    /// The namespace a `namespace:` prefix on the argument named, independently of
+    /// `project_prefix` (`chief::story-3:WF-5` carries both).
     pub fn namespace_prefix(&self) -> Option<&str> {
         match self {
             DocumentArg::Path { namespace, .. } | DocumentArg::Key { namespace, .. } => {
@@ -57,9 +52,8 @@ impl DocumentArg {
         }
     }
 
-    /// This argument with its import prefix removed, for resolving the rest directly against the
-    /// imported project (`Project::get`/`toc`/`refs`'s own dispatch): the namespace prefix, if
-    /// any, is kept, since it may still be needed to choose among that project's namespaces.
+    /// This argument without its import prefix, to be resolved against the imported project. The
+    /// namespace prefix is kept: it may still choose among that project's namespaces.
     pub fn without_project_prefix(&self) -> DocumentArg {
         match self {
             DocumentArg::Path {
@@ -87,15 +81,10 @@ pub enum Argument {
 }
 
 impl Argument {
-    /// Classifies `arg` by its form alone: on disk (`/`, `./`, `../`, and it must end in
-    /// `.md`), a project-relative path (ends in `.md`), or a key (`CODE-number`); any of the
-    /// three may carry a `project::` prefix (an import), and the path and key forms may also
-    /// carry a `namespace:` prefix after it ("Choosing a namespace" names both a key and a path
-    /// argument as candidates for one; the design's own `project::path` and
-    /// `project::namespace:key` forms nest the two). A path and a key can never be confused,
-    /// since a key never ends in `.md`. Nothing here reads the disk, knows what project the
-    /// argument is in, or knows whether an alias it names is actually configured — that is
-    /// `Project::get`/`toc`/`refs`'s job, once the project is known.
+    /// Classifies `arg` by its form alone (SPC-2): on disk (`/`, `./`, `../`, ending in `.md`), a
+    /// project-relative path (ending in `.md`), or a key (`CODE-number`). The path and key forms
+    /// may carry a `project::` prefix, a `namespace:` prefix, or both. Nothing here reads the
+    /// disk or knows which project the argument is in or which aliases are configured.
     pub fn parse(arg: &OsStr) -> Result<Argument, Error> {
         let text = arg.to_str().ok_or_else(|| {
             Error::BadArgument(format!(
@@ -146,10 +135,9 @@ impl Argument {
     }
 }
 
-/// `^[A-Z][A-Z0-9]*-\d+$`, written by hand so the crate takes on no regex engine for it. Shared
-/// with `refs`, which tells a bare key apart from a relative path the same way an argument does
-/// (the key shape itself is one fact about the world; where the two readings differ — a prefix,
-/// scope — each module keeps its own rule, per ticket 7's report).
+/// `^[A-Z][A-Z0-9]*-\d+$`, written by hand so the crate takes on no regex engine for it. `refs`
+/// shares it to tell a bare key from a relative path; where the two readings differ (a prefix,
+/// scope), each module keeps its own rule.
 pub(crate) fn looks_like_key(text: &str) -> bool {
     let Some((code, digits)) = text.split_once('-') else {
         return false;
@@ -189,8 +177,7 @@ pub fn discover_for(arg: Argument, env: &dyn Env) -> Result<(PathBuf, DocumentAr
                 .strip_prefix(&root)
                 .expect("root came from walking up the file's own folder, so it is a prefix");
             let path = to_project_path(relative, &given)?;
-            // An on-disk path is never written with a `namespace:` prefix (that syntax applies
-            // only to the project-relative and key forms); it takes no scope of its own.
+            // An on-disk path takes no `namespace:` prefix, so no scope of its own.
             Ok((
                 root,
                 DocumentArg::Path {
@@ -204,11 +191,8 @@ pub fn discover_for(arg: Argument, env: &dyn Env) -> Result<(PathBuf, DocumentAr
     }
 }
 
-/// An on-disk path argument, resolved against a project root already known (unlike
-/// `discover_for`, which finds the root by walking up from the file itself). Used when several
-/// document arguments are given to one command and the root was already fixed by the first of
-/// them: every later on-disk argument is read against that same root, and one outside it is
-/// not found, since a path on disk names no document of a different project.
+/// An on-disk path argument, read against a root an earlier argument of the same command already
+/// fixed. One outside it is not found: a path on disk names no document of another project.
 pub fn resolve_on_disk(root: &Path, given: &Path, env: &dyn Env) -> Result<DocumentArg, Error> {
     let cwd = env.current_dir().map_err(Error::io_at(Path::new(".")))?;
     let absolute = normalize(&if given.is_absolute() {
