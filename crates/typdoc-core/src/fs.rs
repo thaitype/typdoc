@@ -1,10 +1,9 @@
-//! The seam every write goes through, and the one function above it that holds what an
-//! interrupted write may leave behind.
+//! The seam every write goes through, and the functions above it that hold the rules for temp
+//! files, modes and renames.
 //!
-//! The seam is the file operations a write is built from rather than "write this document",
-//! so the rules about temp files, modes and renames sit above it, here. The write half of it is
-//! the `typdoc-fs` crate, which is the only crate that may change a file: no module of this one
-//! may, and the lint list beside this crate has no exception in it.
+//! The seam is the file operations a write is built from rather than "write this document", so
+//! those rules sit here rather than below the seam. The `typdoc-fs` crate implements it and is
+//! the only crate that may change a file.
 
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
@@ -30,11 +29,9 @@ pub fn is_temp_name(name: &str) -> bool {
 /// What the file system reports about a file: enough to tell whether two names lead to one
 /// file, and whether a file behind a still-open handle has been unlinked.
 ///
-/// `device` and `inode` are what a lock's release compares: a `stat` on the path a lock file
-/// sits at, against an `fstat` on the handle held since the lock was created. `links` is read
-/// from the handle side only, since the design's second removal check ("or the open file's
-/// link count is zero") is about whether the file the handle still refers to has been unlinked,
-/// which a `stat` on a path that may now lead to a different file cannot tell.
+/// `device` and `inode` are what a lock's release compares between the path and its handle.
+/// Only the handle's `links` is read: whether the file behind the handle has been unlinked is
+/// not something a `stat` on a path that may now lead elsewhere can tell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FileId {
     pub device: u64,
@@ -53,11 +50,8 @@ pub trait WriteHandle {
     /// renames is not decided, so the operation is on the seam and the decision stays open.
     fn sync(&mut self) -> io::Result<()>;
 
-    /// The identity the file system gives this open handle (`fstat`), unaffected by anything
-    /// that happens to the path it was opened at: the inode stays alive, and reachable through
-    /// the handle, for as long as the handle is open, whatever a later writer does to the name.
-    /// This is what lets a lock's release tell its own file from whatever the path currently
-    /// leads to.
+    /// The identity of the open file (`fstat`), which nothing done to its path afterwards
+    /// changes: a lock's release compares it with the path's.
     fn identity(&self) -> io::Result<FileId>;
 }
 
@@ -75,17 +69,14 @@ pub trait Fs {
     /// Moves a file, replacing whatever is at the destination. It cannot cross a file system.
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()>;
 
-    /// Removes a file.
     fn remove_file(&self, path: &Path) -> io::Result<()>;
 
     /// Creates a directory and every parent of it that is missing, and succeeds when they are
     /// all there already.
     fn create_dir_all(&self, path: &Path) -> io::Result<()>;
 
-    /// The permission bits of the file at `path`.
     fn mode(&self, path: &Path) -> io::Result<Mode>;
 
-    /// Sets the permission bits of the file at `path`.
     fn set_mode(&self, path: &Path, mode: Mode) -> io::Result<()>;
 
     /// Whether anything is at `path`. A path that cannot be looked at is an error rather than
@@ -105,7 +96,7 @@ pub trait Fs {
 
 /// Writes `bytes` to `path` so that a reader sees the old file or the new one whole.
 ///
-/// This is the one function above the seam, so that no command has to know a temp file exists.
+/// Commands call this rather than the seam, so none of them has to know a temp file exists.
 /// A rename replaces the inode, so the mode of the file being replaced is carried to the temp
 /// file, and carried before the bytes are written: a document nobody else may read must not
 /// have its contents sitting beside it, under a looser mode, for as long as the write takes.
@@ -116,11 +107,8 @@ pub trait Fs {
 /// leaves one. The temp file this call made is removed when the call itself fails, on the
 /// evidence that it was made here and by nobody else.
 ///
-/// `_lock` is not inspected: it is here so that this function cannot be called without one
-/// (decision 6, "every function that writes takes it by reference"). There is no check that it
-/// is the right lock for `path`'s namespace; that a lock exists at all is what the type proves,
-/// which of the possibly several held locks a command must hold before calling this is a
-/// property of the command, not of this function.
+/// `_lock` is not inspected: it makes a call without a lock fail to compile (SPC-10). Which lock
+/// a command must hold for `path` is the command's to get right.
 pub fn write_atomically(
     fs: &dyn Fs,
     _lock: &crate::namespace_lock::NamespaceLock<'_>,
@@ -152,14 +140,10 @@ pub fn write_atomically(
     written
 }
 
-/// Prepares a temp file beside `path` holding `bytes`, with `path`'s current mode carried to it
-/// (or the default, when there is none), but does not rename it into place: the "prepare" half
-/// of [`write_atomically`], split out for a caller that must prepare several files before
-/// committing any of them (`mv`, decision 1: "It prepares a temp file for every file that will
-/// change first, and then does the renames in one run at the end"). The temp file this call made
-/// is removed when it itself fails, on the same evidence `write_atomically` already acts on; a
-/// temp file a caller committed by renaming it elsewhere is no longer this function's to clean
-/// up.
+/// The first half of [`write_atomically`]: a temp file beside `path` holding `bytes`, with
+/// `path`'s mode carried to it, not yet renamed, for a caller that must prepare every file
+/// before renaming any (`mv`, SPC-2). The temp file is removed if this call fails; once it is
+/// returned, it is the caller's.
 pub fn prepare_replacement(
     fs: &dyn Fs,
     _lock: &crate::namespace_lock::NamespaceLock<'_>,
@@ -187,18 +171,12 @@ pub fn prepare_replacement(
     }
 }
 
-/// Creates `path`, which must not already exist, and writes `bytes` into it directly: no temp
-/// file and no rename, unlike [`write_atomically`]. `new` is the caller this is for, and its own
-/// document is what decides the shape: the file being created adds no state a temp file would
-/// have to protect (decision 7, "`new` keeps `O_EXCL` because it is one call that adds no state
-/// and costs nothing"). Fails with [`io::ErrorKind::AlreadyExists`] when `path` is already there,
-/// which is how the file system enforces decision 15's refusal rather than typdoc remembering to
-/// look first. The folder that will hold `path` is created first, the same way
-/// [`crate::namespace_lock::acquire`] creates its own lock folder before the first lock a project
-/// takes, so the first document of a namespace's own folder does not fail on a "not found".
+/// Creates `path`, which must not exist, and writes `bytes` into it directly, with no temp file:
+/// `new` adds a file where none was, so there is nothing a temp file would protect, and
+/// `O_EXCL` makes the file system refuse a destination that exists (SPC-10). The folder that
+/// holds `path` is created first.
 ///
-/// `_lock` is not inspected, the same as `write_atomically`'s: there is no check that it is the
-/// right lock for `path`'s namespace.
+/// `_lock` is not inspected, as in [`write_atomically`].
 pub fn create_exclusively(
     fs: &dyn Fs,
     _lock: &crate::namespace_lock::NamespaceLock<'_>,
@@ -211,21 +189,15 @@ pub fn create_exclusively(
     let mut handle = fs.create_new(path)?;
     let written = handle.write_all(bytes);
     if written.is_err() {
-        // The file created here is the document itself, not a hidden temp file: left in place, a
-        // half-written failure would look like a real document rather than nothing having
-        // happened. Best effort, the same reasoning `write_atomically` already gives its own
-        // cleanup: the write's own error is what the caller needs to see.
+        // This is the document itself, not a temp file: left half written, it would look like
+        // a real one.
         let _ = fs.remove_file(path);
     }
     written
 }
 
-/// Every leftover temp file below `dir`, found by an ordinary recursive read: any file whose
-/// name has the reserved shape ([`is_temp_name`]), at any depth, a symbolic link never followed
-/// (the same rule every other walk of this crate keeps), and a folder holding its own
-/// `.typdoc/config.json` never entered, since a separate project's leftovers are its own to
-/// find. A read, not a write, so it takes no lock and changes nothing; pair it with
-/// [`remove_leftovers`] to act on what it finds.
+/// Every leftover temp file below `dir`. Symbolic links are not followed, and a folder that is
+/// a project of its own is not entered: its leftovers are its own. A read, so it takes no lock.
 pub fn find_leftovers(dir: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     find_leftovers_into(dir, &mut found);
@@ -255,18 +227,12 @@ fn find_leftovers_into(dir: &Path, found: &mut Vec<PathBuf>) {
     }
 }
 
-/// Removes every one of `paths` through `fs`, within the scope [`crate::namespace_lock`] proves
-/// the caller holds a lock over: a command holding a lock may remove leftovers there, on the
-/// evidence that no other typdoc is writing in that namespace while the lock is held (decision
-/// 4). Age is never a criterion, as it is never one for a lock: every path handed in is removed,
-/// whatever its age. A removal that fails is not reported here and does not stop the sweep —
-/// the caller's own write matters more than a tidy folder, the same reasoning
-/// [`write_atomically`] already carries for the temp file it made itself. Returns how many were
-/// actually removed, for a caller that wants to say so.
+/// Removes `paths`, which must lie within the scope of `_lock`: while it is held no other typdoc
+/// writes there, so a leftover belongs to a process that has gone. Age is never a criterion
+/// (SPC-10). A removal that fails is skipped: the caller's own write matters more than a tidy
+/// folder. Returns how many were removed.
 ///
-/// `_lock` is not inspected, the same as `write_atomically`'s: there is no check that it is the
-/// right lock for every path in `paths`, which of the possibly several held locks proves a
-/// caller may remove a given path is a property of the caller, not of this function.
+/// `_lock` is not inspected; which held lock covers each path is the caller's to get right.
 pub fn remove_leftovers(
     fs: &dyn Fs,
     _lock: &crate::namespace_lock::NamespaceLock<'_>,

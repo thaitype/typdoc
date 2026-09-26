@@ -1,6 +1,5 @@
-//! `.typdoc/lock.json`: the pin of every remote schema this project has fetched (`typdoc pull`,
-//! story 3). Read only in this story: the file is never written, and nothing is fetched
-//! (contract, decision 3 and 5).
+//! `.typdoc/lock.json` and the pinned copies under `.typdoc/vendor/schemas/` (SPC-16). Only
+//! read: nothing here writes them or fetches.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -15,29 +14,22 @@ use crate::error::Error;
 const LOCK_FILE: &str = ".typdoc/lock.json";
 const VENDOR_SCHEMAS_DIR: &str = ".typdoc/vendor/schemas";
 
-/// One entry of `lock.json`'s `schemas` object. `fetchedAt` is read by nothing this story
-/// needs; `serde` leaves it where it is, since `Pin` has no `deny_unknown_fields`.
+/// No `deny_unknown_fields`: an entry also holds `fetchedAt`, which nothing reads.
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct Pin {
     pub sha256: String,
 }
 
-/// `lock.json` as this story reads it: only the `schemas` section exists yet (`pull` is story
-/// 3; a later section joins it with no rename, the design says, so nothing here assumes it is
-/// the only one — an unknown top-level key is left alone rather than refused, since this story
-/// does not own the file's shape the way it owns `config.json`'s).
+/// Other sections may join `schemas` (SPC-16), so an unknown top-level key is left alone.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub(crate) struct Lock {
     #[serde(default)]
     pub schemas: BTreeMap<String, Pin>,
 }
 
-/// `.typdoc/lock.json`, or an empty lock (no pins at all) when the file does not exist: a
-/// project that has never run `pull` has no `lock.json` yet, and every remote schema it names is
-/// `config.schema-unpinned` either way. A file that exists and cannot be read as the shape above
-/// has no id in the design's table (the file is written and re-read by `pull`, never hand-edited
-/// under the design's own account), so it stops the command the same id-less way an unreadable
-/// schema already does.
+/// A missing file is no pins, so every remote schema is `config.schema-unpinned`. A file that
+/// cannot be parsed has no config error id (SPC-6) and stops the command, as an unreadable
+/// schema does.
 pub(crate) fn read(root: &Path) -> Result<Lock, Error> {
     let file = root.join(LOCK_FILE);
     let bytes = match fs::read(&file) {
@@ -51,24 +43,14 @@ pub(crate) fn read(root: &Path) -> Result<Lock, Error> {
     })
 }
 
-/// The SHA-256 of `bytes`, as lowercase hex: what a pinned copy's contents are checked against
-/// its own file name with (`config.vendor-edited`).
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// The text of the pinned copy of the remote schema named by `url`, checked against
-/// `lock.json`, or `Ok(None)` once a config error (`config.schema-unpinned`,
-/// `config.vendor-missing` or `config.vendor-edited`) has been added to `report` and the caller
-/// stops reading this chain, the same way an unreadable local schema already does
-/// (`schema::load`). `said_in` is the file the reference was named in, for the message and as
-/// the finding's `path` — the same choice `config.schema-url` already makes for a URL of the
-/// wrong scheme. `url` is used unchanged as the lookup key in `lock.json`'s `schemas` object
-/// (contract, decision 3: "a pinned copy is read from `vendor/schemas/<sha256>`... an absent
-/// copy is `config.vendor-missing`... a URL with no pin is `config.schema-unpinned`"), and, once
-/// found, as `vendor/schemas/<sha256>`'s own file name to check the copy's bytes against
-/// (`config.vendor-edited`).
+/// The vendor path and text of the pinned copy of `url` (SPC-16), or `Ok(None)` once a config
+/// error has been added to `report`. `said_in` is the file that named `url`, used as the
+/// finding's `path`, as `config.schema-url` does.
 pub(crate) fn read_pinned(
     root: &Path,
     url: &str,
@@ -120,9 +102,7 @@ pub(crate) fn read_pinned(
 mod tests {
     use super::*;
 
-    /// NIST's own published test vectors (FIPS 180-4), not the output of this crate or of
-    /// `typdoc pull`: proof the hash this check relies on is computed right, independent of
-    /// anything this story writes.
+    /// NIST's published vectors (FIPS 180-4), not this crate's own output.
     #[test]
     fn sha256_hex_matches_the_published_test_vectors() {
         assert_eq!(

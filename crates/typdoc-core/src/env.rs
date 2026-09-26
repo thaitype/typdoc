@@ -9,13 +9,9 @@ use crate::fs::Fs;
 pub trait Env {
     fn var(&self, name: &str) -> Option<OsString>;
     fn current_dir(&self) -> io::Result<PathBuf>;
-    /// The machine's own hostname, stamped into a lock file so a competing lock's message can
-    /// say whether it is on this host or another one (design, Concurrency: "A file created with
-    /// `O_EXCL`, holding pid, hostname and timestamp"). A name that cannot be read cleanly is not
-    /// a reason to refuse taking the lock: the hostname only ever chooses the wording of a
-    /// timeout message (design: "The pid check only chooses the wording; it never decides
-    /// whether a lock is valid" — read the same way for the host), so this reads infallibly, the
-    /// same shape `pid_alive` already uses for the same reason.
+    /// The machine's hostname, stamped into a lock file. It only words a timeout message and
+    /// never decides whether a lock is valid (SPC-10), so a name that cannot be read is no reason
+    /// to refuse a lock, and this cannot fail.
     fn hostname(&self) -> String;
 }
 
