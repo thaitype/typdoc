@@ -97,8 +97,9 @@ because `last` had risen past it, everything outside this project that cites `WF
 pointing at nothing, and `validate` would report none of it and exit 0. A coded document cannot
 be renumbered into another project either — no command writes into another project.
 
-`--renumber` prints the new key, and nothing else, on standard output, as `typdoc new` prints the
-key it allocated, so that a shell can put it in a variable. It holds the locks of both
+`--renumber` prints what a plain `mv` prints: the moved document's labeled block, with its new
+key, then the rewritten, unrewritten and findings lines (`SPC-5`); a caller that wants just the
+key reads it from `--json`. It holds the locks of both
 namespaces (in the same fixed order), issues the next number from the destination's `last`,
 moves the file and rewrites every visible ref in frontmatter and body links, bare and prefixed,
 in the form that is correct
