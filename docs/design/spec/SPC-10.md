@@ -89,3 +89,10 @@ deadlock. Reads never lock. The lock covers reading, checking and the rename onl
 no waiting for input, which is why five seconds is a reasonable timeout. `mv` and `mv --renumber`
 are the only commands whose hold time grows with the size of the repository; a large repository
 may need a longer `--lock-timeout`.
+
+A held lock is a value that only acquiring a lock produces: it has no public constructor and no
+public fields, and every function that writes a file takes it. A write outside a lock therefore
+does not compile, and every command reaches its locks through the one acquisition path, which is
+also the path that registers the lock for release on an interrupt. A `set` on a file that no
+collection matches needs such a value as much as any other write, which is why it takes
+`locks/.loose.lock` rather than writing without a lock.

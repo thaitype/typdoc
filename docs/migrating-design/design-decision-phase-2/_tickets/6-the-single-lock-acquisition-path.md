@@ -49,13 +49,6 @@ Story 1's test strategy sends a real signal to a shipped binary holding a lock. 
 something about every command only if every command reaches a lock through the same code, and a
 rule that lives in someone's memory is not a rule.
 
-**A held lock is a value that only the acquisition path can make.** The type has no public
-constructor and no public fields; the only function that returns one is the acquire function, and
-it is the only place that creates a lock file and registers it for release. A command cannot write
-under a lock without holding one of these values, because the functions that write take it. There
-is nothing to remember: a command that tried to take a lock some other way would have no value to
-pass on.
-
 **Two things already in place hold the floor under it.** `typdoc-core`'s `clippy.toml` bans
 `File::create_new` along with the rest of the writing half of `std::fs`, so a lock file cannot be
 created anywhere but behind the write seam. And the lock's release is tied to the value's own

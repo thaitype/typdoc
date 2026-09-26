@@ -109,5 +109,26 @@ its folder is a known, deliberate state, not an orphan. A state file whose folde
 at all, and that no entry — plain or `!` — currently matches, is a genuine orphan and is still
 reported.
 
+## Choosing a namespace
+
+In a project with more than one namespace, a command takes its scope from the first of these that
+applies:
+
+1. A prefix on a key or path argument (`story-2:WF-5`).
+2. `--namespace <list>`: names separated by `,`, or globs (`*` only). `'*'` means every namespace
+   of this project; imported projects are not included and are named explicitly, as in
+   `'chief::*'`.
+3. `TYPDOC_NAMESPACE`, with the same syntax as `--namespace`.
+4. The current directory, when it is inside a namespace folder or below one.
+5. Otherwise there is no scope: reads span every namespace of the project and writes are an
+   error.
+
+A key that exists in more than one namespace in scope, and a write that could land in more than
+one, exit 1 with every choice listed and, with `--json`, a `candidates` array; typdoc never picks.
+From inside a namespace, reading another needs a prefix or `--namespace`. A ref written in a file
+always means the namespace of that file, whatever the working directory. A namespace of an
+imported project can be named only for reading. Examples always quote `'*'`, because an unquoted
+`*` is expanded by the shell.
+
 `docs/design/catalog/config-errors.md` and `docs/design/catalog/rules.md` hold the machine-readable
 ids this document's rules produce; this document explains the behavior behind them.
