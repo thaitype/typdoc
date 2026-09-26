@@ -107,7 +107,9 @@ Rust changes in this story that are not comments, each in its own commit:
   import prefix and no configured imports is renamed to say so (its old name said the import form
   is not read); the assertion is unchanged (ticket 05 PR);
 - in `crates/typdoc/src/registry.rs`, the `[reverse-scope]` entry of `KNOWN_GAPS` states the gap
-  without pointing at the design; its meaning is unchanged (ticket 06 PR).
+  without pointing at the design; its meaning is unchanged (ticket 06 PR);
+- in `crates/typdoc/tests/mv.rs` and `templates.rs`, an assertion message drops a decision number
+  and an `ignore` reason drops the date of a CI run; each meaning is unchanged (ticket 07 PR).
 
 The proof for each of those PRs reports exactly its own differences and no others.
 
