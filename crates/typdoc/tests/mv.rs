@@ -1,6 +1,4 @@
-//! `typdoc mv` within one project: refs rewritten in frontmatter and in body links, the four
-//! refusals, the schema-mismatch case that is carried out rather than refused, and the recovery
-//! a stopped run leaves for the same command to finish.
+//! Covers SPC-2, SPC-5, SPC-10, SPC-12.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -31,22 +29,11 @@ fn mv_text(project: &Scratch, from: &str, to: &str) -> Ran {
         .run()
 }
 
-// ---------------------------------------------------------------------------------------------
-// Done when (a): a stopped run is its own way back.
-// ---------------------------------------------------------------------------------------------
+// --- A stopped run is its own way back ---
 
-/// The two-phase mechanism itself — that a stop partway through the renames leaves some done and
-/// the rest not, and the document itself moved last of all — is proved deterministically at the
-/// seam, against a fake file system staged to stop after a fixed number of operations, in
-/// `crates/typdoc-core/tests/mv_seam.rs`; that is the level decision 1's own promise is about,
-/// and a fake is what lets the test choose exactly where to stop.
-///
-/// What this test proves instead is the behaviour that promise is *for*: the state such a stop
-/// leaves — a holder already naming the new path, the document still at the old one — is exactly
-/// what `validate` reports as broken and what running the identical command again repairs,
-/// without re-touching the holder that was already correct. The state is built by hand rather
-/// than by racing a live interrupt, which is the same state a real stop leaves (`mv_seam.rs`
-/// shows that directly) and is what a user actually meets and re-runs against.
+/// The stop itself is staged at the seam, in `crates/typdoc-core/tests/mv_seam.rs`, where a fake
+/// file system stops after a chosen operation. Here the state such a stop leaves is built by
+/// hand: a holder already naming the new path, and the document still at the old one.
 #[test]
 fn the_same_command_run_again_finishes_a_run_a_stop_left_half_done() {
     let project = Scratch::project(&REF_NOTES);
@@ -93,9 +80,7 @@ fn the_same_command_run_again_finishes_a_run_a_stop_left_half_done() {
     );
 }
 
-// ---------------------------------------------------------------------------------------------
-// Done when (b): each refusal, produced by a test, leaves every file byte-identical.
-// ---------------------------------------------------------------------------------------------
+// --- Refusals leave every file as it was ---
 
 #[test]
 fn a_destination_that_already_exists_is_refused_at_exit_7_and_nothing_changes() {
@@ -111,10 +96,9 @@ fn a_destination_that_already_exists_is_refused_at_exit_7_and_nothing_changes() 
     assert_eq!(project.read("b.md"), "---\ntitle: B\n---\n");
 }
 
-/// `same_file` (device+inode identity) is true both for this literal-same-path case and for a
-/// genuine case-only rename (`AA.md` -> `aa.md` on a case-insensitive file system) — but only
-/// this one has no case difference to explain, so it gets its own message rather than reusing
-/// "the file system does not tell the two names apart" (story-4, ticket 4).
+/// File identity says the two paths are one file here and in a case-only rename on a
+/// case-insensitive file system; only the case-only rename has a case difference to explain, so
+/// this case gets a message of its own.
 #[test]
 fn the_same_path_given_twice_is_refused_at_exit_7_with_its_own_message() {
     let project = Scratch::project(&NOTES);
@@ -190,9 +174,7 @@ fn an_uncoded_document_cannot_move_into_a_coded_collection() {
     assert!(!project.path().join("tickets/WF-9.md").exists());
 }
 
-// ---------------------------------------------------------------------------------------------
-// Done when (c): a move that fails the destination schema is carried out, not refused.
-// ---------------------------------------------------------------------------------------------
+// --- The collection a document lands in ---
 
 #[test]
 fn a_move_onto_a_schema_the_document_fails_is_carried_out_and_reported_not_refused() {
@@ -252,13 +234,10 @@ fn moving_out_of_every_collection_is_allowed_and_the_document_carries_no_collect
     assert_eq!(out["document"]["fields"]["title"], json!("A"));
 }
 
-// ---------------------------------------------------------------------------------------------
-// Done when (d): refs held by another project are named, not counted — the reachable half.
-// See the completion report for why `imported-project` itself is not reachable by any fixture
-// this ticket can build (it needs the reverse-into-imports scan `[reverse-scope]` leaves as a
-// known, story-wide gap); `links-rule-off` is the other of the three reasons this ticket can
-// actually produce, and is tested below.
-// ---------------------------------------------------------------------------------------------
+// --- Refs `mv` leaves unrewritten ---
+//
+// The `imported-project` reason is not reached here: it needs the reverse scan into imports that
+// `[reverse-scope]` in `registry::KNOWN_GAPS` records as missing.
 
 #[test]
 fn a_body_link_in_a_document_whose_body_links_rule_is_off_is_reported_unrewritten_not_rewritten() {
@@ -289,15 +268,8 @@ fn a_body_link_in_a_document_whose_body_links_rule_is_off_is_reported_unrewritte
     );
 }
 
-// ---------------------------------------------------------------------------------------------
-// M-22 (ticket 35): confirmed, not assumed — a plain `mv` genuinely has nothing to report here.
-// `links::mentions` only ever recognizes key-shaped tokens (its own doc comment: "a bare key, or
-// one written with a sibling or import prefix" — never a path), and a coded document can never
-// move under plain `mv` at all (`a_coded_document_cannot_move_and_nothing_changes` above; only
-// `mv --renumber` changes a key). So plain `mv`'s own `from` never has a key for a mention to
-// match against, structurally, every time — proved here rather than left as an assumption.
-// ---------------------------------------------------------------------------------------------
-
+/// A mention is always a key (`links::mentions`), and a plain `mv` never moves a coded document,
+/// so it has no mention to report.
 #[test]
 fn a_plain_mv_never_reports_a_mention_since_the_moved_document_has_no_key() {
     let project = Scratch::project(&[
@@ -336,9 +308,7 @@ fn a_plain_mv_never_reports_a_mention_since_the_moved_document_has_no_key() {
     );
 }
 
-// ---------------------------------------------------------------------------------------------
-// Refs are rewritten in frontmatter and in body links, keeping each one's own written form.
-// ---------------------------------------------------------------------------------------------
+// --- Rewriting refs, each in its own written form ---
 
 #[test]
 fn frontmatter_and_body_refs_are_both_rewritten_and_an_unrelated_link_is_left_alone() {
@@ -406,9 +376,7 @@ fn a_body_link_written_with_percent_encoding_keeps_that_convention() {
     );
 }
 
-// ---------------------------------------------------------------------------------------------
-// `auto: moves` and the mode carried across.
-// ---------------------------------------------------------------------------------------------
+// --- `auto: moves` and the file mode ---
 
 #[test]
 fn auto_moves_appends_the_previous_path_and_a_second_run_with_the_same_state_does_not_double_it() {
@@ -459,11 +427,9 @@ fn the_mode_of_an_existing_file_is_carried_to_its_new_name() {
     assert_eq!(mode, 0o600);
 }
 
-/// Unlike the document's own move, which is a plain rename and so carries its mode for free, a
-/// holder whose ref is rewritten is a genuine content replacement — a temp file prepared and
-/// renamed over the original (`prepare_replacement`) — which is exactly the case decision 4's
-/// mode-carrying rule is for: without it, the rewritten file would take whatever mode the umask
-/// hands a new file, silently.
+/// The moved document keeps its mode through a plain rename. A rewritten holder is replaced by a
+/// temp file (`prepare_replacement`), which has the holder's mode only because the write carries
+/// it across.
 #[cfg(unix)]
 #[test]
 fn the_mode_of_a_rewritten_holder_is_carried_across_its_own_content_replacement() {
@@ -489,16 +455,9 @@ fn the_mode_of_a_rewritten_holder_is_carried_across_its_own_content_replacement(
     assert_eq!(mode, 0o640);
 }
 
-// ---------------------------------------------------------------------------------------------
-// Ticket 21: text output without `--json`, and `--json`'s new `rewritten` list (both additive
-// to everything `mv` already prints, and both built from the same data `typdoc-core`'s own
-// `rewrite_holder`/`mv_rewrite_changes` now track).
-// ---------------------------------------------------------------------------------------------
+// --- Text output, and `rewritten` in `--json` ---
 
-/// A move that rewrites at least one ref: the hand-written golden for `mv`'s text-mode shape
-/// (contract, text-output shapes, `mv` (plain)) — the destination's `get`-shaped block, then
-/// `rewritten:` (one ref in frontmatter's `see`, one in the body link, both in the same holder,
-/// so `1 document`), `unrewritten: none`, `findings: none`.
+/// One ref in `see` and one body link, both in the same holder: `2 refs in 1 document`.
 #[test]
 fn a_move_that_rewrites_refs_prints_the_labeled_block_and_the_rewritten_count() {
     let project = Scratch::project(&REF_NOTES);
@@ -525,9 +484,6 @@ fn a_move_that_rewrites_refs_prints_the_labeled_block_and_the_rewritten_count() 
     );
 }
 
-/// The same move's `--json`: `rewritten` carries the full list behind that count, one entry per
-/// ref actually rewritten, and every field `mv --json` already printed (`document`, `unrewritten`,
-/// `findings`) is unaffected (contract, "`mv --json` gains `rewritten`... additive").
 #[test]
 fn mv_json_carries_the_full_rewritten_list_behind_the_text_count() {
     let project = Scratch::project(&REF_NOTES);
@@ -557,17 +513,11 @@ fn mv_json_carries_the_full_rewritten_list_behind_the_text_count() {
             && r["after"] == json!("renamed.md")),
         "{rewritten:?}"
     );
-    // Additive: `document`, `unrewritten` and `findings` still print exactly as before.
     assert_eq!(out["document"]["path"], json!("renamed.md"));
     assert_eq!(out["unrewritten"], json!([]));
     assert_eq!(out["findings"], json!([]));
 }
 
-/// The fully-singular case both counts in `rewritten_summary` can independently hit: exactly one
-/// ref, held by exactly one document — `1 ref in 1 document`, not `1 refs in 1 documents`.
-/// Caught in review after the two-refs-in-one-document golden above (which exercises the plural
-/// `N refs` / singular `1 document` mix, but not `N == 1` on the ref count itself) shipped with
-/// this bug still in it.
 #[test]
 fn a_move_that_rewrites_exactly_one_ref_in_one_document_uses_the_singular_form() {
     let project = Scratch::project(&REF_NOTES);
@@ -590,15 +540,10 @@ fn a_move_that_rewrites_exactly_one_ref_in_one_document_uses_the_singular_form()
     );
 }
 
-/// A move that leaves a ref unrewritten (`body.links` off): the text-mode golden shows
-/// `unrewritten:`'s own count and one line naming the holder, the field (`$body`) and the
-/// written form left untouched, matching the actual case (testing-decisions.md, "Text output").
 #[test]
 fn a_move_that_leaves_a_ref_unrewritten_prints_its_own_count_and_entry_line() {
-    // `title` is declared on the schema (not left implicit, as `common::NOTES`'s empty-fields
-    // schema does) so the destination's schema-satisfaction check (`findings`) has nothing of
-    // its own to say here — this test is about `unrewritten`, not about a stray
-    // `frontmatter.unknown` warning on a field the schema never declared.
+    // `title` is declared so that `findings` stays empty: under `common::NOTES`, which declares no
+    // field, it would report `frontmatter.unknown`.
     let project = Scratch::project(&[
         (
             ".typdoc/collections/notes.json",
@@ -632,12 +577,8 @@ fn a_move_that_leaves_a_ref_unrewritten_prints_its_own_count_and_entry_line() {
     );
 }
 
-/// `unrewritten:`'s identity follows the same naming-table rule `refs` does (ticket 32, M-20,
-/// Direction 2, `ref_name_text`/`ref_outcome_text` shared with `refs_text`): a coded holder in a
-/// single-namespace project prints its bare key, `WF-1`, not the unconditionally-qualified
-/// `default:WF-1` the bug used to print. The holder is coded (`tickets/WF-1.md`) and the moved
-/// document (`old.md`) is not, matching this ticket's own Direction 2 repro shape ("a coded
-/// holder pointing at the document asked about").
+/// A holder is named as `refs` names a document (`ref_name_text`): a key is qualified with its
+/// namespace only when the project has several.
 #[test]
 fn unrewritten_names_a_coded_holder_by_its_bare_key_in_a_single_namespace_project() {
     let project = Scratch::project(&[
@@ -681,11 +622,7 @@ fn unrewritten_names_a_coded_holder_by_its_bare_key_in_a_single_namespace_projec
     );
 }
 
-/// A clean move, nothing to rewrite and nothing left unrewritten: `rewritten: 0 refs in 0
-/// documents`, `unrewritten: none` (testing-decisions.md, "Text output", the clean-move case).
-/// Its own schema (not `common::NOTES`'s empty-fields one) declares `title`, for the same reason
-/// the test above does: a clean move should show a clean `findings:` too, not an incidental
-/// `frontmatter.unknown` this test is not about.
+/// `title` is declared for the same reason as in the test above.
 #[test]
 fn a_clean_move_prints_zero_rewritten_and_none_unrewritten() {
     let project = Scratch::project(&[
@@ -716,9 +653,6 @@ fn a_clean_move_prints_zero_rewritten_and_none_unrewritten() {
     );
 }
 
-/// The same clean move's `--json`: `rewritten` is an empty array, the third of the three cases
-/// testing-decisions.md asks `mv --json`'s golden to cover for `rewritten` (rewrite / unrewritten
-/// / clean) — `mv.rs`'s other two ticket-21 `--json` tests already cover the first two.
 #[test]
 fn mv_json_reports_an_empty_rewritten_list_for_a_clean_move() {
     let project = Scratch::project(&[
@@ -742,10 +676,6 @@ fn mv_json_reports_an_empty_rewritten_list_for_a_clean_move() {
     assert_eq!(out["findings"], json!([]));
 }
 
-/// `findings:` lists an entry rather than `none` when the destination's schema rejects a field
-/// (decision 16: carried out and reported, not refused) — the same case
-/// `a_move_onto_a_schema_the_document_fails_is_carried_out_and_reported_not_refused` already
-/// proves in `--json`, read here in text mode.
 #[test]
 fn a_move_that_fails_the_destination_schema_lists_the_finding_in_text_mode() {
     let project = Scratch::project(&[
@@ -785,10 +715,6 @@ fn a_move_that_fails_the_destination_schema_lists_the_finding_in_text_mode() {
     );
 }
 
-/// The already-fixed error path (contract decision 4, ticket 21's own item 4): without `--json`,
-/// a destination that already exists prints plain text on stderr, never the `--json` error
-/// object — the same case `a_destination_that_already_exists_is_refused_at_exit_7_and_nothing_changes`
-/// already proves at exit 7 with `--json`, read here without it.
 #[test]
 fn mv_without_json_prints_a_plain_text_error() {
     let project = Scratch::project(&NOTES);

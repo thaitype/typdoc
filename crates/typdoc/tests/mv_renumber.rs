@@ -1,12 +1,7 @@
-//! `typdoc mv --renumber`: the argument shape (one positional, a namespace value), the
-//! allocation from the destination's state, the same-namespace and cross-project refusals, and
-//! the recovery an interruption between the state write and the document's own move leaves.
+//! Covers SPC-2, SPC-5, SPC-8.
 //!
-//! The two-phase prepare-then-rename mechanism and the four within-project refusals are already
-//! proved in `mv.rs` and `crates/typdoc-core/tests/mv_seam.rs`; `--renumber` reuses that
-//! machinery (`Project::mv_reverse_scan`, `Project::mv_lock`, `Project::mv_rewrite_changes`,
-//! `mv::commit`, `Project::mv_result`), so this file covers only what is new: the flag's own
-//! argument shape, the allocation, and the refusals decision 11 gives.
+//! `--renumber` shares plain `mv`'s prepare-then-rename commit and its refusals, which `mv.rs` and
+//! `crates/typdoc-core/tests/mv_seam.rs` cover; this file covers what is its own.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -14,10 +9,8 @@ mod common;
 use common::{Ran, Scratch};
 use serde_json::json;
 
-/// A project with two namespaces, `story-1` and `story-3`, and one coded collection,
-/// `tickets/{key}.md` under each, whose schema's code is `WF`. An entry in `namespaces` without
-/// a glob must already exist on disk (design, Namespaces), so both folders are seeded with a
-/// file the `tickets` collection does not match, before any test adds a document of its own.
+/// A namespace named without a glob must exist on disk (SPC-7), so each folder is seeded with a
+/// file no collection matches.
 fn project() -> Scratch {
     let project = Scratch::project(&[]);
     project.file(
@@ -37,7 +30,6 @@ fn project() -> Scratch {
     project
 }
 
-/// The same project, whose schema also carries a field with `auto: moves`.
 fn project_with_moves() -> Scratch {
     let project = Scratch::project(&[]);
     project.file(
@@ -76,22 +68,14 @@ fn read_bytes(project: &Scratch, path: &str) -> Vec<u8> {
     std::fs::read(project.path().join(path)).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
-// ---------------------------------------------------------------------------------------------
-// The allocation, the move, and the ref rewrite; ticket 21's text-mode shape without `--json`.
-// ---------------------------------------------------------------------------------------------
+// --- Allocation, the move and the ref rewrite ---
 
-/// **Changed (M-10h, ticket 21), deliberate:** without `--json`, `--renumber` no longer prints
-/// the new key bare — it prints the same `get`-shaped labeled block every other write command
-/// prints, plus `rewritten:`/`unrewritten:`/`findings:`. A caller that only wants the bare key
-/// reads it out of `--json`'s `document.key` instead (`renumber_json_reports_the_document_under_its_new_key`,
-/// below, already covers that).
 #[test]
 fn renumber_allocates_the_next_key_from_the_destination_and_prints_the_labeled_block() {
     let project = project();
     project.file("story-1/tickets/WF-5.md", "---\ntitle: One\n---\n");
-    // Seeds the destination so the allocated key differs, in text, from the source's: this
-    // rules out a fixture that would also pass if `mv_renumber` allocated from the source's own
-    // state by mistake.
+    // Seeds the destination's `last`, so the key shows the allocation read the destination's
+    // state and not the source's.
     project.file("story-3/tickets/WF-1.md", "---\ntitle: Existing\n---\n");
     project.file(
         ".typdoc/state/story-3.json",
@@ -120,10 +104,6 @@ fn renumber_allocates_the_next_key_from_the_destination_and_prints_the_labeled_b
     );
 }
 
-/// Also the hand-written golden for a clean `--renumber`'s `--json` `rewritten` (ticket 21,
-/// testing-decisions.md, "Text output": the clean-move case, the third of the three `mv --json`
-/// is asked to cover for `rewritten` — the rewrite and unrewritten cases are covered by
-/// `renumber_json_carries_the_full_rewritten_list_behind_the_text_count` below).
 #[test]
 fn renumber_json_reports_the_document_under_its_new_key() {
     let project = project();
@@ -143,9 +123,7 @@ fn renumber_json_reports_the_document_under_its_new_key() {
     assert_eq!(out["findings"], json!([]));
 }
 
-/// The destination's state file is created in canonical form (decision 13), the same shape
-/// `new` creates one in, and the source's own state is untouched: `--renumber` writes one state
-/// file, not two (decision 13's closing sentence).
+/// The destination's state file is created in the form `new` creates one in.
 #[test]
 fn renumber_writes_only_the_destinations_state_file() {
     let project = project();
@@ -165,14 +143,8 @@ fn renumber_writes_only_the_destinations_state_file() {
     );
 }
 
-// ---------------------------------------------------------------------------------------------
-// The allocation itself refuses exactly as `new`'s own does (`allocate_key` is shared), and
-// decision 15's collision guard still runs even for a number this run just allocated.
-// ---------------------------------------------------------------------------------------------
+// --- Allocation refuses as `new`'s does: `allocate_key` is shared ---
 
-/// `state.malformed`: the destination's `last` is present but not a usable whole number. Refused
-/// before anything is written, the same reason `new` refuses it — a guessed number is a key that
-/// already belongs to a document.
 #[test]
 fn a_malformed_last_in_the_destinations_state_refuses_and_writes_nothing() {
     let project = project();
@@ -202,16 +174,12 @@ fn a_malformed_last_in_the_destinations_state_refuses_and_writes_nothing() {
     );
 }
 
-/// `state.missing`: the destination namespace already has a document of this collection and no
-/// `last` recorded for it at all. Refused for the same reason `state.malformed` is: a guessed
-/// number is a key that already belongs to a document.
 #[test]
 fn a_missing_state_record_for_a_destination_that_already_has_documents_refuses() {
     let project = project();
     project.file("story-1/tickets/WF-5.md", "---\ntitle: One\n---\n");
     project.file("story-3/tickets/WF-1.md", "---\ntitle: Existing\n---\n");
-    // No `.typdoc/state/story-3.json` at all: the collection has documents there already and no
-    // record of the highest number ever issued for it.
+    // No `.typdoc/state/story-3.json`.
 
     let ran = renumber(&project, "WF-5", "story-3");
 
@@ -228,20 +196,13 @@ fn a_missing_state_record_for_a_destination_that_already_has_documents_refuses()
     );
 }
 
-/// Decision 15's own guard still runs for a key this very call just allocated: `Index::build`
-/// drops a path more than one collection's `match` reaches out of `entries` (`collections.overlap`),
-/// so `highest_existing` never sees the hand-made file sitting at `story-3/tickets/WF-1.md` and
-/// allocates `WF-1` anyway — the same "should not be reachable" case `new`'s own
-/// `a_name_a_template_produces_that_exists_is_refused_at_exit_7_with_last_unchanged` test
-/// constructs, reused here for `--renumber`'s own allocation. Exit 7, the hand-made file and the
-/// source document are both untouched, and — the part a mere "the document is unharmed" check
-/// would miss — no state file is written at all: the exists check runs before `state::write`.
+/// As in `new.rs`, an overlapping collection hides the file from the index, so allocation hands
+/// out the name it sits at. The destination is checked before the state file is written, so no
+/// number is spent.
 #[test]
 fn a_name_the_allocation_produces_that_already_exists_is_refused_at_exit_7_with_nothing_written() {
     let project = project();
-    // Overlaps `story-3/tickets/WF-1.md` exactly, the path this run's own allocation
-    // (`max(0, 0) + 1`) is about to compute, so that path is invisible to `highest_existing`
-    // even though a file sits there.
+    // `story-3/tickets/WF-1.md` is the next number: `max(0, 0) + 1`.
     project.file(
         ".typdoc/collections/collides.json",
         r#"{ "match": "tickets/WF-1.md", "schema": "note.json" }"#,
@@ -274,11 +235,8 @@ fn a_name_the_allocation_produces_that_already_exists_is_refused_at_exit_7_with_
     );
 }
 
-/// A bare-key frontmatter ref is promoted to the target's sibling-prefixed key form (a bare key
-/// always means the holder's own namespace, which this move always leaves); a body link, always
-/// a path and never a key, keeps its own sibling-prefixed path form, updated to the new path —
-/// two different written-form categories, kept apart, both correctly updated (design.md, `typdoc
-/// mv`: "keeping each ref's written form (key, prefixed reference or relative path)").
+/// A bare key means the holder's own namespace, which the document leaves, so it gains the new
+/// namespace's prefix; the body link keeps its prefixed path form.
 #[test]
 fn renumber_rewrites_refs_held_by_other_documents_in_the_project() {
     let project = project();
@@ -307,8 +265,7 @@ fn renumber_rewrites_refs_held_by_other_documents_in_the_project() {
     );
 }
 
-/// `auto: moves` records the previous name with its own namespace's prefix (`story-1:WF-5`),
-/// since a bare key alone would not say which namespace it belonged to.
+/// A bare key would not say which namespace the document was in.
 #[test]
 fn renumber_records_the_previous_namespace_prefixed_key_in_the_moves_field() {
     let project = project_with_moves();
@@ -327,10 +284,6 @@ fn renumber_records_the_previous_namespace_prefixed_key_in_the_moves_field() {
         "---\ntitle: One\nmoved_from:\n- story-1:WF-5\n---\n"
     );
 }
-
-// ---------------------------------------------------------------------------------------------
-// Done when (a): the same-namespace refusal writes nothing and leaves `last` unchanged.
-// ---------------------------------------------------------------------------------------------
 
 #[test]
 fn renumbering_into_the_documents_own_namespace_is_refused_and_leaves_last_unchanged() {
@@ -359,21 +312,14 @@ fn renumbering_into_the_documents_own_namespace_is_refused_and_leaves_last_uncha
     assert!(!project.path().join("story-1/tickets/WF-6.md").exists());
 }
 
-// ---------------------------------------------------------------------------------------------
-// Done when (c): a ref left behind by an interrupted run fails validation rather than silently
-// resolving to another document. The state a stop between the state write and the document's
-// own move leaves is built by hand, the same technique `mv.rs`'s own
-// `the_same_command_run_again_finishes_a_run_a_stop_left_half_done` uses for a plain `mv`; the
-// seam-level proof that a real interrupt produces exactly this state is
-// `crates/typdoc-core/tests/mv_renumber_seam.rs`.
-// ---------------------------------------------------------------------------------------------
+// --- A stopped run ---
+//
+// The state a stop between the state write and the move leaves is built by hand;
+// `crates/typdoc-core/tests/mv_renumber_seam.rs` shows that a real stop leaves exactly this state.
 
-/// `story-3`'s state already records `last: 1` (as if `mv --renumber` had written it and then
-/// stopped before the document arrived at `WF-1`), a holder already names `story-3:WF-1`, and
-/// the source document is still sitting at its old name: the number `WF-1` is permanently
-/// skipped (the source's `last` never goes down, so a plain `mv --renumber` run afterwards would
-/// allocate `WF-2` there, never `WF-1` again) and the dangling ref is an ordinary, reported
-/// `refs.resolve` finding, not something that resolves to `WF-5` or to anything else.
+/// `story-3`'s `last` is already `1`, as if a run had written it and stopped before the document
+/// arrived. `story-3`'s `last` never goes down, so `WF-1` stays skipped and the ref to it stays a
+/// `refs.resolve` finding.
 #[test]
 fn a_ref_left_behind_by_a_stopped_run_fails_validation_instead_of_resolving_elsewhere() {
     let project = project();
@@ -423,9 +369,7 @@ fn a_ref_left_behind_by_a_stopped_run_fails_validation_instead_of_resolving_else
     );
 }
 
-// ---------------------------------------------------------------------------------------------
-// Done when (d): `--renumber` with no value, and a `project::` prefix on either argument, exit 1.
-// ---------------------------------------------------------------------------------------------
+// --- Argument shape ---
 
 #[test]
 fn renumber_given_with_no_value_is_exit_1() {
@@ -464,11 +408,6 @@ fn a_project_prefix_on_the_namespace_value_is_exit_1() {
         "---\ntitle: One\n---\n"
     );
 }
-
-// ---------------------------------------------------------------------------------------------
-// Argument-shape refusals beyond decision 11's own four, needed for the flag to make sense as
-// one positional in this mode and two without it.
-// ---------------------------------------------------------------------------------------------
 
 #[test]
 fn giving_both_a_destination_path_and_renumber_is_exit_1() {
@@ -531,14 +470,8 @@ fn an_unknown_destination_namespace_is_exit_1() {
     );
 }
 
-// ---------------------------------------------------------------------------------------------
-// Ticket 21: `--renumber`'s text output without `--json`, and `--json`'s new `rewritten` list —
-// the same shape plain `mv` gets, built from the same `typdoc-core` data (`mv.rs`'s own "Ticket
-// 21" section covers the plain-`mv` half of this).
-// ---------------------------------------------------------------------------------------------
+// --- Text output, and `rewritten` in `--json` ---
 
-/// A `notes` collection, added to [`project`], with a `see` ref field — for the tests below that
-/// need a holder somewhere other than `tickets/` to point back at the renumbered document.
 fn project_with_notes() -> Scratch {
     let project = project();
     project.file(
@@ -555,11 +488,7 @@ fn project_with_notes() -> Scratch {
     project
 }
 
-/// A move that rewrites at least one ref: the same fixture
-/// `renumber_rewrites_refs_held_by_other_documents_in_the_project` already proves the file
-/// content for, read here as the hand-written golden for `--renumber`'s text-mode shape
-/// (contract, text-output shapes, `mv --renumber`) — `rewritten: 2 refs in 1 document` (the
-/// frontmatter `see` and the body link, both held by the one holder).
+/// The frontmatter `see` and the body link are in one holder: `2 refs in 1 document`.
 #[test]
 fn a_renumber_that_rewrites_refs_prints_the_labeled_block_and_the_rewritten_count() {
     let project = project_with_notes();
@@ -586,9 +515,6 @@ fn a_renumber_that_rewrites_refs_prints_the_labeled_block_and_the_rewritten_coun
     );
 }
 
-/// The same move's `--json`: `rewritten` carries one entry per ref actually rewritten, matching
-/// the new content `renumber_rewrites_refs_held_by_other_documents_in_the_project` already
-/// checks by reading the holder's file back.
 #[test]
 fn renumber_json_carries_the_full_rewritten_list_behind_the_text_count() {
     let project = project_with_notes();
@@ -624,10 +550,6 @@ fn renumber_json_carries_the_full_rewritten_list_behind_the_text_count() {
     );
 }
 
-/// A `--renumber` that leaves a ref unrewritten (`body.links` off): the text-mode golden shows
-/// `unrewritten:`'s own count and one line naming the holder, `$body`, and the written form left
-/// untouched — the same reason plain `mv`'s own version of this test names
-/// (testing-decisions.md, "Text output").
 #[test]
 fn a_renumber_that_leaves_a_ref_unrewritten_prints_its_own_count_and_entry_line() {
     let project = project();
@@ -663,16 +585,10 @@ fn a_renumber_that_leaves_a_ref_unrewritten_prints_its_own_count_and_entry_line(
     );
 }
 
-// ---------------------------------------------------------------------------------------------
-// M-22 (ticket 35): a plain-text body mention of the moved key is surfaced in `unrewritten`
-// itself, at move time, instead of being left for a later `validate` run to discover alone.
-// ---------------------------------------------------------------------------------------------
+// --- A plain-text mention of the moved key ---
 
-/// The exact repro from the ticket: a document's body says the bare key in ordinary prose, no
-/// ref field and no markdown link around it at all. Before this fix, `unrewritten` said nothing
-/// about it; now it carries one entry with `reason: mention`, `field: "$body"`, the mention's own
-/// written text, and its line/col position (line 5: three frontmatter lines, a blank line, then
-/// the body's first line; col 5: `See ` is four characters before `WF-5` starts).
+/// Line 5 is the body's first line, after three frontmatter lines and a blank one; column 5
+/// follows `See `.
 #[test]
 fn renumber_lists_a_plain_text_mention_of_the_moved_key_in_unrewritten() {
     let project = project();
@@ -709,9 +625,6 @@ fn renumber_lists_a_plain_text_mention_of_the_moved_key_in_unrewritten() {
     );
 }
 
-/// Both `mv` forms report the same way (design: `unrewritten`/`findings` are "always present" for
-/// both) — the plain-text form of the same repro, this time through the text golden rather than
-/// `--json`.
 #[test]
 fn renumber_prints_the_mention_entry_in_the_text_golden() {
     let project = project();
@@ -747,8 +660,6 @@ fn renumber_prints_the_mention_entry_in_the_text_golden() {
     );
 }
 
-/// A negative case: a document mentioning a different key entirely — not the one being moved —
-/// is never reported.
 #[test]
 fn renumber_does_not_report_a_mention_of_an_unrelated_key() {
     let project = project();
@@ -773,10 +684,6 @@ fn renumber_does_not_report_a_mention_of_an_unrelated_key() {
     assert_eq!(ran.stdout_json()["unrewritten"], json!([]));
 }
 
-/// A negative case, alongside the positive: a formal ref/link to the moved key is still rewritten
-/// normally in the very same holder that also carries an unrelated plain-text mention of it —
-/// this ticket only adds a new `unrewritten` entry, it does not change how a formal reference is
-/// handled.
 #[test]
 fn renumber_still_rewrites_a_formal_ref_while_separately_reporting_a_mention() {
     let project = project();
@@ -813,10 +720,6 @@ fn renumber_still_rewrites_a_formal_ref_while_separately_reporting_a_mention() {
     assert_eq!(unrewritten[0]["written"], json!("WF-5"));
 }
 
-/// Belt and suspenders: a subsequent `validate` run, with `body.mentions` turned on, still
-/// independently reports the same mention as broken (`body.mentions WF-5 not found`) — two
-/// different code paths reaching the same conclusion, `mv` proactively at move time and
-/// `validate` afterward.
 #[test]
 fn a_subsequent_validate_run_agrees_with_the_mention_mv_already_reported() {
     let project = project();
@@ -853,11 +756,6 @@ fn a_subsequent_validate_run_agrees_with_the_mention_mv_already_reported() {
     );
 }
 
-/// The already-fixed error path (contract decision 4, ticket 21's own item 4): without `--json`,
-/// `--renumber`'s own refusal (renumbering into the document's own namespace) prints plain text
-/// on stderr, never the `--json` error object — the same case
-/// `renumbering_into_the_documents_own_namespace_is_refused_and_leaves_last_unchanged` already
-/// proves at exit 1 with `--json`, read here without it.
 #[test]
 fn renumber_without_json_prints_a_plain_text_error() {
     let project = project();
