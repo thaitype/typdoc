@@ -1,3 +1,5 @@
+//! Covers SPC-10.
+//!
 //! One table of scenarios for the write seam, run twice: against the fake, and against a real
 //! temporary directory.
 //!
@@ -30,9 +32,8 @@ trait Disk {
 }
 
 /// The file system a scenario runs against, the directory it runs in, and a lock held for the
-/// whole of it: `write_atomically` requires one (decision 6), and the scenarios in this table
-/// are about what the write seam does to `w.root`, not about locking, so one lock is acquired
-/// once, outside `w.root`, and reused for every write the table makes.
+/// whole of it: the table is about what the write seam does to `w.root`, not about locking, so
+/// one lock is acquired once, outside `w.root`, and reused for every write the table makes.
 struct World<'a> {
     fs: &'a dyn Fs,
     disk: &'a dyn Disk,
@@ -79,7 +80,6 @@ impl World<'_> {
     }
 }
 
-/// One line of the table.
 struct Scenario {
     name: String,
     /// What the fake is told to do. `Stage::Nothing` marks a scenario a real directory reaches.
@@ -296,8 +296,7 @@ fn scenarios() -> Vec<Scenario> {
                 assert_eq!(w.leftovers(&["note.md"]), Vec::<String>::new());
             },
         },
-        // `create_exclusively` is `new`'s own half of the seam: no temp file and no rename, a
-        // file created once and never replaced (decision 7).
+        // `create_exclusively` is `new`'s half of the seam: no temp file and no rename.
         Scenario {
             name: "create_exclusively makes a file that was not there, holding the bytes"
                 .to_owned(),

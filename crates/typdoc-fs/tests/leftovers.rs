@@ -1,13 +1,11 @@
-//! `find_leftovers` and `remove_leftovers` (ticket 13, decision 4): discovering a leftover temp
-//! file by an ordinary read, and removing one through the seam without letting a failed removal
-//! stop anything else a caller is doing.
+//! Covers SPC-10.
 //!
-//! `find_leftovers` is a read, so it is checked against a real temporary directory, the same as
-//! any other read in this crate would be — a leftover is manufactured directly by writing it
-//! with `std::fs::write`, outside typdoc entirely, since nothing ships yet that would leave one
-//! by being killed mid-write. `remove_leftovers` is a write, so it goes through `Fs` and is
-//! checked against the fake, which can stage a removal to fail on request; a real directory has
-//! no ordinary way to make `remove_file` fail on one particular name.
+//! `find_leftovers` is a read, so it is checked against a real temporary directory — a leftover
+//! is manufactured directly by writing it with `std::fs::write`, outside typdoc entirely, since
+//! nothing ships yet that would leave one by being killed mid-write. `remove_leftovers` is a
+//! write, so it goes through `Fs` and is checked against the fake, which can stage a removal to
+//! fail on request; a real directory has no ordinary way to make `remove_file` fail on one
+//! particular name.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -26,8 +24,6 @@ fn a_lock<'a>(fs: &'a FakeFs, path: &str) -> typdoc_core::NamespaceLock<'a> {
     )
     .unwrap_or_else(|e| panic!("the scenario's own lock could not be acquired: {e}"))
 }
-
-// ---- find_leftovers: a real directory, read only ----
 
 #[test]
 fn find_leftovers_finds_a_leftover_at_the_top_and_one_nested_a_directory_down() {
@@ -89,8 +85,6 @@ fn find_leftovers_does_not_enter_a_folder_that_holds_its_own_project() {
     );
 }
 
-// ---- remove_leftovers: the fake, so a removal can be staged to fail ----
-
 #[test]
 fn remove_leftovers_removes_every_path_it_is_given_through_the_seam() {
     let fs = FakeFs::new();
@@ -138,10 +132,6 @@ fn remove_leftovers_counts_only_what_actually_came_off() {
     assert_eq!(removed, 1);
 }
 
-/// Done-when (d): a removal made to fail leaves the write successful. The fake is armed so
-/// every `remove_file` fails; `remove_leftovers` reports nothing removed and the leftover is
-/// still there, and a write through `write_atomically`, made right after with the same failure
-/// still staged, still succeeds — the removal's failure has no bearing on it at all.
 #[test]
 fn a_removal_made_to_fail_leaves_the_write_successful() {
     let fs = FakeFs::new();

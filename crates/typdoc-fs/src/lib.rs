@@ -1,16 +1,14 @@
 //! The write half of the seam: the file system itself.
 //!
-//! This crate exists to be the one place a file is changed. Everything else reaches a file
-//! system through [`typdoc_core::Fs`], and `typdoc-core`'s own lint list refuses the calls that
-//! would go round it, with no exception in it anywhere. Which code may write is therefore
-//! settled by the dependency graph: a crate that can write has to say so in its manifest, where
-//! it can be searched for and seen in a review, instead of by an attribute that a later one
-//! could be added beside without anyone noticing.
+//! This crate is the one place a file is changed. Everything else reaches a file system through
+//! [`typdoc_core::Fs`], and `typdoc-core`'s lint list refuses the calls that would go round it,
+//! with no exception. Which code may write is settled by the dependency graph: a crate that can
+//! write says so in its manifest, where a review sees it, rather than by an attribute a later
+//! change could add unnoticed.
 //!
-//! Every function below is one operation of that trait and calls exactly the standard-library
-//! function that performs it. The rules about temp files, modes and renames are not here: they
-//! sit above the seam, in `typdoc_core`, so that they are the same whichever implementation is
-//! underneath.
+//! Each function is one operation of that trait and calls exactly the standard-library function
+//! that performs it. The rules about temp files, modes and renames sit above the seam, in
+//! `typdoc_core`, so they are the same whichever implementation is underneath.
 
 use std::fs;
 use std::io::{self, Write};
@@ -83,7 +81,6 @@ fn file_id(data: &fs::Metadata) -> FileId {
     }
 }
 
-/// A file this process opened for writing.
 struct OpenFile(fs::File);
 
 impl WriteHandle for OpenFile {

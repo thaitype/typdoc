@@ -1,11 +1,8 @@
-//! `typdoc_core::write_state` (`state::write`, re-exported) against a real directory: the glue
-//! around the pure logic `crates/typdoc-core/src/state.rs`'s own unit tests already cover — a
-//! real read of whatever is there now, `.typdoc/state/` created on the namespace's first write,
-//! and the write itself going through `write_atomically`, so nothing is left temp on success.
+//! Covers SPC-8.
 //!
-//! `new` and `mv --renumber` are the two callers; this is the write half's own proof that it
-//! works regardless: a library test reaching it directly, against a real file system, which is
-//! what this crate is for.
+//! `typdoc_core::write_state` against a real directory: the glue the unit tests of `state.rs`
+//! do not reach — a real read of whatever is there now, `.typdoc/state/` created on the
+//! namespace's first write, and the write going through `write_atomically`.
 
 use std::fs;
 use std::path::Path;
