@@ -41,3 +41,10 @@ An error goes to standard error. With `--json`, standard error carries one objec
 finding's `message` as its `error`, as above, not a phrase wrapped around it. For a config error,
 `rule` holds the error's id from `docs/design/catalog/config-errors.md` (every one starts with
 `config.`) and `path` is the configuration file it is about.
+
+## An interrupted run
+
+When typdoc is interrupted by `SIGINT` or `SIGTERM`, it removes the locks it holds and then ends
+by that signal. The caller sees a process killed by a signal, not a code from the table above,
+and no error object is written. The table describes the outcomes of a command, not every way a
+process can end.
