@@ -99,7 +99,7 @@ mod tests {
     }
 
     #[test]
-    fn a_document_with_no_frontmatter_block_at_all_is_reported_as_its_own_case() {
+    fn a_document_with_no_frontmatter_block_at_all_is_reported_as_missing_content_type() {
         let file = "just a body, no frontmatter\n";
 
         let error = read_json_body::<serde_json::Value>(file).unwrap_err();
