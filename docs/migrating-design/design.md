@@ -458,8 +458,6 @@ The hash is stable across versions of typdoc. Changing how it is computed would 
 
 ## JSON output
 
-**A `number` in `--json`** is printed with the digits written in the document, not with a value converted from them. JSON puts no limit on the digits of a number; the readers do, each in its own way, and a reader that cannot hold one rounds it knowingly from a true value instead of being handed a different one. The reason is the same one that makes the frontmatter reader keep text: nothing between the file and the caller decides what `1e3` is. Converting first loses more than digits. Two documents whose numbers differ by one print the same value and cannot be told apart, and `1e3` becomes `1000.0`, which is not what the file says. A field of any other type is printed as it always was, and a `string` holding the same digits has never been affected.
-
 `path` is the path of the file relative to the folder of the project the document belongs to, the folder that holds that project's `.typdoc`, so it is the same in every namespace and can be opened as it stands from there. `namespace` is not redundant with it: the namespace `default` has no folder of its own, so the paths of its documents contain no namespace name and none can be recovered from them, and that is the commonest case. Where a project has several namespaces, two documents in different ones can have the same path below their namespace folder, and the namespace tells them apart from the path's first segment onward.
 
 | Command | Prints |

@@ -1,12 +1,10 @@
-//! The goal's second criterion, real-process half (contract, testing decision 2, "Across real
-//! processes"): a shipped binary holds a namespace's lock — ticket 4's own mechanism, reused
-//! rather than reinvented (`crates/typdoc/tests/signals.rs`'s `large_project`, now shared through
-//! `crates/typdoc/tests/common/mod.rs`) — while several independent `new` processes are started
-//! against the very same lock, with a `--lock-timeout` long enough that none of them gives up.
-//! Running them one after another and finding no duplicate key would prove nothing (it is the
-//! same result a build with no lock at all gives whenever the runs happen not to overlap), so
-//! this test forces the overlap: the holder is not let go until every contender has been
-//! observed still alive and still turned away, not merely started.
+//! Covers SPC-10.
+//!
+//! A running `new` holds a namespace's lock (`common::large_project`) while several `new`
+//! processes contend for it, with a `--lock-timeout` long enough that none gives up. Runs that
+//! happen one after another would find no duplicate key even with no lock at all, so the overlap
+//! is forced: the holder is not let go until every contender has been seen still running and
+//! turned away.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -15,39 +13,31 @@ use std::time::{Duration, Instant};
 
 use common::{LOCK_APPEARS_WITHIN, RunningChild, Spawn, large_project, lock_path, wait_for_file};
 
-/// Large enough that the holder's own `Project::prescan_refs` scan (see `common::large_project`'s
-/// own doc comment) reliably takes a stretch of real wall-clock time next to the setup and
-/// polling this test does around it — the same size ticket 4 measured in the low seconds.
+/// Large enough that the holder's scan (see `common::large_project`) outlasts this test's setup
+/// and polling.
 const DOCUMENT_COUNT: u32 = 20_000;
 
-/// How many independent `new` processes race for the one lock the holder is standing on.
 const CONTENDER_COUNT: u32 = 3;
 
-/// Long enough that no contender's own `acquire` gives up before the holder's scan does, on any
-/// machine this suite runs on; `new`'s own default is five seconds, and the holder's scan alone
-/// can take a few of those.
+/// Longer than the holder's scan on any machine the suite runs on, which the default of five
+/// seconds may not be.
 const CONTENDER_LOCK_TIMEOUT_SECS: u64 = 120;
 
-/// How long this test waits to observe every contender turned away and still running before
-/// giving up and failing outright — generous next to how quickly that state is normally reached
-/// (well before the holder's own scan, which takes seconds, finishes), so a failure to observe
-/// it within this bound is treated as a real fault, not retried or silently accepted.
+/// Generous next to how soon every contender is normally seen waiting, so not seeing it is a
+/// fault, not a reason to retry.
 const WAITING_OBSERVED_WITHIN: Duration = Duration::from_secs(60);
 
-/// The lock file's own recorded owner, read the same way `crates/typdoc-core/src/
-/// namespace_lock.rs`'s `Owner` does, without depending on that private type.
+/// The lock file's recorded owner, read without the private `Owner` type of
+/// `typdoc-core`'s `namespace_lock`.
 fn lock_owner_pid(lock: &std::path::Path) -> Option<u32> {
     let bytes = std::fs::read(lock).ok()?;
     let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     value["pid"].as_u64().map(|pid| pid as u32)
 }
 
-/// Polls until the lock file at `lock` names `pid` as its owner, or panics if `LOCK_APPEARS_WITHIN`
-/// (already generous next to how quickly a real write finishes) passes without that happening.
-/// `wait_for_file` alone only proves the file exists, not that the write of its contents — the
-/// `pid` field this reads — has finished; reading it back immediately after existence is confirmed
-/// can observe an empty or partially written file, which is a race in the observation, not a real
-/// fault, so this polls for the field itself rather than accepting `None` as the answer.
+/// `wait_for_file` shows only that the file exists, not that its contents are written, so this
+/// polls for the `pid` itself: an empty or half-written file is a race in the observation, not a
+/// fault.
 fn wait_until_lock_names_pid(lock: &std::path::Path, pid: u32) {
     let start = Instant::now();
     loop {
@@ -64,15 +54,9 @@ fn wait_until_lock_names_pid(lock: &std::path::Path, pid: u32) {
     }
 }
 
-/// Polls until every contender is confirmed still running (`RunningChild::is_alive`) *and* the
-/// lock file still names the holder's own pid (nobody else has taken it over, and the holder has
-/// not yet released it) — the combination the ticket's own reasoning gives for "waiting" rather
-/// than "started" or "finished": a contender that had succeeded would have taken the lock away
-/// from the holder (impossible while the holder still holds it, but checked anyway, since it is
-/// exactly the evidence that would show a fault if the reasoning above were wrong), and a
-/// contender that had errored out (for instance by giving up on the timeout) would no longer be
-/// running. Panics with a clear message if this is never observed within a generous bound,
-/// rather than silently proceeding on an unproven assumption.
+/// Waiting means every contender still running while the lock still names the holder. A
+/// contender that had taken the lock would have taken it from the holder, which cannot happen and
+/// is checked anyway; one that gave up would no longer be running.
 fn wait_until_all_contenders_are_observed_waiting(
     lock: &std::path::Path,
     holder_pid: u32,
@@ -96,15 +80,9 @@ fn wait_until_all_contenders_are_observed_waiting(
     }
 }
 
-/// **Contract testing decision 2, "Across real processes."** The holder is an *uncoded* `new`
-/// (a path target, matching a second collection of the same namespace, so it shares the same
-/// lock) rather than one of the `n`: it allocates no key and touches no state file, so it cannot
-/// be mistaken for one of the `n` distinct keys this test counts, and its own pid, read back out
-/// of the lock file it creates, is never one a contender could legitimately have. It is not
-/// released deliberately (there is no signal, and no test-only mode to hold it open): its own
-/// scan is what holds the lock, exactly ticket 4's mechanism, and it is simply given enough
-/// filler documents that, by the time all `n` contenders have been confirmed turned away and
-/// still waiting, it has not finished on its own yet either.
+/// The holder is an uncoded `new`, a path in a second collection of the same namespace, so it
+/// takes the same lock but allocates no key the test could count. Nothing releases it: its own
+/// scan holds the lock until every contender has been seen waiting.
 #[test]
 fn n_processes_racing_one_lock_issue_n_distinct_keys_with_no_document_overwritten() {
     let project = large_project(DOCUMENT_COUNT);
@@ -148,8 +126,6 @@ fn n_processes_racing_one_lock_issue_n_distinct_keys_with_no_document_overwritte
 
     wait_until_all_contenders_are_observed_waiting(&lock, holder_pid, &mut contenders);
 
-    // Nothing releases the holder: its own scan finishes in its own time, exactly as it would
-    // for any other run of `new` against a project this size.
     let holder_ended = holder.wait();
     assert_eq!(
         (holder_ended.code, holder_ended.signal),
@@ -180,7 +156,6 @@ fn n_processes_racing_one_lock_issue_n_distinct_keys_with_no_document_overwritte
         allocations.push((key, title.clone()));
     }
 
-    // (b) `n` distinct keys.
     let keys: Vec<&String> = allocations.iter().map(|(key, _)| key).collect();
     let mut sorted_keys = keys.clone();
     sorted_keys.sort();
@@ -198,7 +173,6 @@ fn n_processes_racing_one_lock_issue_n_distinct_keys_with_no_document_overwritte
         .max()
         .expect("at least one numeric key");
 
-    // `last` equal to the highest of them.
     let state_text = std::fs::read_to_string(project.path().join(".typdoc/state/default.json"))
         .expect("the state file");
     let state: serde_json::Value = serde_json::from_str(&state_text).expect("valid JSON");
@@ -208,8 +182,6 @@ fn n_processes_racing_one_lock_issue_n_distinct_keys_with_no_document_overwritte
         "`last` must equal the highest key any contender was actually given"
     );
 
-    // `n` documents on disk, and no document written over another: each contender's own key
-    // names a file that exists, carries that contender's own title, and no other contender's.
     for (key, title) in &allocations {
         let path = project.path().join(format!("tickets/{key}.md"));
         assert!(

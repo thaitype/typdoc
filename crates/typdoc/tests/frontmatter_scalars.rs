@@ -1,8 +1,6 @@
-//! A frontmatter value that is one scalar keeps the text written in the file: an integer of any
-//! length and a value with a tag are read like every other scalar, so the document is listed,
-//! `get` shows the text, and `validate` finds nothing to parse. Every project is built in a
-//! scratch folder, and every expected value is written out by hand from the design (Documents:
-//! no reader decides what `1e3`, `no` or `2026-09-19` is).
+//! Covers SPC-4, SPC-12, SPC-13.
+//!
+//! Every expected value is written out by hand, never copied from the tool's output.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -16,7 +14,6 @@ const SCHEMA: &str = r#"{ "name": "n", "fields": {
     "l": { "type": "list" }
 } }"#;
 
-/// A project with one collection of `*.md` and one document `d.md` whose block is `block`.
 fn project_with(block: &str) -> Scratch {
     let project = Scratch::project(&[]);
     project.file(
@@ -32,14 +29,12 @@ fn run(project: &Scratch, args: &[&str]) -> Ran {
     Spawn::args(args.iter().copied()).cwd(project.path()).run()
 }
 
-/// What `get d.md --json` shows as `fields`; the run must have gone well.
 fn fields_of(project: &Scratch) -> Value {
     let ran = run(project, &["get", "d.md", "--json"]);
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
     ran.stdout_json()["document"]["fields"].clone()
 }
 
-/// The document is listed and `validate` does not report `frontmatter.parse` for it.
 fn is_listed_and_parses(project: &Scratch, block: &str) {
     let listed = run(project, &["list", "--ids"]);
     assert_eq!(listed.code, 0, "{block}: {}", listed.stderr);
@@ -56,8 +51,6 @@ fn is_listed_and_parses(project: &Scratch, block: &str) {
     assert!(!rules.contains(&"frontmatter.parse"), "{block}: {rules:?}");
 }
 
-/// The document is written as `block` and it is read as `expected`, listed, and not reported by
-/// `frontmatter.parse`.
 fn reads_as(block: &str, expected: Value) {
     let project = project_with(block);
 
@@ -97,9 +90,6 @@ fn an_integer_past_64_bits_in_a_list_keeps_its_digits() {
     );
 }
 
-/// A `number` past `u64` or below `i64::MIN` is printed with its digits, and a reader that
-/// converts it to a float lands on the nearest one that float holds: the rounding is the
-/// reader's, out of a value that was true when it reached it. It is not a finding either way.
 #[test]
 fn an_integer_past_64_bits_in_a_number_field_keeps_its_digits_and_converts_to_the_nearest_float() {
     for (written, nearest) in [
@@ -187,7 +177,6 @@ fn a_tagged_list_that_holds_a_mapping_is_refused() {
     );
 }
 
-/// Every other scalar keeps its text, tagged or not.
 #[test]
 fn every_other_scalar_keeps_its_text() {
     reads_as(
@@ -209,12 +198,6 @@ fn every_other_scalar_keeps_its_text() {
         reads_as(&format!("s: {written}"), json!({ "s": written }));
     }
 }
-
-// ---------------------------------------------------------------------------------------------
-// A `number` is printed with the digits written in the document, not with a value converted out
-// of them (design, JSON output). Every value below is written out by hand from that paragraph
-// and from the pairs the decision behind it measured; none is copied from the tool's output.
-// ---------------------------------------------------------------------------------------------
 
 /// The text `get --json` prints for the field `num`, read out of the bytes of the output. A
 /// JSON reader of its own would convert the number on the way in, which is the very step under
@@ -244,19 +227,18 @@ fn a_number_is_printed_with_the_digits_the_document_holds() {
     );
 
     for written in [
-        // Inside the range an integer holds, where every digit survived before this and has to
-        // go on surviving: 2^53 + 1, i64's minimum, u64's maximum.
+        // Inside the range an integer holds: 2^53 + 1, i64's minimum, u64's maximum.
         "3",
         "9007199254740993",
         "-9223372036854775808",
         "18446744073709551615",
-        // Outside it, where the digits were lost.
+        // Outside it.
         "18446744073709551616",
         "99999999999999999999",
         "99999999999999999998",
         "12345678901234567890123",
-        // Inside it in size, and lost all the same, because the conversion also decided the
-        // form: these are ordinary documents, not extreme ones.
+        // Inside it in size, but a conversion would change the form: ordinary documents, not
+        // extreme ones.
         "1e3",
         "1.10",
         "-2.5e-3",
@@ -265,24 +247,18 @@ fn a_number_is_printed_with_the_digits_the_document_holds() {
         assert_eq!(printed_num(&project), written, "num: {written}");
     }
 
-    // Two numbers that differ in their last digit print differently. Both printed `1e+20`
-    // before this, so nothing reading the output could tell the two documents apart.
+    // Two numbers that differ in their last digit print differently; converted, both would
+    // print `1e+20`.
     assert_ne!(
         printed_num(&project_with("num: 99999999999999999999")),
         printed_num(&project_with("num: 99999999999999999998"))
     );
 
-    // A `string` holding the same digits was never affected, which is what locates the change.
     let as_text = project_with("s: \"99999999999999999999\"");
     assert_eq!(fields_of(&as_text)["s"], json!("99999999999999999999"));
 }
 
-// ---------------------------------------------------------------------------------------------
-// Comparing numbers that no primitive holds is a separate piece of work on the query path, and
-// printing the digits does not touch it. Recorded here, with the pair the decision behind it
-// measured, so that this change is not later read as having fixed the comparison as well.
-// ---------------------------------------------------------------------------------------------
-
+/// Printing keeps the digits; comparing uses the converted value.
 #[test]
 fn two_numbers_that_differ_past_a_primitive_still_compare_equal() {
     let project = Scratch::project(&[]);
@@ -331,20 +307,12 @@ fn two_numbers_that_differ_past_a_primitive_still_compare_equal() {
     matched.sort_unstable();
     assert_eq!(matched, ["above.md", "below.md"]);
 
-    // The same rule in the ordinary case: a document written `1e3` is found by the value it
-    // converts to, which is what `=` matched before the digits were printed.
+    // The same rule in the ordinary case: `1e3` is found by the value it converts to.
     let ratio = project_with("num: 1e3");
     let by_converted = run(&ratio, &["list", "--where", "num=1000.0", "--ids"]);
     assert_eq!(by_converted.code, 0, "stderr: {}", by_converted.stderr);
     assert_eq!(by_converted.stdout, "d.md\n");
 }
-
-// ---------------------------------------------------------------------------------------------
-// A field written with no value and one written as an empty string are two different YAML values.
-// The design says each keeps the form it was written in, with the first shown as `null`
-// (`docs/design.md`, "Document files" and "JSON output"; decision 21). This pinned the binary's
-// old, narrower reading, in both directions; it is turned round here, to what the design asks for.
-// ---------------------------------------------------------------------------------------------
 
 #[test]
 fn a_field_written_with_no_value_is_kept_apart_from_one_written_as_an_empty_string() {
@@ -363,8 +331,8 @@ fn a_field_written_with_no_value_is_kept_apart_from_one_written_as_an_empty_stri
     assert_eq!(fields_of(&bare)["s"], Value::Null);
     assert_eq!(fields_of(&quoted)["s"], json!(""));
 
-    // Unchanged by the decision: a field written with no value is present rather than missing,
-    // and one whose type it does not fit is reported the same way a written value would be.
+    // Present rather than missing, and reported like a written value where its type does not
+    // fit.
     let ran = run(&bare, &["validate", "--json"]);
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
     assert_eq!(ran.stdout_json()["findings"], json!([]));

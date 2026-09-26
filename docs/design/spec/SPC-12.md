@@ -46,6 +46,17 @@ project folder, for a document and for a configuration file alike; `namespace`, 
 finding is always located in a file of the project being checked, never in one of an imported
 project: a broken ref is a fault of the document that holds it, not of its target.
 
+## A `number`
+
+A `number` is printed with the digits written in the document, not with a value converted from
+them. JSON puts no limit on the digits of a number; its readers do, each in its own way, and a
+reader that cannot hold one rounds it knowingly from a true value rather than being handed a
+different one. It is the reason the frontmatter reader keeps text: nothing between the file and
+the caller decides what `1e3` is. Converting first would lose more than digits: two documents
+whose numbers differ by one would print the same value and could not be told apart, and `1e3`
+would print as `1000.0`, which is not what the file says. A field of any other type prints the
+value it holds, and a `string` of digits is printed as the text it is.
+
 ## A field written with no value
 
 A field written with no value is `null` in `--json`, and one written as an empty string is `""`.

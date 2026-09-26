@@ -103,3 +103,9 @@ error. `datetime` values compare as instants, offsets included. A date-only valu
 `datetime` field compares against the field's date part. A document without the field, or whose
 value does not fit the field's type, satisfies no ordering comparison. Always quote the expression:
 `<` and `>` are shell redirections.
+
+A `number` is compared by the value its digits convert to, a 64-bit floating-point number, not by
+the digits themselves, though it is printed with its digits (`SPC-12`). Two numbers that differ
+only past what that value holds compare equal: `num>99999999999999999998` does not find a document
+holding `99999999999999999999`, and `num=1e+20` finds both. In the ordinary case the same rule is
+what makes `num=1000.0` find a document written `1e3`.

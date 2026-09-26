@@ -45,4 +45,7 @@ the `pid_alive` fix after the story: every lock records the host name `unknown-h
 design text that names Linux alone stays in `docs/migrating-design/`. Fixed in the ticket 06 PR:
 SPC-2 no longer says `mv --renumber` prints only the new key.
 
+From the ticket 07 PR. Fixed in that PR: a test in `crates/typdoc/tests/state.rs` named after a
+decision number is renamed to `deriving_last_reissues_a_retired_key_silently`.
+
 Done when: that record is reported. The story is accepted outside the loop.
