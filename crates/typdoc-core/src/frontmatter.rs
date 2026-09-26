@@ -22,8 +22,8 @@ pub struct Split<'a> {
     pub body: usize,
 }
 
-/// Cuts a file where its block ends. A line ends as the design says, so a file with `\r\n` or
-/// lone `\r` endings has its block found too.
+/// Cuts a file where its block ends, counting lines as SPC-1 does, so `\r\n` and lone `\r`
+/// endings find the block too.
 pub fn split(text: &str) -> Result<Split<'_>, String> {
     let line = |start: usize| {
         let end = next_line(text, start);
@@ -50,7 +50,6 @@ pub fn split(text: &str) -> Result<Split<'_>, String> {
     Err("the frontmatter block is never closed".to_owned())
 }
 
-/// The lines between the opening and the closing `---`, or `None` when the file has no block.
 pub fn block(text: &str) -> Result<Option<&str>, String> {
     split(text).map(|split| split.block)
 }
@@ -92,92 +91,56 @@ pub fn fields(block: &str, schema: &Resolved) -> Result<Vec<(String, Value)>, St
         .collect())
 }
 
-/// Builds the frontmatter block a write produces, through the three operations phase 1's
-/// ticket 1 put in front of the writer and decision 20 keeps: set a scalar, append or remove a
-/// list item, and add a key. What decision 20 changed is what stands behind them: there is no
-/// document being edited in place any more, only this block, built fresh from the fields a read
-/// already found and finished into text in one call, so "a write rewrites the whole frontmatter
-/// block, not the line it changed" holds however a caller reaches this trait — the three
-/// operations change what the block holds, [`FrontmatterWriter::finish`] is the one place that
-/// turns what it holds into text, and an implementation is free to change there without a
-/// caller changing, which is the property the trait exists to keep.
+/// Builds the frontmatter block a write produces. The operations change what the block holds
+/// and [`FrontmatterWriter::finish`] turns it into text, so a write always rewrites the whole
+/// block, and what stands behind the operations can change without a caller changing (SPC-4).
 ///
-/// A caller starts from the fields a read already found, in the order they were read, so that a
-/// key already present never moves; [`YamlSerdeWriter::new`] is that starting point for the one
-/// implementation this ticket builds.
+/// A caller starts from the fields a read found, in the order read, so a key already present
+/// never moves.
 pub trait FrontmatterWriter {
-    /// Sets `name` to hold `text`, replacing whatever it held before if the field exists, or
-    /// adding it at the end if it does not ("a key that is added goes at the end of the
-    /// frontmatter block").
+    /// Sets `name` to `text`, in place, or at the end for a new field (SPC-4).
     fn set_scalar(&mut self, name: &str, text: String);
 
-    /// Appends `item` to the list at `name`. A field that does not exist yet is added, at the
-    /// end, as a list of the one item; what happens to a field that exists but is not a list is
-    /// not settled by anything upstream of this ticket, and the choice made here is the one
-    /// that cannot corrupt the block: the field becomes a new list holding just `item`, in the
-    /// position it already had, rather than the append being refused with no seam here to
-    /// report that refusal through.
+    /// Appends `item` to the list at `name`; a new field is added at the end. A field that is
+    /// not a list becomes a list of `item` alone, in place: there is no way to report a refusal
+    /// from here, and this cannot damage the block.
     fn append_item(&mut self, name: &str, item: String);
 
-    /// Removes the first item at `name` equal to `item`. A field that does not exist, or does
-    /// not hold `item`, is left exactly as it was: removing something that was never there is
-    /// not a write. A field with every item removed stays a field holding an empty list, since
-    /// nothing here decides that removing the last item should remove the field.
+    /// Removes the first item at `name` equal to `item`; otherwise changes nothing. A list
+    /// emptied this way stays, as an empty list.
     fn remove_item(&mut self, name: &str, item: &str);
 
-    /// Replaces the first item at `name` equal to `old` with `new`, in the position it already
-    /// held. A field that does not exist, or does not hold `old`, is left exactly as it was.
-    /// `mv` is the caller: a `ref[]` field can hold several values and only the one that named
-    /// the document being moved is rewritten, the rest kept exactly as written, in the order
-    /// they were — which `remove_item` then `append_item` cannot do, since `append_item` always
-    /// moves the value to the end.
+    /// Replaces the first item at `name` equal to `old` with `new`, in its position; otherwise
+    /// changes nothing. `mv` needs it: removing and then appending would move the value to the
+    /// end of a `ref[]` list.
     fn replace_item(&mut self, name: &str, old: &str, new: String);
 
-    /// Adds `name` with no value, at the end, unless it already exists, in which case it is
-    /// left untouched. "No value" is [`Value::Empty`], a field with a name and nothing after it
-    /// (`reviewer:`), kept apart from a field written as the empty string (`docs/design.md`, "A
-    /// field written with no value at all is not the same as one written as an empty string").
+    /// Adds `name` with no value (`reviewer:`), at the end, unless it exists. No value is not
+    /// the empty string (SPC-4).
     fn add_key(&mut self, name: &str);
 
-    /// Sets `name` to hold exactly `items`, replacing whatever it held before if the field
-    /// exists (a scalar included), or adding it at the end if it does not.
-    ///
-    /// None of the three operations above expresses this: [`FrontmatterWriter::append_item`]
-    /// only ever adds one item to what is already there, and nothing removes every item while
-    /// keeping the field. `typdoc set`'s own `k=v1,v2` is a comma-separated array value (design,
-    /// `typdoc new`: "Array values are comma-separated"), and it replaces the field's value, the
-    /// same as [`FrontmatterWriter::set_scalar`] does for a scalar one — so a list field needs
-    /// the same replacing operation a scalar field already has.
+    /// Sets `name` to exactly `items`, in place, or at the end for a new field: `set k=v1,v2`
+    /// replaces a list as [`FrontmatterWriter::set_scalar`] replaces a scalar (SPC-2).
     fn set_list(&mut self, name: &str, items: Vec<String>);
 
-    /// Removes `name` entirely, whatever it holds — a scalar, a list or [`Value::Empty`] alike.
-    /// A field that does not exist is left exactly as it was: removing something that was never
-    /// there is not a write, the same principle [`FrontmatterWriter::remove_item`] already
-    /// documents for one item of a list. This is `typdoc set`'s own `k=` (design, `typdoc set`:
-    /// "`k=` removes a field"), which [`FrontmatterWriter::remove_item`] cannot express, since
-    /// that method removes one item equal to a given value, never a whole field.
+    /// Removes `name`, whatever it holds, for `set k=` (SPC-2). A missing field is left as it
+    /// was.
     fn remove_field(&mut self, name: &str);
 
-    /// The block's text, between the fences, assembled from every field this holds at the point
-    /// it is called: no value is reinterpreted on the way, so a [`Value::Text`], a
-    /// [`Value::Number`]'s written digits, a [`Value::Date`] or [`Value::Datetime`]'s written
-    /// form and a [`Value::Bool`]'s `true`/`false` are all written out exactly, quoted only
-    /// where YAML would otherwise read them as something else. A [`Value::List`] becomes a
-    /// block list, one item per line, or `[]` when it holds none. A [`Value::Empty`] is written
-    /// with nothing after its name, the form it was read in.
+    /// The block's text, between the fences. No value is reinterpreted: each is written as its
+    /// text, quoted only where YAML would read it as something else. A list is a block list, or
+    /// `[]` when empty, and [`Value::Empty`] is a name with nothing after it (SPC-4).
     fn finish(&self) -> Result<String, String>;
 }
 
-/// Writes with `yaml_serde`, the crate the reader already trusts, so the writer and the reader
-/// cannot disagree about what a document says (decision 20).
+/// Writes with `yaml_serde`, the library the reader uses, so the writer and the reader cannot
+/// disagree about what a document says (SPC-4).
 pub struct YamlSerdeWriter {
     fields: Vec<(String, Value)>,
 }
 
 impl YamlSerdeWriter {
-    /// Starts from `fields`, in the order given — ordinarily the fields a read already found,
-    /// so that a key already present never moves and a write over an empty document starts
-    /// from nothing.
+    /// Starts from `fields`, ordinarily those a read found, in the order read.
     pub fn new(fields: Vec<(String, Value)>) -> Self {
         YamlSerdeWriter { fields }
     }
@@ -243,8 +206,7 @@ impl FrontmatterWriter for YamlSerdeWriter {
     }
 
     fn finish(&self) -> Result<String, String> {
-        // An empty block is nothing between the fences; `yaml_serde` has no call that means
-        // "an empty mapping written as nothing", so this case is handled before reaching it.
+        // Nothing between the fences: `yaml_serde` cannot write an empty mapping as nothing.
         if self.fields.is_empty() {
             return Ok(String::new());
         }
@@ -253,15 +215,9 @@ impl FrontmatterWriter for YamlSerdeWriter {
     }
 }
 
-/// `yaml_serde` has no call that writes a scalar with nothing after it: unit and `None` both
-/// spell YAML's null as the word `null`, and an empty string is quoted to keep it from reading
-/// as that same null on the way back in. So [`Block::serialize`] writes a [`Value::Empty`] field
-/// as `name: null`, the one place in a block this writer produces that exact line unquoted — a
-/// [`Value::Text`] holding the literal text `"null"` is quoted (`'null'`), because that text
-/// would otherwise read back as this word does — and this pass turns each such line into `name:`
-/// with nothing after it, matching every field this run's `fields` marks [`Value::Empty`] by
-/// name against a whole line of the text `yaml_serde` produced, never a substring, so a value
-/// that happens to contain the same text elsewhere is left alone.
+/// `yaml_serde` cannot write a scalar with nothing after it, so [`Block::serialize`] writes
+/// [`Value::Empty`] as `name: null` and this turns each such whole line into `name:`. Text that
+/// spells `null` is written quoted, so the unquoted line is always an empty field.
 fn bare_the_empty_fields(written: String, fields: &[(String, Value)]) -> String {
     let empty: Vec<&str> = fields
         .iter()
@@ -285,8 +241,7 @@ fn bare_the_empty_fields(written: String, fields: &[(String, Value)]) -> String 
     out
 }
 
-/// A `Serialize` wrapper over the fields of a block, in the order given: a `BTreeMap` would
-/// sort them, and a key never moves on a write.
+/// Not a `BTreeMap`, which would sort the fields: a key never moves on a write.
 struct Block<'a>(&'a [(String, Value)]);
 
 impl Serialize for Block<'_> {
@@ -295,9 +250,7 @@ impl Serialize for Block<'_> {
         for (name, value) in self.0 {
             match value {
                 Value::List(items) => map.serialize_entry(name, items)?,
-                // Written as the word `null` here and turned bare afterward
-                // (`bare_the_empty_fields`): nothing serde's data model offers writes as a
-                // scalar with nothing after it.
+                // Made bare by `bare_the_empty_fields`.
                 Value::Empty => map.serialize_entry(name, &())?,
                 Value::Text(text) | Value::Date(text) | Value::Datetime(text) => {
                     map.serialize_entry(name, text)?
@@ -315,10 +268,8 @@ impl Serialize for Block<'_> {
 /// What a value is, before its text is read.
 enum Shape {
     Scalar,
-    /// The reader resolved this scalar as YAML's null: a field written with a name and nothing
-    /// after it, or a plain `~`, `null`, `Null` or `NULL`. The two are told apart once the text
-    /// is read: empty text is the first (design, "Document files"), and any other text is a
-    /// value that happens to spell null and is kept as written, the same as every other scalar.
+    /// Read as YAML's null: a name with nothing after it, or `~`, `null`, `Null`, `NULL`. Only
+    /// the first becomes [`Value::Empty`] (SPC-4); the others are text kept as written.
     Null,
     ScalarList,
     Unreadable(&'static str),
@@ -615,10 +566,8 @@ mod tests {
         );
     }
 
-    /// The design's promise for an anchor and its alias (`&anchor` with `*alias`  "The value
-    /// written out in full at every place that used it") starts here, in what the read path
-    /// already gives back for each: no write-side work turns one into the other, because they
-    /// are already two independent copies of the same text by the time a write sees them.
+    /// A write gives an alias its value in full (SPC-4) because the read already gives two
+    /// copies of the text.
     #[test]
     fn an_anchor_and_its_alias_are_each_read_as_the_full_value() {
         let schema = schema(&[("original", "string"), ("mirrored", "string")]);
@@ -633,10 +582,7 @@ mod tests {
         );
     }
 
-    /// Reads `block` back with a schema that names none of its fields, so every value stays the
-    /// `Text` or `List` it was written as: a test at the boundary between what a write assembled
-    /// and what it says, not a test of coercion, which is the read path's own job and untouched
-    /// by anything here.
+    /// A schema that names no field, so every value reads back as the text written.
     fn reread(block: &str) -> Vec<(String, Value)> {
         fields(
             block,
@@ -645,8 +591,6 @@ mod tests {
         .unwrap_or_else(|e| panic!("{block:?}: {e}"))
     }
 
-    /// Finishes a [`YamlSerdeWriter`] started from `fields`, panicking with the fields on a
-    /// failure, since every case below hands it fields the read path could have produced.
     fn write(fields: &[(String, Value)]) -> String {
         YamlSerdeWriter::new(fields.to_vec())
             .finish()
@@ -678,9 +622,7 @@ mod tests {
         assert_eq!(written, "tags:\n- a\n- b\nempty: []\n");
     }
 
-    /// Every literal the design names as needing to survive a write exactly (`docs/design.md`,
-    /// "Document files"), plus the shapes decision 20 measured: read through `write` and back
-    /// through [`reread`], the text of the one field must be untouched.
+    /// The literals SPC-4 names, and more text YAML would read as something else.
     #[test]
     fn a_value_the_format_holds_exactly_is_written_back_exactly() {
         let literals = [
@@ -696,7 +638,7 @@ mod tests {
             "true",
             "2026-09-19",
             "2026-09-19T14:30:00+07:00",
-            "", // an empty string
+            "",
             "leading and trailing ",
             " leading space",
             "has\na newline",
@@ -764,9 +706,6 @@ mod tests {
 
     #[test]
     fn a_value_written_with_quotes_it_did_not_need_comes_back_unquoted() {
-        // The source text of a block that was never read through this writer: this is the one
-        // test in the file allowed to hold literal quote marks in the input, because it is
-        // pinning what a write drops, not what a value is.
         let block = "title: 'Ship it'\nflag: \"true\"\n";
         let schema = schema(&[("title", "string")]);
         let before = fields(block, &schema).unwrap();
@@ -969,11 +908,6 @@ mod tests {
         );
     }
 
-    /// Goal criterion 1, at the two forms decision 21 is about: a field read as
-    /// [`Value::Empty`] (`bare:`, YAML's null) and one read as [`Value::Text`] holding nothing
-    /// (`quoted: ''`) each write back in the form they were read in, byte for byte, whether or
-    /// not either is the field a `set` changes (`docs/design.md`, "A field written with no
-    /// value at all is not the same as one written as an empty string").
     #[test]
     fn a_bare_field_and_an_empty_string_field_are_each_written_back_in_the_form_they_held() {
         let before = "bare:\nquoted: ''\nother: kept\n";
@@ -1013,16 +947,11 @@ mod tests {
     }
 }
 
-/// The round trip of the contract's first criterion (goal criterion 1), run over the fixtures
-/// rather than over cases written by hand: `set` of one field, and every other field read back
-/// exactly as it held before. Kept apart from `mod tests` because it reads files from disk,
-/// which the cases above never do.
+/// The round trip over every fixture document: `set` of one field, and every other field read
+/// back as it was. Apart from `mod tests` because it reads files.
 ///
-/// "Assembling the block it meant to" is checked here, at the boundary of typdoc's own code
-/// (decision 20), rather than by a guard that ships: there is no re-read guard in the write
-/// path itself, on the reasoning decision 20 gives — a mismatch here would be a defect in
-/// `yaml_serde`, the crate the read path already trusts unchecked, not one typdoc's own code
-/// could catch by reading its own output back.
+/// This test, not a re-read in the write path, checks that typdoc assembles the block it meant
+/// to (SPC-4).
 #[cfg(test)]
 mod corpus {
     use std::collections::BTreeMap;
@@ -1030,9 +959,7 @@ mod corpus {
 
     use super::*;
 
-    /// Every `.md` file under `fixtures/valid/`, found once and sorted, so the walk is
-    /// deterministic and a file this test does not account for is one the count at the end
-    /// reports rather than one that silently drops out.
+    /// Every `.md` file under `fixtures/valid/`, sorted so the walk is deterministic.
     fn documents() -> Vec<PathBuf> {
         let root = typdoc_testkit::fixtures::path("valid");
         let mut found = Vec::new();
@@ -1053,18 +980,12 @@ mod corpus {
         }
     }
 
-    /// A schema that names no field, so every value read through it stays the `Text` or `List`
-    /// it was written as. This corpus test is about the writer, not about what a schema coerces
-    /// a value into: coercion is a pure function of the text a write already promises not to
-    /// change, so a schema-typed value round-trips exactly whenever its text does, and a real
-    /// per-fixture schema would prove nothing this one does not.
+    /// No field is named, so values stay text. Coercion is a function of the text alone, so a
+    /// typed value round-trips whenever its text does.
     fn no_schema() -> Resolved {
         Resolved::new("test".to_owned(), None, BTreeMap::new())
     }
 
-    /// A value distinguishably different from `value`, of the same shape as what
-    /// [`mutate`] below produces, so a round trip exercises `set` changing the field it names
-    /// and nothing else.
     const MARKER: &str = "frontmatter-write-corpus-marker";
 
     fn changed_value(value: &Value) -> Value {
@@ -1078,10 +999,7 @@ mod corpus {
         }
     }
 
-    /// Changes `name` on `writer` through the trait's own operations, the way a caller reaches
-    /// it, rather than by editing a `Vec` directly: [`FrontmatterWriter::append_item`] for a
-    /// list, [`FrontmatterWriter::set_scalar`] for anything else, matching what
-    /// [`changed_value`] expects to read back.
+    /// Through the trait's operations, as a caller reaches the writer.
     fn mutate(writer: &mut YamlSerdeWriter, name: &str, current: &Value) {
         match current {
             Value::List(_) => writer.append_item(name, MARKER.to_owned()),
@@ -1187,9 +1105,7 @@ mod corpus {
         );
     }
 
-    /// The raw blocks of every fixture document that has one, so a shape is looked for in the
-    /// text as written, not in what `fields` made of it — a comment and a blank line have
-    /// already been thrown away by the time `fields` sees anything.
+    /// Raw, because `fields` has already dropped comments and blank lines.
     fn raw_blocks() -> Vec<String> {
         documents()
             .iter()
@@ -1238,11 +1154,8 @@ mod corpus {
         b.lines().any(|l| l.contains(" !"))
     }
 
-    /// Which detector tells whether some document holds the shape a loss entry of
-    /// `docs/design/catalog/frontmatter-losses.md` names, matched on a fragment of the entry
-    /// stable across a rewording of its text. `Err` names an entry nothing here recognizes, so
-    /// an entry the catalog adds is one this test cannot silently pass on the strength of a
-    /// different one.
+    /// Matched on a fragment of the catalog entry that survives a rewording. An entry the
+    /// catalog adds is an `Err`, so this test cannot pass it silently.
     fn detector_for(row: &str) -> Result<fn(&str) -> bool, String> {
         if row == "Comments, anywhere in the block" {
             Ok(has_comment)
@@ -1308,9 +1221,8 @@ mod corpus {
         assert!(has_a_tag("a: !Ref x\n"));
     }
 
-    /// Goal criterion 1's other half: the list of losses is read from
-    /// `docs/design/catalog/frontmatter-losses.md`, not copied here a second time, so a row the
-    /// catalog adds or changes is a row this test reads too.
+    /// The losses are read from the catalog, not copied, so a row the catalog adds is checked
+    /// too.
     #[test]
     fn every_shape_the_design_names_as_lost_is_held_by_some_document_in_the_corpus() {
         #[derive(serde::Deserialize)]
