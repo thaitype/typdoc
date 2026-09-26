@@ -1,5 +1,5 @@
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 01
 
 # Ticket 02 — pilot: `typdoc-fs`, `typdoc-testkit`, `json_body.rs`
