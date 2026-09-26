@@ -613,7 +613,7 @@ mod tests {
         assert_ne!(
             same_relative_hash, elsewhere_hash,
             "a worktree keeping the project at a different relative path is a different \
-             project under decision 14, and must take a different lock"
+             project, and must take a different lock"
         );
     }
 
