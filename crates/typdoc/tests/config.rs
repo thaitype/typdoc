@@ -1,5 +1,6 @@
-//! The config errors that need no schema, import, state file or pin: what the error object on
-//! standard error carries for each, and that every error that can be determined is in it.
+//! Covers SPC-1, SPC-3, SPC-6, SPC-7.
+//!
+//! The config errors that need no schema, import, state file or pin.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -13,7 +14,6 @@ fn get_a(project: &Scratch) -> Ran {
         .run()
 }
 
-/// The error object of a run that ended with 2, checked to have the shape of a config error.
 fn config_error(ran: &Ran) -> Value {
     assert_eq!(ran.code, 2, "stderr: {}", ran.stderr);
     assert_eq!(ran.stdout, "", "a failure prints nothing on stdout");
@@ -24,7 +24,6 @@ fn config_error(ran: &Ran) -> Value {
     object
 }
 
-/// `(rule, path)` of each detail, in the order printed.
 fn details(object: &Value) -> Vec<(String, String)> {
     object["details"]
         .as_array()
@@ -153,7 +152,6 @@ fn a_key_in_a_collection_file_that_is_not_in_the_format_is_config_unknown_key() 
     }
 }
 
-/// A project of two notes, each with a title, and nothing else in it.
 fn two_notes() -> Scratch {
     let project = Scratch::project(&[
         (
@@ -217,7 +215,6 @@ fn a_stray_typdoc_json_is_not_reported_with_a_config_that_cannot_be_parsed() {
     assert_eq!(object["complete"], json!(false));
 }
 
-/// The error of a run that found no project: exit 5, the file it looked for named in the message.
 fn no_project_error(ran: &Ran) -> String {
     assert_eq!(ran.code, 5, "stderr: {}", ran.stderr);
     assert_eq!(ran.stdout, "", "a failure prints nothing on stdout");
@@ -264,10 +261,8 @@ fn typdoc_dir_naming_a_folder_without_a_config_is_no_project_and_names_the_confi
     assert!(message.contains("elsewhere"), "{message}");
 }
 
-/// A plain file named `.typdoc` (no extension, the same name the folder would have) is not a
-/// project: `config_file()` joins `config.json` onto it and finds nothing there either way, but
-/// this pins the case down explicitly rather than leaving it as an accident of path-joining.
-/// Covers the ancestor-walk branch of `discover()`.
+/// `config_file()` finds nothing under a plain file either way; this pins the case down rather
+/// than leaving it to how paths are joined.
 #[test]
 fn a_plain_file_named_dot_typdoc_is_not_a_project_via_the_ancestor_walk() {
     let only = Scratch::empty();
@@ -278,7 +273,6 @@ fn a_plain_file_named_dot_typdoc_is_not_a_project_via_the_ancestor_walk() {
     no_project_error(&ran);
 }
 
-/// The same plain-file-named-`.typdoc` case, through the `TYPDOC_DIR` branch of `discover()`.
 #[test]
 fn a_plain_file_named_dot_typdoc_is_not_a_project_via_typdoc_dir() {
     let project = Scratch::empty();
@@ -362,8 +356,7 @@ fn a_collection_file_name_with_anything_but_ascii_letters_digits_dash_and_unders
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
-              name; APFS on macOS refuses to create one at all (EILSEQ), confirmed on a real \
-              macos-latest CI run, 2026-09-24"
+              name; APFS on macOS refuses to create one at all (EILSEQ)"
 )]
 #[test]
 fn a_collection_file_named_only_by_its_extension_or_by_bytes_that_are_not_utf8_is_named_wrongly() {
@@ -624,7 +617,6 @@ fn an_error_that_is_not_a_config_error_has_no_complete_key() {
     assert!(ran.stderr_json().get("complete").is_none());
 }
 
-/// The fixtures for the config errors, each run as its `fixture.json` says.
 fn broken_config_runs() -> Vec<(String, Ran)> {
     let ids: Vec<String> = typdoc_testkit::fixtures::broken_entries()
         .into_iter()

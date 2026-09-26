@@ -1,7 +1,5 @@
-//! `examples/`: the small, real project the top of the repository ships for a reader to copy.
-//! Not a fixture — nothing here is generated, and nothing in `typdoc_testkit::fixtures` reaches
-//! it, so it is read the way a user's own copy would be: `typdoc_testkit::fixtures::root()`
-//! plus `examples`, run through the same spawn helper as every other command test.
+//! `examples/` is the project the repository ships for a reader to copy, not a fixture: nothing
+//! generates it, so it is read the way a user's own copy would be.
 //!
 //! Values are written by hand from the files under `examples/`, never copied from a run.
 

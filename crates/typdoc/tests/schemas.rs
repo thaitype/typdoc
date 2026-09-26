@@ -1,5 +1,7 @@
-//! Frontmatter values read by the type their schema gives them, and the config errors that
-//! need a schema. The expected values are written by hand from the design.
+//! Covers SPC-4, SPC-6, SPC-12, SPC-14, SPC-15, SPC-16, SPC-17.
+//!
+//! Also the config errors that need a schema. Every expected value is written out by hand, never
+//! copied from the tool's output.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -11,17 +13,15 @@ fn get(project: &std::path::Path, path: &str) -> Ran {
     Spawn::args(["get", path, "--json"]).cwd(project).run()
 }
 
-/// The `fields` of a document of the fixture `valid/field-types`.
 fn fields_of(path: &str) -> Value {
     let ran = get(&fixture("valid/field-types"), path);
     assert_eq!(ran.code, 0, "{path}: {}", ran.stderr);
     ran.stdout_json()["document"]["fields"].clone()
 }
 
-/// Written out as JSON text rather than with `json!`, so that `ratio` reads as the document
-/// writes it and as `--json` prints it, `1e3`. The comparison below is of parsed JSON, which
-/// turns both `1e3` and `1000.0` into one value, so the digits themselves are pinned against
-/// the bytes on standard output in `frontmatter_scalars.rs` rather than here.
+/// JSON text rather than `json!`, so that `ratio` reads `1e3` as the document writes it. Parsed
+/// JSON makes `1e3` and `1000.0` one value, so the digits themselves are pinned in
+/// `frontmatter_scalars.rs`.
 const TYPED_FIELDS: &str = r#"{
     "title": "Typed",
     "count": 3,
@@ -100,8 +100,7 @@ fn a_field_the_schema_does_not_name_keeps_the_text_as_written() {
             "extra": "1e3",
             "flag": "true",
             "year": "2026",
-            // Written with no value at all, unlike an empty string: `null`, not `""`
-            // (`docs/design.md`, "Document files"; decision 21).
+            // Written with no value at all, unlike an empty string.
             "empty": null,
             "nothing": "~",
             "items": ["1", "2.50"]
@@ -109,14 +108,11 @@ fn a_field_the_schema_does_not_name_keeps_the_text_as_written() {
     );
 }
 
-/// `records/unknown.md` (fixture `valid/field-types`) holds a field written with no value at
-/// all (`empty:`), not in the schema. It validates as every field the schema does not name
-/// does, unmoved by the form it was written in: `frontmatter.unknown` at `warn`, naming the
-/// field, and nothing else — a required field written with no value being present rather than
-/// missing, and a `number` written with no value failing its type, are shown against a
-/// synthetic project in `frontmatter_scalars.rs`, where a schema can be built to ask for both.
+/// `records/unknown.md` holds `empty:`, a field with no value that the schema does not name. A
+/// required field and a `number` written with no value are covered in `frontmatter_scalars.rs`,
+/// where a schema can ask for both.
 #[test]
-fn a_bare_field_in_the_fixtures_validates_as_it_did() {
+fn a_bare_field_in_the_fixtures_is_only_an_unknown_field() {
     let ran = Spawn::args(["validate", "--json"])
         .cwd(fixture("valid/field-types"))
         .run();
@@ -264,7 +260,6 @@ fn a_document_with_no_block_has_no_fields_under_a_schema_with_types() {
     assert_eq!(ran.stdout_json()["document"]["fields"], json!({}));
 }
 
-/// `(rule, path)` of each detail of the error object of a run that ended with 2.
 fn details(ran: &Ran) -> Vec<(String, String)> {
     assert_eq!(ran.code, 2, "stderr: {}", ran.stderr);
     assert_eq!(ran.stdout, "");
@@ -590,12 +585,9 @@ fn a_fault_with_no_id_does_not_hide_the_config_errors_that_have_one() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Pinned copies of remote schemas: read from `.typdoc/vendor/schemas/<sha256>` and hashed to
-// check the name, never fetched. `fixtures/valid/pinned-schema` and the three
-// `fixtures/broken/config.schema-unpinned`, `config.vendor-missing` and `config.vendor-edited`
-// fixtures carry the hand-computed hashes (a real `sha256sum` run on the exact bytes
-// committed, never typdoc's own output); this section checks the positive path once more
-// end to end, through the binary, past the fixture-coverage machinery.
+// Pinned copies of remote schemas. `fixtures/valid/pinned-schema` and the fixtures of
+// `config.schema-unpinned`, `config.vendor-missing` and `config.vendor-edited` carry hashes that
+// `sha256sum` computed on the committed bytes, never typdoc's own output.
 // ---------------------------------------------------------------------------------------------
 
 #[test]
@@ -610,13 +602,9 @@ fn a_pinned_remote_schema_is_read_and_checks_frontmatter_by_its_type() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Schema drift on a qualified `target` (design, Refs → Schema drift): a `target` that names a
-// schema of an imported project through `"alias::name"` is checked once every import is loaded,
-// against that project's own schema names (`Project::schema_info_of`).
+// Schema drift on a qualified `target`
 // ---------------------------------------------------------------------------------------------
 
-/// A minimal project of one namespace and one coded collection, `learning` (code `LRN`), for
-/// the drift tests below to import.
 fn learning_project(dir: &std::path::Path) {
     std::fs::create_dir_all(dir.join(".typdoc/collections")).unwrap();
     std::fs::write(dir.join(".typdoc/config.json"), r#"{ "version": 1 }"#).unwrap();
@@ -632,9 +620,6 @@ fn learning_project(dir: &std::path::Path) {
     .unwrap();
 }
 
-/// A project that imports `imported` as `memory_import` (an underscore, so the alias itself
-/// does not have the shape of a URL scheme and trip `schema.valid`'s own check for that) and
-/// has one local schema whose `see` field's `target` is exactly `[target]`.
 fn importing_project(imported: &std::path::Path, target: &str) -> Scratch {
     let project = Scratch::project(&[]);
     project.file(
@@ -720,11 +705,8 @@ fn a_qualified_target_naming_an_alias_that_is_not_configured_is_schema_valid() {
 
 #[test]
 fn a_qualified_target_naming_an_import_absent_on_this_machine_is_not_a_schema_valid_finding() {
-    // design, Refs → Schema drift: "An import that is absent on this machine is reported by
-    // `imports.absent` instead and is not an error here." No pin (this ticket does not fetch)
-    // means there is no schema to check the name against either way, so this checks the
-    // silence, not `imports.absent` itself, which needs a ref to actually name the import
-    // before it fires.
+    // Only the silence: `imports.absent` fires once a ref names the import, and nothing here
+    // does.
     let project = Scratch::project(&[]);
     project.file(
         ".typdoc/config.json",

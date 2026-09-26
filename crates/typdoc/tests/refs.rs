@@ -1,5 +1,4 @@
-//! `typdoc refs` through the built binary: outgoing refs, `--reverse` through the reverse
-//! index, `--field`, and the shape of an unresolved reference.
+//! Covers SPC-2, SPC-5, SPC-12, SPC-14.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -23,10 +22,8 @@ fn error_of(ran: &Ran, code: i32) -> Value {
 
 #[test]
 fn outgoing_refs_are_in_document_field_order_then_body_by_position() {
-    // The schema (fixtures/valid/refs/schemas/ticket.json) declares `blocked_by` before
-    // `context`; the document itself (fixtures/valid/refs/tickets/WF-1.md) writes `context`
-    // before `blocked_by`. The order below matches the document, not the schema, which is what
-    // the design's "the fields in the order they appear in the document" asks for.
+    // The schema declares `blocked_by` before `context` and `WF-1.md` writes them the other way
+    // round, so the two orders differ.
     let ran = refs(&fixture("valid/refs"), &["tickets/WF-1.md", "--json"]);
 
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
@@ -116,10 +113,6 @@ fn a_body_ref_carries_line_and_col_and_a_frontmatter_ref_does_not() {
 
 #[test]
 fn a_body_link_with_no_path_at_all_is_not_a_ref_and_is_left_out_of_body() {
-    // `[t]()` and `[t](#a)` name no path (ticket 11: "read as a self-reference with nothing to
-    // check"); the design's References paragraph only ever names "the document at the other
-    // end", and there is none here, so neither counts as a `$body` reference in either
-    // direction — unlike a URL-scheme link, which is skipped the same way.
     let project = Scratch::project(&NOTES);
     project.file(
         "a.md",
@@ -253,18 +246,8 @@ fn an_argument_that_is_neither_a_path_nor_a_key_exits_1() {
     error_of(&ran, 1);
 }
 
-/// The hand-written golden for `refs`'s text-mode shape (design.md, `typdoc refs`'s own worked
-/// example: `chief:WF-7   context` / `learnings/x.md   $body`, header row added by M-16, and
-/// corrected by ticket 29 to name the other document first and to keep `written` as a third
-/// column since the forward direction is where it can genuinely differ from the resolved name).
-/// `fixtures/valid/refs-worked-example` is built to reproduce that exact example: `team/doc.md`
-/// holds one ref field, `context: chief:WF-7` (a sibling-namespace key), and one body link,
-/// `[x](learnings/x.md)`. The `context` row's `written` happens to equal its resolved `document`
-/// (`chief:WF-7` was written exactly as its canonical name); the `$body` row's `written`
-/// (`learnings/x.md`, the relative form used in the link) differs from its resolved `document`
-/// (`team/learnings/x.md`, the full path) — together the two rows show `written` both equal to
-/// and different from `document`, confirming the column is genuinely informative for the forward
-/// direction rather than a copy of it.
+/// The `context` row's `written` equals its `document` and the `$body` row's does not, so the two
+/// rows show that `written` is more than a copy of `document`.
 #[test]
 fn refs_without_json_prints_the_designs_worked_example() {
     let ran = refs(&fixture("valid/refs-worked-example"), &["team/doc.md"]);
@@ -279,19 +262,7 @@ fn refs_without_json_prints_the_designs_worked_example() {
     );
 }
 
-/// `--reverse` in text mode (ticket 29): a `document  field` header — no `written` column, since
-/// for `--reverse` it would only repeat how the holder wrote a reference back to the document
-/// already named on the command line — then one line per holder that points at the document
-/// asked about, naming the holder itself in the first column
-/// (`reverse_scans_every_namespace_and_orders_by_the_holders_path`'s `--json` case gives the same
-/// three references, in the same order, that this checks in text). `tickets/WF-1.md` is a coded
-/// document holding the reversed target via `blocked_by`, the same shape the ticket's own bug
-/// report used (a coded holder pointing at the document asked about) — this fixture just has the
-/// roles the other way round (WF-1 is the holder here, not the target). `valid/refs` has exactly
-/// one namespace (`default`), so per the design's naming table each coded holder prints its bare
-/// key, not `default:WF-1`/`default:WF-3` (ticket 32, M-20, Direction 2: `ref_name_text` used to
-/// qualify unconditionally, even where the project has only one namespace and a bare key would
-/// do).
+/// `valid/refs` has one namespace, so a coded holder prints its bare key.
 #[test]
 fn refs_reverse_without_json_prints_the_holders_name_and_field_per_line() {
     let ran = refs(&fixture("valid/refs"), &["tickets/WF-2.md", "--reverse"]);
@@ -307,12 +278,6 @@ fn refs_reverse_without_json_prints_the_holders_name_and_field_per_line() {
     );
 }
 
-/// `--field` in text mode: only the refs held in that field are printed, in either direction
-/// (`field_keeps_only_the_refs_held_in_that_field_in_either_direction`'s own `--json` case). This
-/// is the forward direction, so `written` still appears as the third column; one of the two refs
-/// (`WF-99`) never resolves, so `document` shows `(unresolved: not-found)` rather than a name.
-/// `valid/refs` has exactly one namespace, so the resolved row's `document` is the bare key
-/// `WF-2`, not `default:WF-2` (ticket 32, M-20, Direction 2).
 #[test]
 fn refs_field_without_json_keeps_only_that_fields_refs() {
     let ran = refs(
@@ -330,9 +295,6 @@ fn refs_field_without_json_keeps_only_that_fields_refs() {
     );
 }
 
-/// The empty case (M-16's own criterion, following `list_table`'s precedent): no refs at all
-/// means no header either — `render_table` returns an empty string, not a bare `written  field`
-/// line with nothing under it.
 #[test]
 fn refs_without_json_prints_nothing_when_there_are_no_refs() {
     let ran = refs(&fixture("valid/refs"), &["tickets/WF-2.md"]);
@@ -342,8 +304,6 @@ fn refs_without_json_prints_nothing_when_there_are_no_refs() {
     assert_eq!(ran.stdout, "");
 }
 
-/// The already-fixed error path (contract decision 4): without `--json`, a failure prints plain
-/// text on stderr, never the `--json` error object — the hard-coded `true` this ticket removes.
 #[test]
 fn refs_without_json_prints_a_plain_text_error() {
     let ran = refs(&fixture("valid/refs"), &["absent.md"]);

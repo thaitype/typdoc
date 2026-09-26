@@ -1,3 +1,5 @@
+//! Covers SPC-2, SPC-4, SPC-5, SPC-6, SPC-7, SPC-14, SPC-17.
+
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
 
@@ -213,11 +215,6 @@ fn a_call_with_no_document_exits_1() {
     error_of(&ran, 1);
 }
 
-/// The hand-written golden for `get`'s text-mode shape (contract, text-output shapes: `path`,
-/// `collection`, `schema`, `namespace`, then frontmatter fields in file order — `valid/minimal`'s
-/// `note.md` writes `title` before `tags`, and this is not a coded document, so there is no
-/// `key` line). Every line is `name: value`, so this is also the field-names-principle check the
-/// ticket asks for: a bare, unlabeled line would show up as a diff against this literal string.
 #[test]
 fn get_without_json_prints_the_labeled_block() {
     let ran = Spawn::args(["get", "note.md"])
@@ -237,8 +234,6 @@ fn get_without_json_prints_the_labeled_block() {
     );
 }
 
-/// The already-fixed error path (contract decision 4): without `--json`, a failure prints plain
-/// text on stderr, never the `--json` error object.
 #[test]
 fn get_without_json_prints_a_plain_text_error() {
     let ran = Spawn::args(["get", "absent.md"])
@@ -390,9 +385,8 @@ fn a_remote_schema_is_refused_and_not_read_as_a_path() {
     error_of(&ran, 2);
 }
 
-/// The design never settles a `collections.overlap` by precedence, so `get` has no collection to
-/// read such a file with and refuses it; `validate` is where the overlap is reported, as a
-/// finding rather than a stop (`crates/typdoc/tests/validate.rs`).
+/// An overlap is never settled by precedence, so `get` has no collection to read the file with;
+/// `validate` reports it as a finding instead.
 #[test]
 fn a_file_matched_by_two_collections_is_refused_by_get() {
     let project = Scratch::project(&NOTES);
@@ -466,12 +460,10 @@ fn a_file_below_the_project_folder_is_not_in_a_collection_that_matches_names_the
     error_of(&ran, 5);
 }
 
-/// One name that cannot be read denies no answer about the file beside it.
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
-              name; APFS on macOS refuses to create one at all (EILSEQ), confirmed on a real \
-              macos-latest CI run, 2026-09-24"
+              name; APFS on macOS refuses to create one at all (EILSEQ)"
 )]
 #[test]
 fn a_name_that_is_not_utf8_and_that_a_collection_matches_is_skipped() {
@@ -489,8 +481,7 @@ fn a_name_that_is_not_utf8_and_that_a_collection_matches_is_skipped() {
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
-              name; APFS on macOS refuses to create one at all (EILSEQ), confirmed on a real \
-              macos-latest CI run, 2026-09-24"
+              name; APFS on macOS refuses to create one at all (EILSEQ)"
 )]
 #[test]
 fn a_name_that_is_not_utf8_and_that_no_collection_matches_is_left_alone() {
