@@ -21,11 +21,8 @@ impl Env for ProcessEnv {
         std::env::current_dir()
     }
 
-    // Linux is the only supported platform (design, Concurrency), so the kernel's own record
-    // of the machine's name is read directly rather than through a crate: a plain file, not a
-    // call the write ban has any reason to cover. Read infallibly (`pid_alive`'s own shape, for
-    // the same reason): the hostname only ever decorates a message, so a read that fails or
-    // finds an empty file falls back to a placeholder rather than refusing to take the lock.
+    // Read from `/proc`, which only Linux has; elsewhere the placeholder stands in. The hostname
+    // only words a lock's timeout message (SPC-10), so a failed read never refuses the lock.
     fn hostname(&self) -> String {
         std::fs::read_to_string("/proc/sys/kernel/hostname")
             .ok()
@@ -36,14 +33,9 @@ impl Env for ProcessEnv {
 }
 
 fn main() -> ExitCode {
-    // Registered before any command runs, so before any lock file this process might create
-    // exists (decision 6): the handler only wakes a thread, which does the identity-checked
-    // release the design's own cleanup needs and then ends the process by the signal. Not
-    // verified: this crate has no way to make `Signals::new` itself fail to check what happens
-    // then, so the branch below is written for a real failure (resource exhaustion registering
-    // the two signals) rather than proven able to run; code 6 is the table's closest meaning,
-    // "a... failure of the environment", for a startup failure the table otherwise has no entry
-    // for.
+    // Registered before any command runs, so before any lock file exists (SPC-10). Not
+    // verified: `Signals::new` cannot be made to fail here, so the branch below is not shown to
+    // run. Exit 6 is the closest code to a startup failure: a failure of the environment (SPC-3).
     if let Err(source) = signals::install() {
         eprintln!("typdoc: could not install the SIGINT/SIGTERM handler: {source}");
         return ExitCode::from(6);
