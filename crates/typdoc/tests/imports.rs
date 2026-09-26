@@ -763,8 +763,7 @@ fn refs_target_allows_a_ref_that_crosses_an_import_to_the_qualified_schema_it_na
 }
 
 #[test]
-fn refs_target_now_refuses_a_ref_that_crosses_an_import_to_a_schema_the_qualified_target_excludes()
-{
+fn refs_target_refuses_a_ref_that_crosses_an_import_to_a_schema_the_qualified_target_excludes() {
     let imported = tempfile::tempdir().unwrap();
     coded_import_project(imported.path());
     // `other` is a real schema of the imported project (so this is not also a schema-drift
@@ -798,7 +797,7 @@ fn a_bare_name_in_target_does_not_reach_a_same_named_schema_across_an_import() {
 }
 
 #[test]
-fn refs_coded_by_path_now_warns_for_a_coded_document_of_an_import_referenced_by_path() {
+fn refs_coded_by_path_warns_for_a_coded_document_of_an_import_referenced_by_path() {
     let imported = tempfile::tempdir().unwrap();
     coded_import_project(imported.path());
     let project = importer_project(imported.path(), "*");

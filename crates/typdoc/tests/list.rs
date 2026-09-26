@@ -601,7 +601,7 @@ fn namespace_narrows_the_scope() {
 }
 
 #[test]
-fn list_is_no_longer_in_the_list_of_commands_the_binary_lacks() {
+fn list_is_not_in_the_list_of_commands_the_binary_lacks() {
     use typdoc::registry;
 
     assert!(!registry::UNIMPLEMENTED_COMMANDS.contains(&"list"));

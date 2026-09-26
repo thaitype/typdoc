@@ -112,7 +112,7 @@ fn a_field_the_schema_does_not_name_keeps_the_text_as_written() {
 /// required field and a `number` written with no value are covered in `frontmatter_scalars.rs`,
 /// where a schema can ask for both.
 #[test]
-fn a_bare_field_in_the_fixtures_validates_as_it_did() {
+fn a_bare_field_in_the_fixtures_is_only_an_unknown_field() {
     let ran = Spawn::args(["validate", "--json"])
         .cwd(fixture("valid/field-types"))
         .run();
