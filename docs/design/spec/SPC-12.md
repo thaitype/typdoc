@@ -151,8 +151,10 @@ refs it holds and `in` for `--reverse`. A reference is the name of the document 
 (the target for `out`, the document that holds the ref for `in`), plus `field`, the field that
 holds the ref (`$body` for a body link), and `written`, the text as it is written in the file,
 which cannot be worked out from the other end and which `mv` needs to keep the written form. A
-body link also has `line` and `col`, 1-based. For `in`, the documents of this project that hold
-the refs are in `path` order.
+body link also has `line` and `col`, 1-based. For `out`, the refs come in the order the document
+writes its fields, not the order its schema declares them, then its body links by position, and
+the values of one field in the order they are written. For `in`, the documents of this project
+that hold the refs are in `path` order.
 
 A reference that does not resolve has no `path` and has `unresolved` instead, one of three values:
 `not-found`, the place the ref names is present and the file or key is not; `import-absent`, the
