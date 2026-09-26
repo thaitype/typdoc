@@ -151,7 +151,8 @@ pub struct SortKey {
 
 /// `list`'s filter, already parsed by the caller. Empty `collections` and `codes` mean every
 /// collection, `wheres` are ANDed, and `sort` is in priority order. `--limit`, `--fields` and
-/// `--ids` change neither which documents match nor their order, so the caller applies them.
+/// `--ids` change neither which documents match nor their order, so the caller applies them
+/// (SPC-12).
 #[derive(Debug)]
 pub struct ListFilter<'a> {
     pub collections: &'a [String],
@@ -161,7 +162,7 @@ pub struct ListFilter<'a> {
 }
 
 /// `list`'s result: the matched documents, sorted but not cut to `--limit`, and one line for
-/// every dangling ref a `ref.*` condition reached, ready to print to stderr.
+/// every dangling ref a `ref.*` condition reached, ready to print to stderr (SPC-13).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListResult {
     pub documents: Vec<Document>,
@@ -183,8 +184,8 @@ pub struct Project {
     /// `match` names as plain text, and so which of them a run reads at all.
     members: Vec<Member>,
     /// Every alias of `config.imports`, merged with the machine file's. An imported project's own
-    /// imports are not followed. An alias missing here names no import, so an import prefix
-    /// using it is `bad-prefix`.
+    /// imports are not followed (SPC-14). An alias missing here names no import, so an import
+    /// prefix using it is `bad-prefix`.
     imports: BTreeMap<String, ImportState>,
     /// Every namespace's state file as read at load, never written back: a write command reads
     /// the file again under its lock and writes it through `state::write`.
@@ -232,7 +233,7 @@ struct Loaded {
     /// The collection file's own `validation`, merged over the project's `validation.global`.
     validation: Rules,
     /// Read only for an unprefixed relative ref: a sibling-prefixed path is always read from
-    /// that namespace's folder.
+    /// that namespace's folder (SPC-14).
     ref_base: RefBase,
 }
 
@@ -244,11 +245,11 @@ pub struct ValidateReport {
     /// Sorted, each once.
     pub namespaces: Vec<String>,
     /// 0 for `Schemas`. Never counts a file matched by more than one collection, which has no one
-    /// schema to be checked against, nor, under `--audit`, a file with no frontmatter.
+    /// schema to be checked against, nor, under `--audit`, a file with no frontmatter (SPC-12).
     pub documents: usize,
     /// Only for `Paths`: sorted, each once, matching the `path` of every finding.
     pub paths: Option<Vec<String>>,
-    /// Ordered by `validate::order`.
+    /// Ordered by `validate::order` (SPC-12).
     pub findings: Vec<Finding>,
     /// Only for `--audit`.
     pub audit: Option<AuditReport>,
@@ -283,7 +284,7 @@ pub struct AuditNotRead {
 /// `--audit`'s report, beside `findings`. Its three file lists never overlap: a file in no
 /// collection has no schema to say what its frontmatter should hold, so it is only in
 /// `uncollected`, and a file matched by more than one collection is reported as
-/// `collections.overlap` and is only in `overlapping`.
+/// `collections.overlap` and is only in `overlapping` (SPC-12).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AuditReport {
     /// Sorted by name, a collection that holds no document in scope included with 0.
@@ -304,7 +305,7 @@ pub struct AuditReport {
 impl Project {
     /// Loads the project at `root`, its schemas, its index, and every import it configures. An
     /// imported project's own `imports` are read for `schema.valid`'s name-collision check but
-    /// are never loaded.
+    /// are never loaded (SPC-14).
     pub fn load(root: &Path, env: &dyn Env) -> Result<Project, Error> {
         Project::load_inner(root, env, true)
     }
@@ -489,7 +490,7 @@ impl Project {
 
     /// An import absent on this machine is bad arguments here, not the `imports.absent` finding a
     /// ref gets: an argument is a direct request for that document, as `--namespace 'alias::*'`
-    /// is.
+    /// is (SPC-14).
     fn imported(&self, alias: &str) -> Result<&Project, Error> {
         match self.imports.get(alias) {
             None => {
@@ -538,8 +539,8 @@ impl Project {
 
     /// `typdoc set`: writes `sets` to the document `arg` names, deciding every `ifs` condition
     /// under the same namespace lock as the write (SPC-10). Returns the document as it stands
-    /// after the write. A file matched by no collection has no schema, so only its `--if` is
-    /// checked.
+    /// after the write (SPC-12). A file matched by no collection has no schema, so only its
+    /// `--if` is checked (SPC-2).
     pub fn set(
         &self,
         arg: &DocumentArg,
@@ -591,7 +592,7 @@ impl Project {
     }
 
     /// Unlike [`Project::resolve`], a path matched by no collection is not an error as long as
-    /// the file exists: `set` reaches such a file the same way a ref does.
+    /// the file exists: `set` reaches such a file the same way a ref does (SPC-2).
     fn resolve_write_target(
         &self,
         arg: &DocumentArg,
@@ -630,7 +631,7 @@ impl Project {
     ///
     /// `write_atomically` needs a [`NamespaceLock`], and this file belongs to no namespace, so
     /// every such write shares `.typdoc/locks/.loose.lock`. Its name starts with `.`, so no
-    /// namespace can have it.
+    /// namespace can have it (SPC-10).
     fn set_loose(
         &self,
         path: &str,
@@ -867,7 +868,7 @@ impl Project {
     }
 
     /// `typdoc new`: creates a document, under a key allocated for a coded schema or at the path
-    /// given for an uncoded one. A path must match a collection.
+    /// given for an uncoded one. A path must match a collection (SPC-2).
     pub fn new_document(
         &self,
         target: &NewTarget,
@@ -1022,7 +1023,7 @@ impl Project {
     /// lock.
     ///
     /// `--namespace` and `TYPDOC_NAMESPACE` play no part: the path already names its namespace
-    /// folder. A `--namespace` given with a path is ignored, not checked against it.
+    /// folder. A `--namespace` given with a path is ignored, not checked against it (SPC-2).
     fn new_uncoded(
         &self,
         path: &str,
@@ -1320,12 +1321,12 @@ impl Project {
     }
 
     /// `list`: every document of `scope` whose collection is selected and whose fields satisfy
-    /// every `--where` condition, sorted by `--sort` with ties broken in key or path order. The
-    /// caller applies `--limit`.
+    /// every `--where` condition, sorted by `--sort` with ties broken in key or path order
+    /// (SPC-2). The caller applies `--limit` (SPC-12).
     ///
     /// A field unknown to every selected schema is an error, while a document whose own schema
-    /// lacks it counts as absent. `query::evaluate` sees one schema at a time and cannot tell the
-    /// two apart, so the scope-wide check is made here, before any document is read. A
+    /// lacks it counts as absent (SPC-13). `query::evaluate` sees one schema at a time and cannot
+    /// tell the two apart, so the scope-wide check is made here, before any document is read. A
     /// `ref.*`/`refby.*` field is checked against the whole project instead, since arrows leave
     /// the selected collections.
     pub fn list(&self, scope: &Scope, filter: &ListFilter) -> Result<ListResult, Error> {
@@ -1603,7 +1604,7 @@ impl Project {
             .collect()
     }
 
-    /// The scope of the condition after `ref.*(f)`/`refby.*(f)`. An invalid `target`
+    /// The scope of the condition after `ref.*(f)`/`refby.*(f)` (SPC-13). An invalid `target`
     /// (`Target::Other`) restricts nothing, like `"*"`: it is already reported under
     /// `schema.valid`.
     fn ref_condition_inner_scope(
@@ -1680,7 +1681,7 @@ impl Project {
     }
 
     /// A dangling ref is counted as an arrow, and every one a `ref.*` arrow reaches is a warning,
-    /// whatever the inner condition decides.
+    /// whatever the inner condition decides (SPC-13).
     fn evaluate_ref_condition(
         &self,
         condition: &RefCondition,
@@ -1926,7 +1927,7 @@ impl Project {
             });
         }
 
-        // `in` is ordered by the holder's path, and `Index::iter` promises no order.
+        // `in` is ordered by the holder's path (SPC-12), and `Index::iter` promises no order.
         let mut holders: Vec<(&str, &Indexed)> = self.index.iter().collect();
         holders.sort_by_key(|(other_path, _)| *other_path);
         let mut refs = Vec::new();
@@ -2010,7 +2011,7 @@ impl Project {
         links.sort_by_key(|link| (link.line, link.col));
         for link in links {
             // `[t]()` and `[t](#anchor)` name no other document, so, like a URL-scheme link,
-            // they are not refs.
+            // they are not refs (SPC-12).
             let Some(target) = &link.target else {
                 continue;
             };
@@ -2091,7 +2092,7 @@ impl Project {
 
     /// The report of `validate`: `Schemas` when `schemas_only`, `Paths` when `args` is not
     /// empty, and `All` otherwise. The caller refuses `schemas_only` with arguments and `audit`
-    /// with either, so only `All` reads `audit`.
+    /// with either (SPC-2), so only `All` reads `audit`.
     pub fn validate(
         &self,
         args: &[DocumentArg],
@@ -2127,11 +2128,11 @@ impl Project {
             let mut namespaces = BTreeSet::new();
             let mut documents = 0usize;
             // `state.missing` reports a collection only once it has a document in the namespace:
-            // with none and no record, the collection is new.
+            // with none and no record, the collection is new (SPC-8).
             let mut present: BTreeSet<(usize, usize)> = BTreeSet::new();
             let mut highest: BTreeMap<(usize, usize), u64> = BTreeMap::new();
             // `--audit` only. A document with no frontmatter still counts for its collection,
-            // which matched it, but is listed rather than evaluated.
+            // which matched it, but is listed rather than evaluated (SPC-12).
             let mut documents_by_collection: BTreeMap<usize, usize> = BTreeMap::new();
             let mut no_frontmatter: Vec<String> = Vec::new();
             for (path, entry) in self.index.iter() {
@@ -2165,7 +2166,7 @@ impl Project {
             findings.extend(self.state_behind_findings(&highest, &scope));
             findings.extend(self.state_retired_findings(&scope));
             // An overlapping path has no one schema to be checked against, so it is not counted
-            // in `documents`, though its namespace was covered.
+            // in `documents`, though its namespace was covered (SPC-12).
             let mut overlapping: Vec<AuditOverlap> = Vec::new();
             for (path, namespace_idx, collections) in self.index.overlaps() {
                 let namespace = &self.config.namespaces[namespace_idx].name;
@@ -2275,7 +2276,7 @@ impl Project {
         let mut paths = BTreeSet::new();
         // An overlapping path named directly is a finding here, not a refusal as in `get` and
         // `toc`: only an ambiguous key or an argument that names no document stops `validate`
-        // before its report. It is checked against no schema, so it stays out of `paths`.
+        // before its report (SPC-2). It is checked against no schema, so it stays out of `paths`.
         let mut overlapping = BTreeSet::new();
         for arg in args {
             if let Some(alias) = arg.project_prefix() {
@@ -2769,7 +2770,7 @@ impl Project {
     ) {
         let name = doc.name;
         // Looked up by `target`, not `written`: a recorded move never has a `#anchor`, so
-        // `[t](old.md#section)` must be looked up as `old.md`.
+        // `[t](old.md#section)` must be looked up as `old.md` (SPC-1).
         let missing = |findings: &mut Vec<Finding>, lookup: &str| match self.moved_outcome(
             name,
             lookup,
@@ -2886,7 +2887,7 @@ impl Project {
     /// `None` when the mention's code is not a code of this project, so `UTF-8` is never
     /// checked; otherwise whether it fails to resolve. A prefix naming no sibling namespace and an
     /// import prefix both read as not found: a mention has one outcome for every failed lookup,
-    /// unlike a ref's `bad-prefix`.
+    /// unlike a ref's `bad-prefix` (SPC-1).
     fn mention_missing(
         &self,
         written: &str,
@@ -3179,7 +3180,7 @@ impl Project {
     }
 
     /// Reported whatever documents the namespace holds: it is the state file's own text that is
-    /// wrong.
+    /// wrong (SPC-8).
     fn state_malformed_findings(&self, scope: &Scope) -> Vec<Finding> {
         let mut findings = Vec::new();
         for (_, namespace, recorded) in self.state_in_scope(scope) {
@@ -4271,7 +4272,7 @@ enum DefaultValue {
 }
 
 /// A default that does not fit the field's type is left for `frontmatter.types` to report once
-/// the block is read back.
+/// the block is read back (SPC-15).
 fn schema_default(field: &Field) -> Option<DefaultValue> {
     match field.default.as_ref()? {
         serde_json::Value::Array(items) => Some(DefaultValue::List(
@@ -4292,7 +4293,7 @@ fn json_scalar_text(value: &serde_json::Value) -> String {
 }
 
 /// `sets` are applied last, so an explicit `--set`, and a coded `new`'s title, win over a
-/// default or an `auto` stamp.
+/// default or an `auto` stamp (SPC-15).
 fn new_block(schema: &Resolved, sets: &[SetOp], now: &str, file: &Path) -> Result<String, Error> {
     let mut writer = YamlSerdeWriter::new(Vec::new());
     for (field_name, field) in schema.fields() {
@@ -4378,7 +4379,7 @@ fn read_fields(
 
 /// List or scalar is decided here, from `schema`: neither `SetOp` nor the CLI knows a field's
 /// type. A field the schema does not name is a scalar. Escapes are read here too, since how a
-/// value is split depends on that decision.
+/// value is split depends on that decision (SPC-13).
 fn apply_ops(writer: &mut YamlSerdeWriter, sets: &[SetOp], schema: &Resolved) -> Result<(), Error> {
     for op in sets {
         match op {
@@ -4406,7 +4407,7 @@ fn apply_ops(writer: &mut YamlSerdeWriter, sets: &[SetOp], schema: &Resolved) ->
     Ok(())
 }
 
-/// Unlike a `--where` value, a bare `*` is always an error: `set` has no glob.
+/// Unlike a `--where` value, a bare `*` is always an error: `set` has no glob (SPC-13).
 fn unescape_set_value(raw: &str, split_on_comma: bool) -> Result<Vec<String>, Error> {
     if raw.is_empty() {
         return Ok(if split_on_comma {
@@ -4449,7 +4450,7 @@ fn unescape_set_value(raw: &str, split_on_comma: bool) -> Result<Vec<String>, Er
     Ok(items)
 }
 
-/// Compared by typed value, not by text. A field only one side has counts as changed.
+/// Compared by typed value, not by text (SPC-4). A field only one side has counts as changed.
 fn fields_changed(before: &[(String, Value)], after: &[(String, Value)]) -> bool {
     fields_map(before) != fields_map(after)
 }
@@ -4514,7 +4515,7 @@ fn parsed_fields(text: &str, schema: &Resolved) -> Option<Vec<(String, Value)>> 
 }
 
 /// A field `schema` lacks is known to another schema in scope, which the caller has checked, so
-/// here it is absent, never `query::evaluate`'s `UnknownField`.
+/// here it is absent, never `query::evaluate`'s `UnknownField` (SPC-13).
 fn condition_matches(
     condition: &PlainCondition,
     schema: &Resolved,
@@ -4538,7 +4539,7 @@ fn combine_quant(quant: Quant, items: impl Iterator<Item = bool>) -> bool {
 }
 
 /// Two fields of one name whose schemas give them different types compare as equal: no rule
-/// orders one type against another.
+/// orders one type against another (SPC-2).
 enum SortValue {
     Missing,
     Number(f64),
@@ -4584,7 +4585,7 @@ fn cmp_key_number(a: Option<u64>, b: Option<u64>) -> Ordering {
 /// A value that does not fit its declared type sorts as `Missing`.
 ///
 /// A field no schema in scope declares is not an error here, unlike in `--where`: an unknown
-/// `--sort` field changes only the order, never which documents are returned.
+/// `--sort` field changes only the order, never which documents are returned (SPC-2).
 fn sort_value(field: &FieldRef, schema: &Resolved, doc: &Document) -> SortValue {
     match field {
         FieldRef::Path => SortValue::Text(doc.path.clone()),
@@ -4670,7 +4671,7 @@ fn named_sort_value(field: &Field, value: &Value) -> SortValue {
     }
 }
 
-/// `Missing` sorts last whether or not `:desc` reverses the rest.
+/// `Missing` sorts last whether or not `:desc` reverses the rest (SPC-2).
 fn sort_compare(
     key: &SortKey,
     schema_a: &Resolved,
@@ -4777,7 +4778,7 @@ fn missing_target_message(written: &str, uses: Option<usize>) -> String {
 }
 
 /// Merged option by option, as `level` is: a collection that overrides only `level` keeps every
-/// option the global setting gave the rule.
+/// option the global setting gave the rule (SPC-1).
 fn rule_options(
     rule: &str,
     global: &Rules,
@@ -4848,8 +4849,8 @@ fn printed_key(prefix: Option<&str>, key: &str) -> String {
     }
 }
 
-/// No `validate` run reads an import, so accepting one in scope would give a report that reads
-/// as checked and clean when nothing it named was checked.
+/// No `validate` run reads an import (SPC-14), so accepting one in scope would give a report
+/// that reads as checked and clean when nothing it named was checked.
 fn reject_import_scope(scope: &Scope) -> Result<(), Error> {
     if scope.imports.is_empty() {
         return Ok(());
@@ -4866,7 +4867,7 @@ fn reject_import_scope(scope: &Scope) -> Result<(), Error> {
 }
 
 /// A path is not narrowed by scope, so any namespace of `imported` will do. A key into a project
-/// with several namespaces must name one even when it is not ambiguous, as a ref must.
+/// with several namespaces must name one even when it is not ambiguous, as a ref must (SPC-14).
 fn imported_scope(imported: &Project, arg: &DocumentArg) -> Result<Scope, Error> {
     if let Some(name) = arg.namespace_prefix() {
         let index = imported.namespace_index(name).ok_or_else(|| {
@@ -4989,7 +4990,8 @@ fn read_state(
 }
 
 /// An alias that is not configured is reported as a schema renamed away is: either way the
-/// target names nothing. An import absent on this machine is left to `imports.absent`.
+/// target names nothing. An import absent on this machine is left to `imports.absent`
+/// (SPC-14).
 fn schema_drift_findings(
     targets: &[schema::QualifiedTarget],
     imports: &BTreeMap<String, ImportState>,
@@ -5032,7 +5034,8 @@ fn schema_drift_findings(
 
 /// An unset variable or a location with no project is absent on this machine, never an error:
 /// a machine-specific import may not be set up yet. A project there whose config cannot be
-/// loaded is an error, since `imports.absent` would hide a mistake that will not fix itself.
+/// loaded is an error, since `imports.absent` would hide a mistake that will not fix itself
+/// (SPC-14).
 fn resolve_import(root: &Path, raw: &str, env: &dyn Env) -> Result<ImportState, Error> {
     let substituted = match crate::imports::substitute(raw, env) {
         Ok(text) => text,
