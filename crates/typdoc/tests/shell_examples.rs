@@ -1,53 +1,30 @@
-//! The harness for typdoc's shell examples, run for real against a stand-in binary through
-//! `sh` and `bash`.
+//! Covers SPC-13.
 //!
-//! Before ticket 12/M-13, this file extracted every example from the design document
-//! automatically, through a markdown-walking helper this crate no longer has, so the harness
-//! and the document shared one list. That was itself a violation of the same rule that removed
-//! the old design-parsing test helper (M-1: no program reads markdown to extract spec as
-//! machine data) -- a bigger one, since it covered every worked shell example in the whole
-//! document rather than five specific tables. M-13 (ticket 24) resolved it as option 1:
-//! hand-list every example directly here, with no fifth catalog document. The list below
-//! (`declared_examples`, plus `additional_safe_examples`) is now the *only* list this harness
-//! runs -- nothing here reads the design document, or any other markdown, to find an example.
-//! See this ticket's report for which further "safe" examples (no shell-unsafe character),
-//! previously found only through extraction, were hand-listed here and which were dropped, and
-//! why.
+//! Every example is listed here by hand, since no test reads design prose as data (SPC-11).
 //!
-//! Process spawning here is the one exception to the CLI tests' spawn helper (`common::Spawn`
-//! spawns the built `typdoc` binary directly, with a fixed argument list it controls). What
-//! this file tests is what a shell itself does with an example's text before `typdoc` ever
-//! sees it, so the helper does not serve it: a shell has to run the example, not the binary.
-//! `spawn`, below, is the one place in this file `std::process::Command::new` appears, with
-//! one narrow `#[allow(clippy::disallowed_methods, ...)]` on it, the same shape as the
-//! existing helper's.
+//! This file spawns a shell rather than going through `common::Spawn`, which starts the `typdoc`
+//! binary directly: what it tests is what a shell does with an example's text before `typdoc`
+//! sees it.
 //!
-//! An example needs a value declared by hand only when a word in it holds a character
-//! outside the safe set (letters, digits, `_ - . / : = , @ % +` and the space): with no such
-//! character, no shell can change what it means, so the expected value is just its words
-//! split on whitespace, computed here rather than written by hand.
+//! An example needs a value declared by hand only when a word in it holds a character outside
+//! the safe set (letters, digits, `_ - . / : = , @ % +` and the space): with no such character,
+//! no shell can change what it means, so the expected value is its words split on whitespace.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
 
-/// v1 covers these two, and only these two: this host has `sh` (dash) and `bash`, and has no
-/// zsh, which is why the design's own shell list stops at these. A shell named here that the
-/// host cannot run must turn the suite red, never skip quietly (see `spawn` below).
+/// The shells SPC-13 lists. One that the host cannot run turns the suite red, never a skip.
 const SHELLS: &[&str] = &["sh", "bash"];
 
-/// What the stand-in recorded: its own arguments, and every `TYPDOC_`-prefixed environment
-/// variable it saw. Also how an expected value is written by hand.
+/// What the stand-in recorded: its arguments and every `TYPDOC_` variable it saw.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Recorded {
     args: Vec<String>,
     env: BTreeMap<String, String>,
 }
 
-/// Reads the stand-in's `{ "args": [...], "env": {...} }`, without a derive macro so this
-/// file needs no dependency beyond `serde_json`, already a dependency of the binary itself.
-/// Anything that is not exactly that shape is `None`: certainly not a match for a value
-/// declared by hand.
+/// Read by hand rather than with a derive, so this file needs no dependency beyond `serde_json`.
 fn parse_recorded(text: &str) -> Option<Recorded> {
     let value: serde_json::Value = serde_json::from_str(text).ok()?;
     let args = value
@@ -82,20 +59,14 @@ fn args_env(items: &[&str], env: &[(&str, &str)]) -> Recorded {
     }
 }
 
-/// One example declared in full: what is run (`command`, exactly the example's text, with
-/// `typdoc` supplied where the text is a bare `--` fragment) and the value declared by hand
-/// from the design's own words about quoting.
+/// `command` is the example's text, with `typdoc` put in front of a bare `--` fragment.
 struct DeclaredExample {
-    /// The example's text, as it appears in `docs/archived-design/design.md` (or its `spec`
-    /// replacement) -- used in failure messages, not read back out of any file.
+    /// Used in failure messages only, never read from a file.
     text: &'static str,
-    /// What is actually run through the shell.
     command: &'static str,
     expected: Recorded,
 }
 
-/// An example that already begins with `typdoc` (or a `TYPDOC_` assignment naming it): the
-/// text is what is run, so there is only one string to write.
 fn literal(text: &'static str, expected: Recorded) -> DeclaredExample {
     DeclaredExample {
         text,
@@ -104,10 +75,8 @@ fn literal(text: &'static str, expected: Recorded) -> DeclaredExample {
     }
 }
 
-/// Every example that needs a value declared by hand: a literal, standalone invocation with a
-/// character outside the safe set. Each value is what "give it to typdoc exactly as written,
-/// in single quotes" (Quoting in the shell) means for that one example, worked out from the
-/// design's own words, never from running anything.
+/// Each value is what the quoting rule means for that one example, worked out by hand, never by
+/// running anything.
 fn declared_examples() -> Vec<DeclaredExample> {
     vec![
         literal(
@@ -229,21 +198,9 @@ fn declared_examples() -> Vec<DeclaredExample> {
     ]
 }
 
-/// The further "safe" examples (no shell-unsafe character) worth keeping now that nothing
-/// extracts examples from markdown any more (ticket 12/M-13, option 1). Before this ticket,
-/// each was found automatically by walking `docs/design/design.md` and its expected value was
-/// computed by splitting it on whitespace, since no unsafe character means no shell can change
-/// what it means -- `safe_command_and_expected` below still does exactly that; only the list
-/// of texts is now written by hand instead of extracted.
-///
-/// These nine are every worked, standalone invocation with real arguments that used to reach
-/// the harness only this way (drawn from the design's "Worked examples" and "Common tasks"
-/// tables). What did *not* make this list, and why, is in this ticket's report: bare mentions
-/// of a single flag or command name with no arguments (`--json`, `--where`, `typdoc new` alone,
-/// and so on), which are prose references rather than invocations and exercise no shell
-/// behavior a one-word, all-alphanumeric string could ever be at risk from; and `typdoc
-/// validate` on its own, whose coverage `every_listed_shell_runs` below already gives it
-/// verbatim.
+/// Examples with no character outside the safe set. A bare mention of one flag or command
+/// (`--json`, `typdoc new`) is left out, since no shell can change it, and `typdoc validate` is
+/// run by `every_listed_shell_runs`.
 fn additional_safe_examples() -> Vec<&'static str> {
     vec![
         "typdoc list --collection wayfinder,decisions --where status=open --sort status --sort updated_at:desc",
@@ -258,10 +215,6 @@ fn additional_safe_examples() -> Vec<&'static str> {
     ]
 }
 
-/// True when `text` holds a character outside the safe set (letters, digits,
-/// `_ - . / : = , @ % +` and the space): the one condition under which a shell can change
-/// what an example means, and so the one condition under which it needs a value declared by
-/// hand rather than one computed by splitting its words.
 fn has_unsafe_char(text: &str) -> bool {
     !text
         .chars()
@@ -280,9 +233,8 @@ fn star_matching_dir() -> tempfile::TempDir {
     dir
 }
 
-/// A folder holding the stand-in, copied in under the name `typdoc`, once per test binary
-/// run: this is what makes `typdoc` on the harness's `PATH` resolve to the stand-in and
-/// never to a real build of the CLI, which is not on `PATH` at all here.
+/// Put on `PATH` so that `typdoc` resolves to the stand-in; the real binary is never on `PATH`
+/// here.
 fn stand_in_dir() -> &'static Path {
     static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
     DIR.get_or_init(|| {
@@ -297,22 +249,16 @@ fn stand_in_dir() -> &'static Path {
     .path()
 }
 
-/// What one run through a shell left behind.
 struct ShellRun {
     stdout: String,
     stderr: String,
-    /// What the stand-in recorded, if it ran and wrote its output; `None` covers both "the
-    /// shell never reached it" (a syntax error, for instance) and "it wrote something that
-    /// is not the JSON it always writes", either of which is certainly not a match for a
-    /// declared value.
+    /// `None` when the shell never reached the stand-in, a syntax error for one, or when what
+    /// it wrote is not the JSON it always writes.
     recorded: Option<Recorded>,
 }
 
-/// Runs `command_text` through `shell`, found on the harness's own constant `PATH` (the
-/// stand-in's directory, then the real shells' directory), with an empty environment
-/// otherwise, a fresh `HOME`, and `cwd` as the working directory. A shell the design lists
-/// and this host cannot run ends the process with an error here, which is not caught: the
-/// suite goes red for it rather than skipping it (Shells: a listed shell that is missing).
+/// A listed shell this host cannot run panics in `spawn`, uncaught: the suite goes red rather
+/// than skipping it.
 fn run_in_shell(shell: &str, command_text: &str, cwd: &Path) -> ShellRun {
     let home = tempfile::tempdir().expect("a fresh HOME");
     let out_dir = tempfile::tempdir().expect("a folder for the stand-in's output");
@@ -360,10 +306,6 @@ fn spawn(
         })
 }
 
-/// The words of `text`, split on ASCII whitespace: what a shell gives typdoc for an example
-/// with no character outside the safe set, since nothing about quoting can change it. The
-/// command to run is `text` itself when it already starts with `typdoc`, and `typdoc ` put
-/// in front of it otherwise (a bare `--` fragment).
 fn safe_command_and_expected(text: &str) -> (String, Recorded) {
     if let Some(rest) = text.strip_prefix("typdoc") {
         (
@@ -397,14 +339,9 @@ fn every_declared_example_matches_its_declared_value_quoted_in_every_listed_shel
     }
 }
 
-/// For most of `declared_examples`, unquoted `(` and `)` (from a query condition such as
-/// `ref.all(blocked_by)`) are shell-reserved characters that a bare word cannot carry at
-/// all, so removing the quotes turns the run into a syntax error and `recorded` is `None`
-/// (checked with real sh and bash) rather than a value that still parses but differs. That
-/// is still "differs from the declared value", the property this asserts, but it is not the
-/// quieter danger the Quoting paragraph itself names ("not an error but an expression the
-/// shell has changed that still parses"); the examples built on `*` and on `\,` are the ones
-/// that exercise that quieter case, since removing their quotes still parses.
+/// Without quotes, `(` and `)` make most of these a syntax error rather than a value that parses
+/// and differs. The examples built on `*` and on `\,` are the ones that still parse, the quieter
+/// danger the quoting rule warns of.
 #[test]
 fn removing_the_quotes_from_a_declared_example_changes_what_the_shell_passes() {
     let dir = star_matching_dir();
@@ -431,10 +368,6 @@ fn removing_the_quotes_from_a_declared_example_changes_what_the_shell_passes() {
     }
 }
 
-/// The further hand-listed "safe" examples (`additional_safe_examples`) each reach the
-/// stand-in as their own whitespace-split words, through every listed shell -- the same check
-/// the pre-M-13 harness ran automatically for every example extraction found with no unsafe
-/// character, now run over a fixed, hand-written list instead.
 #[test]
 fn every_hand_listed_safe_example_reaches_the_stand_in_as_its_own_words() {
     let dir = star_matching_dir();
@@ -458,9 +391,8 @@ fn every_hand_listed_safe_example_reaches_the_stand_in_as_its_own_words() {
     }
 }
 
-/// An example whose quotes were left out on purpose must turn the suite red, which needs
-/// every listed shell to actually run: this asserts the harness is not the thing that stayed
-/// green by accident, and that no shell above was skipped.
+/// A missing quote turns the suite red only if every listed shell runs, so this checks that
+/// none was skipped.
 #[test]
 fn every_listed_shell_runs() {
     let dir = star_matching_dir();

@@ -1,5 +1,4 @@
-//! Several namespaces in one project, the namespace `default`, and the config errors of
-//! `namespaces`.
+//! Covers SPC-7, SPC-8, SPC-14, SPC-17.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -47,8 +46,6 @@ fn config(namespaces: &str) -> String {
     format!(r#"{{ "version": 1, "namespaces": {namespaces} }}"#)
 }
 
-/// A project with the collection of every `*.md` and the given `namespaces`, and a folder
-/// with a document for each name.
 fn project(namespaces: &str, folders: &[&str]) -> Scratch {
     let project = Scratch::project(&NOTES);
     project.file(".typdoc/config.json", &config(namespaces));
@@ -168,9 +165,6 @@ fn a_star_never_matches_a_folder_that_starts_with_a_dot_and_no_file_is_a_namespa
     assert_eq!(get(project.path(), ".git/a.md").code, 5);
 }
 
-/// A collection and a namespace answer "which folders does this reach" the same way: an entry
-/// that holds a `*` never reaches a folder whose name begins with a dot, and an entry that is
-/// plain text reaches the same folder, even when what it names cannot be a namespace.
 #[test]
 fn an_entry_with_a_star_reaches_no_dot_folder_though_a_literal_entry_reaches_the_same_one() {
     let glob = project(r#"["one", ".*"]"#, &["one", ".hidden"]);
@@ -307,8 +301,8 @@ fn the_errors_of_namespaces_and_of_collections_are_reported_together() {
     );
 }
 
-/// A schema whose one field, `title`, is what the documents of `clean` write, so a report of
-/// such a project has nothing to say about anything but what the test is about.
+/// Declares the one field the documents of `clean` write, so a report holds only what a test is
+/// about.
 const TITLED_NOTE: [(&str, &str); 2] = [
     (
         ".typdoc/collections/notes.json",
@@ -320,7 +314,6 @@ const TITLED_NOTE: [(&str, &str); 2] = [
     ),
 ];
 
-/// `project`, with a schema that the documents satisfy.
 fn clean(namespaces: &str, folders: &[&str]) -> Scratch {
     let project = Scratch::project(&TITLED_NOTE);
     project.file(".typdoc/config.json", &config(namespaces));
@@ -330,7 +323,6 @@ fn clean(namespaces: &str, folders: &[&str]) -> Scratch {
     project
 }
 
-/// Two namespaces and `current`, a link to the second.
 fn project_with_a_link(namespaces: &str) -> Scratch {
     let project = clean(namespaces, &["story-1", "story-2"]);
     project.symlink("current", "story-2");
@@ -721,8 +713,6 @@ fn a_namespace_prefix_on_a_key_that_is_not_a_namespace_of_the_project_is_bad_arg
 // A namespace named after a URL scheme.
 // -------------------------------------------------------------------------------------------
 
-/// A namespace named `scheme`, reached by a plain-text entry and by a glob, is the one
-/// config error `config.namespace-name`, and its message names the folder and says why.
 fn a_scheme_named_folder_is_refused(scheme: &str) {
     for entry in [format!(r#""{scheme}""#), r#""*""#.to_owned()] {
         let project = project(&entry, &["one", scheme]);
@@ -794,9 +784,7 @@ fn an_import_alias_named_after_a_url_scheme_is_still_refused_under_schema_valid(
     );
 }
 
-// --- Wildcard namespace exclusion: a `!`-prefixed entry of `namespaces` removes what an
-// earlier entry matched, in list order, and the excluded folder is invisible to every command
-// that reads namespaces of the project. ---
+// --- Excluding a namespace with a `!` entry ---
 
 #[test]
 fn a_later_exclusion_hides_the_folder_from_every_command() {
@@ -916,9 +904,6 @@ fn a_write_into_an_excluded_namespace_fails_the_same_way_as_a_namespace_that_nev
     );
 }
 
-/// A coded project with two namespaces, `story-1` and `story-2`, `story-1` excluded, so
-/// `mv --renumber`'s own namespace resolution (contract §1, "Items 3 & 4") can be exercised the
-/// same way `new`'s already is above.
 fn coded(namespaces: &str) -> Scratch {
     let project = Scratch::project(&[]);
     project.file(".typdoc/config.json", &config(namespaces));
@@ -954,11 +939,6 @@ fn a_renumber_into_an_excluded_namespace_fails_the_same_way_as_a_namespace_that_
     );
 }
 
-/// Goal item 1: "a ref into [an excluded namespace] resolves as not found." A bare coded key is
-/// looked up in the referencing document's own namespace (`refs.rs::classify`'s bare-key form),
-/// so this is proven at the point a bare key that only the now-excluded namespace ever issued
-/// stops being found anywhere at all — the key's own namespace never entered the index
-/// `resolve_key` reads, exactly as it never would have for a key that was never issued.
 #[test]
 fn a_bare_key_the_excluded_namespace_alone_ever_issued_resolves_as_not_found() {
     let project = coded(r#"["story-*", "!story-1"]"#);
@@ -980,12 +960,8 @@ fn a_bare_key_the_excluded_namespace_alone_ever_issued_resolves_as_not_found() {
     );
 }
 
-// --- state-orphan interaction (contract §1, item 6): excluding a namespace that has already
-// issued codes must not break every other command against the project ---
+// --- The state file of an excluded namespace ---
 
-/// A namespace excluded via `!` keeps its own state file: `validate`, `list`, `get` and `new`
-/// (writing into a different, still-visible namespace) all succeed, none of them stopped by
-/// `config.state-orphan` over the excluded namespace's own leftover state file.
 #[test]
 fn an_excluded_namespaces_existing_state_does_not_stop_other_commands() {
     let project = coded(r#"["story-*", "!story-1"]"#);
@@ -1017,9 +993,7 @@ fn an_excluded_namespaces_existing_state_does_not_stop_other_commands() {
     );
 }
 
-/// Removing the `!` continues numbering from where the excluded namespace's state left off — no
-/// codes reissued — and the state file's bytes never changed while it was excluded: proof
-/// exclusion truly never read or wrote it, not merely that the numbers came out right by luck.
+/// The state file's bytes are compared too, so the numbering cannot come out right by luck.
 #[test]
 fn re_including_a_namespace_continues_numbering_with_its_state_untouched() {
     let project = coded(r#"["story-1", "story-2"]"#);
@@ -1055,9 +1029,8 @@ fn re_including_a_namespace_continues_numbering_with_its_state_untouched() {
     );
 }
 
-/// The true-orphan case stays caught: a state file whose folder no longer exists at all, named
-/// only by a `!` entry that therefore matches nothing, adds nothing to the excluded set (matching,
-/// not text, is what puts a name there) — its leftover state file is a genuine orphan.
+/// A `!` entry that matches no folder excludes nothing: matching, not the entry's text, puts a
+/// name in the excluded set.
 #[test]
 fn a_state_files_folder_gone_and_named_only_by_a_bang_entry_is_still_an_orphan() {
     let project = coded(r#"["story-2", "!story-9"]"#);
