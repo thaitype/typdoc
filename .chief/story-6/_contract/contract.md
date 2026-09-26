@@ -97,7 +97,12 @@ Rust changes in this story that are not comments, each in its own commit:
   users do not read SPC keys), and one `#[allow]` reason string that described `body.mentions`
   as not built is brought up to date (ticket 03 PR, with the item above);
 - in `crates/typdoc-core/src/namespace_lock.rs`, one test assertion message no longer names a
-  decision number; its reason is unchanged (ticket 04 PR).
+  decision number; its reason is unchanged (ticket 04 PR);
+- in the `typdoc-core` read path, three strings no longer point at history: an assertion message
+  in `refs.rs` drops a reference to a design section, a test assertion message in
+  `namespaces.rs` drops a note about earlier behavior, and the fixed host name in
+  `tests/common/mod.rs` no longer carries a ticket number; each meaning is unchanged (ticket 05
+  PR).
 
 The proof for each of those PRs reports exactly its own differences and no others.
 
