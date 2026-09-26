@@ -22,6 +22,17 @@ migrated_from: docs/archived-design/design.md#commands
 compares the CLI's own command table against, so a command added to one and not the other is
 caught rather than drifting apart silently.
 
+## What `new` and `set` check before they write
+
+Before writing, `new` and `set` check every ref the document's frontmatter will hold (body links are
+left to `validate`): its target must exist, and its schema must be one the field's `target` allows.
+A ref into an import that is absent on this machine is reported at its `imports.absent` level
+instead, and a ref to a document recorded as moved at its `refs.moved` level; either refuses the
+write only at `error`. A cycle on an `acyclic` field refuses the write only when the write forms it:
+the cycle passes through the document being written, on a field whose value the write changes. A
+document that already sits on a cycle can still be written, and `validate` goes on reporting the
+cycle.
+
 ## `mv` explained
 
 ```bash
@@ -141,3 +152,147 @@ For a coded document, none of these can point at a different document silently: 
 issued again, and a path made from a key is never reused either. A document without a code is
 identified by its path, and a path can be created again later; a ref to it then resolves to the
 new document, which is the ref meaning what it says.
+
+## Arguments that name a document
+
+An argument that names a document is a path or a key, told apart by its form and never guessed.
+After any `project::` prefix, an argument that ends in `.md` is a path, and one that has the form
+of a key is a key. A key never ends in `.md` and a document is always a `.md` file, so the two
+cannot be confused. Anything else is bad arguments (exit 1). A path that begins with `/`, `./` or
+`../` is a path on disk, absolute or relative to the current directory. Any other path is
+relative to the project folder, the folder that holds `.typdoc`, which is what `path` is in
+`--json`. The path of a document of an imported project is written `project::path`, relative to
+that project's folder. `mv` reads both its arguments in this way, except that neither may carry a
+`project::` prefix: `mv` writes only in the project it is run in, so an argument naming a
+document of another project is bad arguments (exit 1). Its second names a file that does not
+exist yet: a `mv` whose destination is already there writes nothing and exits 7, and so does a
+`--renumber` whose destination name is taken. When a path relative to the project names nothing
+in it but a file of that name exists relative to the current directory, the error is exit 5 and
+says that `./name` exists. That is a suggestion; nothing is done in its place.
+
+The string that names a document in an argument follows from the name it is printed with
+(`SPC-12`):
+
+| The document | As a path | As a key (a coded document only) |
+| --- | --- | --- |
+| In this project | `path` | `key` when the project has one namespace, `namespace:key` when it has several |
+| In an imported project | `project::path` | `project::key` when that project has one namespace, `project::namespace:key` when it has several |
+
+The path form works for every document and needs to know nothing about how many namespaces a
+project has, so it is the form for a program to pass on. A key into an imported project with
+several namespaces must name one, as a ref must, even when the key is not ambiguous. A name that a
+command prints is accepted by every command that takes a key or a path, and a test walks every
+document of every project in the fixtures to check it.
+
+## `new`
+
+```bash
+typdoc new <CODE> "<title>" [--set k=v ...]      # coded schema: allocates the next key
+typdoc new <path> [--set k=v ...]                  # path-identified schema
+typdoc new WF "Cosmos or SQL?" --set kind=grilling --set blocked_by=WF-1
+```
+
+For a code, `new` allocates the next number under the namespace's lock: the larger of the highest
+existing number in the collection within this namespace and the collection's `last` in
+`.typdoc/state/<namespace>.json`, plus one, then records it as the new `last`. It writes into
+exactly one namespace: if the scope holds more than one, it exits 1 with the choices. A number is
+never reused after its document is deleted, as long as the state file records the collection
+(`SPC-8`); when it does not and the collection has coded documents in this namespace,
+`state.missing` stops the command with exit 2 and nothing is written, and a record that is there
+but is not a number that can be held stops it the same way as `state.malformed`. A file created
+by hand with a higher number is respected: the highest existing number is then larger than
+`last`, and the numbers in between stay unissued, which is harmless. The file is named from the
+collection's `match` template.
+
+For a path, the path must match a collection, so `new` cannot create a file outside every
+collection. The path already names its namespace folder, so `--namespace` and
+`TYPDOC_NAMESPACE` play no part: one given alongside a path is ignored, not checked against it.
+
+`new` fills defaults and `auto` fields (`SPC-15`), validates, and only then writes: a refused
+`--set` spends no number. The number is written to the state file before the document is
+created, so an interruption between the two leaves a skipped number, never one a later `new`
+could issue again. A `new` whose file is already there writes nothing and exits 7, for a path
+given on the command line and for a name a template produced alike; the second should not be
+reachable, since the number is one nobody has used, and it is checked because an unchecked
+impossible state is how a number comes to be issued twice. The check is made under the
+namespace's lock, before `last` is raised, and the file is created with `O_EXCL`, so the file
+system refuses the write rather than typdoc remembering to look first: a look taken before the
+lock is advice that can go stale between the looking and the writing. Array values are
+comma-separated.
+
+## `set`
+
+```bash
+typdoc set <key|path> k=v [k=v ...] [--if EXPR ...]
+typdoc set WF-3 status=claimed owner=session-7a2f --if status=open
+```
+
+`set` validates types, enums, transitions and refs, then writes all fields atomically. `--if`
+uses `--where` expressions and is checked under the same lock as the write; if any is false,
+nothing is written and the exit code is 3. `k=` removes a field. Writing an `auto` field directly
+is a validation error; when at least one value changes, `auto: update` fields are set to the
+current time in the same write.
+
+A file that exists and that no collection matches can still be written by `set`, the same way a
+ref can still reach it. It has no schema, so the write is an ordinary one: `--if` is still
+decided under the lock, and nothing else is checked. Every value is kept as plain text, since
+there is no field type to say that a comma splits it into a list, and its `--json` leaves
+`namespace` out as `get` does.
+
+## `list`
+
+```bash
+typdoc list [--collection c[,c]] [--code C[,C]] [--where EXPR ...] [--fields f,...]
+            [--sort field[:asc|:desc] ...] [--limit n] [--ids] [--json]
+typdoc list --collection wayfinder,decisions --where status=open --sort status --sort updated_at:desc
+```
+
+`--collection` selects by collection name; `--code` is a shorthand that selects the collections
+whose schema has that code, and the two together select the union. A name or a code that matches
+nothing is refused, as an unknown namespace is, since it is more likely a typo than an intended
+empty scope. Expressions are described in `SPC-13`. `--ids` prints one key or path per line. An
+empty result exits 0.
+
+**Sorting.** `--sort field:dir` may repeat; the first flag sorts first and later flags break
+ties. The direction is `asc` (default when omitted) or `desc`; anything else is an error. Ties
+that every `--sort` leaves, and the whole result without `--sort`, are in key or path order.
+
+| Sorted value | Order |
+| --- | --- |
+| `number`, `date`, `datetime` | By value; `datetime` as instants, offsets included |
+| `enum` | By position in the schema's `values`, e.g. `open → claimed → resolved → closed` |
+| `key` | By code, then numerically: `WF-2` before `WF-10` |
+| `string`, `path` | Lexicographic |
+| Missing value | Last, in both directions |
+
+Only a document's own fields and pseudo-fields can be sort keys; fields reached through refs
+cannot. A value that does not fit its declared type sorts as a missing one. A `--sort` field that
+no schema in scope declares is not an error, unlike a `--where` field: it changes only the
+order, never which documents are returned, so every document reads it as missing. Two fields of
+one name whose schemas give them different types compare as equal, since no rule orders one type
+against another, and a key compared with a path compares as text.
+
+## `validate`
+
+```bash
+typdoc validate [<key|path> ...] [--schemas] [--strict] [--audit]
+```
+
+`--schemas` checks schemas only, including that each qualified `target` names a schema that
+exists (schema drift). Suited to pre-commit, CI and agent post-edit hooks. The arguments are keys
+or paths of documents, in any mix. A key that exists in more than one namespace in scope stops the
+command with exit 1 and every choice listed, and an argument that names no document stops it with
+exit 5; in both cases before any report is made, never as a finding. An argument that names a
+file matched by more than one collection is neither: it is reported under `collections.overlap`
+and the other arguments are still checked. `--schemas` and `--audit` describe the whole project,
+each in its own way, so combining either with arguments, or the two with each other, is bad
+arguments (exit 1).
+
+## Cost of a run
+
+Every run builds its index from the files with no cache, so the time of a run grows with the
+number of documents, and no figure is promised for it. `list` reports `total`, so it filters every
+document even under `--limit`: a choice made so that a result says how much it left out, and its
+cost is part of the cost above. The passes that need the whole project, such as the one
+`refs.moved` and `refs.acyclic` need before any one document's refs can be judged, read every
+document again.

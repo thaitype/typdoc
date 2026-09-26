@@ -65,3 +65,34 @@ renaming. It carries the mode and nothing else: the owner and group are not carr
 changing them needs privilege typdoc does not have, and access control lists and extended
 attributes are not carried either. A file that did not exist has no mode to carry and gets the
 default.
+
+## Lock order
+
+A command that takes more than one lock takes the project lock first, then every namespace lock in
+the order of the lock files' own paths, compared byte by byte as absolute paths. Two lock files
+that are not the same file have different paths, so the order is total and never needs a
+tie-break, wherever the lock files come from. Namespace names are not used, because two projects
+can have namespaces of the same name; the paths of documents are not used, because the namespace
+`default` has no folder of its own and so no path to sort by. A path is brought to its canonical
+form before it is compared, so that two spellings of one file are one lock. The lock file does not
+exist yet when the order is decided, and a path to a file that is not there cannot be
+canonicalized, so what is canonicalized is the directory that holds the lock file, with the file's
+name joined to it; the directory is created before the first lock is taken.
+
+## What is locked
+
+`new` holds its namespace's lock from reading `last` until `last` is raised and the document is
+created. `set` holds it across the read, `--if`, validation and the write. A `set` on a file that
+no collection matches belongs to no namespace, and takes one shared lock, `locks/.loose.lock`,
+instead. `mv` takes the lock of every namespace it writes, in the order above, so two `mv`s cannot
+deadlock. Reads never lock. The lock covers reading, checking and the rename only: no network and
+no waiting for input, which is why five seconds is a reasonable timeout. `mv` and `mv --renumber`
+are the only commands whose hold time grows with the size of the repository; a large repository
+may need a longer `--lock-timeout`.
+
+A held lock is a value that only acquiring a lock produces: it has no public constructor and no
+public fields, and every function that writes a file takes it. A write outside a lock therefore
+does not compile, and every command reaches its locks through the one acquisition path, which is
+also the path that registers the lock for release on an interrupt. A `set` on a file that no
+collection matches needs such a value as much as any other write, which is why it takes
+`locks/.loose.lock` rather than writing without a lock.

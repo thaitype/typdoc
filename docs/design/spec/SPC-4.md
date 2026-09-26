@@ -25,3 +25,15 @@ that depends on either should be edited by hand, not by `typdoc`.
 `docs/design/catalog/frontmatter-losses.md` holds these same seven rows as short strings — the
 set a test compares the write path's actual behavior against, corpus document by corpus
 document.
+
+## What counts as frontmatter
+
+A document is YAML frontmatter plus a free Markdown body; `typdoc` owns only the frontmatter. A
+file has frontmatter when it begins with a `---` line that opens a block. A block that is present
+but empty counts: it is a document that declares itself and has no fields yet, and it is checked
+like any other, so every required field it lacks is a finding. A file with no block at all is an
+ordinary Markdown file. The two are not merged, because a document missing every required field
+would otherwise be filed with the files that are not typdoc's, with no signal. A block that is
+present but cannot be parsed is not an absent block: it is the finding `frontmatter.parse`, so a
+damaged document is never taken for an ordinary Markdown file. The finding has a position when
+the YAML reader gives one, and the reader does not give one for every error.

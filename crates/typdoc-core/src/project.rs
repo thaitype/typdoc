@@ -52,7 +52,7 @@ pub fn discover(env: &dyn Env) -> Result<PathBuf, Error> {
         .ok_or(Error::NoProject { from: cwd })
 }
 
-/// The headings of one document, named as the design names a document.
+/// The headings of one document.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Toc {
     /// Relative to the project the document belongs to.
@@ -65,11 +65,10 @@ pub struct Toc {
     pub headings: Vec<Heading>,
 }
 
-/// The name of a document at the other end of a reference, once it is known to exist: `path`,
-/// `namespace` and `key` (only for a coded document), the same three parts `get` and `toc` name
-/// a document with, plus `project` when the document belongs to an imported project (the alias
-/// it was imported under; `None` for a document of this project). `namespace` is `None` for a
-/// file outside every namespace folder, which is named by its path alone.
+/// The name of a document at the other end of a reference, once it is known to exist. `key` is
+/// present only for a coded document, `project` is the alias of the imported project the document
+/// belongs to (`None` for this project), and `namespace` is `None` for a file outside every
+/// namespace folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefName {
     pub path: String,
@@ -79,10 +78,8 @@ pub struct RefName {
 }
 
 impl RefName {
-    /// Whether both names are the same document: the same project (none for this one), the same
-    /// namespace (none for a file outside every namespace folder, which equals only another such
-    /// file) and the same path. The path alone is not enough, since an imported project has
-    /// documents at paths this one also has, and the reverse index is keyed by all three.
+    /// The path alone is not enough: an imported project can hold a document at a path this one
+    /// also has.
     fn is_same_document(&self, other: &RefName) -> bool {
         self.project == other.project
             && self.namespace == other.namespace
@@ -90,8 +87,8 @@ impl RefName {
     }
 }
 
-/// What one written ref names, once it is looked up: the document it resolves to, or why it
-/// does not (`refs::Reason` under the design's own ids, `"import-absent"` included).
+/// What one written ref resolves to, or the id of why it does not (`not-found`, `bad-prefix` or
+/// `import-absent`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RefOutcome {
     Resolved(RefName),
@@ -105,10 +102,9 @@ pub enum RefsDirection {
     In,
 }
 
-/// One entry of a `refs` report: the document at the other end (the target for `Out`, the
-/// document that holds the ref for `In`, always resolved since it was found by reading it),
-/// the field that holds it (`"$body"` for a body link), the text as written, and a position
-/// only a body link carries.
+/// One entry of a `refs` report. `other` is the target for `Out`, and for `In` the document that
+/// holds the ref, which is always resolved. `field` is `"$body"` for a body link, the only kind
+/// with a `position`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefsReference {
     pub other: RefOutcome,
@@ -117,14 +113,11 @@ pub struct RefsReference {
     pub position: Option<Position>,
 }
 
-/// Every ref `mv`/`mv --renumber` will rewrite, grouped by the holder that carries it
-/// (`mv_reverse_scan`'s own result, alongside the refs it cannot touch).
+/// The refs `mv` will rewrite, by the path of the document that holds them.
 type RewriteByHolder = BTreeMap<String, Vec<RefsReference>>;
 
-/// The report of a `refs` run: the document asked about (always resolved, since `refs` reads it
-/// the same way `get` and `toc` do), the direction, and its references in the design's order
-/// (the fields in document order, each value as written, then `$body` by position; for `In`,
-/// grouped by the holder's own path, lexicographically, and then the same order within it).
+/// The report of a `refs` run. `refs` is in its guaranteed order: the fields in document order,
+/// each value as written, then `$body` by position; for `In`, grouped by the holder's path first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefsReport {
     pub document: RefName,
@@ -132,21 +125,14 @@ pub struct RefsReport {
     pub refs: Vec<RefsReference>,
 }
 
-/// One entry of `Project::incoming_refs`: an outgoing reference found anywhere in the project,
-/// with the document that holds it (`holder`) and that document's position in `self.collections`
-/// (`collection`), for `refby.*` to filter by field and by where it resolves to, and to read
-/// `holder` under its own schema without reading its file again.
+/// `collection` is the holder's index into `Project::collections`, so `holder` is read under its
+/// own schema without reading its file again.
 struct IncomingRef {
     holder: Document,
     collection: usize,
     reference: RefsReference,
 }
 
-/// What `evaluate_ref_condition` needs about the candidate `me` and the project, bundled so the
-/// method itself takes one context argument instead of one per piece: `me`'s own name, index
-/// entry, parsed fields and body links (read once per candidate by `Project::list`'s own loop),
-/// the project's coded schemas (for classifying a bare-key ref), and the precomputed reverse
-/// index `refby.*` reads, when at least one `refby.*` condition needs it.
 struct RefEvalCtx<'a> {
     me: &'a RefName,
     me_entry: &'a Indexed,
@@ -156,21 +142,17 @@ struct RefEvalCtx<'a> {
     incoming: Option<&'a [IncomingRef]>,
 }
 
-/// One `--sort field[:asc|:desc]` of a `list` run, already parsed: `field` the same grammar a
-/// condition's own field uses (a pseudo-field or a name), `desc` for `:desc`, `false` (`asc`) by
-/// default.
+/// One `--sort field[:asc|:desc]` of a `list` run, already parsed.
 #[derive(Debug, Clone)]
 pub struct SortKey {
     pub field: FieldRef,
     pub desc: bool,
 }
 
-/// `list`'s filter, already parsed by the caller: `--collection` and `--code` (empty means every
-/// collection), the `--where` conditions (ANDed), and the `--sort` keys in priority order.
-/// `--limit`, `--fields` and `--ids` change nothing about which documents match or their order
-/// (design, JSON output: "a flag that... limits what is listed... never [changes] the values of
-/// an item"), so they are not part of the filter `list` itself reads; the caller cuts the result
-/// for `--limit` and chooses what to print for `--fields`/`--ids`.
+/// `list`'s filter, already parsed by the caller. Empty `collections` and `codes` mean every
+/// collection, `wheres` are ANDed, and `sort` is in priority order. `--limit`, `--fields` and
+/// `--ids` change neither which documents match nor their order, so the caller applies them
+/// (SPC-12).
 #[derive(Debug)]
 pub struct ListFilter<'a> {
     pub collections: &'a [String],
@@ -179,11 +161,8 @@ pub struct ListFilter<'a> {
     pub sort: &'a [SortKey],
 }
 
-/// `list`'s result: the matched documents, sorted and cut to `--limit` by nothing here (the
-/// caller does that, see `ListFilter`'s own doc), and every dangling ref a `ref.*` condition
-/// reached while evaluating `--where`, one line each, ready to print to stderr as written
-/// (design, Query, "Reached documents": "dangling refs also warn on stderr"). Empty when no
-/// `ref.*` condition reached one, which is the ordinary case.
+/// `list`'s result: the matched documents, sorted but not cut to `--limit`, and one line for
+/// every dangling ref a `ref.*` condition reached, ready to print to stderr (SPC-13).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListResult {
     pub documents: Vec<Document>,
@@ -195,65 +174,42 @@ pub struct Project {
     config: Config,
     index: Index,
     collections: Vec<Loaded>,
-    /// `schema.valid`, gathered once at load: it is always on and never per-document, so its
-    /// level is always `error` and there is nothing left to compute once `validate` runs.
+    /// `schema.valid` is always on and not per document, so its findings are final at load.
     schema_findings: Vec<Finding>,
-    /// `filename.pattern`'s candidates, gathered once at load: the path and namespace of every
-    /// file directly in a coded collection's folder that fits no collection there. It is
-    /// configurable, so its level is decided when `validate` runs, not here.
+    /// `filename.pattern`'s candidates, as (path, namespace): every file directly in a coded
+    /// collection's folder that fits no collection there. The rule is configurable, so its level
+    /// is decided when `validate` runs.
     stray_files: Vec<(String, String)>,
-    /// Every collection's `match`, as the index read it. `--audit`'s own walk of the folders
-    /// needs them to know which folder whose name begins with `.` a `match` names as plain
-    /// text, and so which one a run reads at all.
+    /// `--audit`'s own walk needs these to know which folders whose names begin with `.` a
+    /// `match` names as plain text, and so which of them a run reads at all.
     members: Vec<Member>,
-    /// Every alias of `config.imports` (the project's own, merged with the machine file's),
-    /// resolved once at load: absent on this machine, or the imported project itself, loaded
-    /// with its own imports left unread (design: "imports of imports are ignored" — one level
-    /// only). An alias absent from this map names neither a sibling namespace nor an import, and
-    /// a ref or argument using it as an import prefix is `bad-prefix`.
+    /// Every alias of `config.imports`, merged with the machine file's. An imported project's own
+    /// imports are not followed (SPC-14). An alias missing here names no import, so an import
+    /// prefix using it is `bad-prefix`.
     imports: BTreeMap<String, ImportState>,
-    /// Every namespace's state file, read once at load, by namespace name: this project's own
-    /// reflection of it, never written back to. `Project` itself never writes anywhere — a write
-    /// command reaches `state::write` directly, under the lock it takes for itself, and loads
-    /// its own fresh `Project` afterward the same way any other run does. `state.missing`,
-    /// `state.malformed`, `state.behind` and `state.retired` all read this map when `validate`
-    /// runs, and `load_inner` itself already reads it once to report `config.state-uncoded`.
+    /// Every namespace's state file as read at load, never written back: a write command reads
+    /// the file again under its lock and writes it through `state::write`.
     state: BTreeMap<String, state::StateFile>,
 }
 
-/// What one configured import resolves to, once `${NAME}` is substituted and the location is
-/// checked for a project of its own.
 pub(crate) enum ImportState {
     Absent(crate::imports::Absence),
     Loaded(Box<Project>),
 }
 
-/// The whole-project context `refs.resolve`, `refs.target`, `refs.codedByPath` and `refs.moved`
-/// read beside a document's own frontmatter, bundled because the three always travel together
-/// from `Project::validate` through `check_entry` to `check_refs`.
 struct RefProject {
-    /// The code of every coded schema in the project (the bare-key ref form's "the code exists
-    /// in this project" condition).
+    /// A bare-key ref needs its code to exist in this project.
     codes: BTreeSet<String>,
     /// A written ref that no longer resolves, to the current key or path of the document that
     /// recorded moving away from it (`auto: moves`).
     moved: BTreeMap<String, String>,
 }
 
-/// `Project::prescan_refs`'s two accumulators, bundled into one value so `Project::prescan_one`
-/// (shared between its ordinary per-entry walk and its one extra call for a `new` candidate not
-/// yet in `self.index`) takes one argument for both rather than a `&mut` for each
-/// (`clippy::too_many_arguments`, at the threshold with everything else `prescan_one` already
-/// needs).
 struct PrescanAccum {
     moved: BTreeMap<String, String>,
     edges: BTreeMap<String, Vec<(String, String)>>,
 }
 
-/// The context every checked destination of one document (`check_body_destination`'s callers)
-/// shares: everything about the document and its rule levels that stays the same across every
-/// link, image and definition `check_body` walks, so a caller passes one reference instead of
-/// the same ten values on every call.
 struct BodyDocContext<'a> {
     name: &'a DocName<'a>,
     doc_path: &'a str,
@@ -271,44 +227,37 @@ struct BodyDocContext<'a> {
 struct Loaded {
     name: String,
     schema: Resolved,
-    /// The schema file the collection names directly, relative to the project folder: `schema`
-    /// resolved, not a parent reached through `extends`. Kept so `schema.valid`'s duplicate
-    /// name and code check can name the file a conflict is with.
+    /// The schema file the collection names directly, not a parent reached through `extends`,
+    /// so `schema.valid` can name the file a duplicate name or code conflicts with.
     schema_path: String,
     /// The collection file's own `validation`, merged over the project's `validation.global`.
     validation: Rules,
-    /// How a relative ref in a document of this collection is resolved: from the document's own
-    /// folder or from its namespace's. The sibling-prefixed path form ignores this; only the
-    /// unprefixed form reads it (design.md's Refs table).
+    /// Read only for an unprefixed relative ref: a sibling-prefixed path is always read from
+    /// that namespace's folder (SPC-14).
     ref_base: RefBase,
 }
 
-/// The report of a `validate` run, in the shape the design's summary and findings hold, before
-/// the CLI turns it into JSON.
+/// The report of a `validate` run, before the CLI turns it into JSON.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidateReport {
     pub scope: ValidateScope,
     pub strict: bool,
     /// Sorted, each once.
     pub namespaces: Vec<String>,
-    /// 0 for `Schemas`. For `--audit`, the number of documents actually evaluated: a file with
-    /// no frontmatter is not one of them (design: "`--audit` does not evaluate it"), and neither
-    /// is a file matched by more than one collection (there is no one schema to evaluate it
-    /// against, the same reasoning a plain run already gives `checked.documents`).
+    /// 0 for `Schemas`. Never counts a file matched by more than one collection, which has no one
+    /// schema to be checked against, nor, under `--audit`, a file with no frontmatter (SPC-12).
     pub documents: usize,
     /// Only for `Paths`: sorted, each once, matching the `path` of every finding.
     pub paths: Option<Vec<String>>,
-    /// In the order the design guarantees.
+    /// Ordered by `validate::order` (SPC-12).
     pub findings: Vec<Finding>,
-    /// Only for `--audit` (design: "With `--audit` the report also has `audit`").
+    /// Only for `--audit`.
     pub audit: Option<AuditReport>,
 }
 
-/// The number of documents one collection holds, for `audit.collections` (design: "one
-/// `{ "name", "documents" }` for each collection of the project"). A document it holds and a
-/// document it was checked against a schema for are not the same count: this includes a document
-/// with no frontmatter too, since the collection still matched it, only evaluated nothing about
-/// it. A file matched by more than one collection is held by none of them.
+/// The number of documents one collection holds, for `audit.collections`. It includes a document
+/// with no frontmatter, which the collection matched and nothing evaluated. A file matched by
+/// more than one collection is held by none of them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditCollection {
     pub name: String,
@@ -324,58 +273,39 @@ pub struct AuditOverlap {
     pub collections: Vec<String>,
 }
 
-/// One directory entry a `match` or a `namespaces` glob reached and did not read — a symbolic
-/// link, a name that is not valid UTF-8, or a leftover temp file — for `audit.not_read`, so that
-/// an entry which is reported in `findings` (`files.unreadable` or `files.leftover`) is also
-/// counted somewhere in the account (design, the paragraph on `not_read`).
+/// One directory entry a `match` or a `namespaces` glob reached and did not read (a symbolic
+/// link, a name that is not valid UTF-8, or a leftover temp file), for `audit.not_read`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditNotRead {
     pub path: String,
     pub reason: String,
 }
 
-/// `--audit`'s own report, alongside `findings` (design: "`collections`... `uncollected`...
-/// `no_frontmatter`... `overlapping`"). The three lists never overlap: a file that belongs to no
-/// collection has no schema to say whether it has frontmatter typdoc would recognise, so it is
-/// only ever in `uncollected` (design: "a file in no collection has no schema to say what its
-/// frontmatter should hold, so it is only in `uncollected`"). A file matched by more than one
-/// collection belongs to collections, plural, just not to one in particular, which is a different
-/// problem from belonging to none: it is reported as an ordinary `collections.overlap` finding,
-/// in audit mode exactly as in a plain run, and counted in `overlapping` rather than in either
-/// other list (design: "a file matched by more than one collection belongs to collections rather
-/// than to none... so it is only in `overlapping`").
+/// `--audit`'s report, beside `findings`. Its three file lists never overlap: a file in no
+/// collection has no schema to say what its frontmatter should hold, so it is only in
+/// `uncollected`, and a file matched by more than one collection is reported as
+/// `collections.overlap` and is only in `overlapping` (SPC-12).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AuditReport {
-    /// Every collection of the project, sorted by name, one that holds no document in scope
-    /// included with 0.
+    /// Sorted by name, a collection that holds no document in scope included with 0.
     pub collections: Vec<AuditCollection>,
-    /// The path of every file that belongs to no collection, sorted, each once.
+    /// Sorted, each once.
     pub uncollected: Vec<String>,
-    /// The path of every file that belongs to a collection and has no frontmatter block at all,
-    /// sorted, each once. Never a file whose block is empty (that is frontmatter, design: "An
-    /// empty block, which is frontmatter") or one whose block fails to parse (that has a
-    /// `frontmatter.parse` finding instead, and is counted as checked, not unreported).
+    /// Files in a collection with no frontmatter block at all, sorted, each once. An empty block
+    /// is frontmatter, and a block that fails to parse is a `frontmatter.parse` finding instead.
     pub no_frontmatter: Vec<String>,
-    /// Every file matched by more than one collection, sorted by `path`, each once, with the
-    /// names of the collections that match it. Such a file is checked against no schema, since
-    /// there is no one schema to check it with, and is reported instead under
-    /// `collections.overlap`; it is counted here, and in `summary.overlapping`, so the summary's
-    /// own account of the run is complete without it (contract item 8).
+    /// Sorted by `path`, each once. Counted here and in `summary.overlapping` so that the
+    /// summary's account of the run is complete.
     pub overlapping: Vec<AuditOverlap>,
-    /// Every directory entry the run met and did not read, sorted by `path`, each once
-    /// (design, the paragraph on `not_read`: "a symbolic link, a name that is not valid UTF-8,
-    /// or a leftover temp file"). Counted beside `unreported` and `overlapping`, not inside
-    /// either: every one of these is already reported under `files.unreadable` or
-    /// `files.leftover`, so closing this list out of `findings` would be wrong the same way
-    /// `overlapping` already is not counted twice.
+    /// Sorted by `path`, each once. Counted beside `unreported`, not inside it: each entry is
+    /// already reported in `findings`, under `files.unreadable` or `files.leftover`.
     pub not_read: Vec<AuditNotRead>,
 }
 
 impl Project {
-    /// Loads the project at `root`, its schemas, its index, and every import it configures,
-    /// followed one level (design: "imports of imports are ignored" — an imported project's own
-    /// `imports` are read for `schema.valid`'s name-collision check but never resolved into a
-    /// further `Project`).
+    /// Loads the project at `root`, its schemas, its index, and every import it configures. An
+    /// imported project's own `imports` are read for `schema.valid`'s name-collision check but
+    /// are never loaded (SPC-14).
     pub fn load(root: &Path, env: &dyn Env) -> Result<Project, Error> {
         Project::load_inner(root, env, true)
     }
@@ -395,7 +325,7 @@ impl Project {
                 Ok(Some(schema_load)) => schema_load,
                 Ok(None) => continue,
                 Err(unreadable) => {
-                    // A fault with no id yet does not hide the config errors that have one.
+                    // A fault with no id does not hide the config errors that have one.
                     report.finish()?;
                     return Err(unreadable);
                 }
@@ -446,17 +376,11 @@ impl Project {
                 ref_base: collection.ref_base,
             });
         }
-        // State files are read now, still while `report` is open, so `config.state-orphan` and
-        // `config.state-uncoded` join every other config error this project has, the same way
-        // the machine file's own path is found below.
+        // Read while `report` is open, so `config.state-orphan` and `config.state-uncoded` are
+        // reported with every other config error.
         let state_by_namespace = read_state(root, &config, &loaded, &mut report)?;
-        // The machine file's own path is found now, while `report` is still open, so a bad
-        // `TYPDOC_CONFIG_DIR` (`config.config-dir`) joins every other config error this project
-        // has, in the one object `report.finish()` below turns them into — never read as a
-        // second, later failure. `follow_imports` is false for an imported project (one level
-        // only), so its own machine file is never searched for; its `imports` still contributed
-        // to `schema_findings` above (`schema.valid`'s name-collision check reads every alias,
-        // not only the followed ones).
+        // Found while `report` is open, so a bad `TYPDOC_CONFIG_DIR` (`config.config-dir`) is
+        // reported with every other config error rather than as a later failure.
         let machine_file = follow_imports
             .then(|| crate::imports::imports_file_path(env, &mut report))
             .flatten();
@@ -488,8 +412,6 @@ impl Project {
         } else {
             BTreeMap::new()
         };
-        // Schema drift (design, Refs → Schema drift): a qualified `target` names a schema of an
-        // imported project, and only once every import is loaded can that name be checked.
         schema_findings.extend(schema_drift_findings(&qualified_targets, &imports));
         validate::order(&mut schema_findings);
         Ok(Project {
@@ -509,8 +431,6 @@ impl Project {
         &self.config
     }
 
-    /// This project's own namespaces, for `refs.rs`'s resolution of a ref that lands here after
-    /// crossing an import (`resolve_into_import`, `classify_body`'s import branch).
     pub(crate) fn namespaces(&self) -> &[Namespace] {
         &self.config.namespaces
     }
@@ -523,8 +443,6 @@ impl Project {
         &self.root
     }
 
-    /// The code of every coded schema in this project, for the bare-key sub-form a ref keeps
-    /// once it has crossed into this project through an import.
     pub(crate) fn codes(&self) -> BTreeSet<String> {
         self.project_codes()
     }
@@ -536,8 +454,6 @@ impl Project {
         flag: Option<&str>,
         env: &dyn Env,
     ) -> Result<Scope, Error> {
-        // Owns each loaded import's namespace names for the length of this call, so
-        // `ImportListing` below can borrow them: `scope::choose` never outlives this function.
         let loaded: BTreeMap<&str, Vec<String>> = self
             .imports
             .iter()
@@ -572,14 +488,9 @@ impl Project {
         )
     }
 
-    /// The imported project a `project::` argument prefix names, or why it cannot be read right
-    /// now: an alias this project does not configure is bad arguments, the same reading a
-    /// `namespace:` prefix naming no sibling already gets (ticket 4/7's own choice); one absent
-    /// on this machine is bad arguments too, naming why — an explicit `project::` argument is a
-    /// direct request for that document, and the design's own escape for a required import
-    /// (`imports.absent` set to `error` in CI) exists for refs, which are implicit; an argument
-    /// typed by hand deserves the loud answer immediately, the same choice `--namespace
-    /// 'alias::*'` already makes (`scope::select`'s own doc).
+    /// An import absent on this machine is bad arguments here, not the `imports.absent` finding a
+    /// ref gets: an argument is a direct request for that document, as `--namespace 'alias::*'`
+    /// is (SPC-14).
     fn imported(&self, alias: &str) -> Result<&Project, Error> {
         match self.imports.get(alias) {
             None => {
@@ -626,21 +537,10 @@ impl Project {
         })
     }
 
-    /// `typdoc set`: writes `sets` to the document `arg` names, under its namespace's lock,
-    /// deciding every `ifs` condition under the same lock as the write (design, `typdoc set`;
-    /// Concurrency, "What is locked": "`set` holds it across read, `--if`, validation and
-    /// write"). Returns the document as it stands after the write, in the shape `get` already
-    /// returns (decision 17): `new` and `set` print the document and nothing about the write.
-    ///
-    /// This is the first command to take a namespace lock, so it is also where the lock's
-    /// scaffolding comes together for the first time: `namespace_lock::acquire` for the lock,
-    /// `FrontmatterWriter`/`YamlSerdeWriter` for the block text, and `write_atomically` for the
-    /// disk write, in that order, all inside the lock except the argument-shaped checks that do
-    /// not depend on the document's state (project prefix, an `auto` field named directly).
-    ///
-    /// A document matched by no collection at all — "outside every namespace" (contract item 8)
-    /// — has no schema to validate against, so it goes to [`Project::set_loose`] instead: an
-    /// ordinary write, with `--if` still decided but nothing else checked.
+    /// `typdoc set`: writes `sets` to the document `arg` names, deciding every `ifs` condition
+    /// under the same namespace lock as the write (SPC-10). Returns the document as it stands
+    /// after the write (SPC-12). A file matched by no collection has no schema, so only its
+    /// `--if` is checked (SPC-2).
     pub fn set(
         &self,
         arg: &DocumentArg,
@@ -664,13 +564,9 @@ impl Project {
         }
     }
 
-    /// Acquires the lock for `namespace_name` under this project's lock mode, sourcing the host
-    /// from `deps.env` — the thread ticket 3 left open ("a hostname has no source yet... `Env`
-    /// is where the environment and the home directory are already reached"), closed here as the
-    /// first command to take a lock for real. `git-common` is refused plainly rather than
-    /// attempted: the resolution that mode needs (`git rev-parse --git-common-dir`, read under
-    /// decision 14) is not built yet, and silently taking the `local` lock path instead would be
-    /// the wrong lock file without saying so.
+    /// `git-common` is refused rather than attempted: nothing here resolves
+    /// `git rev-parse --git-common-dir`, and taking the `local` lock path instead would take the
+    /// wrong lock file without saying so.
     fn acquire_lock_for<'d>(
         &self,
         namespace_name: &str,
@@ -695,14 +591,8 @@ impl Project {
         namespace_lock::acquire(deps.fs, deps.clock, lock_path, &host, lock_timeout)
     }
 
-    /// Where `set` finds the file an argument names, one path further than [`Project::resolve`]
-    /// goes: a path matched by no collection at all is not an error here as long as the file
-    /// exists, because such a file is still reachable and nameable (design, Namespaces: "Files
-    /// outside every namespace folder belong to no namespace; a relative path can still point at
-    /// them"), and this contract's own item 8 has `set` reach it the same way a ref does. A key
-    /// argument never reaches [`WriteTarget::Loose`]: a document with no collection has no
-    /// schema and so no code, and [`Project::resolve_key`] only ever finds a path the index
-    /// already holds.
+    /// Unlike [`Project::resolve`], a path matched by no collection is not an error as long as
+    /// the file exists: `set` reaches such a file the same way a ref does (SPC-2).
     fn resolve_write_target(
         &self,
         arg: &DocumentArg,
@@ -736,18 +626,12 @@ impl Project {
         Ok(WriteTarget::Collected { path })
     }
 
-    /// A write to a file matched by no collection: there is no schema to validate against, so
-    /// this is exactly what the contract calls it (item 8), an ordinary write. A value is always
-    /// kept as plain text, because there is no field type here to say a comma should split it
-    /// into a list.
+    /// A write to a file matched by no collection, with no schema to validate against. A value
+    /// is always kept as plain text: there is no field type to say a comma splits it into a list.
     ///
-    /// `write_atomically` cannot be called without a real [`NamespaceLock`] (decision 6: no
-    /// public constructor, `acquire` the only function that returns one), and such a file
-    /// belongs to no namespace for an ordinary lock path to name. Rather than the design's own
-    /// namespace locks, every loose write shares one lock of its own, `.typdoc/locks/.loose.lock`
-    /// (a name starting with `.`, so no real namespace can ever collide with it, the same reason
-    /// the project lock's own name starts with `.`). Decided here rather than in the design,
-    /// because `write_atomically`'s own proof is what requires it.
+    /// `write_atomically` needs a [`NamespaceLock`], and this file belongs to no namespace, so
+    /// every such write shares `.typdoc/locks/.loose.lock`. Its name starts with `.`, so no
+    /// namespace can have it (SPC-10).
     fn set_loose(
         &self,
         path: &str,
@@ -764,11 +648,8 @@ impl Project {
         let no_schema = Resolved::new(String::new(), None, BTreeMap::new());
         let file = self.root.join(path);
 
-        // The read and `--if` are decided under the lock too (design, Concurrency, "What is
-        // locked": "`set` holds it across read, `--if`, validation and write"), the same order
-        // `set_collected` uses: acquiring first is what makes a condition and the write it
-        // guards inseparable, rather than reading the file, deciding `--if` against a value
-        // that might already be stale, and only then taking the lock.
+        // Read and `--if` under the lock, so the condition cannot go stale before the write
+        // (SPC-10).
         let lock = self.acquire_lock_for(".loose", deps, lock_timeout)?;
 
         let text = fs::read_to_string(&file).map_err(Error::io_at(&file))?;
@@ -821,8 +702,6 @@ impl Project {
         })
     }
 
-    /// A write to a document matched by a collection: the full contract (types, enums,
-    /// transitions and refs), under the namespace's lock the whole time.
     fn set_collected(
         &self,
         path: &str,
@@ -941,26 +820,10 @@ impl Project {
             &name,
         ));
         if !findings.iter().any(|f| f.rule == "frontmatter.parse") {
-            // `refs.acyclic` at write time (ticket 30, M-18): a plain `self.ref_project()` scans
-            // every document from disk, before this write's `candidate` text exists there, so a
-            // cycle it finds would be evidence about the pre-write state, not about `candidate` —
-            // checking it directly would be wrong in both directions (a false refusal for an
-            // unrelated cycle elsewhere, a false pass for one this write's own field just
-            // created, since the on-disk copy of this document is still the old one).
-            // `ref_project_for_candidate` fixes the evidence instead of giving up on it: `path`
-            // is scanned from `candidate` rather than from disk, so the resulting `acyclic`
-            // findings are about the state this write is about to produce. Filtered to `path`
-            // itself, since a cycle elsewhere the scan also (correctly) still finds is not this
-            // write's to refuse — that is `validate`'s finding to report, unaffected by this.
-            //
-            // Narrowed further (ticket 34, M-21): `path` can appear in the post-write cyclic set
-            // for a reason that has nothing to do with this write — an acyclic field this write
-            // never touched, already cyclic before the write and still cyclic after. "No cycle
-            // forms" is about this write's own *effect*, not a standing fact about the document,
-            // so a finding only counts when the field it names (`finding.field`, always `Some`
-            // for `refs.acyclic`) actually changed value between `before_fields` and
-            // `after_final` — the same before/after pair `fields_changed` above already computed
-            // for `auto: update`, reused here rather than recomputed.
+            // `refs.acyclic` against the state this write produces: `path` is scanned from
+            // `candidate`, not from disk. Only a cycle on `path` through a field this write
+            // changed refuses it; a cycle elsewhere, or one that was already there, is
+            // `validate`'s to report (SPC-2).
             let (ref_project, acyclic) = self.ref_project_for_candidate(path, entry, &candidate)?;
             let before_map = fields_map(&before_fields);
             let after_map = fields_map(&after_final);
@@ -1004,13 +867,8 @@ impl Project {
         })
     }
 
-    /// `typdoc new`: creates a document, either under a key allocated for a coded schema or at
-    /// the path given for an uncoded one (design, `typdoc new`; contract item 8: "`new` cannot
-    /// create [a document outside every namespace], since `new` requires a collection"). Builds
-    /// on `set`'s own scaffolding (`namespace_lock::acquire` through `Project::acquire_lock_for`,
-    /// `FrontmatterWriter`/`YamlSerdeWriter`, the candidate-text-then-validate-then-write shape),
-    /// with a lock and a write of its own: [`Project::new_coded`] and [`Project::new_uncoded`]
-    /// below say exactly where.
+    /// `typdoc new`: creates a document, under a key allocated for a coded schema or at the path
+    /// given for an uncoded one. A path must match a collection (SPC-2).
     pub fn new_document(
         &self,
         target: &NewTarget,
@@ -1029,49 +887,14 @@ impl Project {
 
     /// The coded form: `typdoc new <CODE> "<title>"`.
     ///
-    /// **What happens before the lock.** Resolving `code` to its collection reads only the
-    /// project's own config (`self.collections`), never anything another process could be
-    /// writing; resolving the scope to exactly one namespace reads the environment and the
-    /// current directory, the same as every other command's scope choice, and is refused here
-    /// (`Error::AmbiguousScope`, exit 1) before a lock is even considered, since the design's
-    /// own reason for the code ("the call was correct in every part" does not apply — this
-    /// call itself is ambiguous) is closer to bad arguments than to anything a lock could fix.
+    /// The number is allocated under the lock, from the state file read again from disk rather
+    /// than `self.state`, which may predate the lock (SPC-10). The index's highest existing
+    /// number is as old as the load, which is safe: a process that won the lock first raised
+    /// `last` before releasing it.
     ///
-    /// **What happens under the lock, and why.** The number is allocated only once the lock is
-    /// held: `state::read` reads the namespace's state file fresh from disk rather than through
-    /// `self.state` (loaded when this `Project` did, which may be older than the lock), because
-    /// two processes racing for this lock must not both compute their number from a `last` that
-    /// was already stale before either of them started waiting — decision 2 (phase 1) ties the
-    /// allocation to the lock for exactly this reason. `self.index`'s own count of the highest
-    /// existing number is read as it stood at load time; that is safe rather than merely
-    /// convenient, because whichever process wins the lock also raises `last` to its own number
-    /// before releasing it, so the process that was waiting recomputes `max(_, last)` against a
-    /// `last` that already accounts for what the winner just created, and the file itself is
-    /// still created with `O_EXCL` under this same lock as the backstop decision 15 asks for —
-    /// two protections doing one job is not a fault, and ticket 14's own collision test is what
-    /// this reasoning has to survive.
-    ///
-    /// **The state write happens before the document is created, on purpose.** `state::write`
-    /// runs first, so that a crash between it and the create leaves `last` already raised and
-    /// only a document missing — an ordinary skipped number (decision 13, and `mv --renumber`'s
-    /// own "the destination namespace's `last` is written before the document appears under its
-    /// new key") — rather than a number a later `new` could reissue. Validation runs *before*
-    /// that write, though, not after: nothing here forces the two into the design's one
-    /// sentence's order, and refusing a bad `--set` without spending the number it would have
-    /// needed is strictly better than the alternative, which only trades a burned number for
-    /// nothing. This is chosen rather than settled: the contract leaves the order of filling
-    /// defaults, filling `auto` fields, validating and taking the lock unspecified, and this is
-    /// the reading that fits best, not the only one the sentence allows.
-    ///
-    /// **One more check sits between validation and the state write:** `deps.fs.exists(&file)`,
-    /// still under the lock, still immediately before `last` is raised. It exists so that "a run
-    /// that refuses leaves no file and no changed `last`" (this ticket's own done-when) holds
-    /// even for decision 15's own "should not be reachable" case, not only for the ordinary
-    /// refusals above it. `O_EXCL` stays the real enforcement underneath it — a look this close
-    /// to the write it guards is not the stale, pre-lock advice decision 15 rules out, and the
-    /// window this leaves for a genuinely unreachable collision (a non-typdoc writer landing on
-    /// this exact path in the instant between this check and the create) still ends at `O_EXCL`,
-    /// with a burned number, exactly as decision 15 already accepts.
+    /// Validation runs before the state write, so a refused `--set` spends no number. The state
+    /// write runs before the document is created, so an interruption between them leaves a
+    /// skipped number, never one a later `new` could issue again (SPC-8).
     fn new_coded(
         &self,
         code: &str,
@@ -1149,21 +972,15 @@ impl Project {
             return Err(Error::Invalid { findings });
         }
 
-        // The number the state write below is about to burn should never be one a file is
-        // already sitting on: `code`-`next` came from `max(highest existing, last) + 1`, and
-        // nobody has used it. Checked here, still under the lock, before `last` is raised for
-        // it — a run that finds this impossible state anyway refuses with the state file
-        // untouched, rather than burning the number it was about to allocate on a collision the
-        // `O_EXCL` create below would catch regardless. `O_EXCL` stays as the real enforcement
-        // (decision 15: "rather than typdoc remembering to look first"); this is the one case
-        // that check alone cannot make true of the state file too, since it runs after the
-        // create, not before it.
+        // Should not be reachable, since nobody has used this number. Checked before `last` is
+        // raised, so a refusal leaves the state file untouched; `O_EXCL` on the create below
+        // stays the real enforcement (SPC-10).
         if deps.fs.exists(&file).map_err(Error::io_at(&file))? {
             return Err(Error::AlreadyExists {
                 path: file.display().to_string(),
                 message: format!(
                     "`{relative}` already exists: the key `{key}` was just allocated and should \
-                     not be reachable (decision 15)"
+                     not be reachable"
                 ),
             });
         }
@@ -1184,7 +1001,7 @@ impl Project {
             candidate.as_bytes(),
             format!(
                 "`{relative}` already exists: the key `{key}` was just allocated and should not \
-                 be reachable, but the file system enforces the refusal either way (decision 15)"
+                 be reachable, but the file system enforces the refusal either way"
             ),
         )?;
 
@@ -1201,25 +1018,12 @@ impl Project {
         })
     }
 
-    /// The path-identified form: `typdoc new <path>`. There is no number to allocate and no
-    /// state file to touch, so the only shared, lock-protected state is the document itself: the
-    /// namespace and the collection a bare path belongs to are read from the project's own,
-    /// static config (`self.config.namespaces`, `self.collections`), which a concurrent writer
-    /// cannot change, so resolving them ahead of the lock costs nothing. The lock is still taken,
-    /// because every write does (design, Locks), and the file is still created with `O_EXCL`
-    /// under it, because a path given on the command line is exactly the first of decision 15's
-    /// four refused cases.
+    /// The path-identified form: `typdoc new <path>`. The namespace and collection come from the
+    /// path and the config, which no concurrent writer changes, so they are resolved before the
+    /// lock.
     ///
-    /// **Where the namespace comes from.** Unlike the coded form, `--namespace`/
-    /// `TYPDOC_NAMESPACE` play no part: the design's grammar shows no prefix on `typdoc new
-    /// <path>`, and "for a path, the path must match a collection" sits in its own sentence,
-    /// never mentioning scope the way the sentence about a coded allocation does two sentences
-    /// earlier. A project-relative path already carries its namespace as a literal folder prefix
-    /// (`Index::build` walks `root.join(&space.folder)` per namespace), the same way an existing
-    /// document's own path already does for `set`'s `resolve_write_target`; this reads that
-    /// prefix instead of asking scope to break a tie scope was never asked about. The doubt this
-    /// leaves: a `--namespace` given alongside a path is silently ignored rather than checked
-    /// against it, which nothing in the design or the contract says either way.
+    /// `--namespace` and `TYPDOC_NAMESPACE` play no part: the path already names its namespace
+    /// folder. A `--namespace` given with a path is ignored, not checked against it (SPC-2).
     fn new_uncoded(
         &self,
         path: &str,
@@ -1282,11 +1086,6 @@ impl Project {
         })
     }
 
-    /// The validation both forms of `new` run on their candidate text, once the block and the
-    /// name are built: [`check_auto_direct`], then [`validate::check_document`], then, unless
-    /// the block itself did not even parse, [`Project::check_refs`] — the same three calls, in
-    /// the same order, `Project::set_collected` already makes on its own candidate, shared here
-    /// once rather than written out twice for `new`'s two forms.
     #[allow(
         clippy::too_many_arguments,
         reason = "each argument is context `new_coded` and `new_uncoded` already hold from their \
@@ -1325,11 +1124,8 @@ impl Project {
                 file: file.to_owned(),
                 key,
             };
-            // Same write-time `refs.acyclic` check as `set_collected`'s (ticket 30, M-18), and
-            // the same reason it must scan `candidate` rather than disk: this document is not
-            // even in `self.index` yet, and `ref_project_for_candidate` scans it anyway (see
-            // `prescan_refs`'s own doc comment), so a document already on disk that names this
-            // one's key or path also sees it as real for this one scan.
+            // This document is not in `self.index` yet; `ref_project_for_candidate` scans it
+            // anyway, so a document on disk that names its key or path sees it for this scan.
             let (ref_project, acyclic) = self.ref_project_for_candidate(path, &entry, candidate)?;
             findings.extend(acyclic.into_iter().filter(|finding| finding.path == path));
             findings.extend(self.check_refs(
@@ -1345,14 +1141,8 @@ impl Project {
         Ok(findings)
     }
 
-    /// The namespace and the collection a not-yet-existing project-relative `path` belongs to,
-    /// for [`Project::new_uncoded`]: the namespace whose folder is a literal prefix of `path` (or
-    /// the one namespace of a project with no `namespaces` folders, whose own folder is empty and
-    /// so a prefix of everything), and, within it, the one uncoded collection whose `match`
-    /// matches what is left of `path` below that folder ([`ignore_matches`], the same whole-path
-    /// template match `body.links`' own `ignore` option already reads by). More than one match is
-    /// the read path's own `collections.overlap`, read here before the file exists rather than
-    /// from the index, which does not hold a path that is not on disk yet.
+    /// The namespace and the uncoded collection of a path not yet on disk, which the index
+    /// cannot answer for. More than one matching collection is refused as `collections.overlap`.
     fn resolve_uncoded_target(&self, path: &str) -> Result<(usize, usize), Error> {
         let namespace_idx = self
             .config
@@ -1422,11 +1212,6 @@ impl Project {
         }
     }
 
-    /// The highest number a document of `(namespace, collection)` actually carries, read from
-    /// the index the same way `Project::validate`'s own `state.behind` scan reads it
-    /// (`key_sort_value`): `new`'s allocation takes the larger of this and the state file's
-    /// `last`, and this is this crate's one reading of "the highest existing number" (design,
-    /// State), reused here rather than duplicated.
     fn highest_existing(&self, namespace_idx: usize, collection_idx: usize) -> Option<u64> {
         self.index
             .iter()
@@ -1441,22 +1226,12 @@ impl Project {
             .max()
     }
 
-    /// The next key `new` and `mv --renumber` each allocate in `(namespace_idx, collection_idx)`,
-    /// and the project-relative path it names, counted from the namespace folder the same way
-    /// every `match` template is (`Index::build` walks `root.join(&space.folder)` and prepends
-    /// it back below): a `default` namespace's own folder is empty, so the rendered path and the
-    /// final one are the same string there, and differ only once a second namespace's own folder
-    /// makes the difference visible. The caller must already hold `namespace_idx`'s lock: two
-    /// processes racing for it must not both compute their number from a `last` that was already
-    /// stale before either started waiting (decision 2, phase 1).
+    /// The next key in `(namespace_idx, collection_idx)`, its project-relative path, and its
+    /// number. The caller must hold that namespace's lock, and then write the number to
+    /// the state file before creating the document: this only decides the number.
     ///
-    /// Refuses (`Error::Invalid`) exactly as `state.malformed` and `state.missing` say to: a
-    /// `last` that is present but not a usable whole number, or a collection with documents in
-    /// this namespace and no `last` recorded at all — in both cases because a guessed number is
-    /// a key that already belongs to a document. Returns the key, its path, and the raw number
-    /// (`next`), which the caller still has to write to the state file and create the document
-    /// under, in that order (decision 1, decision 13): this function only decides the number, it
-    /// does not spend it.
+    /// Refuses on `state.malformed` and `state.missing`: a guessed number is a key that already
+    /// belongs to a document (SPC-8).
     fn allocate_key(
         &self,
         namespace_idx: usize,
@@ -1546,34 +1321,14 @@ impl Project {
     }
 
     /// `list`: every document of `scope` whose collection is selected and whose fields satisfy
-    /// every `--where` condition, sorted by `--sort` and then, breaking every tie, in key or path
-    /// order (`docs/archived-design/design-decision-phase-1/_tickets/15-json-output-shape.md`, "Already decided
-    /// elsewhere and not reopened"). `--limit` is not read here: the design reports `total` before
-    /// it and says a flag that limits what is listed never changes an item's values, so cutting
-    /// the result is the caller's job, done after this returns the whole match, in order.
+    /// every `--where` condition, sorted by `--sort` with ties broken in key or path order
+    /// (SPC-2). The caller applies `--limit` (SPC-12).
     ///
-    /// **The scope-wide field check this ticket owns.** The design's Names and scope paragraph
-    /// makes a field name unknown to *every* schema in scope an error, while a document whose own
-    /// schema merely lacks the field counts as absent; `query::evaluate` sees one schema at a time
-    /// and cannot tell those two apart (ticket 13's report). So every plain `--where` condition's
-    /// own field is checked here, once, against every schema `--collection`/`--code` (or, absent
-    /// those, every collection) selects, before any document is read; only once that has passed
-    /// does a document whose own schema happens to lack the field get to fall out as absent,
-    /// resolved directly by the op (`!=` satisfied, everything else failed) rather than by calling
-    /// `evaluate` with a schema that would misreport it as the scope-wide error.
-    ///
-    /// **`ref.*`/`refby.*` conditions (ticket 15) get the same upfront check, with their own
-    /// scope.** `f` must be a ref/ref[] field (or `$body`) somewhere in the *whole project*, not
-    /// only the collections `--collection`/`--code` select: arrows leave that scope freely. Once
-    /// `f` is known, the condition after it is checked against the scope the design gives that
-    /// condition — the schemas named by `f`'s `target` after `ref.*(f)`, the schemas that declare
-    /// `f` after `refby.*(f)`, and every schema of the project for `$body` in either direction —
-    /// never against `selected`, which is the plain condition's scope, not this one's.
-    ///
-    /// **Dangling refs warn (ticket 15).** `ref.*` counts an arrow from the value written even
-    /// when it does not resolve (see `evaluate_ref_condition`), and the design says so counting
-    /// still warns: "dangling refs also warn on stderr". `refby.*` never contributes a warning,
-    /// since an arrow it follows always comes from a document that exists.
+    /// A field unknown to every selected schema is an error, while a document whose own schema
+    /// lacks it counts as absent (SPC-13). `query::evaluate` sees one schema at a time and cannot
+    /// tell the two apart, so the scope-wide check is made here, before any document is read. A
+    /// `ref.*`/`refby.*` field is checked against the whole project instead, since arrows leave
+    /// the selected collections.
     pub fn list(&self, scope: &Scope, filter: &ListFilter) -> Result<ListResult, Error> {
         let selected = self.select_collections(filter.collections, filter.codes)?;
         for condition in filter.wheres {
@@ -1593,11 +1348,8 @@ impl Project {
             }
         }
         let codes = self.project_codes();
-        // Real body links are only read per candidate when some `ref.*(f)` condition is present
-        // (`refby.*` never reads "me"'s own body: it reads every *other* document's outgoing
-        // refs, gathered once below): an empty `BodyLinks` gives `document_out_refs` nothing to
-        // add under `$body`, which is exactly right for a condition whose own field is a name,
-        // never `$body`.
+        // Only `ref.*` reads the candidate's own body links; `refby.*` reads the other documents'
+        // refs, gathered once here.
         let needs_own_body = filter
             .wheres
             .iter()
@@ -1623,10 +1375,6 @@ impl Project {
             }
             let collection = &self.collections[entry.collection];
             let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
-            // A document whose frontmatter block cannot be parsed has no fields to filter, sort
-            // or print by; it is left out of the result, the same as it contributes no finding
-            // to `validate` beyond `frontmatter.parse` itself and no entry to `refs --reverse`'s
-            // scan (design: "no other rule is evaluated for that file").
             let Some(fields) = parsed_fields(&text, &collection.schema) else {
                 continue;
             };
@@ -1698,9 +1446,7 @@ impl Project {
             }
             compare_identity(a, b)
         });
-        // More than one candidate, or more than one `ref.*` condition on the same field, can
-        // reach the same dangling ref; sorted and deduplicated so a warning is not printed twice
-        // for one.
+        // Several candidates or conditions can reach one dangling ref.
         dangling_refs.sort();
         dangling_refs.dedup();
         Ok(ListResult {
@@ -1709,19 +1455,10 @@ impl Project {
         })
     }
 
-    /// `list`, widened to the imports `scope.imports` names (`--namespace 'chief::*'`): this
-    /// project's own match (`Project::list`, unchanged) plus, for each `(alias, namespaces)`,
-    /// that import's own match under its own namespaces — computed by calling `list` again on
-    /// the imported project itself (design: "a document... in `list` alike, including a `list`
-    /// that reaches an imported project"), so the whole of `--where`/`--sort`/the scope-wide
-    /// field check runs exactly as it does for this project, against that project's own schemas.
-    /// Every returned `Document` is tagged with `project: Some(alias)`; the combined set is then
-    /// sorted once more as a whole (`Project::list` already sorted each half on its own, but a
-    /// combined list needs one order, and `sort_compare`/`compare_identity` take an explicit
-    /// schema rather than a `self.collections` index, so this works the same for either half).
-    /// `scope.namespaces` empty and `scope.imports` non-empty is the ordinary case of `--namespace
-    /// 'chief::*'` alone; `dangling_refs` from an import are prefixed with its alias, since a
-    /// bare path from another project is ambiguous with this one's.
+    /// `list`, widened to the imports `scope.imports` names (`--namespace 'chief::*'`). Each
+    /// import runs its own `list` against its own schemas. An import's dangling-ref lines are
+    /// prefixed with its alias, since a bare path from another project is ambiguous with this
+    /// one's.
     pub fn list_all(&self, scope: &Scope, filter: &ListFilter) -> Result<ListResult, Error> {
         let mut result = self.list(scope, filter)?;
         if scope.imports.is_empty() {
@@ -1775,10 +1512,6 @@ impl Project {
         Ok(result)
     }
 
-    /// The schema of the document `doc` was read under, whichever project it belongs to
-    /// (`doc.project`): used only by `list_all`'s combined sort, which cannot reuse `Project::
-    /// list`'s own `self.collections[index]` lookup once documents from more than one project are
-    /// mixed together.
     #[expect(
         clippy::panic,
         reason = "the only caller is the sort in `list_all`, on documents that `Project::list` \
@@ -1813,12 +1546,8 @@ impl Project {
             .map(|c| &c.schema)
     }
 
-    /// The collections `--collection`/`--code` select, by their position in `self.collections`:
-    /// every collection whose name is in `collections` or whose schema's code is in `codes`, a
-    /// union of the two ways of naming one (design: "`--code` is a shorthand that selects the
-    /// collections whose schema has that code"). Every collection when both are empty. A name or
-    /// a code that matches nothing is refused, the same way an unknown namespace already is,
-    /// since it is more likely a typo than an intentional empty scope.
+    /// A name or a code that matches nothing is refused, as an unknown namespace is: it is more
+    /// likely a typo than an intended empty scope.
     fn select_collections(
         &self,
         collections: &[String],
@@ -1856,11 +1585,8 @@ impl Project {
         Ok(selected.into_iter().collect())
     }
 
-    /// Every collection of the whole project whose schema declares `field` as `ref` or `ref[]`,
-    /// by position in `self.collections` — never narrowed to `--collection`/`--code`'s
-    /// `selected`, since arrows a `ref.*`/`refby.*` condition follows are not bound by it. `$body`
-    /// is declared by every schema implicitly (design: "for `$body` in either it is every schema
-    /// in this project and its imports"), so it returns every collection without checking one.
+    /// Never narrowed to the selected collections: the arrows a `ref.*`/`refby.*` condition
+    /// follows are not bound by them.
     fn schemas_declaring_ref_field(&self, field: &RefField) -> Vec<usize> {
         let RefField::Named(name) = field else {
             return (0..self.collections.len()).collect();
@@ -1878,13 +1604,9 @@ impl Project {
             .collect()
     }
 
-    /// The scope the design gives the condition after `ref.*(f)`/`refby.*(f)` (Names and scope):
-    /// the schemas named by `f`'s `target` after `ref.*(f)` (every schema of the project when the
-    /// target is `"*"`, absent, or a value `schema.valid` already reports as invalid — ticket 10's
-    /// reading of an invalid `target` reused here: it places no restriction, since the fault is
-    /// already reported once under `schema.valid`), the schemas that declare `f` after
-    /// `refby.*(f)` (`declaring`, already computed by the caller), and every schema of the project
-    /// for `$body` in either direction.
+    /// The scope of the condition after `ref.*(f)`/`refby.*(f)` (SPC-13). An invalid `target`
+    /// (`Target::Other`) restricts nothing, like `"*"`: it is already reported under
+    /// `schema.valid`.
     fn ref_condition_inner_scope(
         &self,
         dir: Dir,
@@ -1932,12 +1654,6 @@ impl Project {
             .collect()
     }
 
-    /// The upfront half of a `ref.*`/`refby.*` condition's own scope-wide check, run once before
-    /// any document is read (`Project::list`'s own doc comment explains why): `f` itself must be
-    /// declared as a ref/ref[] field somewhere in the project (skipped for `$body`, which is
-    /// always valid), and, when the condition carries an inner `.EXPR`, that condition's own named
-    /// field must be declared by at least one schema of the scope `ref_condition_inner_scope`
-    /// gives it.
     fn check_ref_condition_scope(&self, condition: &RefCondition) -> Result<(), Error> {
         let declaring = self.schemas_declaring_ref_field(&condition.field);
         if !matches!(condition.field, RefField::Body) && declaring.is_empty() {
@@ -1964,13 +1680,8 @@ impl Project {
         Ok(())
     }
 
-    /// One `ref.*`/`refby.*` condition, evaluated against the candidate `me` named by `ctx`: the
-    /// arrows `condition.field` names, counted from the value written (dangling refs included
-    /// for `ref.*`; `refby.*` arrows always come from a document that exists), each checked
-    /// against `condition.inner` when there is one — existence alone otherwise — and combined by
-    /// `condition.quant`. Every dangling ref a `ref.*` arrow reaches is appended to `warnings`
-    /// (design: "dangling refs also warn on stderr"), whether or not `condition.inner` ends up
-    /// mattering to the result — the arrow was still walked and found dangling.
+    /// A dangling ref is counted as an arrow, and every one a `ref.*` arrow reaches is a warning,
+    /// whatever the inner condition decides (SPC-13).
     fn evaluate_ref_condition(
         &self,
         condition: &RefCondition,
@@ -2048,25 +1759,8 @@ impl Project {
         }
     }
 
-    /// One document reached by an outgoing arrow that resolved: read under its own schema when
-    /// it is indexed (an ordinary collection member), or, when it resolved outside every
-    /// collection (reachable only through `target: "*"`, e.g. a README), a real file with no
-    /// schema — every named field is then unknown to it and reads as absent, the same rule a
-    /// document whose own schema simply lacks a field already follows, while its pseudo-fields
-    /// (`path`, `namespace`) still apply, since the file genuinely exists (design: "Reached
-    /// documents are read under their own schema"). A target whose own frontmatter block cannot
-    /// be parsed has nothing to test either and is read the same way: absent, never an error, the
-    /// same as it is left out of `list`'s own candidates and given no other finding (design: "no
-    /// other rule is evaluated for that file").
-    /// `evaluate_reached`, dispatched to the project `target` actually names: this project when
-    /// `target.project` is `None`, the imported project when it names one — read under that
-    /// project's own collections and index, the same as if the query had been run there
-    /// directly, since a reached document is "read under its own schema" regardless of which
-    /// project asked (design, Query, "Reached documents"). The pattern that would make this
-    /// unreachable (`self.imports.get(alias)` finding no loaded import) cannot occur: `target`
-    /// only ever carries an alias `ref_name_of_resolved` already confirmed is loaded, the same
-    /// invariant `resolve_import_outcome` documents; the fallback reads this project instead of
-    /// panicking, since a query condition is not the place to crash a whole run over it.
+    /// `target.project` only ever names a loaded import; the fallback reads this project rather
+    /// than crash a query over it.
     fn evaluate_reached_target(
         &self,
         target: &RefName,
@@ -2083,6 +1777,9 @@ impl Project {
         }
     }
 
+    /// A target outside every collection (reachable through `target: "*"`) has no schema, so its
+    /// named fields read as absent while its pseudo-fields still apply. A target whose block
+    /// cannot be parsed reads as absent too, never as an error.
     fn evaluate_reached(&self, path: &str, inner: &PlainCondition) -> Result<bool, Error> {
         let Some(entry) = self.index.get(path) else {
             let name = self.ref_name_of(path);
@@ -2117,11 +1814,6 @@ impl Project {
         condition_matches(inner, &collection.schema, &doc)
     }
 
-    /// Every outgoing reference of every document of the project, each with the document that
-    /// holds it (`holder`) and its position in `self.collections` (`collection`): `refby.*`'s own
-    /// reverse index, built once per `list` call that needs it and then filtered per candidate and
-    /// per `refby.*` condition, the same computation `refs --reverse` does without a field or a
-    /// target filter (`Project::refs`'s own reverse branch).
     fn incoming_refs(&self, codes: &BTreeSet<String>) -> Result<Vec<IncomingRef>, Error> {
         let mut holders: Vec<(&str, &Indexed)> = self.index.iter().collect();
         holders.sort_by_key(|(path, _)| *path);
@@ -2176,27 +1868,13 @@ impl Project {
         })
     }
 
-    /// `refs`: outgoing refs by default, or, with `reverse`, every ref of the whole project that
-    /// resolves to the document asked about, the design's `refby` index. `--reverse` scans this
-    /// project only. A `project::` argument's own outgoing refs delegate entirely to the
-    /// imported project's `refs` (read exactly as if `typdoc` ran inside it), but `--reverse`
-    /// with a `project::` argument is refused: the design also wants incoming refs *from this
-    /// project* into that document ("refby sees refs from... also the imported projects", read
-    /// from the importer's side), which needs this project's own reverse scan to widen into the
-    /// import too — not built this ticket, and delegating only to the import's own reverse scan
-    /// would silently under-report rather than say so. `field` keeps only the refs held in that
-    /// field, `"$body"` for body links, in either direction. A ref counts as pointing at the
-    /// document only when it resolved to the same project, namespace and path: one that resolved
-    /// into an imported project does not, whatever path it lands on there.
+    /// `refs`: the refs the document holds, or with `reverse` every ref in this project that
+    /// resolves to it. `field` keeps only the refs held in that field (`"$body"` for body links),
+    /// in either direction.
     ///
-    /// The document asked about is read the same way `get` and `toc` read theirs (`Project::
-    /// resolve`, under `scope`): a broken frontmatter block fails the whole command, matching
-    /// `get`. `reverse` scans every document of the project regardless of `scope`, since the
-    /// design gives `refby` no scope of its own ("scans every namespace of this project and the
-    /// projects it imports"): a document elsewhere in the project whose own frontmatter cannot
-    /// be parsed contributes nothing to that scan, the same way it contributes no `refs.resolve`
-    /// or `body.*` finding to a whole-project `validate` (design: "no other rule is evaluated
-    /// for that file").
+    /// `reverse` scans every document of this project regardless of `scope`, and no imported
+    /// project. With a `project::` argument it is refused: delegating to the import's own reverse
+    /// scan would leave out the refs this project holds without saying so.
     pub fn refs(
         &self,
         arg: &DocumentArg,
@@ -2249,11 +1927,7 @@ impl Project {
             });
         }
 
-        // The design orders `in` by the holder's own `path`, lexicographically (`Order`'s rule
-        // for `findings` applied the same way to a reference's holder). `Index::iter` promises
-        // no order of its own ("the caller sorts what it needs sorted"), so this collects and
-        // sorts explicitly rather than leaning on the incidental order a `BTreeMap` happens to
-        // give today.
+        // `in` is ordered by the holder's path (SPC-12), and `Index::iter` promises no order.
         let mut holders: Vec<(&str, &Indexed)> = self.index.iter().collect();
         holders.sort_by_key(|(other_path, _)| *other_path);
         let mut refs = Vec::new();
@@ -2290,12 +1964,7 @@ impl Project {
         })
     }
 
-    /// The outgoing references of one document already read, in the design's order for `out`:
-    /// its `ref`/`ref[]` fields in the order they appear, each value in the order it is written,
-    /// then its body links (`$body`) by position. Kept whether or not each one resolves: `refs`
-    /// itself needs the unresolved ones for `out`, and `refs --reverse` needs to call this once
-    /// per document of the project and keep only the entries that resolve to the one asked
-    /// about (the design's own words for `refby`: the same index `refs --reverse` uses).
+    /// Unresolved refs are kept: `refs` reports them, and `ref.*` counts them.
     fn document_out_refs(
         &self,
         path: &str,
@@ -2341,12 +2010,8 @@ impl Project {
         let mut links: Vec<&BodyLink> = body.links.iter().collect();
         links.sort_by_key(|link| (link.line, link.col));
         for link in links {
-            // `target: None` is `[t]()` or `[t](#anchor)`: no path at all, so nothing outside
-            // this document is named. Ticket 11 reads it as "a self-reference with nothing to
-            // check" for `body.links`/`body.anchors`, and the design's own References paragraph
-            // only ever speaks of "the document at the other end" — there is none here, so it is
-            // not a ref and is left out of `$body` entirely, the same way a URL-scheme link
-            // (`BodyDestination::Skip`) is: both name nothing this project can point `refby` at.
+            // `[t]()` and `[t](#anchor)` name no other document, so, like a URL-scheme link,
+            // they are not refs (SPC-12).
             let Some(target) = &link.target else {
                 continue;
             };
@@ -2377,20 +2042,12 @@ impl Project {
         refs
     }
 
-    /// The name of a document at `path` in this project, read as `ref_name_in` reads it: a file
-    /// outside every namespace folder has no namespace and is named by its path alone.
     fn ref_name_of(&self, path: &str) -> RefName {
         ref_name_in(&self.config.namespaces, &self.index, None, path)
     }
 
-    /// A `refs::Resolved` already known to exist, named: this project's own naming when it
-    /// stayed inside this project (`resolved.project` is `None`), the imported project's own
-    /// naming when a `name::` prefix carried it across an import (`Some(alias)` — the same
-    /// alias `resolve_into_import` tagged it with). `document_out_refs`' own bug before this
-    /// existed: calling `self.ref_name_of(&resolved.path)` unconditionally read the *path*
-    /// right (a path already fully resolved does not change) but always named it in *this*
-    /// project's namespaces, so a frontmatter ref that crossed an import printed no `project`
-    /// and the wrong `namespace` whenever the two projects' namespace lists differed.
+    /// A ref that crossed an import is named in the imported project's namespaces, not this
+    /// one's.
     fn ref_name_of_resolved(&self, resolved: &refs::Resolved) -> RefName {
         match &resolved.project {
             None => self.ref_name_of(&resolved.path),
@@ -2406,12 +2063,8 @@ impl Project {
         }
     }
 
-    /// A body link's `BodyDestination::Import { alias, path }`, resolved: the alias is already
-    /// known to be a loaded import (`refs::classify_body` only builds this variant for one), so
-    /// this reads that import's own index and root, never this project's. Whether the target
-    /// carries the linked `#anchor`, when there is one, is not checked (`check_body_destination`
-    /// leaves the resolved path unread further for this case): that would mean reading the
-    /// imported project's headings under its own rules, which is not built this ticket.
+    /// Whether the target has the linked `#anchor` is not checked: that needs the imported
+    /// project's headings read under its own rules.
     fn resolve_import_outcome(&self, alias: &str, path: &str) -> RefOutcome {
         #[expect(
             clippy::unreachable,
@@ -2438,11 +2091,8 @@ impl Project {
     }
 
     /// The report of `validate`: `Schemas` when `schemas_only`, `Paths` when `args` is not
-    /// empty, and `All` (every document in scope) otherwise. Combining `schemas_only` with
-    /// arguments, or `audit` with either, is a caller error and is refused before this runs
-    /// (design: "combining either with arguments is bad arguments"), so neither is checked again
-    /// here: `audit` only ever reaches this function true alongside `schemas_only: false` and an
-    /// empty `args`, so only the `All` branch below ever reads it.
+    /// empty, and `All` otherwise. The caller refuses `schemas_only` with arguments and `audit`
+    /// with either (SPC-2), so only `All` reads `audit`.
     pub fn validate(
         &self,
         args: &[DocumentArg],
@@ -2477,20 +2127,12 @@ impl Project {
             findings.extend(acyclic);
             let mut namespaces = BTreeSet::new();
             let mut documents = 0usize;
-            // `(namespace, collection)` pairs with at least one document in scope, for
-            // `state.missing` below: the rule reports a coded collection only once it actually
-            // has a document in the namespace (design, State: "A collection with no coded
-            // documents in the namespace and no record is new, and nothing is reported").
+            // `state.missing` reports a collection only once it has a document in the namespace:
+            // with none and no record, the collection is new (SPC-8).
             let mut present: BTreeSet<(usize, usize)> = BTreeSet::new();
-            // The highest number a document of `(namespace, collection)` actually carries, for
-            // `state.behind` below: the same digits-after-the-code reading `--sort`'s own `key`
-            // field already gives a key (`key_sort_value`), reused here rather than duplicated,
-            // since "the highest existing number" means the same thing in both places.
             let mut highest: BTreeMap<(usize, usize), u64> = BTreeMap::new();
-            // `--audit` only: the number of documents each collection holds (checked or not,
-            // contract item 8's own reasoning for a file with no frontmatter: it was matched, it
-            // was simply not evaluated) and the path of every one of them with no frontmatter
-            // block at all, left unevaluated (design: "`--audit` does not evaluate it").
+            // `--audit` only. A document with no frontmatter still counts for its collection,
+            // which matched it, but is listed rather than evaluated (SPC-12).
             let mut documents_by_collection: BTreeMap<usize, usize> = BTreeMap::new();
             let mut no_frontmatter: Vec<String> = Vec::new();
             for (path, entry) in self.index.iter() {
@@ -2523,16 +2165,8 @@ impl Project {
             findings.extend(self.state_malformed_findings(&scope));
             findings.extend(self.state_behind_findings(&highest, &scope));
             findings.extend(self.state_retired_findings(&scope));
-            // An overlapping path has no one collection to check its frontmatter against, so it
-            // was never checked (contract item 8's reasoning for a document whose block cannot
-            // be parsed does not reach this far: that document at least had a schema to check
-            // it with). `documents` stays a count of documents whose frontmatter was looked at;
-            // the namespace is still added, since the scope did cover it. Under `--audit` such a
-            // path is in none of `documents`, `audit.uncollected` or `audit.no_frontmatter`
-            // either: it belongs to a collection, just not to one in particular, which
-            // `collections.overlap` already reports below the same as a plain run does, and it is
-            // counted instead in `audit.overlapping` (contract item 8, design: "counted as
-            // `overlapping`, beside `unreported` and not inside it").
+            // An overlapping path has no one schema to be checked against, so it is not counted
+            // in `documents`, though its namespace was covered (SPC-12).
             let mut overlapping: Vec<AuditOverlap> = Vec::new();
             for (path, namespace_idx, collections) in self.index.overlaps() {
                 let namespace = &self.config.namespaces[namespace_idx].name;
@@ -2552,12 +2186,8 @@ impl Project {
                     overlap_message(collections),
                 ));
             }
-            // `files.unreadable` or `files.leftover`: an entry a `match` reached and the walk
-            // could not read. It is no document, so it is in none of the counts above; the run
-            // answered about every file beside it, which is why it is a finding and not a
-            // failure. `not_read` is `--audit` only, and gathers both this loop and the one
-            // below, since the account it closes covers every entry the run met and did not
-            // read, whichever kind of glob reached it (design, the paragraph on `not_read`).
+            // An entry the walk could not read is no document. The run still answered for every
+            // file beside it, so it is a finding, not a failure.
             let mut not_read: Vec<AuditNotRead> = Vec::new();
             for (path, namespace_idx, why) in self.index.unreadable() {
                 let namespace = &self.config.namespaces[namespace_idx].name;
@@ -2577,10 +2207,8 @@ impl Project {
                     validate::unreadable_finding(path, Some(namespace), why.to_owned())
                 });
             }
-            // An entry of the project folder that a `namespaces` glob reached is in no
-            // namespace, so it carries none and is reported whatever the scope is. A
-            // `namespaces` glob never reaches a leftover temp file (only a folder can be a
-            // namespace, design), so this loop's entries are always `files.unreadable`.
+            // Reached by a `namespaces` glob, so in no namespace and reported whatever the scope.
+            // Only a folder can be a namespace, so none of these is a leftover temp file.
             for skipped in &self.config.skipped {
                 if audit {
                     not_read.push(AuditNotRead {
@@ -2626,10 +2254,8 @@ impl Project {
             } else {
                 None
             };
-            // `collections.empty` (M-24): project-wide, independent of scope or of what else
-            // `.typdoc/` holds — `self.collections` is every collection the project's config
-            // has, complete regardless of `--namespace`/`TYPDOC_NAMESPACE` (collections are not
-            // namespace-scoped), so this checks it once here rather than per namespace.
+            // Once per project, whatever the scope: collections belong to the project, not to a
+            // namespace (SPC-1).
             if self.collections.is_empty() {
                 findings.push(validate::collections_empty_finding(TYPDOC_DIR));
             }
@@ -2648,22 +2274,12 @@ impl Project {
         let mut findings = Vec::new();
         let mut namespaces = BTreeSet::new();
         let mut paths = BTreeSet::new();
-        // An overlapping path named directly is not refused here the way `get` and `toc` refuse
-        // it (unlike them, `validate` exists to say what is wrong with a project, and design
-        // line 567 names only two things that stop it before any report — an ambiguous key and
-        // an argument that names no document — and an overlap is neither). It contributes a
-        // `collections.overlap` finding, the same shape the whole-project scan gives it, and no
-        // other argument's report is lost over it. It was never checked against a schema (there
-        // is none to check it with), so, like the whole-project scan, it does not add to
-        // `documents`; kept apart from `paths` for the same reason, so `paths` keeps meaning
-        // "the path of each document checked" and stays in step with `documents.len()`. Tracked
-        // by its own set so naming it twice reports it once.
+        // An overlapping path named directly is a finding here, not a refusal as in `get` and
+        // `toc`: only an ambiguous key or an argument that names no document stops `validate`
+        // before its report (SPC-2). It is checked against no schema, so it stays out of `paths`.
         let mut overlapping = BTreeSet::new();
         for arg in args {
             if let Some(alias) = arg.project_prefix() {
-                // Ownership rule 1 (design, Refs → Ownership rules): "A file is validated only
-                // by the namespace that owns it." An imported project is read-only here and
-                // owns its own documents; `validate` never checks them on this project's behalf.
                 return Err(Error::BadArgument(format!(
                     "`{alias}::` cannot be validated from here: a file is validated only by the project that owns it"
                 )));
@@ -2691,11 +2307,8 @@ impl Project {
                 findings.extend(self.check_entry(&path, entry, &text, strict, false, &ref_project));
             }
         }
-        // `refs.acyclic` is always on and its cycles are project-wide, but only a cycle that
-        // passes through one of the documents actually named is reported here: unlike the
-        // whole-project scan, every finding in this scope is about a document the caller named,
-        // and a cycle elsewhere in the project is that other document's own `validate` run to
-        // report, not this one's.
+        // Only a cycle through a named document is reported: every finding in this scope is
+        // about a document the caller named.
         findings.extend(
             acyclic
                 .into_iter()
@@ -2713,17 +2326,8 @@ impl Project {
         })
     }
 
-    /// `--audit`'s own report: `collections` (every collection of the project, with the count
-    /// `documents_by_collection` holds for it in scope, or 0, sorted by name), `uncollected` (the
-    /// `path` of every `.md` file in scope that matches no collection at all), found by an
-    /// independent walk of every namespace folder in scope (`index::all_markdown_files`), never by
-    /// consulting a collection's own `match` template — that is exactly the question a stray
-    /// file's absence from every collection answers — and `overlapping` (every file the caller's
-    /// own scan of `self.index.overlaps()` already found matched by more than one collection,
-    /// sorted here). A path already in `self.index` (checked, or listed in `no_frontmatter` by
-    /// the caller) or already in `self.index.overlap` (the same overlap the caller already
-    /// collected into `overlapping`, checked here directly rather than by searching that `Vec`)
-    /// is not uncollected.
+    /// `uncollected` comes from a walk of every namespace folder in scope, never from a
+    /// collection's `match`: whether a file matches none is the question being asked.
     fn audit_report(
         &self,
         scope: &Scope,
@@ -2754,9 +2358,7 @@ impl Project {
             if self.index.get(&path).is_some() || self.index.overlap(&path).is_some() {
                 continue;
             }
-            // A namespace whose only file in scope is this uncollected one never reaches the
-            // per-document loop above, and `checked.namespaces` ("the namespaces covered", design)
-            // must still name it: audit covered it, which is exactly how the file was found.
+            // A namespace whose only file in scope is uncollected was still covered.
             namespaces.insert(namespace.clone());
             uncollected.push(path);
         }
@@ -2776,15 +2378,8 @@ impl Project {
         })
     }
 
-    /// The findings of one document already read: `frontmatter.parse`, `frontmatter.types` and
-    /// `frontmatter.unknown`, at the level the collection's own `validation`, merged over the
-    /// project's `validation.global`, and `strict` give them; plus `keys.unique` when its key is
-    /// also used by another document of the same namespace. Always on, so `strict` does not
-    /// change it. `collections.overlap` is never checked here: a path it is true of is not in
-    /// the index at all (`Index::build`), so this is never reached for one; it is a finding of
-    /// the whole-project scan instead. `refs` gives `refs.resolve`, `refs.target`,
-    /// `refs.codedByPath` and `refs.moved`, skipped when `frontmatter.parse` already fired for
-    /// this document (the design: "no other rule is evaluated for that file").
+    /// An overlapping path is not in the index, so `collections.overlap` is left to the
+    /// whole-project scan.
     fn check_entry(
         &self,
         path: &str,
@@ -2838,10 +2433,8 @@ impl Project {
         findings
     }
 
-    /// `refs.resolve`, `refs.target`, `refs.codedByPath` and `refs.moved` for every `ref` and
-    /// `ref[]` field of one document already known to parse. A value that does not fit its
-    /// field's type is skipped: `frontmatter.types` already reported it, and a value that is not
-    /// text or a list of text names nothing a ref form could read.
+    /// A value that does not fit its field's type is skipped: `frontmatter.types` already
+    /// reported it.
     #[allow(
         clippy::too_many_arguments,
         reason = "each part is context this document's own check already holds (its path, its
@@ -2897,11 +2490,6 @@ impl Project {
                         audit,
                     )),
                     Ok(resolved) => {
-                        // `schema_info_of` reads this project's own collections when the ref
-                        // stayed inside it, and the alias's own once it has crossed into an
-                        // import (`resolved.project` is `Some`), so both `refs.target` and
-                        // `refs.codedByPath` are now checked either way, once every import is
-                        // loaded (see `Project::schema_info_of`).
                         let info = self.schema_info_of(&resolved);
                         if !refs::target_allowed(field.target.as_ref(), &resolved, info.as_ref()) {
                             findings.push(validate::finding(
@@ -2944,12 +2532,6 @@ impl Project {
         findings
     }
 
-    /// `body.links`, `body.anchors` and `body.mentions` for one document already known to parse:
-    /// every checked link and reference definition `links::scan` finds, resolved the same way a
-    /// frontmatter path-form ref is (`refs::classify_body`, `refs::resolve_path`), and every
-    /// mention `links::mentions` finds, looked up by key. Nothing here is computed when all three
-    /// rules are `off`, since a document with a large body would otherwise be scanned for no
-    /// reason.
     #[allow(
         clippy::too_many_arguments,
         reason = "each part is context this document's own check already holds, the same list
@@ -3038,8 +2620,7 @@ impl Project {
             anchors_level,
         };
         let mut findings = Vec::new();
-        // A reference-style occurrence (`is_reference`) is checked once already, at its
-        // definition below: the design's own words, "the uses are not reported separately".
+        // A reference-style use is checked once, at its definition, not at each use.
         for link in scanned.links.iter().filter(|link| !link.is_reference) {
             self.check_body_destination(
                 &link.written,
@@ -3168,13 +2749,8 @@ impl Project {
         findings
     }
 
-    /// One checked destination (a link, an image, or a reference definition — `uses` is `Some`
-    /// only for the latter, so its finding carries the design's `(used N times)`): resolved the
-    /// same way a frontmatter path-form ref is, then, if it resolves and carries a `#anchor`,
-    /// checked against the target's own headings. `None` for `target` is `[t](#local)`: the
-    /// document names itself, so there is nothing for `body.links` to check and `body.anchors`
-    /// reads this document's own headings. `doc` is the same for every destination of one
-    /// document; only `written`, `target`, `anchor`, `position` and `uses` change call to call.
+    /// `uses` is `Some` only for a reference definition, whose finding says how often it is
+    /// used. A `None` target is `[t](#local)`: `body.anchors` reads this document's own headings.
     #[allow(
         clippy::too_many_arguments,
         reason = "five parts genuinely vary per destination (written, target, anchor, position,
@@ -3193,13 +2769,8 @@ impl Project {
         findings: &mut Vec<Finding>,
     ) {
         let name = doc.name;
-        // A destination that does not resolve but matches a recorded `auto: moves` entry is
-        // `refs.moved`, not `body.links`, exactly as a frontmatter ref already reads it (design:
-        // "Refs come from two places, frontmatter fields and body links" — the Refs table's
-        // `refs.moved` row is written for "a ref", not for one of the two places alone). Looked
-        // up by `target`, the anchor-free path (`moved` never records a `#anchor`), not by
-        // `written`: `[t](old.md#section)` must be looked up as `old.md`, or a moved target with
-        // an anchor would miss this and silently read as an ordinary `body.links` finding.
+        // Looked up by `target`, not `written`: a recorded move never has a `#anchor`, so
+        // `[t](old.md#section)` must be looked up as `old.md` (SPC-1).
         let missing = |findings: &mut Vec<Finding>, lookup: &str| match self.moved_outcome(
             name,
             lookup,
@@ -3268,10 +2839,7 @@ impl Project {
                         return;
                     }
                     match self.resolve_import_outcome(&alias, &path) {
-                        // The document exists in the imported project; whether the `#anchor`
-                        // (if any) exists there too is not checked (see `resolve_import_outcome`'s
-                        // own doc): `resolved_path` stays `None`, so the anchor check below never
-                        // runs for this destination.
+                        // The `#anchor` is not checked there (see `resolve_import_outcome`).
                         RefOutcome::Resolved(_) => None,
                         RefOutcome::Unresolved(_) => {
                             missing(findings, target);
@@ -3302,11 +2870,8 @@ impl Project {
         }
     }
 
-    /// The headings of `target_path`, this document's own when it names itself, another
-    /// document's read fresh from disk otherwise. A target that cannot be read or parsed is
-    /// treated as having no headings, so an anchor into it is loudly reported rather than
-    /// silently passed: `body.anchors` only reaches a target `body.links` already resolved, so
-    /// this is the read failing after the existence check already passed, not a missing file.
+    /// A target that cannot be read or parsed has no headings, so an anchor into it is reported
+    /// rather than passed.
     fn target_headings(&self, target_path: &str, doc_path: &str, doc_text: &str) -> Vec<Heading> {
         if target_path == doc_path {
             return body::headings(doc_text).unwrap_or_default();
@@ -3319,12 +2884,10 @@ impl Project {
             .unwrap_or_default()
     }
 
-    /// Whether a mention needs a finding: `None` when its code is not a known code of this
-    /// project (design: "not a known code" mentions, such as `UTF-8` or `SHA-256`, are never
-    /// checked); `Some(true)` when it does not resolve; `Some(false)` when it does. A prefixed
-    /// mention naming no sibling namespace, and one written with `::` (an import, ticket 17's),
-    /// both read as "not found": the design gives mentions one outcome for every way a lookup can
-    /// fail, unlike a ref's `bad-prefix`.
+    /// `None` when the mention's code is not a code of this project, so `UTF-8` is never
+    /// checked; otherwise whether it fails to resolve. A prefix naming no sibling namespace and an
+    /// import prefix both read as not found: a mention has one outcome for every failed lookup,
+    /// unlike a ref's `bad-prefix` (SPC-1).
     fn mention_missing(
         &self,
         written: &str,
@@ -3348,23 +2911,9 @@ impl Project {
         Some(self.index.key(namespace, key).is_none())
     }
 
-    /// The `refs.moved` outcome for a body destination or a mention that did not otherwise
-    /// resolve: `None` when `lookup` matches no recorded move, so the caller reports its own
-    /// ordinary missing finding; `Some(None)` when it does but `refs.moved` is configured `off`
-    /// and `audit` is not set, so nothing at all is reported (a rule set to `off` produces no
-    /// finding outside `--audit`, not a fallback to a different one; under `--audit` the same
-    /// `off` setting reaches `Some(Some(finding))` at `Info` instead, `effective_level`'s own
-    /// doing); `Some(Some(finding))` otherwise. The frontmatter equivalent,
-    /// `unresolved_ref_finding`, folds this together with the `refs.resolve` fallback it also
-    /// owns; a body destination's and a mention's fallback messages differ from each other and
-    /// from a frontmatter ref's, so this stays the one shared part and each caller builds its own
-    /// fallback.
-    ///
-    /// `lookup` is matched against `auto: moves`' recorded values, plain paths and keys that
-    /// never carry a `#anchor`; `display` is what the message names. A frontmatter ref and a
-    /// mention pass the same string for both; a body link does not, since `[t](old.md#section)`
-    /// must be looked up as `old.md`, not `old.md#section`, or a moved target with an anchor
-    /// would miss `refs.moved` and silently fall through to `body.links` instead.
+    /// `None` when `lookup` matches no recorded move, and the caller reports its own missing
+    /// finding. `Some(None)` when `refs.moved` is `off` outside `--audit`: `off` means no finding,
+    /// not a fallback to another one.
     #[allow(
         clippy::too_many_arguments,
         reason = "each part is independent context the two callers (a body destination, a
@@ -3405,19 +2954,12 @@ impl Project {
         )
     }
 
-    /// `refs.moved` when `written` matches a recorded move, `refs.resolve` otherwise (`None` only
-    /// when `refs.moved` fires but is configured `off`): the one place that decides between the
-    /// two ordinary-missing-target findings, so `check_refs` reads as one branch per outcome of
-    /// `resolve_one` rather than a decision nested inside it.
     #[allow(
         clippy::too_many_arguments,
-        reason = "each part is independent context a caller already holds (the document's name,
-    which field and ref, why it failed, the project's moved records, the collection's own rule
-    levels, strict); bundling them would hide which one changes across the call sites that would
-    use it, `check_refs` and a future `body.mentions` (`body.mentions` is not built by the mv
-    command: a mention is always key-shaped, and mv within one project only ever moves a document
-    without a code successfully, so the two never meet there; a future rule that checks mentions
-    against `refs.moved` is still a plausible second caller)"
+        reason = "each part is independent context `check_refs`, the one caller, already holds (the
+    document's name, which field and ref, why it failed, the project's moved records, the
+    collection's own rule levels, strict, audit); `body.mentions` checks a moved mention through
+    `moved_outcome` instead, so a bundle would only move the same list somewhere else"
     )]
     fn unresolved_ref_finding(
         &self,
@@ -3472,12 +3014,8 @@ impl Project {
         ))
     }
 
-    /// The level `imports.absent` is reported at, once `validation.global`, `collection`'s own
-    /// `validation` and `strict` are merged (default `warn`): `None` means the rule is `off` and
-    /// `audit` is not set, so a ref into an absent import is reported under neither it nor
-    /// `refs.resolve` — a rule set to `off` produces no finding outside `--audit`, not a fallback
-    /// to a different one, the same reading `moved_outcome` already gives `refs.moved`; under
-    /// `--audit` the same `off` setting reports it at `Info` instead.
+    /// `None` when the rule is `off` outside `--audit`: a ref into an absent import is then
+    /// reported under neither this rule nor `refs.resolve`.
     fn imports_absent_level(
         &self,
         collection: &Rules,
@@ -3494,8 +3032,6 @@ impl Project {
         )
     }
 
-    /// The code of every coded schema in the project, for the bare-key ref form's "the code
-    /// exists in this project" condition (design.md's Refs table).
     fn project_codes(&self) -> BTreeSet<String> {
         self.collections
             .iter()
@@ -3503,10 +3039,7 @@ impl Project {
             .collect()
     }
 
-    /// The name and code of every collection's schema, by the collection's position, for
-    /// `refs.target` and `refs.codedByPath`. `pub(crate)`: read on an imported project too, both
-    /// by the schema drift check (`load_inner`, once every import is loaded) and by
-    /// `schema_info_of` (below), for a ref that has crossed into that project.
+    /// In collection order, so `refs::Resolved::collection` indexes it.
     pub(crate) fn schema_infos(&self) -> Vec<refs::SchemaInfo<'_>> {
         self.collections
             .iter()
@@ -3517,18 +3050,8 @@ impl Project {
             .collect()
     }
 
-    /// The schema a resolved ref's target names, whether it stayed inside this project or
-    /// crossed into an import: `resolved.collection` indexes this project's own collections
-    /// when `resolved.project` is `None`, and the alias's own when it is `Some` (`refs::
-    /// Resolved`'s own doc comment). `None` when the ref has no collection at all (a file
-    /// outside every collection, reachable only through `target: "*"`) or, in principle, names
-    /// an alias this project no longer resolves — it should not, since `resolved.project` only
-    /// ever holds an alias `Ctx::imports` already resolved to `ImportState::Loaded` (`refs::
-    /// resolve_into_import` returns before that point otherwise), but a lookup that fails is
-    /// read as "no schema" rather than assumed impossible. This is what makes `refs.target` and
-    /// `refs.codedByPath` reachable for a ref that crosses an import, left unreachable by
-    /// ticket 17 (checking either needs the imported project's own schema names, which needs
-    /// every import loaded first).
+    /// `None` for a target in no collection (reachable through `target: "*"`). An alias that is
+    /// not loaded also reads as no schema, though `refs::resolve_into_import` never produces one.
     fn schema_info_of(&self, resolved: &refs::Resolved) -> Option<refs::SchemaInfo<'_>> {
         let collection = resolved.collection?;
         match &resolved.project {
@@ -3548,22 +3071,14 @@ impl Project {
         }
     }
 
-    /// The whole-project context `check_entry` and `check_refs` read beside a document's own
-    /// frontmatter (`codes` and the `refs.moved` map `prescan_refs` builds), bundled into one
-    /// reference since the two always travel together from here down to `check_refs`, which
-    /// reads a document's own schema through `schema_info_of` instead of a precomputed list, so
-    /// it can read an imported project's just as well; `refs.acyclic`'s findings are returned
-    /// alongside rather than folded in, since whether they are reported depends on the scope
-    /// (see `validate`'s two callers of this).
+    /// `refs.acyclic`'s findings are returned apart: which of them are reported depends on the
+    /// scope.
     fn ref_project(&self) -> Result<(RefProject, Vec<Finding>), Error> {
         self.ref_project_inner(None)
     }
 
-    /// [`Project::ref_project`], scanning `path` from `candidate` instead of from disk (and, if
-    /// `path` is not indexed yet, as an extra document — see `prescan_refs`), for `set_collected`
-    /// and `validate_new_candidate`'s write-time `refs.acyclic` check (ticket 30, M-18): the only
-    /// two callers that ever pass a candidate, both about to write `path` and needing to know
-    /// whether that exact text, not what is on disk right now, closes a cycle.
+    /// [`Project::ref_project`], with `path` read from `candidate` instead of disk, so a write can
+    /// ask whether the text it is about to write closes a cycle.
     fn ref_project_for_candidate(
         &self,
         path: &str,
@@ -3582,10 +3097,8 @@ impl Project {
         Ok((RefProject { codes, moved }, acyclic))
     }
 
-    /// `names.shadowed`: a namespace name that is also an import alias, so `name:` and `name::`
-    /// reach different documents. A fact about the config, not about a document, so it needs no
-    /// document read and is the same in every scope that reports it (`All` and `Schemas`, the
-    /// same two `schema_findings` reaches, never `Paths`: see `check_entry`'s callers).
+    /// A fact about the config, not a document, so it is reported for `All` and `Schemas`, never
+    /// for `Paths`.
     fn shadowed_names_findings(&self, strict: bool, audit: bool) -> Vec<Finding> {
         let Some(level) = validate::effective_level(
             Level::Warn,
@@ -3614,11 +3127,6 @@ impl Project {
             .collect()
     }
 
-    /// `state.missing`: a coded collection with at least one document in a namespace in scope,
-    /// and no `last` recorded for it there (design, State). `self.state` is read once at load
-    /// (`load_inner`) and never written; `present` is `(namespace, collection)` gathered by the
-    /// caller's own document walk, so a namespace this run does not scope over never reports a
-    /// missing record for one it never looked at.
     fn state_missing_findings(
         &self,
         present: &BTreeSet<(usize, usize)>,
@@ -3654,11 +3162,6 @@ impl Project {
         findings
     }
 
-    /// Every namespace in `scope` that has a state file recorded, paired with its index into
-    /// `self.config.namespaces` (`state.behind` needs it, to look `highest` up by) and the
-    /// record itself. The three `state.*` rule methods below share exactly this walk — a
-    /// namespace outside `scope` is skipped, one with nothing recorded has nothing to check —
-    /// so it is written once here rather than three times with the same two `continue`s.
     fn state_in_scope<'a>(
         &'a self,
         scope: &'a Scope,
@@ -3676,11 +3179,8 @@ impl Project {
             })
     }
 
-    /// `state.malformed`: a coded collection's state entry has a `last` that is present but not
-    /// a usable whole number (design, State). Unlike `state.missing` and `state.behind`, this
-    /// does not read `present`: the record is wrong whether or not the collection currently has
-    /// a document in the namespace, since it is the state file's own text that is wrong, not
-    /// anything about a document (decision 13).
+    /// Reported whatever documents the namespace holds: it is the state file's own text that is
+    /// wrong (SPC-8).
     fn state_malformed_findings(&self, scope: &Scope) -> Vec<Finding> {
         let mut findings = Vec::new();
         for (_, namespace, recorded) in self.state_in_scope(scope) {
@@ -3705,13 +3205,8 @@ impl Project {
         findings
     }
 
-    /// `state.behind`, at `warn`: a coded collection's recorded `last` is a usable whole number
-    /// lower than the highest number a document of that collection actually carries in this
-    /// namespace (design, State). `highest` is gathered by the caller's own document walk, the
-    /// same one `present` comes from for `state.missing`; a `(namespace, collection)` with no
-    /// document at all has nothing in `highest`, so a `last` left behind by every document of a
-    /// collection having been deleted is not reported here — keeping that gap is decision 13's
-    /// whole point, not an oversight of this rule.
+    /// A collection with no document left in the namespace has no `highest`, so its `last` is not
+    /// reported: that gap is what keeps a retired key retired (SPC-8).
     fn state_behind_findings(
         &self,
         highest: &BTreeMap<(usize, usize), u64>,
@@ -3746,13 +3241,9 @@ impl Project {
         findings
     }
 
-    /// `state.retired`, at `warn`: a state entry names a collection this project no longer has
-    /// (design, State). `self.collections` is every collection the project's config has right
-    /// now — complete, since a `Project` that loaded at all had no collection left out of it by
-    /// a config error (`load_inner` fails first) — so a name missing from it is a collection
-    /// genuinely gone, not one merely broken elsewhere. Unlike `config.state-uncoded`, its
-    /// predecessor for this case, this is a finding, not a config error, so it stops nothing —
-    /// reads included.
+    /// A `Project` that loaded holds every configured collection, so a name missing from it is a
+    /// collection that is gone, not one broken elsewhere. A finding, not a config error, so it
+    /// stops nothing (SPC-8).
     fn state_retired_findings(&self, scope: &Scope) -> Vec<Finding> {
         let mut findings = Vec::new();
         let known: BTreeSet<&str> = self.collections.iter().map(|c| c.name.as_str()).collect();
@@ -3776,27 +3267,13 @@ impl Project {
         findings
     }
 
-    /// The whole-project pass `refs.moved` and `refs.acyclic` both need before any single
-    /// document's refs can be judged: a moved record can be recorded in a document outside the
-    /// scope of the run that reads it, and a cycle can pass through documents outside it too.
-    /// Reads every document once, distinct from the read `check_entry`'s caller already does for
-    /// the ones in scope: cheap next to a network call, and this crate makes none (contract item
-    /// 21, "no promised figure for the cost of a run").
+    /// A whole-project pass: a move can be recorded, and a cycle can pass, outside the scope of
+    /// the run that reads them. Returns the `auto: moves` map from a written ref to the current
+    /// key or path of the document that moved away from it, and one `refs.acyclic` finding per
+    /// document on a cycle, per field.
     ///
-    /// Returns the map from a written ref that no longer resolves to the current key or path of
-    /// the document that recorded moving away from it (`auto: moves`), and the `refs.acyclic`
-    /// findings of every cycle found through a field marked `acyclic` (one finding per document
-    /// on a cycle, per field, since each one's own edge is what is wrong with it).
-    ///
-    /// `candidate`, when given (ticket 30, M-18), is `(path, entry, text)` for exactly one write
-    /// in progress: `path` is scanned with `text` — the write's own candidate frontmatter —
-    /// instead of whatever is on disk for it right now, and, if `path` is not yet in `self.index`
-    /// at all (a `new` write, not yet indexed or on disk), it is scanned as an extra document on
-    /// top of the ordinary walk rather than in place of one of its entries. Every other document
-    /// is read from disk exactly as it is today: a caller with no `candidate` (every read-only
-    /// caller — `validate`, `get`, `refs`, `toc`, and so on, none of which call this at all except
-    /// `validate` through `Project::ref_project`) sees no change at all, since `candidate` is
-    /// `None` and both branches below fall back to the original behaviour byte for byte.
+    /// `candidate` is one write in progress: its `path` is scanned from its text instead of disk,
+    /// and as an extra document when it is not indexed yet.
     fn prescan_refs(
         &self,
         codes: &BTreeSet<String>,
@@ -3806,10 +3283,8 @@ impl Project {
             moved: BTreeMap::new(),
             edges: BTreeMap::new(),
         };
-        // The candidate's identity, real enough for `refs::resolve_one_for_candidate` to resolve
-        // a ref to it from any document scanned in this same pass, whether or not `path` is
-        // indexed yet — see that function's own doc comment for why a `new` candidate needs this
-        // and a `set` candidate does not (but is given it anyway, harmlessly, for one code path).
+        // Lets a ref to the candidate resolve while it is not indexed yet
+        // (`refs::resolve_one_for_candidate`).
         let phantom = candidate.map(|(path, entry, _)| refs::Candidate {
             namespace: entry.namespace,
             key: entry.key.as_deref(),
@@ -3870,18 +3345,9 @@ impl Project {
                 ));
             }
         }
-        // Not sorted here: the caller merges this into a larger set of findings and orders that
-        // once, so sorting this slice first would only be thrown away.
         Ok((moved, findings))
     }
 
-    /// One document's own contribution to `prescan_refs`'s whole-project `moved` map and
-    /// `acyclic` edge list, shared between the ordinary per-entry walk and the one extra call a
-    /// `new` candidate not yet in `self.index` needs. `phantom`, when given, is the write's own
-    /// candidate identity (see `prescan_refs`): every ref this document writes is resolved
-    /// through `refs::resolve_one_for_candidate` instead of plain `refs::resolve_one` so a ref
-    /// naming that identity resolves even though it is not indexed or on disk yet; with no
-    /// `phantom` (every read-only scan), this is `refs::resolve_one` exactly as before.
     fn prescan_one(
         &self,
         path: &str,
@@ -3943,12 +3409,9 @@ impl Project {
         }
     }
 
-    /// The path a document argument names, its place in the index, and the text of the file.
-    /// A path is looked up as it stands, relative to the project folder, whether or not it
-    /// carries a namespace prefix: a prefix only chooses scope (validated by the caller through
-    /// `Project::scope` before this runs) and does not change what the path is read against,
-    /// since the path already names the file (ticket 4). A key is resolved against the
-    /// namespaces in `scope`, since the same key can be issued once in each of several.
+    /// A path is read as it stands, relative to the project folder: a namespace prefix only
+    /// chooses scope. A key is resolved against the namespaces in `scope`, since the same key can
+    /// be issued once in each.
     fn resolve(
         &self,
         arg: &DocumentArg,
@@ -3992,9 +3455,7 @@ impl Project {
         Ok((path, entry, text))
     }
 
-    /// The path of the document `key` names, in the namespace `prefix` names or, absent that,
-    /// in every namespace of `scope`. More than one match is `Error::AmbiguousKey`; none is
-    /// `Error::NotFound`, with no `./name` hint, since a key names no place on disk.
+    /// `NotFound` carries no `./name` hint: a key names no place on disk.
     fn resolve_key(&self, prefix: Option<&str>, key: &str, scope: &Scope) -> Result<String, Error> {
         let found: Vec<(String, String)> = scope
             .namespaces
@@ -4031,9 +3492,8 @@ impl Project {
         self.config.namespaces.iter().position(|n| n.name == name)
     }
 
-    /// A path relative to the project that names nothing in the index; the message names
-    /// `./path`, relative to the current directory, when a file is there, as a suggestion and
-    /// not a substitution.
+    /// The message names `./path`, relative to the current directory, when a file is there: a
+    /// suggestion, not a substitution.
     fn not_found(&self, path: &str, env: &dyn Env) -> Error {
         let hint = env.current_dir().is_ok_and(|cwd| cwd.join(path).is_file());
         Error::NotFound {
@@ -4042,17 +3502,12 @@ impl Project {
         }
     }
 
-    /// Moves `from` to `to` within this project, rewriting every ref this project holds to it —
-    /// in frontmatter and in body links, in every namespace of the project — keeping each ref's
-    /// written form (design.md, `typdoc mv`). Neither argument may carry a `project::` prefix:
-    /// `mv` writes only in the project it is run in (decision 2).
+    /// Moves `from` to `to` within this project, rewriting every ref this project holds to it in
+    /// its written form.
     ///
-    /// Every temp file is prepared first, then the renames happen in one run, the document
-    /// itself moved last of all (decision 1): a stop or a failure partway leaves some renames
-    /// done and the rest not, and the document still where it was, so the same command run again
-    /// finds only what is left and finishes it, rediscovering nothing extra — a ref already
-    /// rewritten now resolves to the new path, not the old one, so it is not found again by the
-    /// reverse scan below.
+    /// The document itself is renamed last, so a stop partway leaves it where it was and the
+    /// same command run again finishes the work: a ref already rewritten resolves to the new path
+    /// and is not found again (SPC-2).
     pub fn mv(
         &self,
         from: &DocumentArg,
@@ -4078,15 +3533,8 @@ impl Project {
         let to_path = self.mv_destination_path(to, scope)?;
         let to_full = self.root.join(&to_path);
 
-        // Decision 12: identity before anything else. A refusal here writes nothing and needs no
-        // lock to be right about, so it is checked first; the authoritative check, under the
-        // lock, is decision 15's own (below).
-        //
-        // `same_file` (device+inode identity) is true both when `from`/`to` are the literal same
-        // path and when they are a genuine case-only rename — those are different situations for
-        // a user to understand, so string equality is checked first and gets its own message
-        // (story-4, ticket 4); the case-only wording is kept for when `same_file` is true but the
-        // paths differ as strings.
+        // Identity first: a refusal here writes nothing and needs no lock. `same_file` is also
+        // true for the same path given twice, which gets its own message (SPC-2).
         if from_path == to_path {
             return Err(Error::AlreadyExists {
                 path: to_path.clone(),
@@ -4107,10 +3555,8 @@ impl Project {
             });
         }
 
-        // Decision 16 (1): a coded collection's `match` takes `{key}` exactly once and no
-        // globs, so a coded document's path is fixed entirely by its key. The identity check
-        // above already refused the one path that key names; reaching here with a key means
-        // `to_path` genuinely differs, which `mv` (not `--renumber`) cannot do at all.
+        // A coded document's path is fixed by its key, and the one path its key names was
+        // refused above, so only `--renumber` can move it (SPC-2).
         if let Some(key) = &from_key {
             let to_namespace = mv::namespace_of(&self.config.namespaces, &to_path);
             let message = if to_namespace != Some(from_namespace) {
@@ -4136,8 +3582,7 @@ impl Project {
                 .iter()
                 .position(|member| member.template.matches_path(below))
         });
-        // Decision 16 (1), the other half: a document without a code cannot move into a coded
-        // collection, since it has no key to fill the template with.
+        // A document without a code has no key to fill a coded template with.
         if let Some(ci) = to_collection
             && self.collections[ci].schema.code.is_some()
         {
@@ -4157,9 +3602,8 @@ impl Project {
             lock_timeout,
         )?;
 
-        // Decision 15's own check: authoritative because it runs under the lock. The advisory
-        // one above only rules out "the same file"; a different file that exists is caught only
-        // here, since nothing before this point may write and so nothing needed to be sure yet.
+        // The authoritative check, under the lock; the one above rules out only the same file
+        // (SPC-10).
         if deps.fs.exists(&to_full).map_err(Error::io_at(&to_full))? {
             return Err(Error::AlreadyExists {
                 path: to_path.clone(),
@@ -4192,21 +3636,11 @@ impl Project {
     }
 
     /// `typdoc mv FROM --renumber NAMESPACE`: moves a coded document to another namespace of
-    /// this project under a new key, allocated from that namespace's state the same way `new`
-    /// allocates one. The destination is the flag's value, one positional argument in this mode
-    /// (decision 11). Built on the same machinery `mv` above is: the reverse scan
-    /// (`mv_reverse_scan`), the lock set (`mv_lock`), the per-holder rewrite
-    /// (`mv_rewrite_changes`), `mv::commit`'s own two-phase prepare-then-rename, and
-    /// `mv_result`. This function's own job is the argument shape, the allocation, and the
-    /// refusals decision 11 gives: a destination equal to the document's own namespace, and any
-    /// attempt to cross a project on either argument.
+    /// this project under a new key, allocated as `new` allocates one.
     ///
-    /// **The ordering rule decision 13 adds.** The destination namespace's state is written
-    /// before `mv::commit` runs at all, so it is written before the document appears under its
-    /// new key no matter where inside that run an interruption lands (decision 1's own promise
-    /// about `commit`). The source's state is never written: its `last` is the highest number
-    /// ever issued, not the highest that exists, and moving a document out issues nothing there
-    /// (decision 11, decision 13's "`mv --renumber` writes one state file").
+    /// The destination's state is written before `mv::commit` runs, so before the document
+    /// appears under its new key wherever an interruption lands. The source's state is never
+    /// written: moving a document out issues nothing there (SPC-2).
     pub fn mv_renumber(
         &self,
         from: &DocumentArg,
@@ -4222,10 +3656,6 @@ impl Project {
                     .to_owned(),
             ));
         }
-        // Decision 11 (4): renumbering into another project is not possible, and the shape for
-        // naming one (`project::namespace`) already exists elsewhere in the design, so a value
-        // that looks like it is refused by name rather than left to fail some other way further
-        // down.
         if namespace.contains("::") {
             return Err(Error::BadArgument(format!(
                 "`{namespace}` cannot name another project: --renumber moves a document to a \
@@ -4256,9 +3686,6 @@ impl Project {
                     .join(", ")
             )));
         };
-        // Decision 11 (2): carrying this out would retire `from_key` for good while the
-        // document never moved, so it is refused before anything is written, not carried out as
-        // a no-op that still consumes a number.
         if to_namespace == from_namespace {
             return Err(Error::BadArgument(format!(
                 "`{namespace}` is the namespace `{from_path}` is already in: renumbering into \
@@ -4284,30 +3711,25 @@ impl Project {
             .first()
             .expect("mv --renumber always locks at least the source namespace");
 
-        // The number is allocated only once the lock is held (`allocate_key`'s own doc comment
-        // says why); `state.malformed`/`state.missing` are its refusal, the same one `new` gives.
         let to_namespace_name = self.config.namespaces[to_namespace].name.clone();
         let (new_key, to_path, next) = self.allocate_key(to_namespace, from_collection)?;
         let to_full = self.root.join(&to_path);
 
-        // Decision 15's own check, the same reasoning `mv` gives it above: this key was just
-        // allocated and nothing typdoc did should be able to reach it already, but the check
-        // still runs under the lock, before anything is written, rather than being assumed.
+        // Should not be reachable, but checked under the lock before anything is written
+        // (SPC-10).
         if deps.fs.exists(&to_full).map_err(Error::io_at(&to_full))? {
             return Err(Error::AlreadyExists {
                 path: to_path.clone(),
                 message: format!(
                     "`{to_path}` already exists: the key `{new_key}` was just allocated and \
-                     should not be reachable (decision 15)"
+                     should not be reachable"
                 ),
             });
         }
 
         let (mut changes, rewritten) =
             self.mv_rewrite_changes(&rewrite_by_holder, &to_path, Some((&from_key, &new_key)))?;
-        // The value `auto: moves` records for a coded document: its previous key, with its own
-        // namespace's prefix, since a bare key alone would not say which namespace it belonged
-        // to (design, the `auto` field table: "always with its prefix", `story-2:WF-5`).
+        // With its namespace prefix: a bare key would not say which namespace issued it.
         let previous_name = format!("{}:{from_key}", self.config.namespaces[from_namespace].name);
         if let Some(change) = self.mv_document_change(
             &previous_name,
@@ -4319,12 +3741,8 @@ impl Project {
             changes.push(change);
         }
 
-        // Decision 13's own ordering rule: this write raises the destination's `last` before
-        // `mv::commit` runs at all, so it is written before the document appears under its new
-        // key no matter where inside that run an interruption lands. A number recorded here and
-        // then not used, because the run stops before `commit` finishes, is an ordinary skip
-        // (decision 1): the source's `last` never goes down, so the number this write just spent
-        // is never issued again.
+        // Before `mv::commit`: a number recorded and then not used is an ordinary skip, while a
+        // document under a number not recorded is how a number is issued twice (SPC-2).
         state::write(
             deps.fs,
             proof,
@@ -4350,11 +3768,8 @@ impl Project {
         })
     }
 
-    /// Every ref of this project that resolves to `from`, read before any lock is taken (a read
-    /// never locks): split into refs that will be rewritten, grouped by the holder that carries
-    /// them, and refs `mv`/`mv --renumber` already know they cannot touch. `field == "$body"`
-    /// distinguishes a body link from a frontmatter field of that literal name (`$` is reserved
-    /// and no schema field may use it, so the two can never collide).
+    /// Read before any lock is taken: it decides which namespaces to lock. A field named
+    /// `"$body"` is always a body link, since no schema field may start with `$`.
     fn mv_reverse_scan(
         &self,
         from: &DocumentArg,
@@ -4398,31 +3813,12 @@ impl Project {
         Ok((rewrite_by_holder, unrewritten))
     }
 
-    /// Every plain-text body mention (`links::mentions`, the same machinery `body.mentions`
-    /// checks with) of `from`'s own key, across every document of the project, each reported as
-    /// an [`UnrewrittenRef`] with [`UnrewrittenReason::Mention`] — M-22's fix: `mv`/
-    /// `mv --renumber` used to leave a plain-text mention of the moved key for a later
-    /// `validate` to discover alone, instead of surfacing it itself at move time.
+    /// A mention is never rewritten, so every mention of `from`'s key is reported (SPC-2). A
+    /// mention is always a key, so a plain `mv`, which cannot move a coded document, reads no
+    /// file here.
     ///
-    /// A mention is always key-shaped (`links::mentions`'s own doc comment: "a bare key, or one
-    /// written with a sibling or import prefix" — never a path), so this only has anything to
-    /// find when `from` itself resolves to a coded document (`from.key` is `Some`); a
-    /// path-identified document has no key for a mention to ever name, so this returns nothing
-    /// for it without reading a single file — in particular, a plain `mv` (as opposed to
-    /// `--renumber`) never reaches the loop below at all: a coded document cannot change path
-    /// under plain `mv` (refused earlier, in `mv` itself), so `mv`'s own reverse scan only ever
-    /// runs this against an uncoded `from`.
-    ///
-    /// This is a second full-project read, deliberately separate from the formal-refs reverse
-    /// scan `self.refs(..., reverse, ...)` above and from `Project::incoming_refs` (used only by
-    /// `list`'s `refby.*` filter): both of those already discard each document's raw text once
-    /// they have parsed it into fields and body links, and neither is set up to hand that text
-    /// back out for a second, unrelated pass (`links::mentions` needs the raw file text,
-    /// frontmatter included, to compute its own line/col positions). Threading raw text out of
-    /// either would reshape a method `refs --reverse`/`list` also depend on for a concern only
-    /// `mv` has; a second read, paid only when `from` actually has a key to look for (never on a
-    /// plain `mv`, only on `--renumber`, which is already the heavier of the two paths, writing
-    /// a new state file and allocating a key), is the smaller change.
+    /// A second full read of the project: the reverse scan keeps no raw text, and
+    /// `links::mentions` needs the whole file to compute positions.
     fn mv_reverse_mentions(&self, from: &RefName) -> Result<Vec<UnrewrittenRef>, Error> {
         let Some(from_key) = &from.key else {
             return Ok(Vec::new());
@@ -4440,18 +3836,14 @@ impl Project {
             );
             let inline_code = bool_option(&options, "inlineCode", true);
             let fenced_code = bool_option(&options, "fencedCode", false);
-            // A document whose frontmatter does not parse contributes nothing here, the same as
-            // it contributes no `body.*` finding to a whole-project `validate` and no ref to
-            // `refs --reverse`'s own reverse scan above (that scan's own doc comment gives the
-            // same reasoning): its own `frontmatter.parse` finding is a different rule's job.
+            // A document whose frontmatter does not parse contributes nothing, as in the reverse
+            // scan.
             let Ok(mentions) = links::mentions(&text, inline_code, fenced_code) else {
                 continue;
             };
             for mention in mentions {
-                // The same prefix-stripping `mention_missing` uses, but compared directly
-                // against `from`'s own key rather than asked whether it currently resolves:
-                // before the move, it still does, so `mention_missing` would always say
-                // "not missing" and this would never fire — the wrong question at this point.
+                // Compared with `from`'s key rather than checked for resolving: before the move
+                // it still resolves.
                 let key = mention
                     .written
                     .rsplit(':')
@@ -4477,10 +3869,7 @@ impl Project {
         Ok(found)
     }
 
-    /// The namespaces `mv`/`mv --renumber` must lock, in the order Lock order gives (decision
-    /// 3): the source's, the destination's (when it has one) and every holder's that is actually
-    /// rewritten — never a namespace touched only by an unrewritten ref, since nothing is
-    /// written there. `from_namespace` is always included, so the result is never empty.
+    /// Never a namespace touched only by an unrewritten ref: nothing is written there.
     fn mv_lock<'d>(
         &self,
         from_namespace: usize,
@@ -4514,13 +3903,6 @@ impl Project {
         Ok(locks)
     }
 
-    /// One [`ContentChange`] for every holder in `rewrite_by_holder` whose rewritten text
-    /// actually differs from what is on disk now: every ref recomputed to name `to_path`,
-    /// keeping its own written form (`rewrite_holder`); alongside it, the full list of every ref
-    /// that rewrite actually applied (ticket 21, `mv --json`'s new `rewritten`), gathered only
-    /// from a holder whose text did change — the same condition that decides whether a
-    /// [`ContentChange`] is queued for it, since `rewrite_holder` only ever changes `text` by
-    /// applying one of the refs this returns.
     fn mv_rewrite_changes(
         &self,
         rewrite_by_holder: &RewriteByHolder,
@@ -4553,12 +3935,8 @@ impl Project {
         Ok((changes, rewritten))
     }
 
-    /// `mv` and `mv_renumber`'s shared tail, once each has its own `changes` and `to_full`
-    /// ready: creates the destination's parent folder if it does not exist yet (a move into a
-    /// namespace's `elsewhere/` or into a collection's own subfolder is ordinary, and a rename
-    /// cannot create the parent it lands in), commits every change and the document's own move
-    /// (`mv::commit`'s two-phase promise), and releases every lock. `locks` is never empty:
-    /// both callers insert the source namespace into the set `mv_lock` builds unconditionally.
+    /// A rename cannot create the folder it lands in, so the destination's parent is created
+    /// first.
     fn mv_finish(
         &self,
         deps: &Deps,
@@ -4593,10 +3971,8 @@ impl Project {
         Ok(())
     }
 
-    /// The destination `to` names, as a project-relative path: `to`'s own path when it is a
-    /// path, or the path a key already names (which then trips decision 15's "already exists"
-    /// refusal downstream) when it is a key — `mv`'s destination is a place to put a document,
-    /// and a key is never invented for one that does not exist yet.
+    /// A key names the path it already has, which is then refused as existing: `mv` never
+    /// invents a key for its destination.
     fn mv_destination_path(&self, to: &DocumentArg, scope: &Scope) -> Result<String, Error> {
         match to {
             DocumentArg::Path { path, .. } => Ok(path.clone()),
@@ -4606,16 +3982,8 @@ impl Project {
         }
     }
 
-    /// One holder's file, rewritten: every ref in `refs` recomputed to name `new_target`,
-    /// keeping its own written form (`mv::rewritten_path_ref`), applied to a frontmatter field
-    /// through the writer and to a body link by splicing the one line it sits on. Returns `text`
-    /// unchanged when `refs` is empty, so a caller can compare before and after to know whether
-    /// anything actually needs preparing, alongside one [`RewrittenRef`] per ref this actually
-    /// applied (ticket 21) — never one for a ref this function defensively left alone (a body
-    /// link whose position or line no longer matches what was expected), since that ref did not
-    /// in fact get rewritten. `key_rewrite` is `Some((old_key, new_key))` only from `mv
-    /// --renumber`, and is passed straight through to `mv::rewritten_path_ref`, the one place
-    /// that reads it.
+    /// A [`RewrittenRef`] is returned only for a ref actually rewritten, never for a body link
+    /// left alone because its line no longer matches.
     fn rewrite_holder(
         &self,
         holder_path: &str,
@@ -4665,9 +4033,8 @@ impl Project {
                     &reference.written,
                     &new_written,
                 ) else {
-                    // Defensive: leave this one line untouched rather than guess at a shape
-                    // this function did not expect (`mv::splice_body_destination`'s own doc
-                    // comment names the one construction this does not cover).
+                    // Leave the line untouched rather than guess at a shape
+                    // `mv::splice_body_destination` does not cover.
                     continue;
                 };
                 body.replace_range(line_start..line_end, &new_line);
@@ -4690,17 +4057,13 @@ impl Project {
         }
 
         if !frontmatter_touched && !body_touched {
-            // `rewritten` is empty here: every push above happens in the same iteration that
-            // sets one of these two flags, so neither being set means nothing was pushed.
             return Ok((text.to_owned(), rewritten));
         }
         if !frontmatter_touched {
             return Ok((body, rewritten));
         }
         let new_block = writer.finish().map_err(bad)?;
-        // The body may have been spliced above; re-split it fresh (frontmatter edits never move
-        // where the body begins, since they replace the block in place) so the reassembly uses
-        // whichever of the two changed.
+        // Split again: the body may have been spliced above.
         let body_split = frontmatter::split(&body).map_err(bad)?;
         Ok((
             assemble_frontmatter(split.block.is_some(), &new_block, &body[body_split.body..]),
@@ -4708,18 +4071,8 @@ impl Project {
         ))
     }
 
-    /// The moved document's own file, unchanged except for a field with `auto: moves` on the
-    /// destination's schema, which gains the document's previous name (design.md, `typdoc mv`:
-    /// "the previous key or path is appended to it on every move"; the `auto` field table:
-    /// "always with its prefix", `story-2:WF-5` for a coded document's key, `notes/old-name.md`
-    /// for a path). `previous_name` is that literal text: `mv` passes the bare project-relative
-    /// path a document without a code is identified by; `mv_renumber` passes the source
-    /// namespace's name and the key it issued, since a bare key alone would not say which
-    /// namespace it belonged to. `None` when there is no such field, or the field already ends
-    /// with `previous_name` — a re-run after a stop between this in-place update and the
-    /// document's own final rename (below) must not append it twice, and this is the only place
-    /// a re-run can tell the two apart, since the update happens under the source's own, unmoved
-    /// path.
+    /// `None` also when the `auto: moves` field already ends with `previous_name`: a re-run after
+    /// a stop between this update and the document's own rename must not append it twice.
     fn mv_document_change(
         &self,
         previous_name: &str,
@@ -4742,10 +4095,8 @@ impl Project {
             file: from_file.to_owned(),
             message,
         };
-        // Read with the source's own schema, the one `from_text` is actually written against
-        // (`auto: moves`'s field may not even exist there, when the move changes collection —
-        // `YamlSerdeWriter::append_item` below adds it either way, per its own documented rule
-        // for a field the writer starts from that does not exist yet).
+        // Read with the source's schema, the one `from_text` is written against, which may not
+        // have the `auto: moves` field; `append_item` adds it either way.
         let block = frontmatter::block(from_text).map_err(bad)?;
         let fields = match block {
             Some(b) => {
@@ -4777,11 +4128,8 @@ impl Project {
         }))
     }
 
-    /// The result `mv` reports: the document under its new name, read fresh from `to_full` after
-    /// the move, and, when it landed in a collection, what that collection's schema rejects
-    /// (decision 16: carried out and reported, never refused). A document that left every
-    /// collection has no schema to report against, and its `fields` are read as written, with no
-    /// type coercion, the same as an unknown field's value already is elsewhere.
+    /// What the destination's schema rejects is reported, never refused (SPC-2). A document that
+    /// left every collection has no schema, so its fields are read uncoerced.
     fn mv_result(
         &self,
         to_path: &str,
@@ -4810,12 +4158,7 @@ impl Project {
                 let namespace_idx =
                     to_namespace.expect("to_collection is Some only when to_namespace is");
                 let namespace_name = self.config.namespaces[namespace_idx].name.clone();
-                // The inverse of `new_coded`'s own `template.render(&key)`: a coded collection's
-                // template has exactly one `{key}`, so this is `Some` for a coded destination
-                // (`--renumber`'s own case, decision 17: "`--renumber` reports the key it issued
-                // in the field every other shape carries a key in") and `None` for an uncoded
-                // one, which is what plain `mv` always lands on here, since it refuses a document
-                // without a code moving into a coded collection before this is ever reached.
+                // `Some` only for a coded destination, which only `--renumber` reaches.
                 let below =
                     strip_namespace_folder(to_path, &self.config.namespaces[namespace_idx].folder);
                 let key = self.members[ci].template.key(&below);
@@ -4872,8 +4215,6 @@ impl Project {
     }
 }
 
-/// `path` with `folder/` stripped from the front, when `folder` is not empty; `path` unchanged
-/// otherwise (`default`'s folder is empty, and it already covers the whole project).
 fn strip_namespace_folder(path: &str, folder: &str) -> String {
     if folder.is_empty() {
         return path.to_owned();
@@ -4884,12 +4225,7 @@ fn strip_namespace_folder(path: &str, folder: &str) -> String {
         .to_owned()
 }
 
-/// The frontmatter block `finish` produced, fenced, followed by `body` exactly as it stands
-/// (already spliced, when a body link changed): `has_block` chooses whether an empty block still
-/// gets fences (a document that had one keeps having one, even if every field left it empty) or
-/// none at all (a document with no block is not given one just because a ref inside a field it
-/// never had needed rewriting — which cannot happen, since a field with no block has no fields to
-/// rewrite in the first place, but the two are kept independent rather than assumed to agree).
+/// A document that had a block keeps one, even an empty one, and one without is not given one.
 fn assemble_frontmatter(has_block: bool, new_block: &str, body: &str) -> String {
     if !has_block {
         return body.to_owned();
@@ -4897,10 +4233,8 @@ fn assemble_frontmatter(has_block: bool, new_block: &str, body: &str) -> String 
     format!("---\n{new_block}---\n{body}")
 }
 
-/// Brings the directory holding a lock file to its canonical form before it is taken (decision
-/// 3: "the directory is created before the first lock is taken... what is canonicalized is the
-/// directory that holds the lock file, with the file's name joined to it"), so two spellings of
-/// one namespace's lock directory sort as one lock rather than two.
+/// Two spellings of one lock file must sort as one lock. The file may not exist yet and cannot
+/// be canonicalized, so its directory is created and canonicalized instead (SPC-10).
 fn canonical_lock_path(fs: &dyn Fs, path: PathBuf) -> Result<PathBuf, Error> {
     let dir = path.parent().map(Path::to_owned).unwrap_or_default();
     fs.create_dir_all(&dir).map_err(Error::io_at(&dir))?;
@@ -4909,10 +4243,8 @@ fn canonical_lock_path(fs: &dyn Fs, path: PathBuf) -> Result<PathBuf, Error> {
     Ok(canonical_dir.join(name))
 }
 
-/// One `set` argument, once its shape is known (`typdoc set <key|path> k=v [k=v ...]`): `k=v`
-/// sets `field` to the text `raw` (comma-split into a list by `apply_ops` once the field's
-/// type, if any, is known), and `k=` (nothing after the `=`) removes `field` entirely (design,
-/// `typdoc set`: "`k=` removes a field").
+/// One `set` argument: `k=v` sets `field` to `raw`, split into a list once the field's type is
+/// known, and `k=` removes `field`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SetOp {
     Set { field: String, raw: String },
@@ -4927,30 +4259,20 @@ impl SetOp {
     }
 }
 
-/// `typdoc new`'s one argument, once its shape is known: the code of a coded schema plus the
-/// title to give the document (`typdoc new <CODE> "<title>"`), or the path of an uncoded one
-/// (`typdoc new <path>`). The CLI layer tells the two apart by shape (a code, or a path ending
-/// in `.md`), the same way every argument that could be either always is in this design.
+/// `typdoc new`'s argument: a code with a title, or the path of an uncoded document.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NewTarget {
     Coded { code: String, title: String },
     Path { path: String },
 }
 
-/// A schema field's `default`, ready for [`FrontmatterWriter::set_scalar`]/
-/// [`FrontmatterWriter::set_list`] (design, Field options: "`default` | all | Filled in by
-/// `typdoc new`").
 enum DefaultValue {
     Scalar(String),
     List(Vec<String>),
 }
 
-/// `field`'s own `default`, as text or as a list of text. `None` when the field has none. A JSON
-/// array becomes a list of its items' own text; anything else becomes one scalar's text — the
-/// two shapes the design's own examples use (`"default": "open"`, `"default": []"`), and a
-/// mismatch with the field's own type (a `list` field given a scalar default, say) is left for
-/// `frontmatter.types` to report once the block is read back, the same as any other value a
-/// write puts somewhere its type does not fit.
+/// A default that does not fit the field's type is left for `frontmatter.types` to report once
+/// the block is read back (SPC-15).
 fn schema_default(field: &Field) -> Option<DefaultValue> {
     match field.default.as_ref()? {
         serde_json::Value::Array(items) => Some(DefaultValue::List(
@@ -4960,11 +4282,8 @@ fn schema_default(field: &Field) -> Option<DefaultValue> {
     }
 }
 
-/// A JSON scalar's own text, the way a frontmatter value would be written by hand: a string as
-/// itself, a number or a bool as its JSON text. An object, a nested array or `null` has no
-/// scalar text of its own and is read as empty, which a schema that declares one is a schema
-/// error `frontmatter.types` reports once the field is read back, not something this function
-/// decides.
+/// An object, a nested array or `null` reads as empty, and `frontmatter.types` reports it once
+/// the field is read back.
 fn json_scalar_text(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::String(text) => text.clone(),
@@ -4973,17 +4292,8 @@ fn json_scalar_text(value: &serde_json::Value) -> String {
     }
 }
 
-/// The frontmatter block `new` writes for a brand new document: every field's own `default`
-/// (`schema_default`), then every `auto: create`/`auto: update` field stamped with `now` (design,
-/// Field options: "`create`: set by `new`... `update`: set by `new` and by every `set` that
-/// changes a value"), then `sets` applied last through `apply_ops`, so an explicit `--set k=v` —
-/// or, for a coded schema, the `title` `new_coded` puts at the front of its own `sets` — overrides
-/// whichever of the first two wrote there, the same "last write wins" grammar `apply_ops` already
-/// gives `set`. A field the schema does not name is untouched by the first two passes, which walk
-/// only `schema.fields()`, so it reaches the block only when `sets` names it, at the end, the
-/// same as `set` already keeps an unknown field. `file` is only for a `writer.finish()` failure's
-/// `Error::Frontmatter`; `apply_ops`'s own error (a malformed `--set` escape, ticket 31/M-19)
-/// propagates as-is, already the right shape (`Error::BadArgument`).
+/// `sets` are applied last, so an explicit `--set`, and a coded `new`'s title, win over a
+/// default or an `auto` stamp (SPC-15).
 fn new_block(schema: &Resolved, sets: &[SetOp], now: &str, file: &Path) -> Result<String, Error> {
     let mut writer = YamlSerdeWriter::new(Vec::new());
     for (field_name, field) in schema.fields() {
@@ -5005,21 +4315,7 @@ fn new_block(schema: &Resolved, sets: &[SetOp], now: &str, file: &Path) -> Resul
     })
 }
 
-/// The findings of every one of `sets` that names a field the schema marks `auto` directly: `new`
-/// refuses this the same way `set` does (design, `typdoc set`: "Writing an `auto` field directly
-/// is a validation error"), reused here since `new`'s own `--set` shares `set`'s grammar (ticket
-/// 10's own report: "`new`'s `--set k=v` can reuse them directly if its grammar matches, which
-/// the design suggests it does").
-///
-/// **Every offending field is reported, not only the first**, which is where this reaches past
-/// `set_collected`'s own inline version of the same rule: that loop returns on the first `auto`
-/// field it meets, so `set a=1 b=2` with both `auto` names only `a`. This one does not stop
-/// early, on purpose — it is the same choice `evaluate_plain_ifs` and
-/// `validate::check_document` already make for their own findings ("every problem is reported,
-/// not only the first"), and a caller that gave two bad fields in one `--set` list learns about
-/// both from one run rather than fixing one and being told about the other on a second try.
-/// `set_collected`'s own check is not changed to match: it already ships and is tested to stop
-/// at the first, and this ticket's scope is `new`, not revisiting `set`'s.
+/// Every offending field is reported, while `set_collected`'s own check stops at the first.
 fn check_auto_direct(schema: &Resolved, sets: &[SetOp], name: &DocName) -> Vec<Finding> {
     sets.iter()
         .filter_map(|op| {
@@ -5039,11 +4335,6 @@ fn check_auto_direct(schema: &Resolved, sets: &[SetOp], name: &DocName) -> Vec<F
         .collect()
 }
 
-/// The tail both forms of `new` share once validation has passed: create the document, and turn
-/// a destination that is already there into [`Error::AlreadyExists`] with `message` rather than
-/// the bare `io::Error` `create_exclusively` returns (decision 15) — the one difference between
-/// the two forms at this last step is what `message` says, since a coded form's collision names
-/// the key it had just allocated and a path form's names the path the caller gave.
 fn create_document_or_exists(
     deps: &Deps,
     lock: &NamespaceLock,
@@ -5066,17 +4357,12 @@ fn create_document_or_exists(
     })
 }
 
-/// Where `set`'s document lives, once `Project::resolve_write_target` has looked: matched by a
-/// collection, with a schema to validate against, or reachable only by its path, with none.
+/// `Loose` is a file matched by no collection, with no schema to validate against.
 enum WriteTarget {
     Collected { path: String },
     Loose { path: String },
 }
 
-/// The fields of `block` (or none, when there was no block at all), read against `schema`,
-/// wrapping the read's error in `Error::Frontmatter` the way every read in this module already
-/// does: a block a write is about to rewrite that cannot even be read is refused before
-/// anything changes, the same guard `Project::get` already gives a read.
 fn read_fields(
     block: Option<&str>,
     schema: &Resolved,
@@ -5091,16 +4377,9 @@ fn read_fields(
     }
 }
 
-/// Applies every `set`/`k=` operation to `writer`, deciding list-vs-scalar from `schema` once,
-/// here, since neither `SetOp` nor the CLI layer that parses `k=v` knows a field's type: a list
-/// or `ref[]` field replaces its whole value from a comma-separated `raw` (design, `typdoc new`:
-/// "Array values are comma-separated" — the same convention `set` reads a value by), and every
-/// other field, known or not, is set as the scalar text it was given, which is only later found
-/// not to fit its type, by `frontmatter.types`, if it does not. A field the schema does not name
-/// is always a scalar, since there is no type to say a comma should split it. Fallible (ticket
-/// 31/M-19): `raw` is read for `\*`/`\,`/`\\` escapes and a bare `*` here, once the list-vs-
-/// scalar decision is known, rather than at CLI-parse time in `parse_set_op`, where the field's
-/// schema is not yet resolved.
+/// List or scalar is decided here, from `schema`: neither `SetOp` nor the CLI knows a field's
+/// type. A field the schema does not name is a scalar. Escapes are read here too, since how a
+/// value is split depends on that decision (SPC-13).
 fn apply_ops(writer: &mut YamlSerdeWriter, sets: &[SetOp], schema: &Resolved) -> Result<(), Error> {
     for op in sets {
         match op {
@@ -5128,16 +4407,7 @@ fn apply_ops(writer: &mut YamlSerdeWriter, sets: &[SetOp], schema: &Resolved) ->
     Ok(())
 }
 
-/// The escape-scanning half of `apply_ops` (ticket 31/M-19, design §Query as applied to `set`):
-/// walks `raw` once, char by char, unescaping `\*`, `\,` and `\\` to their literal character;
-/// any other `\x` is an error, as is a value ending in a lone `\`. Unlike `query.rs`'s
-/// `parse_value` (the reference this mirrors for `--where`/`--if`), a bare unescaped `*` is
-/// always an error here — `set` has no wildcard concept, so there is no glob split to fall back
-/// to. When `split_on_comma` is true (a list/`ref[]` field), an unescaped `,` starts a new item;
-/// otherwise (a scalar field, nothing to split into) it is just a literal comma and the whole
-/// value comes back as the single item. An empty `raw` is never passed in by `apply_ops` (an
-/// empty `--set` value parses as `SetOp::Remove`, not `SetOp::Set`), but is handled here too:
-/// it comes back as a single empty item for a scalar, or no items at all for a list.
+/// Unlike a `--where` value, a bare `*` is always an error: `set` has no glob (SPC-13).
 fn unescape_set_value(raw: &str, split_on_comma: bool) -> Result<Vec<String>, Error> {
     if raw.is_empty() {
         return Ok(if split_on_comma {
@@ -5180,11 +4450,7 @@ fn unescape_set_value(raw: &str, split_on_comma: bool) -> Result<Vec<String>, Er
     Ok(items)
 }
 
-/// Whether any field's value differs between `before` and `after`, by the typed [`Value`] each
-/// holds and not by its text — the value promise ticket 5/decision 20 already gives a round
-/// trip, reused here for `auto: update`'s own condition (design, `typdoc set`: "when at least
-/// one value changes, `auto: update` fields are set"). A field only one side has counts as
-/// changed too: added by a `k=v` that named a new field, or removed by a `k=`.
+/// Compared by typed value, not by text (SPC-4). A field only one side has counts as changed.
 fn fields_changed(before: &[(String, Value)], after: &[(String, Value)]) -> bool {
     fields_map(before) != fields_map(after)
 }
@@ -5196,18 +4462,12 @@ fn fields_map(fields: &[(String, Value)]) -> BTreeMap<&str, &Value> {
         .collect()
 }
 
-/// The full file text a write produces: the fences around `block_text` (already ending in its
-/// own newline, or empty for no fields, matching what `frontmatter::split` reads back out of an
-/// existing block) and `body`, the bytes from the close of the original block onward, untouched
-/// (project rule 3: "Writes touch only the frontmatter block").
+/// `body` is kept byte for byte: a write touches only the frontmatter block.
 fn splice(block_text: &str, body: &str) -> String {
     format!("---\n{block_text}---\n{body}")
 }
 
-/// Evaluates every plain `--if` condition against `doc` (a `ref.*`/`refby.*` condition is
-/// refused earlier, by the caller, before this ever runs), returning one finding per condition
-/// that is false — every one, not only the first, the same "every problem is reported" choice
-/// `ConfigErrors` already makes — so `set --if a=1 --if b=2` with both false names both.
+/// Every false condition is reported, not only the first.
 fn evaluate_plain_ifs(
     ifs: &[(String, Condition)],
     schema: &Resolved,
@@ -5238,10 +4498,8 @@ fn evaluate_plain_ifs(
     Ok(false_conditions)
 }
 
-/// `--if`'s own open limit: a `ref.*`/`refby.*` condition needs the whole-project reverse-ref
-/// machinery `Project::list` builds for `--where`, which is out of proportion for deciding one
-/// compare-and-set before one write. Refused plainly (bad arguments) rather than evaluated
-/// wrongly.
+/// A `ref.*`/`refby.*` `--if` would need the whole-project reverse scan for one compare-and-set,
+/// so it is refused rather than evaluated wrongly.
 fn refby_if_unsupported(raw: &str) -> Error {
     Error::BadArgument(format!(
         "`--if {raw}` is a ref.*/refby.* condition, which `--if` does not support yet: only a \
@@ -5249,26 +4507,15 @@ fn refby_if_unsupported(raw: &str) -> Error {
     ))
 }
 
-/// The fields of a document already read, or `None` when its block cannot be parsed: the ref
-/// rules read no document `frontmatter.parse` has already refused (design: "no other rule is
-/// evaluated for that file"), and this is the one place that reads a block a second time to get
-/// them, since `validate::check_document` does not hand its own parse back out.
+/// `None` when the block cannot be parsed. Parses a second time, since
+/// `validate::check_document` does not return its own parse.
 fn parsed_fields(text: &str, schema: &Resolved) -> Option<Vec<(String, Value)>> {
     let block = frontmatter::block(text).ok()??;
     frontmatter::fields(block, schema).ok()
 }
 
-/// `list`'s per-document half of the scope-wide field check `Project::list` owns: a condition
-/// whose field is unknown to `schema` in scope (checked before this ever runs) reaches this only
-/// because *some other* schema in scope defines it, so `doc` is simply absent that field — never
-/// `query::evaluate`'s `UnknownField`, which would misreport a document whose own schema lacks a
-/// field the scope otherwise knows. Absence resolves by the op alone, exactly as the design's
-/// Absence and negation paragraph gives it for a missing field: `!=` is satisfied, `=` in any
-/// form and every ordering comparison fail. A pseudo-field is never unknown to a schema (it
-/// applies, or does not, independently of one), so it always reaches `evaluate` below. Also the
-/// inner condition of a `ref.*`/`refby.*` reached at a real document (ticket 15): the scope check
-/// for that inner condition is `check_ref_condition_scope`'s job, not this one's, exactly as the
-/// outer, plain-condition scope check is `Project::list`'s and not this function's.
+/// A field `schema` lacks is known to another schema in scope, which the caller has checked, so
+/// here it is absent, never `query::evaluate`'s `UnknownField` (SPC-13).
 fn condition_matches(
     condition: &PlainCondition,
     schema: &Resolved,
@@ -5282,12 +4529,6 @@ fn condition_matches(
     query::evaluate(condition, schema, doc).map_err(|e| Error::BadArgument(e.to_string()))
 }
 
-/// The design's table for `ref.*`/`refby.*`: `all` true when every item is, and true on an empty
-/// set ("true when empty"); `any` true when some item is, and false on an empty set ("false when
-/// empty"); `none` true when no item is, and true on an empty set ("true when empty"). One
-/// function for both "does this arrow satisfy the inner condition" (`Some(inner)`, one bool per
-/// arrow) and "does an arrow merely exist" (`inner: None`, a `true` per arrow already baked into
-/// `items` by the caller), since the quantifier's own meaning does not change between them.
 fn combine_quant(quant: Quant, items: impl Iterator<Item = bool>) -> bool {
     let mut items = items;
     match quant {
@@ -5297,23 +4538,17 @@ fn combine_quant(quant: Quant, items: impl Iterator<Item = bool>) -> bool {
     }
 }
 
-/// A sort key's value, comparable independently of type: `Missing` is greater than every other
-/// variant so it sorts last however the comparison is later reversed for `:desc` (Sorting under
-/// `list`, "Missing value | Last, in both directions"). Two fields of the same name whose schemas
-/// disagree on type compare as `Equal` (falling through to the next sort key, or to key/path
-/// order): the design gives sorting rules per declared type and says nothing about two schemas
-/// giving one field name different types, so this is read as a tie rather than an arbitrary
-/// cross-type order.
+/// Two fields of one name whose schemas give them different types compare as equal: no rule
+/// orders one type against another (SPC-2).
 enum SortValue {
     Missing,
     Number(f64),
     Bool(bool),
     Date(NaiveDate),
     Datetime(DateTime<FixedOffset>),
-    /// Position in the schema's own `values`, for an `enum` field.
     EnumPos(usize),
-    /// A `key`: the part before the trailing digits, and the digits read as a number, so `WF-2`
-    /// sorts before `WF-10` (Sorting under `list`).
+    /// The part before the trailing digits, and the digits as a number, so `WF-2` sorts before
+    /// `WF-10`.
     Key(String, Option<u64>),
     Text(String),
 }
@@ -5347,24 +4582,10 @@ fn cmp_key_number(a: Option<u64>, b: Option<u64>) -> Ordering {
     }
 }
 
-/// `key.field`'s value on `doc`, read under `doc`'s own schema, as a `SortValue`: a pseudo-field
-/// other than `key` is always present and sorts as `Text`; `key` and a named field read as
-/// `Missing` when `doc` does not carry one. A named field's declared type picks the variant
-/// (Sorting under `list`); a value that does not fit it (kept as written, `coerce` already
-/// returning `None` for it) sorts as `Missing`, the same as a genuinely absent field, since there
-/// is no typed value to compare.
+/// A value that does not fit its declared type sorts as `Missing`.
 ///
-/// **A field name no schema in scope declares is not checked here, on purpose.** The design's
-/// Names and scope paragraph ties its "unknown to every schema is an error" rule to "a plain
-/// condition" — a `--where`/`--if` expression, the seam ticket 13 built and `Project::list`
-/// checks scope-wide before evaluating any document (see `list`'s own doc comment). Sorting has
-/// its own paragraph and its own table, and neither states a validation rule: a name no schema
-/// declares simply means `doc.fields` never has it, so every document reads `Missing` here and
-/// the sort falls through to the next key, or to key/path order. This differs from `--where` in
-/// what a mistake costs: an unrecognised `--where` field could silently change which documents
-/// match (or look like an empty result); an unrecognised `--sort` field changes nothing about
-/// `total`, `truncated` or which documents are returned, only their order, so there is no result
-/// that reads as more complete or more correct than it is.
+/// A field no schema in scope declares is not an error here, unlike in `--where`: an unknown
+/// `--sort` field changes only the order, never which documents are returned (SPC-2).
 fn sort_value(field: &FieldRef, schema: &Resolved, doc: &Document) -> SortValue {
     match field {
         FieldRef::Path => SortValue::Text(doc.path.clone()),
@@ -5439,10 +4660,8 @@ fn named_sort_value(field: &Field, value: &Value) -> SortValue {
                 .map_or(SortValue::Missing, SortValue::EnumPos),
             _ => SortValue::Missing,
         },
-        // `list`, `ref` and `ref[]` have no rule of their own in the Sorting table; read as
-        // plain text of the value as written, the same bucket as `string`, since the design
-        // never singles them out and a fallback that always ties would make `--sort` on such a
-        // field indistinguishable from not sorting at all.
+        // `list`, `ref` and `ref[]` have no sort rule of their own and sort as the text written:
+        // a fallback that always ties would make `--sort` on them do nothing.
         _ => match value {
             Value::Text(text) => SortValue::Text(text.clone()),
             Value::Empty => SortValue::Text(String::new()),
@@ -5452,10 +4671,7 @@ fn named_sort_value(field: &Field, value: &Value) -> SortValue {
     }
 }
 
-/// One `--sort` key's contribution to the order of `a` (under `schema_a`) against `b` (under
-/// `schema_b`): `Missing` always sorts last, in front of and unaffected by `:desc`, and only a
-/// comparison of two present values is reversed for it (Sorting under `list`, "Missing value |
-/// Last, in both directions").
+/// `Missing` sorts last whether or not `:desc` reverses the rest (SPC-2).
 fn sort_compare(
     key: &SortKey,
     schema_a: &Resolved,
@@ -5479,10 +4695,8 @@ fn sort_compare(
     }
 }
 
-/// The tiebreak every `list` result falls back to, `--sort` given or not: key order (by code,
-/// then numerically) for a coded document, path order otherwise. A document with a key compared
-/// against one without falls back to comparing the key's text against the path's text, since the
-/// design gives no rule for that mix and it is rare enough that any total order is defensible.
+/// A key against a path compares as text: no rule orders that mix, and any total order will
+/// do.
 fn compare_identity(a: &Document, b: &Document) -> Ordering {
     match (&a.key, &b.key) {
         (Some(ka), Some(kb)) => key_sort_value(ka).cmp_same_type(&key_sort_value(kb)),
@@ -5492,15 +4706,8 @@ fn compare_identity(a: &Document, b: &Document) -> Ordering {
     }
 }
 
-/// The fields and body links of a document already read, for `refs --reverse`'s scan of every
-/// other document of the project: `None` exactly when `frontmatter.parse` would fire for it (an
-/// unclosed block, or a block that is not valid YAML), so such a document contributes nothing to
-/// the reverse index, the same as it contributes no finding to `validate` (design: "no other
-/// rule is evaluated for that file"). Unlike `parsed_fields` above (used where a caller already
-/// knows `frontmatter.parse` did not fire, so its own collapsing of "no block" and "broken
-/// block" into one `None` is safe), this tells a file with no block at all — a legitimate,
-/// ref-less document — apart from one that is broken, since only the latter should also skip the
-/// body scan below.
+/// `None` only for a block that cannot be parsed. Unlike `parsed_fields`, a document with no
+/// block still has its body links read.
 fn parsed_fields_and_body(
     text: &str,
     schema: &Resolved,
@@ -5520,25 +4727,18 @@ fn parsed_fields_and_body(
     Some((fields, body))
 }
 
-/// The written ref or refs a field's already-typed value holds: one for `ref`, each item of the
-/// list for `ref[]`. Called only once `coerce::fits` has shown the value matches the field's
-/// kind, so the other variants of `Value` never reach here.
+/// Called only once `coerce::fits` has shown the value fits a `ref` or `ref[]` field.
 fn ref_values(value: &Value) -> Vec<&str> {
     match value {
         Value::Text(text) => vec![text.as_str()],
-        // Empty text either way, so a `ref` written with no value is one ref of no text, the
-        // same as `field: ''` already is (`coerce::fits` treats the two alike).
+        // A `ref` written with no value is one ref of no text, as `field: ''` is.
         Value::Empty => vec![""],
         Value::List(items) => items.iter().map(String::as_str).collect(),
         Value::Number(_) | Value::Bool(_) | Value::Date(_) | Value::Datetime(_) => Vec::new(),
     }
 }
 
-/// The message for a ref that does not resolve under `refs.resolve`, naming why. A reason of
-/// `ImportAbsent` never reaches this: `check_refs` reports it under `imports.absent` instead,
-/// before `unresolved_ref_finding` would call `reason_message` (see `Project::
-/// imports_absent_level`); the arm stays here so the match is exhaustive and correct if a future
-/// caller ever reaches it.
+/// `ImportAbsent` never reaches this: it is reported under `imports.absent` instead.
 fn reason_message(written: &str, reason: &refs::Reason) -> String {
     match reason {
         refs::Reason::NotFound => format!("the ref `{written}` does not resolve: not found"),
@@ -5554,7 +4754,6 @@ fn reason_message(written: &str, reason: &refs::Reason) -> String {
     }
 }
 
-/// `refs::Reason` under the design's own `unresolved` ids.
 fn reason_id(reason: &refs::Reason) -> &'static str {
     match reason {
         refs::Reason::NotFound => "not-found",
@@ -5563,8 +4762,6 @@ fn reason_id(reason: &refs::Reason) -> &'static str {
     }
 }
 
-/// `refs`'s `--field` filter, kept for `"$body"` on a body link and for a named field on a
-/// frontmatter ref alike: `None` keeps everything.
 fn filtered(refs: Vec<RefsReference>, field: Option<&str>) -> Vec<RefsReference> {
     match field {
         Some(field) => refs.into_iter().filter(|r| r.field == field).collect(),
@@ -5572,9 +4769,6 @@ fn filtered(refs: Vec<RefsReference>, field: Option<&str>) -> Vec<RefsReference>
     }
 }
 
-/// `body.links`' message for a destination that does not resolve, matching the design's own
-/// example (`"link target missing: ../x.md"`); a definition's finding also carries how many
-/// places used it (`uses` is `Some` only there), since it is checked once regardless of use.
 fn missing_target_message(written: &str, uses: Option<usize>) -> String {
     match uses {
         None => format!("link target missing: {written}"),
@@ -5583,12 +4777,8 @@ fn missing_target_message(written: &str, uses: Option<usize>) -> String {
     }
 }
 
-/// A rule's own options, `global`'s then `collection`'s merged key by key: design line 618, "A
-/// collection file merges key by key, so it states only what differs," read as holding inside
-/// one rule's own setting and not only for which rule names a collection's `validation` states —
-/// a collection that overrides only `level` keeps every option the global setting gave the same
-/// rule, and an option a collection does state replaces only that option, never the whole set.
-/// `level` itself already merges this way (`effective_level`); this is the same rule for options.
+/// Merged option by option, as `level` is: a collection that overrides only `level` keeps every
+/// option the global setting gave the rule (SPC-1).
 fn rule_options(
     rule: &str,
     global: &Rules,
@@ -5615,10 +4805,7 @@ fn bool_option(
         .unwrap_or(default)
 }
 
-/// `body.links`' `ignore` option: globs of relative targets to skip, matched after
-/// percent-decoding (design's `body.links` row). A value that is not a string, or missing
-/// entirely, contributes nothing, since `config.rule-unknown` already refuses any other shape for
-/// the option when the config loads.
+/// Any other shape of the option is refused as `config.rule-unknown` when the config loads.
 fn ignore_globs(options: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
     options
         .get("ignore")
@@ -5632,10 +4819,7 @@ fn ignore_globs(options: &serde_json::Map<String, serde_json::Value>) -> Vec<Str
         .unwrap_or_default()
 }
 
-/// Whether `path` (relative to the project folder) matches an `ignore` glob such as
-/// `assets/**`: the same template syntax `match` already reads (`Template::parse`), so `**`
-/// stands for any number of whole path segments and `*` for any run of characters within one,
-/// rather than a second glob syntax with its own rules.
+/// An `ignore` glob uses the `match` template syntax, not a second glob syntax of its own.
 fn ignore_matches(pattern: &Template, path: &str) -> bool {
     fn go(steps: &[Step], parts: &[&str]) -> bool {
         match steps.split_first() {
@@ -5651,8 +4835,6 @@ fn ignore_matches(pattern: &Template, path: &str) -> bool {
     go(pattern.steps(), &parts)
 }
 
-/// The message a `collections.overlap` finding and a refused direct read of the same path share:
-/// which collections matched it.
 fn overlap_message(collections: &[String]) -> String {
     format!(
         "this file is matched by more than one collection: `{}`",
@@ -5660,8 +4842,6 @@ fn overlap_message(collections: &[String]) -> String {
     )
 }
 
-/// The text an ambiguous or missing key is reported by: the prefix the argument gave, if any,
-/// put back in front of it.
 fn printed_key(prefix: Option<&str>, key: &str) -> String {
     match prefix {
         Some(namespace) => format!("{namespace}:{key}"),
@@ -5669,18 +4849,8 @@ fn printed_key(prefix: Option<&str>, key: &str) -> String {
     }
 }
 
-/// Refuses a `--namespace`/`TYPDOC_NAMESPACE` value that named an import, for any `validate` run
-/// — the whole-project scan, `--schemas`, and named arguments alike: none of the three ever
-/// reads an import (a named argument is resolved by path or key against `self.resolve`, which
-/// reads only `self.index`, regardless of `scope`; the whole-project scan reads `self.index.
-/// iter()`; `--schemas` reads only findings gathered at load), so silently accepting the scope
-/// would report on nothing named, in a shape (a report with `documents: 0`, an empty `paths`
-/// entry, or a clean `findings: []`) that reads as "checked and clean" rather than "not checked"
-/// — the same silent-incompleteness the audit invariant elsewhere in this design exists to
-/// catch. `--namespace 'chief::*'` is for `list`, which does read imports (`Project::list_all`);
-/// ownership rule 1 keeps `validate` from ever reading one, `project::` arguments included (see
-/// `validate`'s own refusal of those, just above each of this function's three call sites: the
-/// named-argument loop, and the two whole-project branches).
+/// No `validate` run reads an import (SPC-14), so accepting one in scope would give a report
+/// that reads as checked and clean when nothing it named was checked.
 fn reject_import_scope(scope: &Scope) -> Result<(), Error> {
     if scope.imports.is_empty() {
         return Ok(());
@@ -5696,18 +4866,8 @@ fn reject_import_scope(scope: &Scope) -> Result<(), Error> {
     )))
 }
 
-/// The scope a `project::` argument chooses inside `imported`: the named namespace when its own
-/// `namespace:` prefix has one; otherwise, for a path, every namespace of `imported`, since a
-/// path is not narrowed by scope and "needs to know nothing about how many namespaces a project
-/// has" whichever project it is read against (Arguments that name a document) — `resolve`
-/// never reads `namespaces` for a `DocumentArg::Path`, so what is returned here only has to be
-/// a namespace of `imported`, not the one the path happens to sit under; otherwise, for a key,
-/// `imported`'s one namespace when it has exactly one, and bad arguments when it has several
-/// (design: "a ref into a project with several namespaces must name one" — `chief::WF-5` is
-/// refused there whatever the key, unconditionally, not only when it happens to be ambiguous;
-/// ticket 10's report reads a ref the same way, and an argument follows it for the same reason;
-/// the design's own table gives this rule with key examples only, and gives the path form of a
-/// ref into an import no such condition).
+/// A path is not narrowed by scope, so any namespace of `imported` will do. A key into a project
+/// with several namespaces must name one even when it is not ambiguous, as a ref must (SPC-14).
 fn imported_scope(imported: &Project, arg: &DocumentArg) -> Result<Scope, Error> {
     if let Some(name) = arg.namespace_prefix() {
         let index = imported.namespace_index(name).ok_or_else(|| {
@@ -5746,18 +4906,8 @@ fn imported_scope(imported: &Project, arg: &DocumentArg) -> Result<Scope, Error>
     ))
 }
 
-/// The name (`path`, `namespace`, `key`, `project`) of a document at `path` in the project whose
-/// `namespaces` and `index` are given: looked up in the index when it is one, which is the only
-/// place a coded document's `key` comes from. A path that resolved but is outside every
-/// collection (`target: "*"` accepts one, e.g. a README) has no entry of its own; its namespace
-/// is the one whose folder is the longest prefix of `path`, or the namespace with no folder
-/// (`default`) when none matches, since namespaces never nest (config rule). When neither exists
-/// (a project with `namespaces` set, and a file outside every namespace folder) the file belongs
-/// to no namespace and is named by its path alone: `namespace` is `None`. `project` is the alias
-/// `path` was reached through, `None` for a document of the project doing the reaching; shared
-/// between `Project::ref_name_of` (`project: None`, this project) and the import-resolving code
-/// in `refs.rs` (`project: Some(alias)`), so the two read a document's name the same way
-/// whichever side of an import it is.
+/// A path outside every collection (which `target: "*"` allows) has no index entry and takes its
+/// namespace from its folder, or has none outside every namespace folder.
 fn ref_name_in(
     namespaces: &[crate::config::Namespace],
     index: &Index,
@@ -5789,27 +4939,9 @@ fn ref_name_in(
     }
 }
 
-/// One configured import, resolved: `${NAME}` substituted in `raw` (an unset or empty variable
-/// makes it `Absence::Variable`, never an empty-string substitution — design, "Environment
-/// variables in import paths"); the result joined against `root` when it is not already
-/// absolute; and, when a `.typdoc/config.json` really sits there, the project loaded with its
-/// own imports left unread (one level only). A location that substitutes cleanly but has no
-/// project of its own is `Absence::NoProject`, the same "absent on this machine" outcome as an
-/// unset variable — both are the design's `imports.absent`, never a fatal error, since the whole
-/// point of a machine-specific import is that it may not be there yet. A location that does have
-/// a project, but one whose own config cannot be loaded, is treated as a real, fixable
-/// misconfiguration and propagated as an ordinary error: unlike an import simply not being set
-/// up yet, a broken config at a real location will not fix itself by installing more machines,
-/// and folding it into `imports.absent` would hide a mistake the design gives no way to catch.
-/// Every namespace's state file, read once: `config.state-orphan` for a file in `.typdoc/state/`
-/// that matches neither a current namespace nor one `namespaces` currently excludes (an excluded
-/// namespace's own state file is left untouched, never read here, but is not an orphan either),
-/// and `config.state-uncoded` for an entry that names a
-/// collection this project has whose schema has no code (decision 13 narrows it to exactly this:
-/// an entry naming a collection the project does not have at all is `state.retired` instead, a
-/// finding rather than a config error, found later from `self.state` once `validate` runs, so
-/// that it does not stop this load the way this function's own errors do). Both join `report`,
-/// the same one `load_inner` finishes with every other config error this project has.
+/// `config.state-uncoded` is only for a collection this project has whose schema has no code. An
+/// entry naming a collection the project does not have is `state.retired`, a finding `validate`
+/// reports, not a config error that would stop the load (SPC-8).
 fn read_state(
     root: &Path,
     config: &Config,
@@ -5821,13 +4953,7 @@ fn read_state(
         .filter(|found| found.schema.code.is_some())
         .map(|found| found.name.as_str())
         .collect();
-    // Every collection this project's config has right now, coded or not: `loaded` is complete
-    // for that question, since a collection with its own config error never gets this far (the
-    // load fails on it before `read_state` is even asked). A name outside this set names a
-    // collection the project no longer has at all, which is `state.retired`, not a config
-    // error — found later, from `self.state` and `self.collections`, once `validate` runs, so
-    // that it stops nothing here (decision 13: unlike `config.state-uncoded`, its predecessor
-    // for this case, a retired entry never stops a command, reads included).
+    // Complete: a collection with a config error of its own fails the load before this.
     let known_collections: BTreeSet<&str> =
         loaded.iter().map(|found| found.name.as_str()).collect();
     for orphan in state::orphans(root, &config.namespaces, &config.excluded)? {
@@ -5863,14 +4989,9 @@ fn read_state(
     Ok(by_namespace)
 }
 
-/// `schema.valid`'s findings for every qualified `target` name gathered while reading schemas
-/// (`schema::QualifiedTarget`), now that `imports` is loaded and can be checked against: an
-/// alias `imports` does not have at all is treated the same as one the imported project renamed
-/// the schema out of — "the target no longer names anything" reads the same either way, and no
-/// id besides `schema.valid` fits an alias that is not configured. An alias present but absent
-/// on this machine is left alone (design: "An import that is absent on this machine is reported
-/// by `imports.absent` instead and is not an error here") — there is no project loaded here to
-/// check the name against.
+/// An alias that is not configured is reported as a schema renamed away is: either way the
+/// target names nothing. An import absent on this machine is left to `imports.absent`
+/// (SPC-14).
 fn schema_drift_findings(
     targets: &[schema::QualifiedTarget],
     imports: &BTreeMap<String, ImportState>,
@@ -5911,6 +5032,10 @@ fn schema_drift_findings(
     findings
 }
 
+/// An unset variable or a location with no project is absent on this machine, never an error:
+/// a machine-specific import may not be set up yet. A project there whose config cannot be
+/// loaded is an error, since `imports.absent` would hide a mistake that will not fix itself
+/// (SPC-14).
 fn resolve_import(root: &Path, raw: &str, env: &dyn Env) -> Result<ImportState, Error> {
     let substituted = match crate::imports::substitute(raw, env) {
         Ok(text) => text,
@@ -5937,8 +5062,6 @@ fn resolve_import(root: &Path, raw: &str, env: &dyn Env) -> Result<ImportState, 
     Ok(ImportState::Loaded(Box::new(imported)))
 }
 
-/// `schema.valid`'s finding for an import name that is one of the four URL schemes, at the file
-/// that names it.
 fn reserved_alias_finding(file: &str, alias: &str) -> Finding {
     validate::schema_finding(
         file,
@@ -5949,8 +5072,6 @@ fn reserved_alias_finding(file: &str, alias: &str) -> Finding {
     )
 }
 
-/// The template of a collection as it is written, before it is bound to a schema. A template
-/// that cannot be read is a config error.
 fn read_template(collection: &Collection, report: &mut Report) -> Option<Template> {
     match Template::parse(&collection.pattern) {
         Ok(template) => Some(template),
@@ -5961,11 +5082,8 @@ fn read_template(collection: &Collection, report: &mut Report) -> Option<Templat
     }
 }
 
-/// `schema.valid`'s findings for a schema name or code shared by more than one collection's own
-/// schema file: two different files, since `config.coded-schema-shared` already covers two
-/// collections naming the exact same coded schema file. One finding per extra file, at the file
-/// that comes later in collection order (collections are already sorted by name), naming the
-/// first file that used it, the same convention `config.coded-schema-shared` uses.
+/// Only across two different files: `config.coded-schema-shared` covers two collections naming
+/// the same coded schema file.
 fn duplicate_schema_findings(loaded: &[Loaded]) -> Vec<Finding> {
     let mut findings = Vec::new();
     let mut first_by_name: BTreeMap<&str, &str> = BTreeMap::new();
