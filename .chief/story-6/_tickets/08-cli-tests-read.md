@@ -1,5 +1,5 @@
 Type: implementation
-Status: claimed
+Status: resolved
 Blocked by: 07, and the batch before it has merged, and the pilot's judgment is accepted
 
 # Ticket 08 — `typdoc/tests`, read commands and the rest
