@@ -129,6 +129,10 @@ In every PR body, as a script anyone can rerun on this repository at the base an
 - **Corrected comments** in the PR body: each comment the code clearly contradicted, what it
   claimed, what the code does, and `file:line`. It is corrected to the code, or removed if
   nothing non-obvious is left.
+- A **citation table** in the PR body, one row per removed citation: where it was at the base, what
+  it pointed at, its case (1, 2 or 3), and the result (`SPC-N` cited, moved into `SPC-N` and
+  cited, or dropped and why). A match of a citation-like word that is not a citation gets a row
+  saying so.
 - An **Investigate** list in the PR body: each mismatch where it is unclear which side is right
   (a comment or moved text against the code, or a test name against its assertion), what it
   claims, what the code does, and `file:line`. Nothing on it is fixed.
