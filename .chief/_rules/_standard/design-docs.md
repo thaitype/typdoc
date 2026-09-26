@@ -43,3 +43,16 @@ Move only the sections the change touches. Sections nothing touched stay where t
 
 `.chief/story-N/` holds only what chief creates (goal, contract, tickets, reports) — no other
 planning files.
+
+## A comment that cites design moves that design too
+
+Code comments cite design by SPC key (`SPC-7`), never by path, heading, ticket, decision
+number, or brief. When a comment's reasoning lives only in `docs/migrating-design/` or `.chief/`:
+
+1. It is design (what typdoc does, or why) → move it into an SPC as in item 2 of "Every change
+   to behavior updates `docs/design/` in the same PR", describing what the code does today, then
+   cite the SPC.
+2. It is process (who asked, which ticket, when) → drop the citation.
+
+Move only the sections a comment cites. If the text being moved disagrees with the code, do not
+pick a side: leave both as they are and list the mismatch in the PR.
