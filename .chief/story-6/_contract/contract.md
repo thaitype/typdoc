@@ -109,7 +109,9 @@ Rust changes in this story that are not comments, each in its own commit:
 - in `crates/typdoc/src/registry.rs`, the `[reverse-scope]` entry of `KNOWN_GAPS` states the gap
   without pointing at the design; its meaning is unchanged (ticket 06 PR);
 - in `crates/typdoc/tests/mv.rs` and `templates.rs`, an assertion message drops a decision number
-  and an `ignore` reason drops the date of a CI run; each meaning is unchanged (ticket 07 PR).
+  and an `ignore` reason drops the date of a CI run; each meaning is unchanged (ticket 07 PR);
+- in `crates/typdoc/tests/state.rs`, a test named after a decision number is renamed to name only
+  what it checks; its assertions are unchanged (ticket 07 PR).
 
 The proof for each of those PRs reports exactly its own differences and no others.
 

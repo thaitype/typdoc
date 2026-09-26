@@ -21,6 +21,7 @@ done
 - Also in this PR, as its own commit: an assertion message in `mv.rs` drops a decision number, and
   an `ignore` reason in `templates.rs` drops the date of a CI run. The proof reports those two and
   nothing else.
-- A test in `state.rs` is named after a decision number; it is listed, not renamed.
+- Also as its own commit: a test in `state.rs` named after a decision number is renamed to
+  `deriving_last_reissues_a_retired_key_silently`; its assertions are unchanged.
 - Gates at head: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
   `scripts/test.sh` (1057 passed, 0 failed, 1 ignored), `typdoc validate` at every commit.
