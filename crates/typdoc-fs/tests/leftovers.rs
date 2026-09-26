@@ -2,7 +2,7 @@
 //!
 //! `find_leftovers` is a read, so it is checked against a real temporary directory — a leftover
 //! is manufactured directly by writing it with `std::fs::write`, outside typdoc entirely, since
-//! nothing ships yet that would leave one by being killed mid-write. `remove_leftovers` is a
+//! a real one needs a write killed between its create and its rename. `remove_leftovers` is a
 //! write, so it goes through `Fs` and is checked against the fake, which can stage a removal to
 //! fail on request; a real directory has no ordinary way to make `remove_file` fail on one
 //! particular name.
@@ -53,8 +53,6 @@ fn find_leftovers_never_follows_a_symbolic_link() {
     let real_leftover = root.join("real").join(format!("{TEMP_PREFIX}333-ccc"));
     std::fs::write(&real_leftover, "").unwrap();
     std::os::unix::fs::symlink(root.join("real"), root.join("linked")).unwrap();
-    // A symbolic link straight to a leftover-shaped name: not followed either, and its own
-    // name (however it is spelled) is never returned, since it is a link and not a file.
     std::os::unix::fs::symlink(&real_leftover, root.join(format!("{TEMP_PREFIX}444-ddd"))).unwrap();
 
     let found = find_leftovers(root);
@@ -120,8 +118,6 @@ fn remove_leftovers_counts_only_what_actually_came_off() {
         b"",
         0o100_644,
     );
-    // The second path names nothing: `remove_leftovers` never fails the sweep over it, the
-    // same as any other removal that does not come off.
     let paths = vec![
         PathBuf::from("/project/.typdoc-tmp-1-a"),
         PathBuf::from("/project/.typdoc-tmp-absent"),

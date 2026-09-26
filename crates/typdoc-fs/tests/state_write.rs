@@ -1,8 +1,7 @@
 //! Covers SPC-8.
 //!
 //! `typdoc_core::write_state` against a real directory: the glue the unit tests of `state.rs`
-//! do not reach — a real read of whatever is there now, `.typdoc/state/` created on the
-//! namespace's first write, and the write going through `write_atomically`.
+//! do not reach.
 
 use std::fs;
 use std::path::Path;
@@ -45,8 +44,8 @@ fn updating_an_entry_already_there_leaves_a_hand_formatted_file_otherwise_untouc
     let lock_path = dir.path().join("outside/lock");
     let lock = a_lock(&fs, &lock_path);
     fs::create_dir_all(dir.path().join(".typdoc/state")).expect("the state dir");
-    // One space of indentation, no trailing newline, an entry for another collection kept
-    // exactly as written: none of this is typdoc's own canonical form, on purpose.
+    // No indentation, no trailing newline, an entry for another collection kept exactly as
+    // written: none of this is typdoc's own canonical form, on purpose.
     fs::write(
         dir.path().join(".typdoc/state/default.json"),
         "{\"rfcs\":{\"last\":7},\"tickets\":{\"last\":3}}",

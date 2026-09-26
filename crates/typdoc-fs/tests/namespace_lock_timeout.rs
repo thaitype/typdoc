@@ -1,6 +1,3 @@
-//! What the exit-4 message says once the competing lock's content can actually be read, and
-//! that `acquire` makes the directory a lock file sits in.
-//!
 //! `namespace_lock::acquire` reads the competing lock file with `std::fs::read`, the same way
 //! every other read in `typdoc-core` reaches a file: not through `Fs`, which is the write seam
 //! only. A fake file system therefore cannot back this: it holds files in memory, and
@@ -60,7 +57,6 @@ fn a_timeout_names_the_path_pid_host_and_age_and_maps_to_exit_4() {
 fn a_timeout_says_the_owner_is_running_here_when_the_host_matches_and_the_pid_is_alive() {
     let dir = TempDir::new().expect("a temporary directory can be made");
     let clock = FixedClock::new();
-    // This test's own process is certainly alive, and it is a pid `/proc` really has.
     let path = foreign_lock(
         &dir,
         "default.lock",
@@ -137,8 +133,6 @@ fn a_timeout_says_it_cannot_be_checked_when_the_recorded_host_differs() {
 fn acquire_creates_the_directory_that_will_hold_the_lock_file() {
     let dir = TempDir::new().expect("a temporary directory can be made");
     let clock = FixedClock::new();
-    // The first lock a real project ever takes finds no `.typdoc/locks/` yet: nothing in this
-    // test, or in `acquire`'s caller, makes it ahead of time.
     let path = dir.path().join(".typdoc/locks/default.lock");
     assert!(
         !path.parent().unwrap().exists(),

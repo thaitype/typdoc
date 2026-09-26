@@ -1,14 +1,13 @@
 //! The write half of the seam: the file system itself.
 //!
-//! This crate is the one place a file is changed. Everything else reaches a file system through
+//! This crate is the one place a file is changed. Everything else changes a file through
 //! [`typdoc_core::Fs`], and `typdoc-core`'s lint list refuses the calls that would go round it,
 //! with no exception. Which code may write is settled by the dependency graph: a crate that can
 //! write says so in its manifest, where a review sees it, rather than by an attribute a later
 //! change could add unnoticed.
 //!
-//! Each function is one operation of that trait and calls exactly the standard-library function
-//! that performs it. The rules about temp files, modes and renames sit above the seam, in
-//! `typdoc_core`, so they are the same whichever implementation is underneath.
+//! The rules about temp files, modes and renames sit above the seam, in `typdoc_core`, so they
+//! are the same whichever implementation is underneath.
 
 use std::fs;
 use std::io::{self, Write};
@@ -70,9 +69,6 @@ impl Fs for SystemFs {
     }
 }
 
-/// The one place `dev()`, `ino()` and `nlink()` are read out of a platform `Metadata`, so that
-/// `identity_at` and a handle's own `identity` cannot drift into reading them two different
-/// ways.
 fn file_id(data: &fs::Metadata) -> FileId {
     FileId {
         device: data.dev(),
