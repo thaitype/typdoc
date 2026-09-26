@@ -14,7 +14,6 @@ const SCHEMA: &str = r#"{ "name": "n", "fields": {
     "l": { "type": "list" }
 } }"#;
 
-/// A project with one collection of `*.md` and one document `d.md` whose block is `block`.
 fn project_with(block: &str) -> Scratch {
     let project = Scratch::project(&[]);
     project.file(
@@ -30,14 +29,12 @@ fn run(project: &Scratch, args: &[&str]) -> Ran {
     Spawn::args(args.iter().copied()).cwd(project.path()).run()
 }
 
-/// What `get d.md --json` shows as `fields`; the run must have gone well.
 fn fields_of(project: &Scratch) -> Value {
     let ran = run(project, &["get", "d.md", "--json"]);
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
     ran.stdout_json()["document"]["fields"].clone()
 }
 
-/// The document is listed and `validate` does not report `frontmatter.parse` for it.
 fn is_listed_and_parses(project: &Scratch, block: &str) {
     let listed = run(project, &["list", "--ids"]);
     assert_eq!(listed.code, 0, "{block}: {}", listed.stderr);
@@ -54,8 +51,6 @@ fn is_listed_and_parses(project: &Scratch, block: &str) {
     assert!(!rules.contains(&"frontmatter.parse"), "{block}: {rules:?}");
 }
 
-/// The document is written as `block` and it is read as `expected`, listed, and not reported by
-/// `frontmatter.parse`.
 fn reads_as(block: &str, expected: Value) {
     let project = project_with(block);
 
