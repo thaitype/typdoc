@@ -245,8 +245,7 @@ fn a_symbolic_link_to_a_file_that_the_template_matches_is_skipped() {
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
-              name; APFS on macOS refuses to create one at all (EILSEQ), confirmed on a real \
-              macos-latest CI run, 2026-09-24"
+              name; APFS on macOS refuses to create one at all (EILSEQ)"
 )]
 #[test]
 fn a_folder_whose_name_is_not_utf8_under_a_double_star_is_skipped() {

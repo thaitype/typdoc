@@ -202,7 +202,7 @@ fn a_move_onto_a_schema_the_document_fails_is_carried_out_and_reported_not_refus
 
     assert_eq!(
         ran.code, 0,
-        "the move happened; validation is a separate concern (decision 16): {}",
+        "the move happened; validation is a separate concern: {}",
         ran.stderr
     );
     let out = ran.stdout_json();
