@@ -1,7 +1,6 @@
-//! `validate`'s report, its scope, the merge of rule levels, and the three rules this ticket
-//! builds: `frontmatter.parse`, `frontmatter.types` and `frontmatter.unknown`. The exact set
-//! each rule's `broken/` fixture trips is checked by `coverage.rs`; this file covers the report
-//! shape, scope, level merging and the arguments that choose them.
+//! Covers SPC-1, SPC-2, SPC-4, SPC-5, SPC-7, SPC-10, SPC-12, SPC-14, SPC-15, SPC-17.
+//!
+//! The exact set each rule's `broken/` fixture trips is checked by `coverage.rs`.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -17,8 +16,6 @@ fn validate(args: &[&str], cwd: &std::path::Path) -> Ran {
     Spawn::args(all).cwd(cwd).run()
 }
 
-/// A project with one collection of `*.md` and a schema whose `title` is required, so a
-/// missing or misfit field is easy to produce on purpose.
 const REQUIRED_TITLE: [(&str, &str); 2] = [
     (
         ".typdoc/collections/notes.json",
@@ -139,11 +136,8 @@ fn schemas_or_audit_together_with_arguments_is_bad_arguments() {
     }
 }
 
-/// `--schemas` and `--audit` each describe the whole project in their own, incompatible way.
-/// Without this refusal, `Project::validate`'s `schemas_only` branch runs first and silently
-/// answers `--schemas` alone, dropping `--audit`'s report (and its own exit-code rule) with no
-/// word said — the one silent way through this command the bad-arguments check above does not
-/// otherwise catch, since neither flag is combined with an argument here.
+/// Without this refusal, `--schemas` would answer alone and drop `--audit`'s report without a
+/// word.
 #[test]
 fn schemas_and_audit_together_is_bad_arguments_even_with_no_document_arguments() {
     let project = fixture("valid/several-namespaces");
@@ -161,10 +155,6 @@ fn schemas_and_audit_together_is_bad_arguments_even_with_no_document_arguments()
     );
 }
 
-/// `--audit` on a clean project builds a real report: `summary.audit` and `summary.unreported`
-/// alongside the ordinary summary, and the `audit` object beside `findings` (design, JSON
-/// output: "with `--audit` also `"audit": {...}`"). This is the claim ticket 8 refused outright
-/// ("`--audit` is not built yet"); this ticket replaces the refusal, it does not extend it.
 #[test]
 fn audit_alone_builds_a_report_with_summary_audit_and_unreported() {
     let project = fixture("valid/several-namespaces");
@@ -182,9 +172,6 @@ fn audit_alone_builds_a_report_with_summary_audit_and_unreported() {
     assert!(object["audit"]["overlapping"].is_array(), "{object}");
 }
 
-/// One collection (`notes/*.md`), a document with an unknown field under a project that turns
-/// `frontmatter.unknown` `off`, a document with no frontmatter at all, and an uncollected file at
-/// the project root: the one project every audit-specific test below reads.
 const AUDIT_PROJECT: [(&str, &str); 2] = [
     (
         ".typdoc/collections/notes.json",
@@ -205,11 +192,6 @@ fn audit_project() -> Scratch {
     project
 }
 
-/// Design, Audit mode: "Rules set to `off`... Reported as `info`". `frontmatter.unknown` is
-/// turned `off` by the collection, so plain `validate` never reports `extra`; `--audit` still
-/// checks it and reports it at `info`. `frontmatter.types` (always on, `notes/a.md` is missing
-/// its required `title`) still reports at `error`, and the exit code is 0 regardless, per the
-/// design's "0, unless the config itself is invalid".
 #[test]
 fn audit_reports_an_off_rule_as_info_and_still_exits_0_despite_an_error_finding() {
     let project = audit_project();
@@ -239,10 +221,7 @@ fn audit_reports_an_off_rule_as_info_and_still_exits_0_despite_an_error_finding(
     );
 }
 
-/// `--strict` and `--audit` combine: a rule left at its default `warn` still rises to `error`
-/// under `--strict` (the ordinary behaviour, unaffected by `--audit`), while the same rule turned
-/// `off` by a collection stays `info` regardless of `--strict` — `off` has no `warn` for
-/// `--strict` to raise (`effective_level`'s own reasoning).
+/// A rule turned `off` has no `warn` for `--strict` to raise, so it stays `info`.
 #[test]
 fn strict_still_raises_warn_to_error_under_audit_while_an_off_rule_stays_info() {
     let project = audit_project();
@@ -279,9 +258,6 @@ fn strict_still_raises_warn_to_error_under_audit_while_an_off_rule_stays_info() 
     );
 }
 
-/// `README.md` matches no collection (`uncollected`); `notes/b.md` matches `notes` but has no
-/// frontmatter block at all (`no_frontmatter`). Neither is evaluated: neither produces a finding,
-/// and `checked.documents` counts only `notes/a.md`.
 #[test]
 fn audit_lists_uncollected_and_no_frontmatter_and_evaluates_neither() {
     let project = audit_project();
@@ -308,10 +284,7 @@ fn audit_lists_uncollected_and_no_frontmatter_and_evaluates_neither() {
     );
 }
 
-/// Design: "one `{ "name", "documents" }` for each collection with the number of documents it
-/// holds". `notes` holds two documents, `a.md` (checked) and `b.md` (no frontmatter, held but
-/// not evaluated) — a count `findings` alone could not give, since a clean or unevaluated
-/// document produces none.
+/// `notes` holds `b.md` though it is not evaluated: a count `findings` alone could not give.
 #[test]
 fn audit_counts_a_no_frontmatter_document_as_one_the_collection_holds() {
     let project = audit_project();
@@ -326,12 +299,6 @@ fn audit_counts_a_no_frontmatter_document_as_one_the_collection_holds() {
     );
 }
 
-/// Design: "The two modes treat a file with no frontmatter differently, and this is a
-/// difference of mechanism, not of presentation." Plain `validate` evaluates `notes/b.md`
-/// against its schema like any document (its missing `title` is a finding); `--audit` lists it
-/// in `no_frontmatter` and evaluates nothing about it. `uncollected` and `no_frontmatter` never
-/// share a path: `README.md` (no collection at all) is never in `no_frontmatter`, and
-/// `notes/b.md` (held by `notes`) is never in `uncollected`.
 #[test]
 fn validate_and_audit_treat_a_file_with_no_frontmatter_differently_and_the_lists_never_overlap() {
     let project = audit_project();
@@ -369,11 +336,6 @@ fn validate_and_audit_treat_a_file_with_no_frontmatter_differently_and_the_lists
     assert!(!no_frontmatter.contains(&"README.md"), "{no_frontmatter:?}");
 }
 
-/// The text form of `--audit` (design, Audit mode, the worked `typdoc audit: ...` example): a
-/// header naming the number of collections, the independently accounted total, and the number
-/// in no collection; one line per collection with its own document count and, grouped by rule,
-/// the count and level of what it found, or `clean`; and a line naming every uncollected file and
-/// every file with no frontmatter, each with its own count.
 #[test]
 fn the_text_form_of_audit_prints_the_summary_and_the_two_lists() {
     let project = audit_project();
@@ -393,10 +355,8 @@ fn the_text_form_of_audit_prints_the_summary_and_the_two_lists() {
     assert_eq!(ran.stdout, expected);
 }
 
-/// The text form accounts for an overlapping file the same way the JSON does (Ticket 19,
-/// contract item 8): `total` in the header includes it, and it gets its own line, parallel to
-/// `in no collection` and `no frontmatter`, so a reader of the text sees the same total a reader
-/// of `summary.overlapping` plus `summary.checked.documents` plus `summary.unreported` does.
+/// The header's total counts the overlapping file, and the file gets a line of its own, so the
+/// text gives the same total as the JSON summary.
 #[test]
 fn the_text_form_of_audit_accounts_for_an_overlapping_file() {
     let project = overlap_and_a_clean_sibling();
@@ -440,18 +400,8 @@ fn an_argument_that_names_no_document_stops_before_any_report_and_is_not_a_findi
     assert!(object.get("summary").is_none(), "{object}");
 }
 
-/// Ticket 20: plain `validate` without `--json` prints a header row, then one line per finding,
-/// from the same finding data `--json` already carries (header row and `path, level, rule,
-/// message` column order added by M-16 — matching `finding_json`'s own JSON field names exactly,
-/// `path` even though the printed value can be `path:line:col`). `error.md`'s broken body link is
-/// `body.links` at `error`, with a known position; `warn.md`'s unknown field is
-/// `frontmatter.unknown` at the default `warn`, with no position, so it prints its bare path
-/// (design, the paragraph beginning "Output.": `path:line:col` when a position is known, `path`
-/// alone otherwise, the same rule `--json` follows for `line`/`col`). Findings are ordered by
-/// path (`order`), so `error.md` prints first. `info` never occurs here: `Severity::Info` is
-/// produced only by `--audit`'s "a rule turned off is reported as info" (`effective_level`), and
-/// plain `validate` has no configurable level that produces it — a golden covering `info` belongs
-/// to `--audit`'s own tests, not here.
+/// `error.md`'s finding has a position and `warn.md`'s has none. `info` cannot occur here: only
+/// `--audit` reports at `info`.
 #[test]
 fn plain_validate_without_json_prints_one_line_per_finding_at_warn_and_error() {
     let project = Scratch::project(&[
@@ -474,8 +424,6 @@ fn plain_validate_without_json_prints_one_line_per_finding_at_warn_and_error() {
     assert_eq!(ran.stdout, expected);
 }
 
-/// Ticket 20, decided (following `list`'s own precedent): a clean project prints nothing without
-/// `--json`, and the exit code alone carries the result — no special-cased "clean" line.
 #[test]
 fn a_clean_project_without_json_prints_nothing_and_exits_0() {
     let project = fixture("valid/minimal");
@@ -487,10 +435,6 @@ fn a_clean_project_without_json_prints_nothing_and_exits_0() {
     assert_eq!(ran.stderr, "");
 }
 
-/// Ticket 20: `--schemas` alone, without `--json`, uses the same header-plus-one-line-per-finding
-/// shape as plain `validate` for a schema-only problem (an import alias that collides with a
-/// reserved URL scheme, `schema.valid`, found with `checked.documents` at 0 since `--schemas`
-/// checks no document).
 #[test]
 fn schemas_alone_without_json_prints_the_same_one_line_per_finding_shape() {
     let project = Scratch::project(&[(
@@ -683,9 +627,8 @@ fn the_frontmatter_parse_fixture_reports_no_position() {
     }
 }
 
-// Ticket 9: `schema.valid`, `collections.overlap`, `keys.unique` and `filename.pattern`.
+// `schema.valid`, `collections.overlap`, `keys.unique` and `filename.pattern`
 
-/// A schema-file finding is not about a document: no `namespace`, `collection` or `key`.
 #[test]
 fn a_schema_valid_finding_carries_no_namespace_collection_or_key() {
     let object = broken("schema.valid");
@@ -700,11 +643,8 @@ fn a_schema_valid_finding_carries_no_namespace_collection_or_key() {
     assert!(finding.get("key").is_none(), "{finding}");
 }
 
-/// The design never settles an overlap by precedence, so which collection is "the" collection
-/// of the file is exactly what is wrong: `collection` and `key` are left out. The fixture also
-/// holds `b.md`, matched by one collection only, with an `extra` field its empty schema does
-/// not name: its `frontmatter.unknown` finding is what proves the overlap did not swallow the
-/// rest of the report (see the `checked` assertions below).
+/// An overlap is never settled by precedence, so which collection is the file's is exactly what
+/// is unknown: `collection` and `key` are left out.
 #[test]
 fn a_collections_overlap_finding_carries_a_namespace_and_no_collection_or_key() {
     let object = broken("collections.overlap");
@@ -728,9 +668,8 @@ fn a_collections_overlap_finding_carries_a_namespace_and_no_collection_or_key() 
     );
 }
 
-/// Two collections that both match `a.md`, one that matches only `b.md` besides, and a schema
-/// with no fields, so any field written in `b.md` is `frontmatter.unknown`. The same shape as
-/// `fixtures/broken/collections.overlap`, built fresh so a test can name its own arguments.
+/// The shape of `fixtures/broken/collections.overlap`, built here so a test can name its own
+/// arguments.
 fn overlap_and_a_clean_sibling() -> Scratch {
     let project = Scratch::project(&[
         (
@@ -748,14 +687,9 @@ fn overlap_and_a_clean_sibling() -> Scratch {
     project
 }
 
-/// design.md:567 stops `validate` before any report for only two reasons (a key ambiguous
-/// across namespaces, an argument naming no document) and `collections.overlap` is neither: an
-/// overlapping path named as an argument is a finding, the same shape the whole-project scan
-/// gives it, and does not throw away the report of another argument named alongside it.
-/// design.md:743 ties `checked.documents`/`checked.paths` to what was actually checked, and an
-/// overlapping path was never checked against a schema, so it is counted in neither, even
-/// though its own finding is in `findings` — the one place a finding's `path` is not found in
-/// `checked.paths`, and on purpose: there is no document there to have been checked.
+/// An overlapping path was never checked against a schema, so it is in neither
+/// `checked.documents` nor `checked.paths`, though its finding is in `findings`: the one finding
+/// whose `path` is not in `checked.paths`.
 #[test]
 fn validate_on_an_overlapping_path_argument_reports_it_instead_of_aborting() {
     let project = overlap_and_a_clean_sibling();
@@ -776,8 +710,6 @@ fn validate_on_an_overlapping_path_argument_reports_it_instead_of_aborting() {
     assert_eq!(object["summary"]["checked"]["documents"], json!(0));
     assert_eq!(object["summary"]["checked"]["paths"], json!([]));
 
-    // Naming the overlapping path alongside `b.md`: `b.md`'s own finding is not thrown away,
-    // and `b.md` alone is in `checked.paths` and `checked.documents`.
     let both = Spawn::args(["validate", "a.md", "b.md", "--json"])
         .cwd(project.path())
         .run();
@@ -795,9 +727,6 @@ fn validate_on_an_overlapping_path_argument_reports_it_instead_of_aborting() {
     assert_eq!(object["summary"]["checked"]["paths"], json!(["b.md"]));
 }
 
-/// The whole-project scan reports the same `collections.overlap` finding, but its `documents`
-/// count is the same question `checked.documents` answers for a `paths` scope: only `b.md` was
-/// checked against a schema.
 #[test]
 fn validate_on_the_whole_project_does_not_count_an_overlapping_document_as_checked() {
     let project = overlap_and_a_clean_sibling();
@@ -818,12 +747,6 @@ fn validate_on_the_whole_project_does_not_count_an_overlapping_document_as_check
     assert_eq!(object["summary"]["checked"]["documents"], json!(1));
 }
 
-/// Ticket 19 (contract item 8, the `overlapping` decision): under `--audit` the overlapping
-/// `a.md` is counted in `summary.overlapping` and listed in `audit.overlapping`, beside
-/// `summary.unreported` and not inside it (design, the paragraph beginning "The summary of
-/// `validate`": "counted as `overlapping`, beside `unreported` and not inside it"). It is not in
-/// `audit.uncollected` (it belongs to collections, plural, not to none) or `audit.no_frontmatter`
-/// (its frontmatter is never read), and `checked.documents` stays 1, only `b.md`.
 #[test]
 fn audit_counts_an_overlapping_file_beside_unreported_not_inside_it() {
     let project = overlap_and_a_clean_sibling();
@@ -856,8 +779,6 @@ fn audit_counts_an_overlapping_file_beside_unreported_not_inside_it() {
     );
 }
 
-/// A project whose collections all share one empty schema, from `(collection name, match)`
-/// pairs, so a test states only which collection matches what.
 fn project_of_collections(collections: &[(&str, &str)]) -> Scratch {
     let mut files: Vec<(String, String)> = collections
         .iter()
@@ -887,10 +808,8 @@ fn audit_object(project: &Scratch, extra: &[&str]) -> Value {
     ran.stdout_json()
 }
 
-/// The shape of the design's Audit paragraph: `a.md` is matched by `notes` and by `skills`, and
-/// `b.md` by `notes` alone. `skills` is a collection of the project whose every file is also
-/// matched by another, so it holds 0 and is still listed; a listing built only from the
-/// collections that hold a document would leave it out. `overlapping` names both collections.
+/// `skills` holds 0, since its one file is matched twice; a listing built from the collections
+/// that hold a document would leave it out.
 #[test]
 fn audit_lists_a_collection_whose_every_file_is_matched_twice_with_0_and_names_the_overlap() {
     let project = project_of_collections(&[("notes", "*.md"), ("skills", "a.md")]);
@@ -912,9 +831,8 @@ fn audit_lists_a_collection_whose_every_file_is_matched_twice_with_0_and_names_t
     );
 }
 
-/// A collection whose `match` reaches no file at all is a collection of the project as much as
-/// one that reaches several, and it is listed with 0. It is named to sort before and after the
-/// collection that holds the one document, so the order by name is read from both sides.
+/// Named to sort before and after the collection that holds the document, so the order by name
+/// is read from both sides.
 #[test]
 fn audit_lists_a_collection_that_matches_nothing_with_0() {
     let project = project_of_collections(&[
@@ -937,11 +855,8 @@ fn audit_lists_a_collection_that_matches_nothing_with_0() {
     assert_eq!(object["audit"]["overlapping"], json!([]));
 }
 
-/// A file matched by three collections names all three, sorted by name, and a second overlapping
-/// file matched by two names its two: the list is sorted by `path`, and every entry carries its
-/// own collections, so an entry that carried only the first two, or the collections of another
-/// file, would differ from what is written here. `solo.md` belongs to `solo` alone and is in its
-/// number; the two files that overlap are in the number of none of the collections.
+/// Every entry carries its own collections, so one that carried only the first two, or another
+/// file's, would differ from what is written here.
 #[test]
 fn audit_names_every_collection_of_an_overlap_sorted_by_name_and_the_list_by_path() {
     let project = project_of_collections(&[
@@ -974,12 +889,9 @@ fn audit_names_every_collection_of_an_overlap_sorted_by_name_and_the_list_by_pat
     assert_eq!(object["summary"]["overlapping"], json!(2));
 }
 
-/// A file matched twice is in the number of no collection, and the summary numbers count each
-/// kind of file once. `a.md` is matched by `notes` and `skills`; `b.md` (with
-/// frontmatter) and `n.md` (with none) belong to `notes` alone; `deep/u.md` belongs to none. A
-/// collection's number counts what it holds whether or not the document was checked, so `notes`
-/// is 2 (`b.md`, `n.md`); counting `a.md` in each collection would give 3 and 1.
-/// `checked.documents` is 1, since `n.md` was not evaluated and `a.md` has no one schema.
+/// `a.md` is matched by `notes` and `skills`, `b.md` and `n.md` (no frontmatter) by `notes`
+/// alone, and `deep/u.md` by none. Counting `a.md` in each collection would give 3 and 1.
+/// `checked.documents` is 1: `n.md` is not evaluated and `a.md` has no one schema.
 #[test]
 fn a_file_matched_twice_is_in_the_number_of_no_collection_and_the_summary_numbers_hold() {
     let project = project_of_collections(&[("notes", "*.md"), ("skills", "a.md")]);
@@ -1007,8 +919,6 @@ fn a_file_matched_twice_is_in_the_number_of_no_collection_and_the_summary_number
     assert_eq!(object["audit"]["no_frontmatter"], json!(["n.md"]));
 }
 
-/// The text form lists every collection too, `skills` with 0 files and nothing found in it, and
-/// names the collections of each overlap after its path, in the order of the paths.
 #[test]
 fn the_text_form_of_audit_lists_every_collection_and_names_the_collections_of_each_overlap() {
     let project = project_of_collections(&[("notes", "*.md"), ("skills", "a.md")]);
@@ -1029,8 +939,6 @@ fn the_text_form_of_audit_lists_every_collection_and_names_the_collections_of_ea
     assert_eq!(ran.stdout, expected);
 }
 
-/// The text form names the collections of each overlap, sorted by name, and lists the overlaps
-/// in the order of their paths: `a.md` is matched by three collections and `b.md` by two.
 #[test]
 fn the_text_form_of_audit_names_every_collection_of_each_of_several_overlaps() {
     let project = project_of_collections(&[
@@ -1058,10 +966,8 @@ fn the_text_form_of_audit_names_every_collection_of_each_of_several_overlaps() {
     assert_eq!(ran.stdout, expected);
 }
 
-/// A collection is one file in `.typdoc/collections/`, and its number covers its documents in
-/// every namespace the audit reports. `notes` matches in both namespaces (1 + 1); `only-two`
-/// reaches a file in `two` alone; `only-one` reaches none. Narrowed to `one`, every collection
-/// is still listed, and the numbers count the namespace that was read.
+/// `notes` matches in both namespaces, `only-two` reaches a file in `two` alone, and `only-one`
+/// reaches none.
 #[test]
 fn a_collections_number_covers_every_namespace_the_audit_reports() {
     let project = Scratch::project(&[
@@ -1144,8 +1050,6 @@ fn a_filename_pattern_finding_carries_a_namespace_and_no_collection_or_key() {
     assert!(finding.get("key").is_none(), "{finding}");
 }
 
-/// The ticket's own example: two namespaces that each number a document `WF-1` are clean,
-/// since a key is unique within its namespace, not across them.
 #[test]
 fn two_namespaces_sharing_a_key_is_clean() {
     let project = Scratch::project(&[
@@ -1175,8 +1079,6 @@ fn two_namespaces_sharing_a_key_is_clean() {
     assert_eq!(ran.stdout_json()["findings"], json!([]));
 }
 
-/// A cycle in `extends` is rejected, not ended silently (ticket 5 left rejecting it to this
-/// ticket).
 #[test]
 fn an_extends_cycle_is_rejected_by_schema_valid() {
     let project = Scratch::project(&[
@@ -1210,8 +1112,6 @@ fn an_extends_cycle_is_rejected_by_schema_valid() {
     assert!(rules.contains(&"schema.valid"), "{findings}");
 }
 
-/// Redefining an inherited field without `"override": true` is `schema.valid`; the same field
-/// declared with `"override": true` is clean.
 #[test]
 fn redefining_an_inherited_field_needs_override_true() {
     let base = |kind: &str| {
@@ -1248,9 +1148,6 @@ fn redefining_an_inherited_field_needs_override_true() {
     }
 }
 
-/// A boolean option written as something else, an option that does not apply to the field's
-/// type, and a reserved or malformed field name are all `schema.valid`, and do not crash the
-/// read (the relaxing of ticket 5's strict reading, decided by ticket 9).
 #[test]
 fn invalid_field_options_and_names_are_schema_valid_and_not_a_crash() {
     for fields in [
@@ -1288,9 +1185,6 @@ fn invalid_field_options_and_names_are_schema_valid_and_not_a_crash() {
     }
 }
 
-/// An import alias that is one of the four URL schemes the design names is `schema.valid`
-/// (design, Frontmatter values: "Sibling names and import aliases may not collide with URL
-/// schemes (`http`, `https`, `mailto`, `file`)").
 #[test]
 fn an_import_name_that_is_a_reserved_url_scheme_is_schema_valid() {
     let project = Scratch::project(&[(
@@ -1310,11 +1204,8 @@ fn an_import_name_that_is_a_reserved_url_scheme_is_schema_valid() {
     assert_eq!(findings[0]["path"], json!(".typdoc/config.json"));
 }
 
-/// An ordinary alias that merely has the shape of a URL scheme (any letters-only word does) is
-/// not `schema.valid`: the design reserves four literal names, not a shape, and its own worked
-/// examples use exactly the two aliases checked here (`memory::precedents/x.md`,
-/// `chief::story-3:WF-5`) — a fixture or reader trying the design's own examples must not be
-/// refused by this check.
+/// Four names are reserved, not a shape, and `memory` and `chief` are the aliases the examples
+/// of SPC-14 use.
 #[test]
 fn import_names_the_designs_own_examples_use_are_not_schema_valid() {
     let project = Scratch::project(&[(
@@ -1331,9 +1222,6 @@ fn import_names_the_designs_own_examples_use_are_not_schema_valid() {
     assert_eq!(ran.stdout_json()["findings"], json!([]));
 }
 
-/// The design's own example: several coded collections can share one folder (`WF` and `RFC`
-/// both under `tickets/{key}.md`); a file that fits one of them is not a `filename.pattern`
-/// stray just because it fits none of the others.
 #[test]
 fn a_file_fitting_one_of_several_coplaced_coded_collections_is_not_a_stray() {
     let project = Scratch::project(&[
@@ -1366,12 +1254,8 @@ fn a_file_fitting_one_of_several_coplaced_coded_collections_is_not_a_stray() {
     assert_eq!(ran.stdout_json()["findings"], json!([]));
 }
 
-// Ticket 10: the forms of a ref (a bare key, a sibling prefix, a relative path with `refBase`),
-// resolved through the index of names as they are on disk, and `refs.resolve`, `refs.target`,
-// `refs.acyclic`, `refs.moved`, `refs.codedByPath` and `names.shadowed`. The exact set each
-// rule's `broken/` fixture trips is checked by `coverage.rs`; this file covers the two cases the
-// ticket names, and a few finding shapes and positive cases that a single fixture cannot show
-// alongside a negative one.
+// Refs, and `names.shadowed`: finding shapes, and positive cases that a `broken/` fixture cannot
+// show beside a negative one.
 
 const REF_SCHEMA: [(&str, &str); 2] = [
     (
@@ -1384,9 +1268,6 @@ const REF_SCHEMA: [(&str, &str); 2] = [
     ),
 ];
 
-/// The ticket's own example: a ref whose case differs from the target file's is `not-found`, not
-/// a match a case-insensitive file system might have given it (ticket 22 of the design
-/// decisions: paths compare exactly as written, case included).
 #[test]
 fn a_ref_whose_case_differs_from_the_files_is_not_found() {
     let project = Scratch::project(&REF_SCHEMA);
@@ -1410,11 +1291,8 @@ fn a_ref_whose_case_differs_from_the_files_is_not_found() {
     );
 }
 
-/// Ticket 25's own companion case: the fix to `resolve_path`'s fallback (reading real directory
-/// entries instead of trusting `Path::is_file`'s yes/no) must not turn a correct, exactly-cased
-/// match into a false negative. `README.txt` matches no collection (`REF_SCHEMA` only claims
-/// `*.md`), so this exercises the exact same fallback branch the mismatch test above does — the
-/// only difference is the case matches — and it must still resolve.
+/// `README.txt` is in no collection, so this takes the same branch as the case-mismatch test
+/// above, with the case matching.
 #[test]
 fn a_ref_whose_case_exactly_matches_a_file_outside_every_collection_is_found() {
     let project = Scratch::project(&REF_SCHEMA);
@@ -1427,10 +1305,6 @@ fn a_ref_whose_case_exactly_matches_a_file_outside_every_collection_is_found() {
     assert_eq!(ran.stdout_json()["findings"], json!([]));
 }
 
-/// The ticket's other example: `chief::WF-5` in a project with several namespaces is
-/// `bad-prefix`. The import form is not resolved in this story (ticket 17's), so this holds
-/// whether or not `chief` is a configured import alias: nothing here ever treats `::` as
-/// anything but not-yet-read.
 #[test]
 fn chief_double_colon_wf_5_in_a_project_with_several_namespaces_is_bad_prefix() {
     let project = Scratch::project(&[
@@ -1470,8 +1344,6 @@ fn chief_double_colon_wf_5_in_a_project_with_several_namespaces_is_bad_prefix() 
     );
 }
 
-/// A bare key whose code exists in the project resolves in the document's own namespace,
-/// whatever the current directory is (design.md's Refs: "whatever the working directory").
 #[test]
 fn a_bare_key_resolves_in_the_documents_own_namespace() {
     let project = Scratch::project(&[
@@ -1502,8 +1374,6 @@ fn a_bare_key_resolves_in_the_documents_own_namespace() {
     assert_eq!(ran.stdout_json()["findings"], json!([]));
 }
 
-/// A relative ref resolved under `refBase: namespace` reads from the namespace's folder, not
-/// the document's own, unlike the default `refBase: file`.
 #[test]
 fn ref_base_namespace_reads_a_relative_ref_from_the_namespace_folder() {
     let project = Scratch::project(&[
@@ -1525,8 +1395,6 @@ fn ref_base_namespace_reads_a_relative_ref_from_the_namespace_folder() {
     assert_eq!(ran.stdout_json()["findings"], json!([]));
 }
 
-/// A ref that resolves to a document whose schema `target` does not list is `refs.target`, and
-/// one that resolves to a listed schema is clean.
 #[test]
 fn refs_target_refuses_a_schema_not_named_by_target() {
     let project = Scratch::project(&[
@@ -1553,9 +1421,6 @@ fn refs_target_refuses_a_schema_not_named_by_target() {
     assert_eq!(ran.stdout_json()["findings"], json!([]));
 }
 
-/// `refs.codedByPath` warns when a coded document is named by path, and a ref to the same
-/// document by key is clean, the same choice `set` and `new` make: a key does not change when
-/// the file moves and a path does (design.md's Refs, "Canonical form").
 #[test]
 fn a_coded_document_referenced_by_key_is_clean_and_by_path_warns() {
     let files = [
@@ -1601,8 +1466,6 @@ fn a_coded_document_referenced_by_key_is_clean_and_by_path_warns() {
     assert_eq!(findings[0]["level"], json!("warn"));
 }
 
-/// A cycle through an `acyclic` field is reported at each document on it; a field not marked
-/// `acyclic` may point back at itself with no finding.
 #[test]
 fn refs_acyclic_reports_every_document_on_the_cycle_and_a_plain_ref_field_may_cycle_freely() {
     let files = [
@@ -1640,9 +1503,7 @@ fn refs_acyclic_reports_every_document_on_the_cycle_and_a_plain_ref_field_may_cy
     assert_eq!(free_ran.stdout_json()["findings"], json!([]));
 }
 
-/// `refs.acyclic` is always on, but naming one document of a cycle reports only that document's
-/// own finding: every finding in the `paths` scope is about a document the caller named, and the
-/// other document on the same cycle is that document's own `validate` run to report.
+/// Every finding in a `paths` scope is about a document the caller named.
 #[test]
 fn refs_acyclic_in_paths_scope_reports_only_the_named_document_on_the_cycle() {
     let project = Scratch::project(&[
@@ -1670,8 +1531,6 @@ fn refs_acyclic_in_paths_scope_reports_only_the_named_document_on_the_cycle() {
     assert_eq!(findings[0]["path"], json!("a.md"));
 }
 
-/// `refs.moved` replaces the ordinary missing-target finding and names the new key or path;
-/// without a matching `auto: moves` record, the same dangling ref is plain `refs.resolve`.
 #[test]
 fn refs_moved_replaces_refs_resolve_and_names_the_new_identity() {
     let files = [
@@ -1747,7 +1606,6 @@ fn a_names_shadowed_finding_carries_no_namespace_collection_or_key() {
     assert!(finding.get("key").is_none(), "{finding}");
 }
 
-/// `names.shadowed` also shows under `--schemas`, the same scope `schema.valid` reaches.
 #[test]
 fn names_shadowed_is_reported_under_schemas_only_too() {
     let project = Scratch::project(&[]);
@@ -1766,11 +1624,8 @@ fn names_shadowed_is_reported_under_schemas_only_too() {
     assert_eq!(findings[0]["rule"], json!("names.shadowed"));
 }
 
-// Ticket 23: `files.unreadable`, and a project whose documents live under a folder whose name
-// begins with a dot (design, Which files a run reads).
+// `files.unreadable`, and documents under a folder whose name begins with a dot
 
-/// A project whose one collection reaches every `.md` file below it, for the entries a walk
-/// meets and cannot read.
 const EVERY_MARKDOWN: [(&str, &str); 2] = [
     (
         ".typdoc/collections/notes.json",
@@ -1866,12 +1721,10 @@ fn a_folder_name_that_is_not_valid_utf8_is_files_unreadable_and_the_rest_is_stil
     );
 }
 
-// Ticket 13: temp files and leftovers (decision 4). The reserved shape and the rule that skips
-// it live in `typdoc-core` (`is_temp_name`, `take` in `index.rs`); these go through the built
-// binary, the same as the `files.unreadable` tests above.
+// Temp files and leftovers. The reserved name and the rule that skips it are unit-tested in
+// `typdoc-core`; these go through the binary.
 
-/// A project with one collection of `match: "*"`: the broadest glob there is, so a leftover is
-/// reached whatever its name, `.md` suffix or not.
+/// The broadest glob, so a leftover is reached whatever its name.
 const MATCH_STAR: [(&str, &str); 2] = [
     (
         ".typdoc/collections/notes.json",
@@ -1880,8 +1733,7 @@ const MATCH_STAR: [(&str, &str); 2] = [
     ("note.json", r#"{ "name": "note", "fields": {} }"#),
 ];
 
-/// A project with one collection of `match: "*.md"`: the glob a leftover ending in `.md` would
-/// otherwise fit, which is exactly decision 4's own worked concern.
+/// The glob a leftover ending in `.md` would otherwise fit.
 const MATCH_MD: [(&str, &str); 2] = [
     (
         ".typdoc/collections/notes.json",
@@ -1933,11 +1785,8 @@ fn a_leftover_a_match_of_star_reaches_is_files_leftover_and_counted_in_not_read(
     );
 }
 
-/// The `.md`-suffixed case decision 4 itself worked through: a glob of `*.md` would claim the
-/// name on its own, so the walker's rule has to run whether or not the glob would have excluded
-/// it. `--strict` is also checked here: `files.leftover` stays `warn`, the same as
-/// `files.unreadable` stays `error` under `--strict` (an always-on rule's level is fixed, never
-/// merged or raised).
+/// An always-on rule's level is never merged or raised, so `files.leftover` stays `warn` under
+/// `--strict`.
 #[test]
 fn a_leftover_a_match_of_star_dot_md_reaches_is_files_leftover_at_warn_even_under_strict() {
     let project = Scratch::project(&MATCH_MD);
@@ -1965,11 +1814,9 @@ fn a_leftover_a_match_of_star_dot_md_reaches_is_files_leftover_at_warn_even_unde
     );
 }
 
-/// A leftover inside a coded collection's folder is never `filename.pattern` either (decision
-/// 4: "a finding about a file the user did not write"), the twin of
-/// `a_dotted_file_name_in_a_coded_collections_folder_is_a_stray` above but with a leftover
-/// instead of a plain dotted name: this one fits no `match` at all (`{key}` needs the code and a
-/// number), so it is invisible to both mechanisms rather than caught by either.
+/// The twin of `a_dotted_file_name_in_a_coded_collections_folder_is_a_stray`: the leftover fits
+/// no `match` (`{key}` needs the code and a number), so neither `files.leftover` nor
+/// `filename.pattern` reports it.
 #[test]
 fn a_leftover_in_a_coded_collections_folder_is_not_a_stray_or_anything_else() {
     let project = Scratch::project(&[]);
@@ -1996,14 +1843,6 @@ fn a_leftover_in_a_coded_collections_folder_is_not_a_stray_or_anything_else() {
     assert_eq!(object["findings"], json!([]), "{object}");
 }
 
-/// A leftover left by a stopped run is reported once by `validate --audit`, then removed by the
-/// next command that holds the lock (done-when (c)). No command ships yet that writes, and the
-/// signal handler that would stop one mid-write is ticket 4, built after ticket 9 — so there is
-/// no real interrupted run to produce one from. The leftover is manufactured directly instead:
-/// a file of the reserved shape is placed on disk (`project.file`, an ordinary write outside
-/// typdoc entirely) exactly where `write_atomically` would have left one, and "the next command
-/// that holds the lock" is played by hand, acquiring a real lock and calling
-/// `find_leftovers`/`remove_leftovers` the way ticket 9, 10 or 11 will.
 #[test]
 fn a_leftover_left_by_a_stopped_run_is_reported_once_then_removed_by_the_next_command_that_holds_the_lock()
  {
@@ -2017,7 +1856,6 @@ fn a_leftover_left_by_a_stopped_run_is_reported_once_then_removed_by_the_next_co
         "the leftover must be manufactured on disk first"
     );
 
-    // Reported once.
     let ran = validate(&["--audit"], project.path());
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     let before = ran.stdout_json();
@@ -2028,7 +1866,7 @@ fn a_leftover_left_by_a_stopped_run_is_reported_once_then_removed_by_the_next_co
         "{before}"
     );
 
-    // The next command that holds the lock removes it.
+    // Played by hand: the next command that holds the lock removes it.
     let fs = typdoc_fs::SystemFs;
     let lock_path = project.path().join(".typdoc/locks/default.lock");
     let lock = typdoc_core::acquire(
@@ -2049,7 +1887,6 @@ fn a_leftover_left_by_a_stopped_run_is_reported_once_then_removed_by_the_next_co
     );
     typdoc_core::release(lock).expect("the lock releases");
 
-    // Removed: a second audit no longer reports it.
     let ran = validate(&["--audit"], project.path());
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     let after = ran.stdout_json();
@@ -2057,10 +1894,8 @@ fn a_leftover_left_by_a_stopped_run_is_reported_once_then_removed_by_the_next_co
     assert_eq!(after["findings"], json!([]), "{after}");
 }
 
-/// A project that keeps its documents under a folder whose name begins with a dot: naming the
-/// folder in `match` is what makes the run read it, and the audit then answers about every file
-/// the run reaches there, the one no collection covers included. The list holds a file whose own
-/// name begins with a dot as well, since the leading-dot rule is about folders.
+/// `valid/dot-folder` names `.agents` in `match`. The list holds a file whose own name begins
+/// with a dot too, since the leading-dot rule is about folders.
 #[test]
 fn an_audit_of_a_project_under_a_dot_folder_lists_what_no_collection_covers_there() {
     let ran = validate(&["--audit"], &fixture("valid/dot-folder"));
@@ -2079,8 +1914,6 @@ fn an_audit_of_a_project_under_a_dot_folder_lists_what_no_collection_covers_ther
     );
 }
 
-/// A folder written out as plain text after a wildcard is written out all the same, so the run
-/// reads it and the audit answers about the files beside the ones a collection covers there.
 #[test]
 fn a_dot_folder_a_match_names_after_a_wildcard_is_read_like_one_it_names_first() {
     let project = Scratch::project(&[]);
@@ -2108,8 +1941,6 @@ fn a_dot_folder_a_match_names_after_a_wildcard_is_read_like_one_it_names_first()
     );
 }
 
-/// A file whose name begins with a dot, directly in a coded collection's folder, fits no `match`
-/// there like any other file that does not, and is a stray.
 #[test]
 fn a_dotted_file_name_in_a_coded_collections_folder_is_a_stray() {
     let project = Scratch::project(&[]);
@@ -2138,14 +1969,11 @@ fn a_dotted_file_name_in_a_coded_collections_folder_is_a_stray() {
     assert_eq!(findings[0]["path"], json!("tickets/.notes.md"), "{object}");
 }
 
-// Ticket 19: `validate --audit`. Contract item 8, the accounting invariant.
+// The account of `validate --audit`
 
-/// The name of every folder a project's `match` templates write out as plain text, read here
-/// from the collection files as JSON and never through typdoc: a folder whose name begins with
-/// `.` is read by a run only where a `match` names it this way (design, Which files a run
-/// reads). Every step but the last is looked at, since the last names a file, and a step holding
-/// a wildcard names no folder and is passed over while the plain-text steps after it still
-/// count.
+/// Read from the collection files as JSON, never through typdoc. The last step of a template
+/// names a file, and a step holding a wildcard names no folder, though the plain steps after it
+/// still do.
 fn folders_a_match_names(project: &std::path::Path) -> std::collections::BTreeSet<String> {
     let mut named = std::collections::BTreeSet::new();
     let Ok(entries) = std::fs::read_dir(project.join(".typdoc/collections")) else {
@@ -2169,16 +1997,9 @@ fn folders_a_match_names(project: &std::path::Path) -> std::collections::BTreeSe
     named
 }
 
-/// Every `.md` file below `dir` that a run reads, and every one of those that the run meets and
-/// does not read because it is a symbolic link or a leftover temp file (ticket 13; no fixture
-/// used here carries a name that is not valid UTF-8, so that third reason is not modelled),
-/// walked here rather than through `typdoc_core::index`, so the count owes nothing to typdoc's
-/// own idea of which files it reads. The rules, written out from the design: a folder whose name
-/// begins with `.` is entered only where a `match` writes that name out as plain text (`named`);
-/// a file whose name begins with `.` is counted like any other, since the leading-dot rule is
-/// about folders; a symbolic link is never entered, and a leftover is never a document, whatever
-/// either looks like otherwise; and a folder holding its own `.typdoc/config.json` is a separate
-/// project and is not entered. Returns `(documents, not_read)`.
+/// Walked here rather than through `typdoc_core::index`, so the count owes nothing to typdoc's
+/// own idea of which files it reads. No fixture used here has a name that is not valid UTF-8, so
+/// that reason for not reading an entry is not modelled. Returns `(documents, not_read)`.
 fn count_markdown_files(
     dir: &std::path::Path,
     named: &std::collections::BTreeSet<String>,
@@ -2220,12 +2041,8 @@ fn count_markdown_files(
     (documents, not_read)
 }
 
-/// The `.md` files of every namespace named in `namespaces`, and the ones among them the run
-/// meets and does not read: `default`'s folder is the project root itself, and any other
-/// namespace's folder is its own name directly below the project root (design, Namespaces: "each
-/// matching child folder is one, named by its folder" — the same fact `--audit`'s own report
-/// already relies on to answer `checked.namespaces` by name; only the folder each name maps to
-/// is read here, never how the name was matched). Returns `(documents, not_read)`.
+/// Only the folder each name maps to is read here, never how the name was matched. Returns
+/// `(documents, not_read)`.
 fn independent_document_count(project: &std::path::Path, namespaces: &[&str]) -> (usize, usize) {
     let named = folders_a_match_names(project);
     namespaces
@@ -2243,26 +2060,13 @@ fn independent_document_count(project: &std::path::Path, namespaces: &[&str]) ->
         })
 }
 
-/// The accounting invariant (contract item 8, extended by ticket 13's `not_read`): in
-/// `--audit --json`, `summary.checked.documents` plus every count of what was not checked —
-/// `summary.unreported.uncollected`, `summary.unreported.no_frontmatter`, `summary.overlapping`
-/// and `summary.not_read` — equals the number of `.md` files and not-read entries the run meets,
-/// counted independently of typdoc (`count_markdown_files`, a plain walk of the folder, never
-/// `typdoc_core::index`). Checked on every project fixture that loads: a `broken/config.*`
-/// fixture never reaches a report at all (ticket 8: every gathered config error today turns the
-/// whole load into a failure), so it is asserted to fail rather than skipped.
+/// The files and entries the run meets are counted without typdoc. A `broken/config.*` fixture
+/// never reaches a report, so it is asserted to fail rather than skipped.
 ///
-/// `summary.overlapping` is read from the tool's own output, not counted here from `findings`: a
-/// test that counted `collections.overlap` findings itself would check that overlap produces a
-/// finding, which a different test already does, and not that the tool reports the count in the
-/// summary, which is what contract item 8 actually asks for. `broken/collections.overlap` is the
-/// fixture that gives this term a nonzero value: it has one file matched by two collections, and
-/// that file is not `checked` (there is no one schema to have checked it against), not
-/// `uncollected` (it belongs to collections, plural, just not to one in particular — the opposite
-/// problem from belonging to none) and not `no_frontmatter` (that list is drawn from the same
-/// index the file is missing from). It is reported as an ordinary `collections.overlap` finding,
-/// in `--audit` exactly as in a plain run, and it is `summary.overlapping`'s job to say so where a
-/// reader of the summary sees it.
+/// `summary.overlapping` is read from the output, not counted from `findings`: counting the
+/// findings would check that an overlap produces one, which another test does, and not that the
+/// summary reports the count. `broken/collections.overlap` is the fixture that gives it a value
+/// other than 0.
 #[test]
 fn the_accounting_invariant_holds_on_every_fixture_project() {
     let root = fixture("");
@@ -2280,10 +2084,8 @@ fn the_accounting_invariant_holds_on_every_fixture_project() {
                 continue;
             }
             checked_any = true;
-            // A `broken/` fixture may need an environment variable set on purpose to trip its
-            // own rule (`fixture.json`'s `env`, `config.config-dir`'s `TYPDOC_CONFIG_DIR` the
-            // one case among these that needs it); a `valid/` fixture has no `fixture.json` and
-            // needs none. `spec.command` is not read: this test always runs its own `--audit`.
+            // A `broken/` fixture may need its `env` to trip its rule. Its `command` is not
+            // read: this test runs its own `--audit`.
             let mut spawn = Spawn::args(["validate", "--audit", "--json"]).cwd(&project);
             if group == "broken" {
                 let spec = typdoc_testkit::spec::FixtureSpec::load(&project, &name)
@@ -2335,10 +2137,7 @@ fn the_accounting_invariant_holds_on_every_fixture_project() {
                  reports checked={checked} uncollected={uncollected} \
                  no_frontmatter={no_frontmatter} overlapping={overlapping}: {object}"
             );
-            // Ticket 13: the entries the run met and did not read (a symbolic link or a
-            // leftover temp file, among these fixtures) are counted independently the same way,
-            // and must equal `summary.not_read`, which closes the account contract item 8's own
-            // equation would otherwise leave short.
+            // Without the entries the run met and did not read, the account would be short.
             assert_eq!(
                 independent_not_read, not_read,
                 "{group}/{name}: independently counted {independent_not_read} not-read entries, \
@@ -2359,9 +2158,6 @@ fn the_accounting_invariant_holds_on_every_fixture_project() {
                     "{group}/{name}: {path}"
                 );
             }
-            // The list behind `summary.overlapping`: one `{ "path", "collections" }` for each
-            // file, every path a file that is on disk, each naming at least the two collections
-            // that make it an overlap.
             let listed = object["audit"]["overlapping"].as_array().unwrap();
             assert_eq!(listed.len(), overlapping, "{group}/{name}: {object}");
             for entry in listed {
@@ -2393,11 +2189,8 @@ fn the_accounting_invariant_holds_on_every_fixture_project() {
     assert!(checked_any, "no fixture project was found to check");
 }
 
-// --- `collections.empty` (M-24): a project with no collections at all, warn, not fatal ---
+// --- `collections.empty` ---
 
-/// A project with zero collections is `collections.empty`, at `warn`, project-level: `path` is
-/// `.typdoc` and `namespace`/`collection`/`key`/`field` are all absent, mirroring `state.retired`'s
-/// shape.
 #[test]
 fn a_project_with_no_collections_at_all_is_collections_empty() {
     let project = Scratch::empty();
@@ -2418,8 +2211,6 @@ fn a_project_with_no_collections_at_all_is_collections_empty() {
     assert!(finding["field"].is_null(), "{finding}");
 }
 
-/// A project with at least one collection, even with no documents in it yet, is silent:
-/// `collections.empty` is not a rule that fires on everything.
 #[test]
 fn a_project_with_a_collection_and_no_documents_leaves_collections_empty_silent() {
     let project = Scratch::project(&common::NOTES);
@@ -2430,8 +2221,6 @@ fn a_project_with_a_collection_and_no_documents_leaves_collections_empty_silent(
     assert_eq!(ran.stdout_json()["findings"], json!([]));
 }
 
-/// The non-fatal proof that actually matters: a zero-collection project still returns a normal
-/// exit code from `list` and `get` — only `validate` shows the warning.
 #[test]
 fn a_zero_collection_project_still_lets_list_and_get_run() {
     let project = Scratch::empty();
@@ -2441,8 +2230,7 @@ fn a_zero_collection_project_still_lets_list_and_get_run() {
     assert_eq!(listed.code, 0, "{}", listed.stderr);
     assert_eq!(listed.stdout_json()["total"], json!(0));
 
-    // No document exists to `get`, so this is the ordinary not-found exit (5), never the config
-    // error exit (2) `collections.empty`'s predecessor as a config error would have produced.
+    // No document exists, so this is the ordinary not-found exit, not a config error.
     let got = Spawn::args(["get", "anything.md", "--json"])
         .cwd(project.path())
         .run();
