@@ -709,7 +709,7 @@ mod tests {
     }
 
     #[test]
-    fn a_body_link_double_colon_is_bad_prefix_the_import_form_this_story_does_not_read() {
+    fn a_body_link_double_colon_naming_no_configured_import_is_bad_prefix() {
         let form = classify_body_default("memory::precedents/x.md", RefBase::File);
 
         assert!(matches!(form, BodyDestination::BadPrefix));
