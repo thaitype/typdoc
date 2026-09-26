@@ -87,6 +87,12 @@ Each later batch branches from `origin/main` after the batch before it has merge
 
 ## Proof that Rust changed only in comments
 
+One Rust change in this story is not a comment: in `crates/typdoc-core/src/json_body.rs`, the
+test that asserts `MissingContentType` for a document with no frontmatter block is renamed to
+say so (its old name said the case is reported as its own). The assertion and all behavior are
+unchanged. It is its own commit, and the proof for that PR reports exactly one differing file,
+`json_body.rs`, whose only difference is that function name.
+
 In every PR body, as a script anyone can rerun on this repository at the base and head commits
 (included in the PR body in full, since it is not part of the repository), with its result:
 
