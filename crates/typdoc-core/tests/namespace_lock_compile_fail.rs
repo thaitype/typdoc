@@ -1,7 +1,7 @@
-//! Proves, rather than asserts, decision 6: the held lock is a value with no public
-//! constructor, and every function that writes takes one. Each failing case has a compiling
-//! twin, so a fixture that fails to compile for an unrelated reason cannot pass unnoticed —
-//! `trybuild` reports a fixture in the wrong list as a failure of this test either way.
+//! Covers SPC-10.
+//!
+//! Each failing case has a compiling twin, so a fixture that fails to compile for an unrelated
+//! reason cannot pass unnoticed.
 
 #[test]
 fn one_lock_acquisition_path_and_no_write_without_one() {

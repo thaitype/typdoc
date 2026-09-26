@@ -1,6 +1,4 @@
-// PASS: the sanctioned way to get a `NamespaceLock` — `acquire` — compiles and runs. Paired
-// with `construct_lock_outside_module.rs`, which must not compile: together they show the
-// failure there is the private constructor, not something wrong with the fixture harness.
+// PASS: the compiling twin of `construct_lock_outside_module.rs`.
 
 use typdoc_testkit::fake::{FakeFs, FixedClock};
 

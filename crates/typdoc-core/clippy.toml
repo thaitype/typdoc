@@ -1,11 +1,7 @@
-# typdoc-core changes nothing: the environment, the home directory, the spawning of a process,
-# the time and every function that changes a file are reached through `deps` or through the
-# `Fs` trait in `src/fs.rs`, both of which this crate can call freely because a trait method is
-# not one of the functions below. This list has no exception anywhere in this crate: the
-# concrete file system, the only place a call below is actually made, is the `typdoc-fs` crate,
-# which depends on this one rather than the other way round, and has no such list of its own.
-# The list covers test code too, because a test that reaches around the seam is exactly the
-# test that stops proving anything about the code that ships.
+# The environment, the time and every change to a file are reached through `deps` or the `Fs`
+# trait, whose methods are not the functions below; the concrete file system is `typdoc-fs`.
+# The list has no exception and covers test code too: a test that reaches around the seam stops
+# proving anything about the code that ships.
 disallowed-methods = [
     { path = "std::env::var", reason = "the environment is reached through Env in deps" },
     { path = "std::env::var_os", reason = "the environment is reached through Env in deps" },
