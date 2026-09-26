@@ -46,7 +46,7 @@ The same folder works for people and for tools, and if you stop using typdoc you
 ## Install
 
 ```console
-$ curl -fsSL https://typdoc.thaitype.dev/install | sh
+curl -fsSL https://typdoc.thaitype.dev/install | sh
 ```
 
 Supported platforms:
@@ -65,7 +65,7 @@ If you work with a coding agent, add the typdoc skill too. It teaches Claude Cod
 skill-aware agents how to find, create, change and move documents in a typdoc project:
 
 ```console
-$ npx skills add thaitype/typdoc
+npx skills@latest add thaitype/typdoc
 ```
 
 ## Concepts
