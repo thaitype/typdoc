@@ -32,7 +32,7 @@ pub const KNOWN_GAPS: &[&str] = &[
     // crates/typdoc/tests/imports.rs:
     // `a_reverse_lookup_does_not_see_a_ref_from_an_imported_project`
     "[reverse-scope] a reverse lookup (`refs --reverse`) scans this project's own namespaces \
-     only; the design says it also scans the namespaces of every project this one imports, so \
+     only, not also the namespaces of every project this one imports, so \
      a ref written in an imported project's own document, pointing back into this project, is \
      missing from the result rather than being in it",
     // crates/typdoc/tests/imports.rs:
