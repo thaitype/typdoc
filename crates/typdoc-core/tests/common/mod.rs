@@ -41,6 +41,6 @@ impl Env for FixedEnv {
     }
 
     fn hostname(&self) -> String {
-        "ticket-14-test".to_owned()
+        "fixed-host".to_owned()
     }
 }

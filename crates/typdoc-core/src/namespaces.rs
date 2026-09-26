@@ -345,7 +345,7 @@ mod tests {
         assert!(names_of(&resolved).is_empty());
         assert!(
             report.errors().is_empty(),
-            "unchanged today's behavior: a glob matching nothing is silent"
+            "a glob matching nothing is silent"
         );
     }
 

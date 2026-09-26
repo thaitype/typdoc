@@ -905,8 +905,7 @@ mod tests {
                 &crossed,
                 Some(&info)
             ),
-            "a bare name means a schema of this project (design, Target names), never one \
-             reached through an import"
+            "a bare name means a schema of this project, never one reached through an import"
         );
     }
 
