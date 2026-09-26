@@ -14,7 +14,7 @@ No code or comment changes. On `origin/main` after every batch has merged:
 
 Known so far: `crates/typdoc-core/src/json_body.rs`, the test named
 `a_document_with_no_frontmatter_block_at_all_is_reported_as_its_own_case` asserts
-`MissingContentType` (pilot batch). Deferred by decision to a later story; list it as deferred,
-not as waiting.
+`MissingContentType` (pilot batch). Fixed in the ticket 03 PR: the test is renamed to name what it
+asserts.
 
 Done when: that record is reported. The story is accepted outside the loop.
