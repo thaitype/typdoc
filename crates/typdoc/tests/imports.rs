@@ -1,12 +1,7 @@
-//! Imports through the built binary: `${NAME}` substitution never giving an empty-string
-//! path, `imports.absent`'s exit code and its silence when nothing names an absent import,
-//! `name::` resolving through a real import (`bad-prefix` for an unknown alias, `import-absent`
-//! for one absent on this machine, resolution for one that is there), `project::` arguments,
-//! `project` in the name of a document reached through one, `--namespace 'alias::*'`, the
-//! machine file `imports.json` actually merged in and read (path *discovery* for its five cases
-//! is unit-tested in `typdoc-core`'s own `imports` module; this file is the disk-touching,
-//! through-the-binary half, the same split every other index-reading part of this crate already
-//! uses), and one level of import only.
+//! Covers SPC-2, SPC-6, SPC-7, SPC-12, SPC-13, SPC-14, SPC-15.
+//!
+//! Where the machine file `imports.json` is found is unit-tested in `typdoc-core`'s `imports`
+//! module; this file reads and merges it through the binary.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -34,12 +29,9 @@ fn error_of(ran: &Ran, code: i32) -> Value {
 // `${NAME}` substitution: an unset or empty variable never becomes an empty string.
 // ---------------------------------------------------------------------------------------------
 
-/// `fixtures/valid/imports/decoy`: `imports.trap_import` is `${TYPDOC_TEST_UNSET_VAR}notes`. A
-/// real project sits at `decoy/notes`, so a wrong implementation that substituted an empty
-/// string for the unset variable would turn the path into the plain, existing folder `notes`
-/// and the import would wrongly resolve — the fixture would pass under the wrong behaviour if
-/// it did not carry this trap (rule: a fixture that would pass under the wrong behaviour proves
-/// nothing).
+/// In `fixtures/valid/imports/decoy`, `imports.trap_import` is `${TYPDOC_TEST_UNSET_VAR}notes`
+/// and a real project sits at `decoy/notes`, so an unset variable read as an empty string would
+/// resolve the import.
 #[test]
 fn an_unset_variable_in_an_import_path_never_becomes_an_empty_string() {
     let ran = run(&["refs", "a.md", "--json"], &fixture("valid/imports/decoy"));
@@ -66,10 +58,8 @@ fn a_variable_set_to_an_empty_value_behaves_as_unset() {
     );
 }
 
-/// With the variable set to a real value, the import is no longer absent: the ref now names a
-/// real project (`decoy/notes`) that simply has no `x.md` in it, so the outcome is `not-found`,
-/// not `import-absent` — proof that these are genuinely different reasons, not one dressed up
-/// as the other.
+/// The ref then names a real project with no `x.md` in it, so `not-found` and `import-absent`
+/// are shown to be different outcomes.
 #[test]
 fn a_variable_set_to_a_real_value_is_substituted_and_the_import_is_then_present() {
     let ran = Spawn::args(["refs", "a.md", "--json"])
@@ -123,9 +113,7 @@ fn imports_absent_at_error_gives_exit_2_when_a_ref_names_the_absent_import() {
 
     let ran = run(&["validate", "--json"], project.path());
 
-    // `validate`'s own exit 2 is a verdict on the project, not a config error: the report is
-    // printed on stdout regardless of whether it is favourable (design, JSON output), unlike
-    // the generic error object other failures print on stderr.
+    // Exit 2 from `validate` is a verdict, printed on stdout, not an error object on stderr.
     assert_eq!(ran.code, 2, "{}", ran.stderr);
     assert_eq!(ran.stderr, "");
     let report = ran.stdout_json();
@@ -244,9 +232,7 @@ fn an_alias_configured_and_present_resolves_and_carries_project_in_its_name() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// `project::` arguments: `get`, `toc` and `refs` resolve them; `project` appears in the name of
-// a document that belongs to one; a multi-namespace import needs the namespace named, and is
-// bad arguments otherwise.
+// `project::` arguments
 // ---------------------------------------------------------------------------------------------
 
 #[test]
@@ -276,9 +262,7 @@ fn toc_with_a_project_prefix_resolves_inside_the_import_and_names_it() {
 
 #[test]
 fn refs_with_a_project_prefix_reads_the_imported_documents_own_out_refs() {
-    // `LRN-1` itself holds no refs, so this only checks that the command runs inside the
-    // import and names the document asked about with `project` set; `document_json`'s own
-    // `project` field is exercised more directly by `get`.
+    // `LRN-1` holds no refs, so this checks only that the command runs inside the import.
     let ran = run(&["refs", "memory_import::LRN-1", "--json"], &main_project());
 
     assert_eq!(ran.code, 0, "{}", ran.stderr);
@@ -321,13 +305,8 @@ fn validate_with_a_project_prefix_is_refused() {
     );
 }
 
-/// `validate` never reads an import: not for the whole project, not for `--schemas` (both
-/// already covered by `namespace_flag_naming_...` above via `list`'s own analogues), and, this
-/// case specifically, not for a *named argument* either — `--namespace`/`TYPDOC_NAMESPACE`
-/// naming an import must be refused there too, or `validate note.md --namespace 'alias::*'`
-/// would silently validate `note.md` under a scope that named something `validate` never reads,
-/// giving a clean report that looks like "checked and clean" rather than "the scope you asked
-/// for was never read".
+/// `validate` never reads an import, so a scope that names one is refused rather than giving a
+/// clean report for a scope that was never read.
 #[test]
 fn validate_of_a_named_argument_refuses_a_namespace_flag_naming_an_import() {
     let ran = run(
@@ -411,8 +390,7 @@ fn a_project_prefix_naming_an_import_absent_on_this_machine_is_bad_arguments() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// `--namespace 'alias::*'` reaching an imported project (`list`), including combined with this
-// project's own namespaces, and refusing an unknown or absent alias explicitly named this way.
+// `--namespace 'alias::*'`
 // ---------------------------------------------------------------------------------------------
 
 #[test]
@@ -484,10 +462,7 @@ fn namespace_flag_naming_an_absent_import_is_bad_arguments() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// A `ref.*(f)` query condition follows an arrow across an import: ticket 15's carried-forward
-// doubt ("a ref that resolves to a file in no collection is read under an empty schema... no
-// fixture reaches that branch") is reached here, through `memory_import::README.md`
-// (`fixtures/valid/imports/memory/README.md`, matched by no collection).
+// A `ref.*(f)` condition across an import
 // ---------------------------------------------------------------------------------------------
 
 #[test]
@@ -508,21 +483,11 @@ fn a_ref_condition_follows_an_arrow_across_an_import_to_a_real_document() {
     assert_eq!(out["documents"][0]["path"], json!("note.md"));
 }
 
-/// The carried-forward branch: `uncollected.md`'s `see` reaches `memory_import::README.md`, a
-/// file in no collection of the imported project. Read under an empty schema, its `path`
-/// pseudo-field is still real (the file genuinely exists), so `ref.any(see).path=README.md`
-/// matches — the same reasoning `evaluate_reached`'s own doc gives for a same-project target
-/// outside every collection, now shown reached across an import too.
 #[test]
 fn a_ref_condition_reaches_a_document_of_an_import_that_is_in_no_collection() {
-    // `named_import` (`fixtures/valid/imports/named`) has one namespace, `only`, not `default`.
-    // Reading `named_import::only/uncollected.md` under the *wrong* project (this project,
-    // `main`, whose own only namespace is `default`) would report `namespace: default` for it;
-    // reading it correctly, under `named_import`'s own namespaces, reports `only`. This is the
-    // check `ref.any(see).path=README.md` alone could not make: a wrong implementation that
-    // silently read `main`'s own (empty) index still reports the right-looking `path`, since the
-    // written path text is carried through either way, so that alone proves nothing about which
-    // project's `namespace` was actually consulted.
+    // `named_import`'s one namespace is `only`, and `main`'s is `default`. Read under `main`,
+    // `named_import::only/uncollected.md` would still carry the right `path`, so the namespace
+    // is what shows which project it was read under.
     let ran = run(
         &[
             "list",
@@ -540,11 +505,8 @@ fn a_ref_condition_reaches_a_document_of_an_import_that_is_in_no_collection() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// One level of import only: `memory_import`'s own `.typdoc/config.json` configures an import of
-// its own (`loop_back`, pointing at `nowhere-nested`, whose `.typdoc/config.json` is not valid
-// JSON). Loading `main` succeeds regardless — proof that `memory_import`'s own import is never
-// followed, since a wrong implementation that did follow it would fail to load `main` at all
-// (the same "would fail under the wrong behaviour" shape the `${NAME}` trap above uses).
+// One level of import only. `memory_import` imports `nowhere-nested`, whose config is not valid
+// JSON, so following it would fail to load `main`.
 // ---------------------------------------------------------------------------------------------
 
 #[test]
@@ -555,12 +517,9 @@ fn an_imports_own_import_is_never_followed() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The machine file `imports.json`: not only found (`typdoc-core`'s own unit tests), but read
-// and merged with the project's own `imports`, with the project's own entry winning when both
-// name the same alias.
+// The machine file `imports.json`
 // ---------------------------------------------------------------------------------------------
 
-/// A minimal project of one file, for the machine file to import.
 fn tiny_project(dir: &std::path::Path, title: &str) {
     std::fs::create_dir_all(dir.join(".typdoc/collections")).unwrap();
     std::fs::write(dir.join(".typdoc/config.json"), r#"{ "version": 1 }"#).unwrap();
@@ -695,10 +654,8 @@ fn an_alias_named_by_the_project_and_the_machine_file_is_refused_once_at_the_pro
 }
 
 // ---------------------------------------------------------------------------------------------
-// `config.config-dir`: an invalid `TYPDOC_CONFIG_DIR` is refused loudly, whether or not the
-// project's own `imports` is even set. `fixtures/broken/config.config-dir` covers the relative
-// case through the generic coverage harness; the two cases below are explicit about which of
-// the two conditions ("absolute", "exists") each one fails.
+// `config.config-dir`. `fixtures/broken/config.config-dir` covers the relative case through the
+// coverage harness; each case below fails one of the two conditions, absolute and exists.
 // ---------------------------------------------------------------------------------------------
 
 #[test]
@@ -712,9 +669,7 @@ fn typdoc_config_dir_that_is_not_absolute_is_config_dot_config_dir() {
 
     let object = error_of(&ran, 2);
     assert_eq!(object["details"][0]["rule"], json!("config.config-dir"));
-    // Unlike `config.parse` or an unknown `version`, an invalid `TYPDOC_CONFIG_DIR` does not
-    // stop the rest of `config.json` from being read: `complete` is `true`, the same as any
-    // other config error that leaves checking possible (design, Config errors).
+    // Unlike `config.parse`, it does not stop the rest of `config.json` from being read.
     assert_eq!(object["complete"], json!(true));
 }
 
@@ -733,15 +688,9 @@ fn typdoc_config_dir_naming_a_directory_that_does_not_exist_is_config_dot_config
 }
 
 // ---------------------------------------------------------------------------------------------
-// `refs.target` and `refs.codedByPath` for a ref that crosses into an import, left unchecked by
-// ticket 17 and reachable now that every import is loaded before either runs
-// (`Project::schema_info_of`, shared with the schema drift check of `schemas.rs`).
+// `refs.target` and `refs.codedByPath` for a ref that crosses into an import
 // ---------------------------------------------------------------------------------------------
 
-/// A tiny imported project of two schemas: `learning`, coded `LRN`, with one document to
-/// reference; and `other`, uncoded, used by nothing — a real schema of the imported project, so
-/// a `target` that names it is not itself a drift fault, and `refs.target`'s own refusal is the
-/// only thing a test built on it can be about.
 fn coded_import_project(dir: &std::path::Path) {
     std::fs::create_dir_all(dir.join(".typdoc/collections")).unwrap();
     std::fs::write(dir.join(".typdoc/config.json"), r#"{ "version": 1 }"#).unwrap();
@@ -768,10 +717,7 @@ fn coded_import_project(dir: &std::path::Path) {
     .unwrap();
 }
 
-/// `target` is `"*"` for `Target::Any` (bare string, the design's own shape for it) and, for
-/// anything else, one schema name, wrapped here into the one-element list `Target::Schemas`
-/// reads: `["*"]` is a different, stricter value from `"*"` (a list of one schema literally
-/// named `*`, which nothing is), so the two are not interchangeable.
+/// `"*"` is written bare: `["*"]` would be a list of one schema named `*`, which nothing is.
 fn importer_project(imported: &std::path::Path, target: &str) -> Scratch {
     let project = Scratch::project(&[]);
     project.file(
@@ -839,9 +785,6 @@ fn refs_target_now_refuses_a_ref_that_crosses_an_import_to_a_schema_the_qualifie
 fn a_bare_name_in_target_does_not_reach_a_same_named_schema_across_an_import() {
     let imported = tempfile::tempdir().unwrap();
     coded_import_project(imported.path());
-    // design.md, Target names: "A bare name... means a schema in this project." A bare
-    // `learning` must not let the ref through just because the imported project happens to have
-    // a schema of that name too.
     let project = importer_project(imported.path(), "learning");
     project.file("a.md", "---\nsee: memory_import::LRN-1\n---\n");
 
@@ -871,12 +814,9 @@ fn refs_coded_by_path_now_warns_for_a_coded_document_of_an_import_referenced_by_
 }
 
 // ---------------------------------------------------------------------------------------------
-// A gap `registry::KNOWN_GAPS` names: the design says a reverse lookup scans this project's own
-// namespaces *and the namespaces of every project it imports*; `refs --reverse` scans this
-// project only (`Project::refs`'s own doc comment). Two mutually-importing scratch projects: `a`
-// imports `b` and `b` imports `a` back, so `b`'s own document can point into `a` the same way
-// any other cross-import ref does, using nothing `refs --reverse` with a `project::` argument
-// (refused outright, see `refs_reverse_with_a_project_prefix_is_refused` above) is needed for.
+// A gap `registry::KNOWN_GAPS` names: `refs --reverse` scans this project only, not the projects
+// it imports. `a` and `b` import each other, so a document of `b` can point into `a` as any
+// cross-import ref does.
 // ---------------------------------------------------------------------------------------------
 
 #[test]
@@ -913,40 +853,28 @@ fn a_reverse_lookup_does_not_see_a_ref_from_an_imported_project() {
         .unwrap();
         std::fs::write(dir.join("note.json"), note_schema(see)).unwrap();
     };
-    // `a` holds the target document, `x.md`, and imports `b` under the alias `b_import` only so
-    // that a fixed implementation would have somewhere to look; `a`'s own schema needs no ref
-    // field, since nothing in `a` points anywhere.
+    // `a` imports `b` only so that a reverse scan of imports would have somewhere to look.
     write(a.path(), "b_import", b.path(), false);
     std::fs::write(a.path().join("x.md"), "").unwrap();
-    // `b` imports `a` back under `a_import`, and its one document, `y.md`, points at `a`'s
-    // `x.md` through that alias — an ordinary cross-import ref, read exactly as
-    // `an_alias_configured_and_present_resolves_and_carries_project_in_its_name` above reads
-    // one, just from the other side of the pair.
     write(b.path(), "a_import", a.path(), true);
     std::fs::write(b.path().join("y.md"), "---\nsee: a_import::x.md\n---\n").unwrap();
 
-    // The premise: `b`'s own ref genuinely resolves. If it did not, a reverse scan omitting it
-    // would prove nothing (a fixture that would pass under the wrong behaviour proves nothing).
+    // The premise: `b`'s ref resolves. If it did not, an empty reverse scan would prove nothing.
     let from_b = run(&["refs", "y.md", "--json"], b.path());
     assert_eq!(from_b.code, 0, "{}", from_b.stderr);
     let out = from_b.stdout_json();
     assert_eq!(out["refs"][0]["path"], json!("x.md"));
     assert_eq!(out["refs"][0]["project"], json!("a_import"));
 
-    // The gap: run from `a`, a reverse lookup on its own `x.md` does not see that ref, though
-    // the design's reverse lookup is meant to scan `a`'s imports too.
+    // The gap: from `a`, a reverse lookup on `x.md` does not see that ref.
     let from_a = run(&["refs", "x.md", "--reverse", "--json"], a.path());
     assert_eq!(from_a.code, 0, "{}", from_a.stderr);
     assert_eq!(from_a.stdout_json()["refs"], json!([]));
 }
 
 // ---------------------------------------------------------------------------------------------
-// A third gap `registry::KNOWN_GAPS` names, alongside the two above: a body link that crosses
-// an import has its target's existence checked (`body.links`) but not the `#anchor` after it
-// (`body.anchors`) — `Project::check_body_destination`'s own comment on the `Import` branch
-// says `resolved_path` stays `None` there, "so the anchor check below never runs for this
-// destination". `target.md` is given exactly one real heading, so a link to a different one
-// would be caught inside one project; across this import, it is not.
+// A gap `registry::KNOWN_GAPS` names: a body link that crosses an import has its target's
+// existence checked (`body.links`) but not its `#anchor` (`body.anchors`).
 // ---------------------------------------------------------------------------------------------
 
 #[test]
@@ -1010,9 +938,6 @@ fn a_body_link_across_an_import_has_its_anchor_left_unchecked() {
 // the pair pass under any implementation that ignores the project.
 // ---------------------------------------------------------------------------------------------
 
-/// The pair of projects: `a` (returned first, with `pointer_text` as `notes/pointer.md`) imports
-/// `b` under the alias `b`. Both hold `notes/target.md`, and both have the same collection and
-/// the same schema, with a ref field `see` that may point anywhere.
 fn importer_and_imported(pointer_text: &str) -> (Scratch, Scratch) {
     let make = |imports: &str| {
         let project = Scratch::project(&[]);
@@ -1037,7 +962,6 @@ fn importer_and_imported(pointer_text: &str) -> (Scratch, Scratch) {
     (importer, imported)
 }
 
-/// What `refs notes/target.md --reverse --json` reports as `refs`, run in `a`.
 fn reverse_refs_of_target(a: &Scratch, extra: &[&str]) -> Value {
     let mut args = vec!["refs", "notes/target.md", "--reverse", "--json"];
     args.extend_from_slice(extra);
@@ -1049,14 +973,12 @@ fn reverse_refs_of_target(a: &Scratch, extra: &[&str]) -> Value {
     out["refs"].clone()
 }
 
-/// The paths `list --where <condition> --ids` prints, run in `a`.
 fn listed_by(a: &Scratch, condition: &str) -> Vec<String> {
     let ran = run(&["list", "--where", condition, "--ids"], a.path());
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     ran.stdout.lines().map(str::to_owned).collect()
 }
 
-/// The premise of the fault shape: the ref of `pointer.md` resolves, into `b`.
 fn assert_pointer_resolves_into_b(a: &Scratch, field: &str) {
     let ran = run(&["refs", "notes/pointer.md", "--json"], a.path());
     assert_eq!(ran.code, 0, "{}", ran.stderr);

@@ -1,6 +1,4 @@
-//! `typdoc list` through the built binary: the default table, `--json`, `--ids`, the collection
-//! and code filter, `--where` (including the scope-wide field check this ticket owns), `--sort`,
-//! `--limit`, `--fields`, and the scope by namespace.
+//! Covers SPC-2, SPC-5, SPC-7, SPC-12, SPC-13.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -8,10 +6,6 @@ mod common;
 use common::{Ran, Scratch, Spawn, fixture};
 use serde_json::json;
 
-/// A project with one coded collection, `tickets/{key}.md`, code `T`: `title` (string), `status`
-/// (enum, `open` before `closed`, the reverse of the design's own `open`/`resolved` example, on
-/// purpose, so an enum-order sort test cannot pass by accident agreeing with key order), and
-/// `priority` (number, not required, so a document can leave it unset).
 const TICKETS: [(&str, &str); 2] = [
     (
         ".typdoc/collections/tickets.json",
@@ -100,14 +94,11 @@ fn an_empty_result_exits_0() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The scope-wide field check this ticket owns (ticket 13's thread)
+// A `--where` field and the schemas in scope
 // ---------------------------------------------------------------------------------------------
 
 #[test]
 fn a_field_no_schema_in_scope_declares_is_an_error_not_an_empty_result() {
-    // `valid/refs` has two collections, `notes` (schema `note`: only `title`) and `tickets`
-    // (schema `ticket`: `title`, `blocked_by`, `context`). No schema in the project declares
-    // `nope`, so this must be an error (exit 1), never a well-formed query with an empty result.
     let ran = list(&fixture("valid/refs"), &["--where", "nope=x", "--json"]);
 
     let object = error_of(&ran, 1);
@@ -119,11 +110,8 @@ fn a_field_no_schema_in_scope_declares_is_an_error_not_an_empty_result() {
 
 #[test]
 fn a_field_one_collection_has_and_another_lacks_is_absent_on_the_one_that_lacks_it_not_an_error() {
-    // `blocked_by` is declared by `ticket` (the tickets collection) and not by `note` (the notes
-    // collection). Over the whole project (both collections in scope), the field is known
-    // somewhere, so the query is not an error; `notes/a.md`, whose own schema lacks the field,
-    // must be treated as absent and simply excluded (`blocked_by=WF-2` is a positive condition,
-    // which absence always fails), not as a scope-wide unknown-field error.
+    // `blocked_by` is declared by `ticket` and not by `note`, so `notes/a.md` reads it as absent,
+    // which fails a positive condition.
     let ran = list(
         &fixture("valid/refs"),
         &["--where", "blocked_by=WF-2", "--json"],
@@ -142,9 +130,6 @@ fn a_field_one_collection_has_and_another_lacks_is_absent_on_the_one_that_lacks_
 
 #[test]
 fn the_same_field_negated_satisfies_the_document_whose_schema_lacks_it() {
-    // The complement of the case above: `!=` is satisfied by something absent (design, Absence
-    // and negation), so `notes/a.md` (no `blocked_by` at all) must be included by `!=` even
-    // though its own schema does not declare the field.
     let ran = list(
         &fixture("valid/refs"),
         &["--where", "blocked_by!=WF-2", "--json"],
@@ -236,9 +221,7 @@ fn sort_by_a_number_field_orders_by_value_not_by_key() {
 #[test]
 fn sort_by_an_enum_field_orders_by_position_in_the_schemas_values() {
     let project = Scratch::project(&TICKETS);
-    // The schema's `values` are `["open", "closed"]`, so `open` sorts before `closed`; by key
-    // order T-1 (open) would already come before T-2, so give the *later* key the *earlier*
-    // enum value to prove the enum's own order is read, not the key's.
+    // By key alone T-1 comes first, so the later key holds the earlier enum value.
     project.file("tickets/T-1.md", "---\ntitle: one\nstatus: closed\n---\n");
     project.file("tickets/T-2.md", "---\ntitle: two\nstatus: open\n---\n");
 
@@ -297,11 +280,6 @@ fn an_invalid_sort_direction_is_a_bad_argument() {
 
 #[test]
 fn a_sort_field_no_schema_declares_is_not_an_error_and_falls_back_to_key_or_path_order() {
-    // Unlike `--where` (Names and scope: "a field name unknown to every schema in scope is an
-    // error"), the design's Sorting table states no such rule, and that error is tied to "a
-    // plain condition". An unknown `--sort` field changes nothing about which documents match or
-    // their count, only how they are ordered, so every document reads as missing that key and
-    // the result falls back to key or path order, still exit 0 with every document present.
     let ran = list(
         &fixture("valid/refs"),
         &["--code", "WF", "--sort", "nope", "--json"],
@@ -320,7 +298,7 @@ fn a_sort_field_no_schema_declares_is_not_an_error_and_falls_back_to_key_or_path
 }
 
 // ---------------------------------------------------------------------------------------------
-// --limit, total and truncated (the ticket's own criterion)
+// --limit, total and truncated
 // ---------------------------------------------------------------------------------------------
 
 fn three_tickets() -> Scratch {
@@ -367,11 +345,9 @@ fn limit_does_not_change_total_or_the_json_fields_of_a_listed_document() {
 
 #[test]
 fn a_value_the_default_table_prints_does_not_change_with_limit() {
-    // T-2's title is much longer than T-1's; with the extra `status` column after `title`,
-    // `title` is no longer the table's last (unpadded) column, so a column-width computed from
-    // only the *listed* rows would give T-1's row a different width under `--limit 1` than it
-    // gets when every matching document (T-1 and T-2 both) is measured. Both share the same
-    // `status` value, so the last column cannot itself be the source of any difference.
+    // T-2's title is much longer than T-1's, and `status` after it makes `title` a padded column,
+    // so a width taken from the listed rows alone would change T-1's row under `--limit 1`. Both
+    // share one `status`, so the last column cannot be the source of a difference.
     let project = Scratch::project(&TICKETS);
     project.file("tickets/T-1.md", "---\ntitle: A\nstatus: open\n---\n");
     project.file(
@@ -386,18 +362,14 @@ fn a_value_the_default_table_prints_does_not_change_with_limit() {
     assert_eq!(cut.code, 0, "stderr: {}", cut.stderr);
     let full_lines: Vec<&str> = full.stdout.lines().collect();
     let cut_lines: Vec<&str> = cut.stdout.lines().collect();
-    // The header (driven off the whole matched set, not the listed one) is identical either way.
     assert_eq!(
         cut_lines[0], full_lines[0],
         "header must not depend on --limit"
     );
-    // T-1's own row (the first row under the header) must also be identical either way.
     let t1_line_of_full = full_lines[1];
     assert_eq!(cut_lines.get(1), Some(&t1_line_of_full));
-    // And, concretely, `title` is padded to fit T-2's ten-character title (9 padding spaces
-    // after T-1's one-character title, plus the 2-space column separator) even though `--limit
-    // 1` never prints T-2 at all: a width taken from the listed rows alone would pad `A` to only
-    // its own width, giving 2 spaces before `open`, not 11.
+    // 9 spaces pad `A` to T-2's ten characters, then the 2-space separator; a width taken from
+    // the listed rows alone would give 2.
     let gap = t1_line_of_full.split("A").nth(1).unwrap();
     let spaces_before_open = gap.len() - gap.trim_start_matches(' ').len();
     assert_eq!(
@@ -418,9 +390,7 @@ fn the_default_table_shows_identity_title_and_every_field_used_in_where() {
     );
 
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
-    // A header row names the key, the title and `context`, in that order, above the rows;
-    // only WF-1 and WF-3 carry `context`, so each row must show the key, the title and the
-    // value of `context`, in that same column order.
+    // Only WF-1 and WF-3 carry `context`.
     let lines: Vec<&str> = ran.stdout.lines().collect();
     assert_eq!(lines.len(), 3, "{lines:?}");
     assert_eq!(
@@ -452,12 +422,7 @@ fn the_header_row_names_path_for_a_path_identified_collection() {
 
 #[test]
 fn the_header_row_names_document_when_the_matched_set_mixes_coded_and_path_identified_documents() {
-    // No `--collection`/`--code`: `valid/refs` spans both `tickets` (coded) and `notes`
-    // (path-identified). This is a genuine mix -- some matched documents have a key, some don't
-    // -- so the identity column is labeled `document` (ticket 29): `key` would wrongly claim
-    // every row holds one, when `notes/a.md`'s own row plainly holds a path instead -- the same
-    // identity `table_row` already prints per row (`doc.key.unwrap_or(doc.path)`) is unaffected,
-    // only the header's label changes.
+    // `valid/refs` spans `tickets`, which is coded, and `notes`, which is not.
     let ran = list(&fixture("valid/refs"), &[]);
 
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
@@ -541,17 +506,12 @@ fn ids_and_json_cannot_be_combined() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// M-20 (ticket 32): a coded document's identity in `list`'s table and in `--ids` is the bare
-// `key` only when the project has exactly one namespace; `namespace:key` when it has several
-// (the design's own naming table) — matching what `ref_name_text` already prints for `refs`/`mv`.
+// A coded document's identity in the table and in `--ids`
 // ---------------------------------------------------------------------------------------------
 
 #[test]
 fn ids_qualifies_a_coded_documents_key_when_the_project_has_several_namespaces() {
-    // `valid/several-namespaces` has two namespaces, `story-1` and `story-2`, each with a
-    // document coded `WF-1` — this ticket's own Direction 1 repro: the bare key alone is
-    // ambiguous project-wide (passing it back to another command exits 1), so `--ids` must print
-    // each one qualified by its own namespace.
+    // `story-1` and `story-2` each hold a `WF-1`, so a bare key would be ambiguous.
     let ran = list(
         &fixture("valid/several-namespaces"),
         &["--collection", "tickets", "--where", "key=WF-1", "--ids"],
@@ -573,8 +533,7 @@ fn list_table_qualifies_a_coded_documents_key_when_the_project_has_several_names
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
     let lines: Vec<&str> = ran.stdout.lines().collect();
     assert_eq!(lines.len(), 4, "{lines:?}");
-    // The header still says `key` (ticket 29's header logic is unaffected by this ticket: it
-    // names what kind of value the column holds, not how a key happens to be spelled).
+    // The header names what the column holds, not how a key is spelled.
     assert_eq!(
         lines[0].split_whitespace().collect::<Vec<_>>()[0],
         "key",
@@ -591,9 +550,6 @@ fn list_table_qualifies_a_coded_documents_key_when_the_project_has_several_names
 
 #[test]
 fn list_table_and_ids_stay_bare_when_the_project_has_exactly_one_namespace() {
-    // `valid/refs` has a single (default) namespace: unaffected by Direction 1's fix, both
-    // shapes still print the bare key exactly as before — the regression this ticket must not
-    // introduce.
     let ids = list(&fixture("valid/refs"), &["--code", "WF", "--ids"]);
     assert_eq!(ids.code, 0, "stderr: {}", ids.stderr);
     let mut lines: Vec<&str> = ids.stdout.lines().collect();
@@ -608,9 +564,6 @@ fn list_table_and_ids_stay_bare_when_the_project_has_exactly_one_namespace() {
 
 #[test]
 fn a_mixed_list_result_qualifies_only_the_coded_rows_in_a_multi_namespace_project() {
-    // `valid/several-namespaces`, scoped to the `story-*` namespaces: tickets (coded) and notes
-    // (uncoded) both match — coded rows must show `namespace:key`, uncoded rows keep their bare
-    // path, unaffected either way (the design's own rule for an uncoded document).
     let ran = list(
         &fixture("valid/several-namespaces"),
         &["--namespace", "story-*"],
@@ -656,8 +609,7 @@ fn list_is_no_longer_in_the_list_of_commands_the_binary_lacks() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// `ref.*`/`refby.*` through the binary: parses, evaluates, and a dangling ref warns on stderr
-// (design, Query, "Reached documents": "dangling refs also warn on stderr").
+// `ref.*` and `refby.*`
 // ---------------------------------------------------------------------------------------------
 
 #[test]
@@ -683,9 +635,7 @@ fn a_ref_star_condition_matches_through_the_binary() {
 
 #[test]
 fn a_dangling_ref_reached_by_ref_star_warns_on_stderr() {
-    // T-1's blocked_by is [T-2, T-99]; T-99 does not exist, so evaluating ref.any(blocked_by)
-    // for T-1 walks a dangling ref and must warn about it, even though the query itself succeeds
-    // (exit 0) and the dangling ref simply counts as absent for the result.
+    // T-1's `blocked_by` is `[T-2, T-99]`, and T-99 does not exist.
     let ran = list(
         &fixture("valid/ref-query"),
         &[
@@ -719,9 +669,7 @@ fn a_dangling_ref_reached_by_ref_star_warns_on_stderr() {
 
 #[test]
 fn a_query_with_no_dangling_ref_prints_nothing_on_stderr() {
-    // Narrowed to T-3 alone (key=T-3): its only blocker (T-2) resolves cleanly, so evaluating
-    // ref.any(blocked_by) for it never reaches T-1's or T-5's dangling T-99, and stderr stays
-    // empty even though the very same field, elsewhere in this project, does have one.
+    // T-3's only blocker resolves; the dangling T-99 is reached only from T-1 and T-5.
     let ran = list(
         &fixture("valid/ref-query"),
         &[

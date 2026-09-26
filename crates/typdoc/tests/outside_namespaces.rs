@@ -1,7 +1,6 @@
-//! A ref or a body link that reaches a file outside every namespace folder: it resolves, the
-//! command goes on, and the file is named by its path alone (no `namespace` in `--json`).
-//! Every project here is built in a scratch folder, and every expected value is written out by
-//! hand from the design (Namespaces, Refs, JSON output).
+//! Covers SPC-7, SPC-12, SPC-13.
+//!
+//! Every expected value is written out by hand, never copied from the tool's output.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -12,8 +11,6 @@ use serde_json::{Value, json};
 const COLLECTION: &str = r#"{ "match": "*.md", "schema": "schemas/n.json" }"#;
 const SCHEMA: &str = r#"{ "name": "n", "fields": { "up": { "type": "ref", "target": "*" } } }"#;
 
-/// Two namespaces and a `README.md` at the project root, which belongs to neither. `story-1/a.md`
-/// refers to the README, and `story-2/b.md` refers to `story-1/a.md`.
 fn two_namespaces(extra: &[(&str, &str)]) -> Scratch {
     let project = Scratch::empty();
     project.file(
@@ -35,7 +32,6 @@ fn run(project: &std::path::Path, args: &[&str]) -> Ran {
     Spawn::args(args.iter().copied()).cwd(project).run()
 }
 
-/// The run went well: exit 0, nothing on stderr. Returns what it printed.
 fn ok(ran: &Ran) -> Value {
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
     assert_eq!(ran.stderr, "");
@@ -151,9 +147,8 @@ fn ref_all_goes_on_past_a_ref_to_a_root_file() {
 fn a_root_file_has_no_namespace_for_a_condition_on_the_document_it_reaches() {
     let project = two_namespaces(&[]);
 
-    // Absent fails `=` in every form, `*` included, and satisfies `!=`. (The query language reads
-    // an empty value the same way, so a unit test in `typdoc-core` pins that the pseudo-field
-    // holds no value at all for such a file.)
+    // Absent fails `=` in every form, `*` included, and satisfies `!=`. An empty value reads the
+    // same way, so that the pseudo-field holds no value at all is pinned in `typdoc-core`.
     assert_eq!(
         listed(project.path(), "ref.any(up).namespace=*"),
         ["story-2/b.md"]
@@ -185,9 +180,6 @@ fn refby_any_reports_the_referring_document_while_another_refers_to_a_root_file(
     );
 }
 
-/// Project `a`, of one namespace, imports `b`, of two, which has a `README.md` at its root.
-/// `a/notes/p.md` refers to it by a frontmatter ref and by a body link, and `a/notes/q.md` refers
-/// to `p.md`.
 fn importing_project() -> Scratch {
     let parent = Scratch::empty();
     parent.file(
