@@ -72,5 +72,7 @@ like any other, so every required field it lacks is a finding. A file with no bl
 ordinary Markdown file. The two are not merged, because a document missing every required field
 would otherwise be filed with the files that are not typdoc's, with no signal. A block that is
 present but cannot be parsed is not an absent block: it is the finding `frontmatter.parse`, so a
-damaged document is never taken for an ordinary Markdown file. The finding has a position when
-the YAML reader gives one, and the reader does not give one for every error.
+damaged document is never taken for an ordinary Markdown file. The finding has no position: the
+YAML reader gives none for some errors and an imprecise one for others (the start of the mapping,
+not the second key, for a duplicate key), and it does not say which kind of error it met, so no
+position is kept for any.
