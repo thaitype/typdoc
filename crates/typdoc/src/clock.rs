@@ -16,12 +16,8 @@ impl Clock for MachineClock {
     }
 }
 
-/// Not part of the documented command-line interface (`docs/design.md` names no such
-/// variable): its only reason to exist is letting a golden fixture pin what an `auto: create`
-/// or `auto: update` field holds, which the machine's own moving clock cannot do twice the same
-/// way. Read through `Env`, the same as every other variable this binary reads (`main.rs`'s
-/// `ProcessEnv`), but before `deps` is built: which clock goes into `deps.clock` is decided from
-/// that one read, ahead of everything the clock itself is later reached through.
+/// Not part of the documented command line: it lets a golden fixture pin what an
+/// `auto: create` or `auto: update` field holds, which the machine's moving clock cannot.
 pub const FIXED_CLOCK_VAR: &str = "TYPDOC_FIXED_CLOCK";
 
 /// A clock that always answers the one instant it was built with.
@@ -33,19 +29,15 @@ impl Clock for FixedEnvClock {
     }
 }
 
-/// The clock the shipped binary actually runs on: the machine's own, unless `FIXED_CLOCK_VAR`
-/// names an instant with an offset, in which case every write of this run stamps that one
-/// instant into every `auto: create`/`auto: update` field instead.
+/// The machine's clock, unless `FIXED_CLOCK_VAR` names an instant with an offset.
 pub enum ShippedClock {
     Machine(MachineClock),
     Fixed(FixedEnvClock),
 }
 
 impl ShippedClock {
-    /// Builds the clock from `FIXED_CLOCK_VAR`'s value, when set. A value that does not parse as
-    /// an instant with an offset is a misuse of a variable no ordinary run ever sets, so this
-    /// panics naming the variable and the text, rather than silently falling back to the
-    /// machine's own clock and hiding the mistake in whatever the golden then records.
+    /// Panics on a value that is not an instant with an offset, rather than falling back to the
+    /// machine's clock and hiding the mistake in whatever a golden then records.
     pub fn from_var(value: Option<String>) -> ShippedClock {
         match value {
             None => ShippedClock::Machine(MachineClock),

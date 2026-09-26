@@ -10,22 +10,18 @@ description = "A CLI that treats a folder of Markdown files as typed, linked doc
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 clap = { version = "4.6.7", features = ["derive"] }
-# `raw_value` is how `--json` prints a `number` with the digits written in the document: a
-# `serde_json::Number` holds a `u64`, an `i64` or an `f64` and nothing else, so `1e3` cannot
-# survive one, and a document is assembled as JSON text instead. `preserve_order` keeps the
-# fields of a document in the order of the file.
+# `raw_value` lets `--json` print a `number` with the digits written in the document, which no
+# `serde_json::Number` keeps. `preserve_order` keeps a document's fields in the order of the file.
 serde_json = { version = "1.0.151", features = ["preserve_order", "raw_value"] }
-# Catches SIGINT and SIGTERM, moves the cleanup they need off the handler onto an ordinary
-# thread, and re-raises so the process ends by the signal rather than with an exit code of its
-# own, all in one dependency (decisions 5 and 6).
+# Catches SIGINT and SIGTERM, moves the cleanup off the handler onto an ordinary thread, and
+# re-raises so the process ends by the signal (SPC-3, SPC-10), all in one dependency.
 signal-hook = "0.4.4"
 typdoc-core = { version = "0.3.0", path = "../typdoc-core" }
 typdoc-fs = { version = "0.3.0", path = "../typdoc-fs" }
 
 [dev-dependencies]
-# `kill(2)`, for the CLI spawn helper's own `RunningChild::signal`: sending a real `SIGINT` or
-# `SIGTERM` to a spawned child is past what `std::process::Child` reaches (it has `kill`, which
-# is `SIGKILL` alone), and this is already an indirect dependency through `signal-hook`.
+# `kill(2)`, for the CLI spawn helper's `RunningChild::signal`: `std::process::Child::kill` sends
+# `SIGKILL` only. Already an indirect dependency through `signal-hook`.
 libc = "0.2.189"
 tempfile = "3.27.0"
 typdoc-testkit = { path = "../typdoc-testkit" }
