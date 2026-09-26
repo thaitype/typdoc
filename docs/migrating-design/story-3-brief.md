@@ -70,17 +70,7 @@ Done means `design.rs` is gone and nothing reads `design.md`.
 
 ## Mild's decisions — 2026-09-23 (supersede the fog above where they overlap)
 
-**M-1 — comparing a generated table against design.md violates the rule.** Mild: *"M1 ถือว่าผิดกฏ ผมจะยกเลิกใช้ไฟล์ design.md โดยให้กฏที่ code ใช้ ref ให้อ่านจาก json ครับ · หมายความว่า design.md สามารถ outdate ได้คับ"*
-No generator, no compare against any markdown. Code reads its spec from JSON; design.md is allowed to go stale.
-
-**New doc layout, two kinds** (converted from the old design docs):
-1. Prose rules code must not read → `docs/design/<xxxx>/*.md`, typdoc documents, managed through the typdoc CLI.
-2. Structured rules code reads → `docs/design/<yyyy>/*.md`, typdoc documents whose body is JSON only.
-Folder names and codes are **pending M-4** (Aria proposed `spec`/`SPC` and `catalog`/`CAT`). **Do not create either folder until Mild picks.**
-
 **M-5 — typdoc version for managing these docs:** the latest tag, `v0.1.0`. If a typdoc bug gets in the way, skip that step and defer validating with typdoc until the bug is fixed. (The repo has no `.typdoc/` yet — it has to be set up.)
-
-**M-6 — reading the JSON body:** a central helper in typdoc handles "md document whose body is JSON". Supporting plain `.json` documents instead of md is future work — **not designed now**.
 
 **M-7 — the old documents and story-3 scope:**
 - Copy ALL of `design-decision-phase-1`, `design-decision-phase-2`, `design.md` into `docs/migrating-design/`. In story 3, text is deleted from `docs/migrating-design/` once it has been moved to its new place.
@@ -90,12 +80,7 @@ Folder names and codes are **pending M-4** (Aria proposed `spec`/`SPC` and `cata
 **M-3 is closed by M-7** — ticket 20 lives in an archived, unedited document; nothing rewrites it. README still says plainly that v0.2.0 has no remote schemas.
 **Still open with Mild:** M-2 (`body.links` ignore glob, ticket 22 — in v0.2.0 or not), M-4 (folder names).
 
-**M-4 — folder names (2026-09-23):** Mild: *"ชื่อ folder เห็นด้วย ทั้ง spec, catalog ครับ ส่วน ใน catalog ให้มี field สำหรับบอก body type เช่น json เพื่อให้ helper รู้ว่าต้อง validate JSON ไม่ใช่ ดูจาก path ว่าต้อง validate หรือไม่"*
-- Prose → `docs/design/spec/`, structured → `docs/design/catalog/` (codes as proposed: `SPC`, `CAT`).
-- Catalog documents carry a frontmatter field declaring the body type (e.g. `json`). The helper decides whether and how to validate the body **from that field, never from the path**.
 **Still open with Mild:** M-2 only.
-
-**M-9 — central helper visibility (2026-09-23):** Mild agreed with (A): internal, used by the tests to read catalog documents (strict JSON parse of the body, driven by the body-type field). `typdoc validate`/`get` do **not** learn body types in v0.2.0 — that is designed later together with plain `.json` documents.
 
 **M-2 — (2026-09-23):** Mild agreed with Aria's proposal:
 - `body.links` `ignore` glob that fails to parse and is dropped silently → **not in v0.2.0**, next story. (It fails strict — the link is still checked and reported — so it confuses but never lets a bad link pass.)
@@ -117,11 +102,6 @@ Today every command without `--json` answers `the output without --json is not b
 - **M-10h decided** (Mild: *"ดีคับ"* / *"เห็นด้วยคับ"*, 2026-09-23): `mv --renumber` uses the same labeled block as the other write commands (not the bare key). Both `mv` forms also print a move summary: `rewritten: N refs in M documents` (count only in text), and `unrewritten:` with count and one line per entry (project, document, field, written form). `mv --json` gains `rewritten` as the **full list** (document, field, before, after) — text prints the count, JSON carries the detail. **No `--verbose` flag** (detail is in `--json`; `git diff` shows every changed line).
 - Field-names principle **confirmed by Mild** (2026-09-23): the inbox copy of that message reads "ไม่อยาก …", the chat reads "อยากให้ …" — Mild: *"อยากให้ เวลาที่ไม่ใช้ JSON แล้วยังเห็นชื่อ field — อันนี้ถูกครับ"*. The principle stands as built into the contract.
 
-**M-11 — frontmatter of spec/catalog (2026-09-23), decided.** Mild: *"งั้นเอา content_type ละกัน"* · *"เห็นด้วยคับ"*
-- a: `docs/design/spec/` is a **coded** collection, code `SPC`, files `spec/SPC-<n>.md`. `docs/design/catalog/` has **no code**; path-identified: `catalog/rules.md`, `commands.md`, `exit-codes.md`, `frontmatter-losses.md`. (A coded collection's `match` must be `{key}`, so `CAT` + named files was impossible — the contract's `CAT` is withdrawn.)
-- b: spec fields — `title` (string, required), `status` (enum `draft|active|superseded`), `superseded_by` (ref → SPC, only when superseded), `migrated_from` (string, source location in the archived docs). Catalog fields — `title` (required), `content_type` (enum `["json"]`, required), `explained_by` (ref → SPC, written as a key, e.g. `SPC-4` — not a path).
-- c: the body-type field is named **`content_type`** — replaces `body-type` everywhere in the contract and tickets.
-
 **M-12 — pushing (2026-09-23).** Mild: *"push ขึ้น branch ได้คับ"* — approved for **throwaway branches used to prove CI red-before-green**, deleted after. Not a release of the story branch, not a PR, not main.
 
 **CI runners (2026-09-23).** Mild: *"ให้ทำ github actions ที่ ubuntu กับ mac นะครับ"* — CI runs every gate on **both** `ubuntu-latest` and `macos-latest`. Windows not asked.
@@ -131,8 +111,6 @@ Today every command without `--json` answers `the output without --json is not b
 **M-15 — token (2026-09-24).** Mild: *"M-15 ทำให้แล้วคับ"* — the `mildronize` fine-grained PAT now has Workflows: Read and write for `thaitype/typdoc`. The CI red-before-green proof on throwaway branches (M-12) can run.
 
 **M-13 — `shell_examples` (2026-09-24).** Mild: *"เห็นด้วยกับข้อ 1 ก็คือ ไม่มี shell example .md เพิ่มใช่มั้ย"* — confirmed by Aria: yes. Option 1: the hand-declared example list already in `crates/typdoc/tests/shell_examples.rs` becomes the list; the sh/bash runs against the stand-in stay. **Removed:** `typdoc-testkit/src/shell_examples.rs` (the markdown extractor), the test that cross-checks declared examples against `design.md`, and the quoting-paragraph span test. **No `catalog/shell-examples.md`.** Examples that were "safe" (no unsafe char) and only reached the harness via extraction: hand-list the ones worth keeping or drop — the harness must not read markdown to find them.
-
-**`explained_by` is `ref[]` (2026-09-24).** Mild: *"explained_by เราไม่ทำเป็น ref[] ไม่ดีกว่าเหรอ"* — agreed: `explained_by` is `ref[]` → SPC, written as keys (e.g. `[SPC-4, SPC-7]`), **optional** (spec documents may not exist yet during migration).
 
 **M-16 — header rows for `refs` and `validate` (2026-09-24).** Mild: *"M-16: เพิ่มหัวตารางแบบเดียวกับ list และ toc — เพิ่มคับ"*. Text `refs` prints a header row (`target`, `field`, …the columns it already prints); text `validate` prints a header row with `rule` moved before the long `message` (e.g. `path  level  rule  message`). Same conventions as `list`/`toc`: no header on an empty result.
 

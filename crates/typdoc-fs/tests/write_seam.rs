@@ -1,5 +1,4 @@
-//! One table of scenarios for the write seam, run twice: against the fake, and against a real
-//! temporary directory.
+//! Covers SPC-10.
 //!
 //! The fake stages what a real directory will not — no space, a permission refused, a rename
 //! across devices, and a run that stops between two operations — and the real directory holds
@@ -29,10 +28,8 @@ trait Disk {
     fn names_in(&self, directory: &Path) -> Vec<String>;
 }
 
-/// The file system a scenario runs against, the directory it runs in, and a lock held for the
-/// whole of it: `write_atomically` requires one (decision 6), and the scenarios in this table
-/// are about what the write seam does to `w.root`, not about locking, so one lock is acquired
-/// once, outside `w.root`, and reused for every write the table makes.
+/// The table is about what the write seam does to `w.root`, not about locking, so one lock is
+/// acquired once, outside `w.root`, and reused for every write the table makes.
 struct World<'a> {
     fs: &'a dyn Fs,
     disk: &'a dyn Disk,
@@ -40,9 +37,8 @@ struct World<'a> {
     lock: NamespaceLock<'a>,
 }
 
-/// Acquires a lock at `lock_path`, which must sit outside every directory a scenario looks at
-/// with [`World::leftovers`] or [`Disk::names_in`], since the lock file is not one of the names
-/// a scenario expects to find there.
+/// `lock_path` must sit outside every directory a scenario looks at with [`World::leftovers`] or
+/// [`Disk::names_in`], since the lock file is not one of the names a scenario expects to find.
 fn a_lock<'a>(fs: &'a dyn Fs, lock_path: &Path) -> NamespaceLock<'a> {
     acquire(
         fs,
@@ -63,13 +59,11 @@ impl World<'_> {
         self.disk.bytes(&self.path(name))
     }
 
-    /// Puts a file there through the seam, which is how a scenario sets up on either backend.
     fn given(&self, name: &str, bytes: &[u8]) {
         write_atomically(self.fs, &self.lock, &self.path(name), bytes)
             .unwrap_or_else(|e| panic!("the setup of {name} could not be written: {e}"));
     }
 
-    /// The names in the directory that are not the ones a scenario put there on purpose.
     fn leftovers(&self, expected: &[&str]) -> Vec<String> {
         self.disk
             .names_in(&self.root)
@@ -79,10 +73,8 @@ impl World<'_> {
     }
 }
 
-/// One line of the table.
 struct Scenario {
     name: String,
-    /// What the fake is told to do. `Stage::Nothing` marks a scenario a real directory reaches.
     stage: Stage,
     setup: fn(&World),
     act: fn(&World) -> io::Result<()>,
@@ -296,8 +288,6 @@ fn scenarios() -> Vec<Scenario> {
                 assert_eq!(w.leftovers(&["note.md"]), Vec::<String>::new());
             },
         },
-        // `create_exclusively` is `new`'s own half of the seam: no temp file and no rename, a
-        // file created once and never replaced (decision 7).
         Scenario {
             name: "create_exclusively makes a file that was not there, holding the bytes"
                 .to_owned(),
@@ -406,7 +396,6 @@ fn scenarios() -> Vec<Scenario> {
     table
 }
 
-/// The fake's own directory, which is a key rather than a place.
 fn fake_root() -> PathBuf {
     PathBuf::from("/project")
 }
@@ -425,7 +414,6 @@ impl Disk for FakeFs {
     }
 }
 
-/// A real temporary directory, read with the standard library rather than through the seam.
 struct RealDisk;
 
 impl Disk for RealDisk {
@@ -451,8 +439,6 @@ impl Disk for RealDisk {
     }
 }
 
-/// Sets a scenario up, arms whatever the backend can stage, acts, and checks. Both backends
-/// go through here, so the two runs of the table cannot drift apart.
 fn run(scenario: &Scenario, world: &World, arm: impl Fn(Stage)) {
     (scenario.setup)(world);
     arm(scenario.stage);
@@ -504,7 +490,6 @@ fn every_scenario_a_real_directory_reaches_holds_against_a_real_temporary_direct
             root: directory.path().to_path_buf(),
             lock,
         };
-        // A real directory stages nothing, which is what puts a scenario in this half.
         run(scenario, &world, |_| {});
         ran += 1;
         println!("real: {}", scenario.name);

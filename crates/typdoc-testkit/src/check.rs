@@ -1,5 +1,4 @@
-//! The checks that compare the design, the code and the fixtures. Each takes plain sets, so
-//! a test can hand it a fault and see it refuse.
+//! Each check takes plain sets, so a test can hand it a fault and see it refuse.
 
 use std::collections::BTreeSet;
 use std::fmt::Display;
@@ -14,13 +13,10 @@ pub struct Kind<'a> {
     pub list: &'a str,
 }
 
-/// The two checks of a list of differences between the design and the binary, for anything the
-/// design names.
-///
 /// `present` is what the code has (the commands the CLI has, the rules the binary reports, the
-/// exit codes a test produces) and `listed` is the list. Everything the design names is present
-/// or listed. A listed entry is not present, and is still named by the design: an entry that
-/// outlives its work is red at once, so a list cannot be a way out.
+/// exit codes a test produces) and `listed` is the list. A listed entry must still be missing
+/// and still named by the design: an entry that outlives its work is red at once, so a list
+/// cannot be a way out.
 pub fn acknowledged<T: Ord + Display>(
     kind: &Kind,
     named_by_design: &BTreeSet<T>,
@@ -61,9 +57,6 @@ pub fn acknowledged<T: Ord + Display>(
     finish(problems)
 }
 
-/// Every entry of `fixtures/broken/` names a rule that exists, and every rule that exists has
-/// an entry. A rule that is listed as not built exists in neither sense, so it needs no fixture
-/// and a fixture for it is refused.
 pub fn broken_coverage(
     entries: &[String],
     built: &BTreeSet<String>,
@@ -92,7 +85,6 @@ pub fn broken_coverage(
     finish(problems)
 }
 
-/// The rules a fixture trips are exactly the rules it declares: no more, no fewer.
 pub fn exact_set(
     fixture: &str,
     expected: &BTreeSet<String>,
@@ -110,8 +102,6 @@ pub fn exact_set(
     finish(problems)
 }
 
-/// The rule ids in what a command printed: `findings[].rule` on standard output and
-/// `details[].rule` in the error object on standard error.
 pub fn tripped_rules(stdout: &str, stderr: &str) -> Result<BTreeSet<String>, String> {
     let mut rules = BTreeSet::new();
     for (stream, text, list) in [

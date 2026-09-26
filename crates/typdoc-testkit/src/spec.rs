@@ -1,13 +1,5 @@
-//! What a broken fixture declares about itself, in `fixture.json` at the folder's root: the
-//! command to run in it, the exact set of rules it is expected to trip, and any environment
-//! variable the run needs declared (`env`, empty by default: most fixtures need none, since the
-//! spawn helper already gives every run a fresh `HOME`; a rule that can only be tripped by
-//! setting a variable on purpose, such as `config.config-dir`'s `TYPDOC_CONFIG_DIR`, is the
-//! exception `env` exists for). The set of rules is written by hand from the design and never
+//! A broken fixture's `fixture.json`. Its `trips` are written by hand from the design and never
 //! taken from a run of the tool.
-//!
-//! Also whether the declared command is one that writes (`is_write`); where such a fixture then
-//! runs is `crate::staging`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -19,17 +11,16 @@ use serde::Deserialize;
 pub struct FixtureSpec {
     /// The arguments of the run, after the program name.
     pub command: Vec<String>,
-    /// The rules the run is expected to trip. The rule the folder is named for is one of them.
     pub trips: BTreeSet<String>,
-    /// A variable the spawned run needs set, by name; empty when the fixture needs none (the
-    /// ordinary case). `HOME` and `PATH` are the spawn helper's own and cannot be named here
-    /// (the same rule `Spawn::var` already enforces for a test that builds one by hand).
+    /// Empty for most fixtures, since the spawn helper already gives every run a fresh `HOME`;
+    /// it is for a rule that can only be tripped by setting a variable on purpose, such as
+    /// `config.config-dir`'s `TYPDOC_CONFIG_DIR`. `HOME` and `PATH` are the spawn helper's own
+    /// and cannot be named here (the same rule `Spawn::var` enforces).
     #[serde(default)]
     pub env: BTreeMap<String, String>,
 }
 
 impl FixtureSpec {
-    /// Reads the spec of the fixture for `rule`, which is the folder's name.
     pub fn parse(rule: &str, text: &str) -> Result<FixtureSpec, String> {
         let spec: FixtureSpec = serde_json::from_str(text).map_err(|e| e.to_string())?;
         if spec.command.is_empty() {
@@ -50,21 +41,14 @@ impl FixtureSpec {
         FixtureSpec::parse(rule, &text).map_err(|e| format!("{}: {e}", file.display()))
     }
 
-    /// Whether the declared command changes a project's files. The first word of `command`
-    /// names the command; a write is one of the three story 2 builds.
     pub fn is_write(&self) -> bool {
         is_write_command(&self.command)
     }
 }
 
-/// The commands whose run changes a project's files. Every other command reads. Kept here
-/// rather than derived from the registry: `golden::Case`'s own `command` (`crates/typdoc-testkit/
-/// src/golden.rs`) is a plain `Vec<String>` with no `FixtureSpec` of its own, and shares this
-/// check through here rather than each keeping a second copy of the list.
+/// Every command not listed here reads. Kept here rather than derived from the registry.
 const WRITE_COMMANDS: &[&str] = &["new", "set", "mv"];
 
-/// Whether `command`'s first word (the command name) is one that writes, the same reading
-/// [`FixtureSpec::is_write`] gives its own `command`.
 pub fn is_write_command(command: &[String]) -> bool {
     command
         .first()

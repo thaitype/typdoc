@@ -1,15 +1,4 @@
-//! The central helper for reading a typdoc document's body as JSON (ticket 11).
-//!
-//! A catalog document (`docs/design/catalog/*.md`) carries its body's shape in its own
-//! `content_type` frontmatter field rather than in its path or its schema's name, so a caller
-//! that wants typed data out of one reads that field itself, here, instead of guessing from
-//! where the file lives. [`read_json_body`] is the one place that decision is made: it reads the
-//! frontmatter block the same way the rest of typdoc-core does ([`crate::frontmatter`]), looks
-//! at `content_type`, and only for `content_type: json` parses the body with `serde_json` into
-//! whatever type the caller asks for. Anything else -- the field missing, holding a value this
-//! helper does not recognize, or a body that is not valid JSON despite declaring it should be --
-//! is its own distinct, readable [`JsonBodyError`], never a silent fallback to treating the
-//! document as plain prose.
+//! Reading a catalog document's JSON body (SPC-11).
 
 use std::collections::BTreeMap;
 
@@ -19,33 +8,23 @@ use crate::document::Value;
 use crate::frontmatter;
 use crate::schema::Resolved;
 
-/// The one frontmatter field [`read_json_body`] dispatches on. Not a path, not a schema name --
-/// this field, on the document itself.
 const CONTENT_TYPE: &str = "content_type";
 
-/// The only `content_type` this helper recognizes today (contract decision 2: "Mild's own name,
-/// not `body-type`"; the enum it drives has one value, `json`).
 const JSON: &str = "json";
 
-/// Why [`read_json_body`] could not read a document's body into the type it was asked for. Each
-/// case is its own variant on purpose -- a caller (or a test) that wants to tell "no
-/// `content_type` at all" apart from "a `content_type` this helper doesn't know" apart from "said
-/// `json` but wasn't" never has to parse a message to do it.
+/// Why [`read_json_body`] could not read a document's body into the type it was asked for.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum JsonBodyError {
-    /// The frontmatter block itself could not be read at all (for example, never closed). Not
-    /// one of ticket 11's three named cases, but a document this broken has no `content_type` to
-    /// dispatch on either, so it is reported for what it is rather than folded into
-    /// [`JsonBodyError::MissingContentType`].
+    /// The frontmatter block could not be read at all (for example, never closed). Reported as
+    /// itself rather than folded into [`JsonBodyError::MissingContentType`].
     #[error("the frontmatter block could not be read: {0}")]
     Frontmatter(String),
 
-    /// No `content_type` field is present in the frontmatter block at all.
     #[error("the document has no `content_type` field")]
     MissingContentType,
 
-    /// `content_type` is present but is not a value this helper recognizes -- today, only `json`
-    /// is. `found` describes what was there instead, for a message a person can act on.
+    /// `content_type` is present but is not `json`. `found` describes what was there instead,
+    /// for a message a person can act on.
     #[error(
         "the document's `content_type` is {found}, which this helper does not recognize (only \
          `json` is)"
@@ -62,10 +41,6 @@ pub enum JsonBodyError {
     InvalidJson(String),
 }
 
-/// Describes a non-`json` `content_type` value for [`JsonBodyError::UnrecognizedContentType`],
-/// in a form that reads naturally after "is": `` `yaml` ``, `an empty field`, `a list`, and so
-/// on. A frontmatter value that survived `frontmatter::fields` is always one of these shapes
-/// ([`crate::document::Value`]).
 fn describe(value: &Value) -> String {
     match value {
         Value::Text(text) => format!("`{text}`"),
@@ -79,24 +54,12 @@ fn describe(value: &Value) -> String {
 }
 
 /// Reads `file` (a whole document, frontmatter block and body, exactly as it sits on disk) into
-/// `T`, dispatching entirely on the document's own `content_type` frontmatter field -- nothing
-/// here reads or asks for the document's path, so nothing about the result can depend on where
-/// the file lives (ticket 6's requirement, restated by ticket 11).
-///
-/// The frontmatter block is read with [`crate::frontmatter::split`] and [`crate::frontmatter::fields`],
-/// the same functions the rest of typdoc-core reads a document's fields with, against a schema
-/// that names no fields -- this helper only ever looks at `content_type` itself, so every other
-/// field is left exactly as written and never coerced into something it might not be.
+/// `T`, deciding from the document's own `content_type` field alone.
 pub fn read_json_body<T: DeserializeOwned>(file: &str) -> Result<T, JsonBodyError> {
     let split = frontmatter::split(file).map_err(JsonBodyError::Frontmatter)?;
     let fields = match split.block {
         Some(block) => {
-            // The name and code below are never read by `frontmatter::fields` (only
-            // `schema.field(name)` is, and an empty field map always answers `None` for it),
-            // so every field -- `content_type` included -- comes back exactly as written rather
-            // than coerced into a type this helper never declared. Left empty/`None` rather than
-            // naming a real schema on purpose: nothing here should look like it is standing in
-            // for `.typdoc/schemas/catalog.json`.
+            // An empty schema leaves every field as written, uncoerced.
             let schema = Resolved::new(String::new(), None, BTreeMap::new());
             frontmatter::fields(block, &schema).map_err(JsonBodyError::Frontmatter)?
         }
@@ -160,9 +123,6 @@ mod tests {
 
     #[test]
     fn a_content_type_field_with_no_value_is_unrecognized_not_missing() {
-        // `content_type:` with nothing after it is present (a field with a name), just not
-        // `json` -- told apart from an absent field the same way the rest of typdoc-core tells
-        // `Value::Empty` apart from a field that was never written at all.
         let file = "---\ntitle: Bare content type\ncontent_type:\n---\n\n{}\n";
 
         let error = read_json_body::<serde_json::Value>(file).unwrap_err();
@@ -225,11 +185,6 @@ mod tests {
 
     #[test]
     fn dispatch_never_looks_at_a_path_because_none_is_ever_given() {
-        // Ticket 6's requirement, restated by ticket 11: nothing about `read_json_body`'s
-        // behavior may depend on the document's path. The strongest proof available at this
-        // seam is structural: the function's only input is the file's own text, so there is no
-        // path for it to read even by accident. Two files with unrelated "paths" implied by
-        // their content but identical frontmatter and body must behave identically.
         let a = "---\ntitle: docs/design/catalog/rules.md\ncontent_type: json\n---\n\n[1]\n";
         let b = "---\ntitle: totally/unrelated/path.md\ncontent_type: json\n---\n\n[1]\n";
 
@@ -239,8 +194,6 @@ mod tests {
         assert_eq!(a_value, b_value);
     }
 
-    /// Ticket 11's fourth test: each of ticket 10's four real catalog documents round-trips
-    /// through the helper into a type matching its actual content.
     mod real_catalog_documents {
         use super::*;
 

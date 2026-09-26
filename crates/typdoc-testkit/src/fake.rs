@@ -1,5 +1,3 @@
-//! A file system in memory, and a clock that does not move.
-//!
 //! The fake is here for the failures a real directory will not produce when a test asks: no
 //! space left, a permission refused, a rename across devices, and a run that stops between two
 //! operations. The same scenarios run against a real temporary directory, which is what holds
@@ -13,8 +11,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use chrono::{DateTime, FixedOffset};
 use typdoc_core::{Clock, FileId, Fs, Mode, WriteHandle};
 
-/// The mode a file gets from [`FakeFs::create_new`] when nothing sets one: what a umask that
-/// takes away nothing from the group and others leaves of a regular file.
+/// What the usual umask, `022`, leaves of a new regular file.
 const DEFAULT_MODE: Mode = 0o100_644;
 
 /// Which operation a staged failure lands on.
@@ -33,12 +30,10 @@ pub enum On {
     HandleIdentity,
 }
 
-/// A failure a real directory will not produce on request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Failure {
     /// `ENOSPC`, which a real directory reaches only by being filled.
     NoSpace,
-    /// A permission the process does not have.
     PermissionDenied,
     /// `EXDEV`: a rename whose two ends are on different file systems.
     CrossesDevices,
@@ -54,7 +49,6 @@ impl Failure {
     }
 }
 
-/// What the fake has been told to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
     /// Behave as a file system does, which is every scenario a real directory also reaches.
@@ -67,7 +61,6 @@ pub enum Stage {
     StopAfter(usize),
 }
 
-/// One file, as the fake holds it.
 #[derive(Debug, Clone)]
 struct Entry {
     bytes: Vec<u8>,
@@ -87,7 +80,6 @@ struct State {
 }
 
 impl State {
-    /// Counts one operation and says whether it may go ahead.
     fn admit(&mut self, on: On) -> io::Result<()> {
         if let Stage::StopAfter(limit) = self.stage
             && self.attempted >= limit
@@ -112,8 +104,6 @@ impl State {
     }
 }
 
-/// A file system in memory.
-///
 /// It is cloned by handle rather than by content: a clone reads and changes the same files, so
 /// a test can hold one and hand another to the code under test.
 #[derive(Clone)]
@@ -158,7 +148,6 @@ impl FakeFs {
         self.locked().files.get(path).map(|e| e.mode)
     }
 
-    /// The names of the files directly inside a directory, sorted.
     pub fn names_in(&self, directory: &Path) -> Vec<String> {
         self.locked()
             .files
@@ -296,7 +285,6 @@ impl Fs for FakeFs {
     }
 }
 
-/// A file of the fake, open for writing.
 struct FakeHandle {
     state: Arc<Mutex<State>>,
     path: PathBuf,

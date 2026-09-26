@@ -19,12 +19,8 @@
 //! themselves are pinned where they can be seen, against the bytes on standard output, in
 //! `crates/typdoc/tests/frontmatter_scalars.rs`.
 //!
-//! The generator writes one golden, named by `<command>/<case>`, and never a file whose parent
-//! folder is not named `golden` or whose name is not `stdout.json`. It has no mode that writes
-//! every golden, and no path by which it writes an assertion file.
-//!
-//! To regenerate one: `TYPDOC_REGENERATE_GOLDEN=<command>/<case> cargo test -p typdoc --test
-//! golden regenerate -- --ignored`. The assertions of a case are written first.
+//! To regenerate one: `TYPDOC_REGENERATE_GOLDEN=<command>/<case> scripts/test.sh -p typdoc
+//! --test golden regenerate -- --ignored`. The assertions of a case are written first.
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
@@ -34,7 +30,6 @@ use serde_json::Value;
 
 use crate::fixtures;
 
-/// The variable that names the one golden to regenerate.
 pub const REGENERATE_VAR: &str = "TYPDOC_REGENERATE_GOLDEN";
 
 const GOLDEN_DIR: &str = "golden";
@@ -47,16 +42,13 @@ const ASSERTIONS_FILE: &str = "assertions.json";
 struct CaseSpec {
     project: String,
     command: Vec<String>,
-    /// A variable the case's run needs set, by name — empty for the ordinary case (most cases
-    /// need none). A case whose command stamps an `auto: create`/`auto: update` field is the
-    /// exception this exists for: it names the one instant the shipped binary's clock should
-    /// report instead of the machine's own (`typdoc::clock::FIXED_CLOCK_VAR`), the same shape
-    /// `crate::spec::FixtureSpec::env` already uses for a broken fixture.
+    /// A case whose command stamps an `auto: create`/`auto: update` field uses it to name the
+    /// instant the shipped binary's clock reports instead of the machine's own
+    /// (`typdoc::clock::FIXED_CLOCK_VAR`).
     #[serde(default)]
     env: BTreeMap<String, String>,
 }
 
-/// One golden case: what to run, and where its files are.
 #[derive(Debug)]
 pub struct Case {
     /// `<command>/<case>`
@@ -66,7 +58,6 @@ pub struct Case {
     pub project: String,
     /// The arguments of the run, after the program name.
     pub command: Vec<String>,
-    /// A variable the run needs set, by name; empty when the case needs none (`CaseSpec::env`).
     pub env: BTreeMap<String, String>,
 }
 
@@ -98,8 +89,7 @@ impl Case {
         self.dir.join(ASSERTIONS_FILE)
     }
 
-    /// Compares `actual`, the standard output of the case's run parsed as JSON, with the golden
-    /// and with the assertions. Every problem is reported, and a missing file is a problem.
+    /// `actual` is the standard output of the case's run, parsed as JSON.
     pub fn check(&self, actual: &Value) -> Result<(), String> {
         let mut problems = Vec::new();
         match read_json(&self.assertions_path()) {
@@ -135,8 +125,8 @@ fn read_json(file: &Path) -> Result<Value, String> {
     serde_json::from_str(&text).map_err(|e| format!("{}: {e}", file.display()))
 }
 
-/// Every case below `root`, sorted by id. A file where a folder is expected, and a case folder
-/// with no `case.json`, are errors: nothing that sits in the tree is passed over.
+/// A file where a folder is expected, and a case folder with no `case.json`, are errors:
+/// nothing that sits in the tree is passed over.
 pub fn discover(root: &Path) -> Result<Vec<Case>, String> {
     let mut cases = Vec::new();
     for command in entries(root)? {
@@ -147,12 +137,10 @@ pub fn discover(root: &Path) -> Result<Vec<Case>, String> {
     Ok(cases)
 }
 
-/// Every case of `fixtures/output/`. The folder being absent stops the test with the reason.
 pub fn discover_fixtures() -> Result<Vec<Case>, String> {
     discover(&fixtures::path("output"))
 }
 
-/// The names of the folders in `dir`, sorted. Anything else in it is an error.
 fn entries(dir: &Path) -> Result<Vec<String>, String> {
     let mut names = Vec::new();
     let read = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -178,8 +166,6 @@ fn entries(dir: &Path) -> Result<Vec<String>, String> {
     Ok(names)
 }
 
-/// The first difference between the golden `expected` and `actual`, as parsed JSON: the order
-/// of keys does not matter, the order of an array does, and no value is set aside.
 pub fn compare(expected: &Value, actual: &Value) -> Result<(), String> {
     match difference(expected, actual, "") {
         None => Ok(()),
@@ -235,8 +221,6 @@ fn difference(expected: &Value, actual: &Value, at: &str) -> Option<String> {
     }
 }
 
-/// Checks each assertion, a JSON pointer and the value it must find, against `actual`. An
-/// assertion file that asserts nothing is refused: it would be a net with no mesh.
 pub fn check_assertions(assertions: &Value, actual: &Value) -> Result<(), String> {
     let Value::Object(assertions) = assertions else {
         return Err("assertions are a JSON object from a JSON pointer to a value".into());
@@ -262,11 +246,8 @@ pub fn check_assertions(assertions: &Value, actual: &Value) -> Result<(), String
     }
 }
 
-/// The one place a golden is written. It refuses any target whose parent folder is not named
-/// `golden`, whose name is not `stdout.json`, that has `..` in it, or that is or sits behind a
-/// symbolic link, so that no assertion file can be reached through it. The file is made whole
-/// beside its target and renamed onto it, so a link that the target or a stale temporary file
-/// is leaves what it points to as it was.
+/// The one place a golden is written. Its refusals are there so that no assertion file can be
+/// reached through it.
 pub fn write_golden(target: &Path, value: &Value) -> Result<(), String> {
     let refuse = |why: &str| Err(format!("refused to write {}: {why}", target.display()));
     if target.components().any(|c| c == Component::ParentDir) {
@@ -320,9 +301,7 @@ pub fn write_golden(target: &Path, value: &Value) -> Result<(), String> {
         })
 }
 
-/// Regenerates the one golden that `id` names, `<command>/<case>`, from the output `run` gives
-/// for the case, and returns the file written. The case and its assertions must exist already.
-/// There is no id that means every case.
+/// `id` is `<command>/<case>`. There is no id that means every case.
 pub fn regenerate(
     root: &Path,
     id: &str,
@@ -365,7 +344,6 @@ mod tests {
 
     use super::*;
 
-    /// A case tree in a scratch folder: `<root>/get/one/` with the three files.
     struct Tree {
         dir: tempfile::TempDir,
     }

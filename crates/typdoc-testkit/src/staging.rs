@@ -1,41 +1,29 @@
-//! Where a fixture's command actually runs. A declared read runs in the fixture's own folder,
-//! exactly as every fixture does today. A declared write runs on a copy, made in a temporary
-//! folder, so that a write never reaches the repository's own tree. No command a fixture can
-//! declare writes yet, but the loader enforces the placement ahead of one existing, so no later
-//! ticket has to add the enforcement together with the command.
+//! A declared read runs in the fixture's own folder. A declared write runs on a copy, made in a
+//! temporary folder, so that a write never reaches the repository's own tree.
 
 use std::path::{Path, PathBuf};
 
 use crate::spec::FixtureSpec;
 
-/// Where a fixture's command actually runs: its own folder for a declared read, exactly as
-/// before; a fresh copy of it, elsewhere, for a declared write. Held for its lifetime so the
-/// copy is not removed while a run still needs it.
+/// Held for its lifetime so the copy of a declared write's fixture is not removed while a run
+/// still needs it.
 pub struct StagedFixture {
     dir: PathBuf,
     _copy: Option<tempfile::TempDir>,
 }
 
 impl StagedFixture {
-    /// The folder to run the command in.
     pub fn dir(&self) -> &Path {
         &self.dir
     }
 }
 
-/// Stages `dir`'s fixture for a run: unchanged for a declared read, copied to a temporary
-/// folder for a declared write. A test that goes through this never has to remember which
-/// fixtures write, and a write fixture can never run in the repository's own tree by a test
-/// forgetting to copy it, because there is no path to a run that skips this decision.
+/// A test that goes through this never has to remember which fixtures write: there is no path
+/// to a run that skips this decision.
 pub fn stage(dir: &Path, spec: &FixtureSpec) -> Result<StagedFixture, String> {
     stage_command(dir, &spec.command)
 }
 
-/// [`stage`], for a caller that has a bare command (`golden::Case`'s own, which is not a
-/// `FixtureSpec` — a golden case's `case.json` has no `trips` or `env` for one to hold) rather
-/// than a loaded fixture spec. Reads whether the command writes the same way `FixtureSpec::
-/// is_write` does (`crate::spec::is_write_command`, the one place that list is kept), so the two
-/// callers can never drift into disagreeing about which commands write.
 pub fn stage_command(dir: &Path, command: &[String]) -> Result<StagedFixture, String> {
     if !crate::spec::is_write_command(command) {
         return Ok(StagedFixture {
@@ -54,11 +42,7 @@ pub fn stage_command(dir: &Path, command: &[String]) -> Result<StagedFixture, St
     })
 }
 
-/// The harness's own guard: a declared write must never be about to run inside the
-/// repository's own `fixtures/` tree. `stage_command` calls this on the folder it is about to
-/// hand back, after copying a write fixture out of that tree; firing here means the copy did not
-/// leave the tree, which is a fault of the loader and not of the fixture. Only ever called once
-/// `stage_command` has already established the command writes, so it has nothing left to ask.
+/// Firing means the copy did not leave the tree: a fault of the loader, not of the fixture.
 fn refuse_if_in_repository(run_dir: &Path, fixtures_root: &Path) -> Result<(), String> {
     if run_dir.starts_with(fixtures_root) {
         return Err(format!(
@@ -71,9 +55,8 @@ fn refuse_if_in_repository(run_dir: &Path, fixtures_root: &Path) -> Result<(), S
     Ok(())
 }
 
-/// Copies `src`'s tree onto `dst`, which must already exist. A plain file's bytes and
-/// permissions are copied; a folder is walked; a symbolic link is recreated as one, never
-/// followed, so a fixture is copied exactly as it is checked in.
+/// `dst` must already exist. A symbolic link is recreated rather than followed, so a fixture is
+/// copied exactly as it is checked in.
 fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
     for entry in std::fs::read_dir(src).map_err(|e| format!("{}: {e}", src.display()))? {
         let entry = entry.map_err(|e| format!("{}: {e}", src.display()))?;
@@ -129,13 +112,6 @@ mod tests {
         assert_eq!(refuse_if_in_repository(run_dir, fixtures_root), Ok(()));
     }
 
-    // `refuse_if_in_repository` is only ever reached from `stage_command` once a command is
-    // already known to write; a *read* pointed at the repository tree never reaches it at all,
-    // which is what `stage`/`stage_command` guarantee, tested at that level below
-    // (`a_read_fixture_stages_in_its_own_folder_unchanged`).
-
-    /// A fixture folder under a temporary directory, standing in for one committed under
-    /// `fixtures/broken/`: a document and the `fixture.json` that declares the command.
     fn temp_fixture(command_json: &str) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("note.md"), "---\ntitle: Before\n---\n").unwrap();
@@ -178,9 +154,8 @@ mod tests {
             "the copy must not sit inside the original folder"
         );
 
-        // No write command exists yet to perform this for real, so the effect a `set` would
-        // have on the copy is simulated directly: the point under test is which folder holds
-        // the change afterward, not what a real `set` would write into it.
+        // The effect a `set` would have on the copy is written directly: the point under test is
+        // which folder holds the change afterward, not what `set` writes.
         std::fs::write(staged.dir().join("note.md"), "---\ntitle: Changed\n---\n").unwrap();
 
         assert_eq!(
