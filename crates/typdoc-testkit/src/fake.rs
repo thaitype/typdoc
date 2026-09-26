@@ -38,7 +38,6 @@ pub enum On {
 pub enum Failure {
     /// `ENOSPC`, which a real directory reaches only by being filled.
     NoSpace,
-    /// A permission the process does not have.
     PermissionDenied,
     /// `EXDEV`: a rename whose two ends are on different file systems.
     CrossesDevices,
@@ -67,7 +66,6 @@ pub enum Stage {
     StopAfter(usize),
 }
 
-/// One file, as the fake holds it.
 #[derive(Debug, Clone)]
 struct Entry {
     bytes: Vec<u8>,
@@ -296,7 +294,6 @@ impl Fs for FakeFs {
     }
 }
 
-/// A file of the fake, open for writing.
 struct FakeHandle {
     state: Arc<Mutex<State>>,
     path: PathBuf,

@@ -12,8 +12,8 @@ pub fn locate(manifest_dir: &Path) -> Result<PathBuf, String> {
         .to_owned();
     for (what, missing) in [
         ("fixtures folder", root.join("fixtures")),
-        // Not a design document (M-13/ticket 12): a marker every checkout has, that cannot be
-        // confused for "reading the design" the way `docs/archived-design/design.md` could be.
+        // A marker every checkout has, and not a design document: no test reads design prose
+        // (SPC-11).
         ("workspace manifest", root.join("Cargo.toml")),
     ] {
         if !missing.exists() {
@@ -45,9 +45,7 @@ pub fn path(relative: &str) -> PathBuf {
 /// Reads `relative` (a path from the repository root, such as
 /// `docs/design/catalog/rules.md`) and parses its body into `T` through
 /// `typdoc_core::read_json_body`. The one place a test reaches for a catalog document's typed
-/// data, so a change to the read path or the panic wording touches here once, not once per
-/// test file that needs a catalog document (ticket 12's own callers: `typdoc-core/tests/rules.rs`,
-/// `typdoc-core/src/frontmatter.rs`'s corpus test, and `typdoc/tests/coverage.rs`).
+/// data, so a change to the read path or the panic wording touches here once.
 pub fn read_catalog<T: serde::de::DeserializeOwned>(relative: &str) -> T {
     let path = root().join(relative);
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));

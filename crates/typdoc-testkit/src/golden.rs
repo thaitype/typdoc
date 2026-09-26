@@ -47,11 +47,9 @@ const ASSERTIONS_FILE: &str = "assertions.json";
 struct CaseSpec {
     project: String,
     command: Vec<String>,
-    /// A variable the case's run needs set, by name — empty for the ordinary case (most cases
-    /// need none). A case whose command stamps an `auto: create`/`auto: update` field is the
-    /// exception this exists for: it names the one instant the shipped binary's clock should
-    /// report instead of the machine's own (`typdoc::clock::FIXED_CLOCK_VAR`), the same shape
-    /// `crate::spec::FixtureSpec::env` already uses for a broken fixture.
+    /// A variable the case's run needs set, by name. A case whose command stamps an
+    /// `auto: create`/`auto: update` field uses it to name the instant the shipped binary's
+    /// clock reports instead of the machine's own (`typdoc::clock::FIXED_CLOCK_VAR`).
     #[serde(default)]
     env: BTreeMap<String, String>,
 }

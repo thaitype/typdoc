@@ -1,5 +1,5 @@
-//! Where a fixture's command actually runs. A declared read runs in the fixture's own folder,
-//! exactly as every fixture does today. A declared write runs on a copy, made in a temporary
+//! Where a fixture's command actually runs. A declared read runs in the fixture's own folder.
+//! A declared write runs on a copy, made in a temporary
 //! folder, so that a write never reaches the repository's own tree. No command a fixture can
 //! declare writes yet, but the loader enforces the placement ahead of one existing, so no later
 //! ticket has to add the enforcement together with the command.
@@ -8,9 +8,8 @@ use std::path::{Path, PathBuf};
 
 use crate::spec::FixtureSpec;
 
-/// Where a fixture's command actually runs: its own folder for a declared read, exactly as
-/// before; a fresh copy of it, elsewhere, for a declared write. Held for its lifetime so the
-/// copy is not removed while a run still needs it.
+/// Held for its lifetime so the copy of a declared write's fixture is not removed while a run
+/// still needs it.
 pub struct StagedFixture {
     dir: PathBuf,
     _copy: Option<tempfile::TempDir>,
@@ -31,11 +30,9 @@ pub fn stage(dir: &Path, spec: &FixtureSpec) -> Result<StagedFixture, String> {
     stage_command(dir, &spec.command)
 }
 
-/// [`stage`], for a caller that has a bare command (`golden::Case`'s own, which is not a
-/// `FixtureSpec` — a golden case's `case.json` has no `trips` or `env` for one to hold) rather
-/// than a loaded fixture spec. Reads whether the command writes the same way `FixtureSpec::
-/// is_write` does (`crate::spec::is_write_command`, the one place that list is kept), so the two
-/// callers can never drift into disagreeing about which commands write.
+/// [`stage`], for a caller that has a bare command rather than a loaded `FixtureSpec`, such as
+/// `golden::Case`. Whether the command writes is read through `crate::spec::is_write_command`,
+/// the same as `FixtureSpec::is_write`, so the two callers cannot disagree.
 pub fn stage_command(dir: &Path, command: &[String]) -> Result<StagedFixture, String> {
     if !crate::spec::is_write_command(command) {
         return Ok(StagedFixture {
@@ -54,11 +51,9 @@ pub fn stage_command(dir: &Path, command: &[String]) -> Result<StagedFixture, St
     })
 }
 
-/// The harness's own guard: a declared write must never be about to run inside the
-/// repository's own `fixtures/` tree. `stage_command` calls this on the folder it is about to
-/// hand back, after copying a write fixture out of that tree; firing here means the copy did not
-/// leave the tree, which is a fault of the loader and not of the fixture. Only ever called once
-/// `stage_command` has already established the command writes, so it has nothing left to ask.
+/// The harness's own guard: a declared write must never run inside the repository's own
+/// `fixtures/` tree. Firing means the copy did not leave the tree, which is a fault of the
+/// loader and not of the fixture.
 fn refuse_if_in_repository(run_dir: &Path, fixtures_root: &Path) -> Result<(), String> {
     if run_dir.starts_with(fixtures_root) {
         return Err(format!(
@@ -129,10 +124,8 @@ mod tests {
         assert_eq!(refuse_if_in_repository(run_dir, fixtures_root), Ok(()));
     }
 
-    // `refuse_if_in_repository` is only ever reached from `stage_command` once a command is
-    // already known to write; a *read* pointed at the repository tree never reaches it at all,
-    // which is what `stage`/`stage_command` guarantee, tested at that level below
-    // (`a_read_fixture_stages_in_its_own_folder_unchanged`).
+    // A read never reaches the guard; `a_read_fixture_stages_in_its_own_folder_unchanged`
+    // covers reads.
 
     /// A fixture folder under a temporary directory, standing in for one committed under
     /// `fixtures/broken/`: a document and the `fixture.json` that declares the command.

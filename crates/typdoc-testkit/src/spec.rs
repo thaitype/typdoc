@@ -50,17 +50,15 @@ impl FixtureSpec {
         FixtureSpec::parse(rule, &text).map_err(|e| format!("{}: {e}", file.display()))
     }
 
-    /// Whether the declared command changes a project's files. The first word of `command`
-    /// names the command; a write is one of the three story 2 builds.
+    /// Whether the declared command changes a project's files.
     pub fn is_write(&self) -> bool {
         is_write_command(&self.command)
     }
 }
 
 /// The commands whose run changes a project's files. Every other command reads. Kept here
-/// rather than derived from the registry: `golden::Case`'s own `command` (`crates/typdoc-testkit/
-/// src/golden.rs`) is a plain `Vec<String>` with no `FixtureSpec` of its own, and shares this
-/// check through here rather than each keeping a second copy of the list.
+/// rather than derived from the registry, and shared with `golden::Case`, which has no
+/// `FixtureSpec`, through [`is_write_command`].
 const WRITE_COMMANDS: &[&str] = &["new", "set", "mv"];
 
 /// Whether `command`'s first word (the command name) is one that writes, the same reading
