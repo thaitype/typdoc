@@ -102,7 +102,10 @@ Rust changes in this story that are not comments, each in its own commit:
   in `refs.rs` drops a reference to a design section, a test assertion message in
   `namespaces.rs` drops a note about earlier behavior, and the fixed host name in
   `tests/common/mod.rs` no longer carries a ticket number; each meaning is unchanged (ticket 05
-  PR).
+  PR);
+- in `crates/typdoc-core/src/refs.rs`, the test that asserts `BadPrefix` for a body link with an
+  import prefix and no configured imports is renamed to say so (its old name said the import form
+  is not read); the assertion is unchanged (ticket 05 PR).
 
 The proof for each of those PRs reports exactly its own differences and no others.
 
