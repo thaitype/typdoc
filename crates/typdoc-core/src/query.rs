@@ -129,12 +129,14 @@ pub enum QueryError {
     /// A field name that is no pseudo-field and no field of the schema this condition was
     /// checked against.
     UnknownField(String),
+    /// `<`, `<=`, `>` or `>=` on a field whose type is not `number`, `date` or `datetime`.
     OrderingNotAllowed { field: String, kind: String },
     CannotCoerce {
         field: String,
         value: String,
         kind: String,
     },
+    /// A value that is not one of the field's `enum` values.
     NotAnEnumValue { field: String, value: String },
 }
 
