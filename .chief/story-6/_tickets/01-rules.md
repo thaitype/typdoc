@@ -1,5 +1,5 @@
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: None
 
 # Ticket 01 — rules for comments and cited design
