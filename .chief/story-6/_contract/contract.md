@@ -105,7 +105,9 @@ Rust changes in this story that are not comments, each in its own commit:
   PR);
 - in `crates/typdoc-core/src/refs.rs`, the test that asserts `BadPrefix` for a body link with an
   import prefix and no configured imports is renamed to say so (its old name said the import form
-  is not read); the assertion is unchanged (ticket 05 PR).
+  is not read); the assertion is unchanged (ticket 05 PR);
+- in `crates/typdoc/src/registry.rs`, the `[reverse-scope]` entry of `KNOWN_GAPS` states the gap
+  without pointing at the design; its meaning is unchanged (ticket 06 PR).
 
 The proof for each of those PRs reports exactly its own differences and no others.
 
