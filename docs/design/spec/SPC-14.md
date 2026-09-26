@@ -7,6 +7,17 @@ migrated_from: docs/archived-design/design.md#refs
 Refs come from two places, frontmatter fields and body links, and both resolve through the same
 index.
 
+## One index
+
+Before any query or validation, typdoc builds one index mapping every key, within its namespace,
+and every path to its file. Refs of either kind resolve through it, so a keyed document can point
+at a path-identified one and the reverse. Paths are compared exactly as they are written, case
+included, on every platform: a ref is resolved through the index of names as they are on disk, and
+a file outside every collection by comparing the names in each folder, so a path that differs from
+the file's name in case does not resolve, even where the file system would open it. Two keys cannot
+differ only in case, because a code is capital letters and digits, so `keys.unique` has nothing to
+do about case.
+
 ## Frontmatter values
 
 A `ref` or `ref[]` value is a plain string, read in this order:
@@ -72,3 +83,36 @@ A location that does hold a project whose own config cannot be loaded is an ordi
 an absent import: it is a mistake at a real location, and folding it into `imports.absent` would
 hide it. A `project::` argument that names an import absent on this machine is bad arguments
 rather than a finding: an argument is a direct request for that document.
+
+## Machine-specific imports
+
+When an imported project's location differs per machine, it goes in an environment variable or in
+a machine file, `imports.json`, which is merged under the project's own `imports`: for an alias
+both name, the project's own entry wins. No machine-specific path is then committed. The file is
+found in this order, stopping at the first step that applies:
+
+1. `TYPDOC_CONFIG_DIR`, if set and not empty: the file is `$TYPDOC_CONFIG_DIR/imports.json`. The
+   value must be an absolute path to a directory that exists; anything else is
+   `config.config-dir`, since it was set on purpose.
+2. `XDG_CONFIG_HOME`, if set to an absolute path: the file is
+   `$XDG_CONFIG_HOME/typdoc/imports.json`. Unset, empty or relative counts as not set, as the XDG
+   specification says.
+3. The platform default, on Linux and macOS: `~/.config/typdoc/imports.json`. With `HOME` unset
+   or empty there is no machine file.
+
+## Heading anchors
+
+The `slug` of a heading follows GitHub's algorithm, so a link that passes `validate` also works on
+GitHub. Take the heading's plain text (text and code spans; image alt text, line breaks and inline
+HTML contribute nothing), lowercase it, delete punctuation other than `-` and `_`, symbols and other
+characters that are not letters or digits, and turn each space into `-`. Marks count as part of a
+letter, so Thai vowels and tone marks stay; non-ASCII text is kept as written, never
+transliterated. A slug that repeats an earlier one in the same document gets `-1`, `-2` and so on,
+skipping any result already taken (`Dup`, `Dup`, `Dup 1` give `dup`, `dup-1`, `dup-1-1`). Every
+heading counts, including those inside block quotes and list items but not those inside fenced
+code, so the numbering matches GitHub's. A heading whose slug is empty (`## !!!`, `## 😀`) is not
+special: the first gets `""` and cannot be linked to, the next `-1`, then `-2`. In a link, the
+fragment is percent-decoded (a `%` not followed by two hex digits is kept as written) and then
+compared with the slug without regard to case. Slugs are used only for anchors, never for file
+names. A fixture of headings rendered by GitHub holds the expected slugs, so the character classes
+are checked against GitHub's own output.

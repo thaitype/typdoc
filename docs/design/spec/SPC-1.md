@@ -39,11 +39,30 @@ The frontmatter block cannot be parsed: invalid YAML, or a block that is never c
 rule is evaluated for that file, and it takes no other part in a run: a query has no fields of
 it to filter, sort or print by, and a reverse lookup reads no refs from it.
 
+## `frontmatter.transitions`
+
+A field whose schema gives it `transitions` may change only to a value the map allows from the
+value it had. The rule is checked on write, since only a write has a value before and a value
+after; `validate` does not report it on a file as it stands.
+
 ## `body.links`
 
 Markdown links in the body (inline, image and reference-style) point at existing files; also text
 that looks like a link but is not, and a reference label defined twice. Its `ignore` option holds
 globs of relative targets to skip, matched after percent-decoding.
+
+**Text that looks like a link but is not.** A `[text](inner)` or `![text](inner)` outside code that
+the parser does not read as a link, and a line `[label]: inner` that it does not read as a
+definition, is reported when `inner` has no URL scheme (a namespace name or an import alias does
+not count as one) and, after a trailing title (`"…"`, `'…'` or `(…)`) is removed, ends with a file
+extension, optionally followed by `#anchor`. An extension is a `.` followed by one to eight ASCII
+letters or digits, at least one of them a letter, so `version 1.2` has none and `ask Mr.Smith` has
+one. The usual cause is an unescaped space, which CommonMark does not allow in a bare destination;
+the message suggests writing `<my file.md>` or using `%20`. Without this check such a link would be
+invisible: the reader sees a link and the checker sees text. The finding is at the `[` (or the
+`!`), or at the start of the definition line; for a rejected definition it cannot say how many
+places use it. A `[text][ref]` with no definition is not reported: CommonMark reads it as plain
+text, and the shape is too common in ordinary prose (`a[0][1]`).
 
 ## `refs.moved`
 

@@ -36,6 +36,23 @@ plus `rule`, `level`, `message` and a position; a reference is that name plus `f
 and a position. A new shape that mentions a document adds to the name and never renames a part
 of it.
 
+## A finding
+
+A finding is the same object in the report of `validate` and in the `details` of an error object.
+It always has `rule`, `level` and `message`. It has `path`, the file it is about, relative to the
+project folder, for a document and for a configuration file alike; `namespace`, `collection` and
+`key` when the file is a document (`collection` when it is in one, `key` for a coded one only);
+`field` when it is about one field; and `line` and `col`, 1-based, when a position is known. A
+finding is always located in a file of the project being checked, never in one of an imported
+project: a broken ref is a fault of the document that holds it, not of its target.
+
+## A field written with no value
+
+A field written with no value is `null` in `--json`, and one written as an empty string is `""`.
+The output says what the file says, for the same reason a `number` carries its digits: the caller
+is told what is there, not what typdoc would have made of it. Every rule and every command treats
+the two alike, so nothing else in the output moves.
+
 ## A document
 
 A document is the same object wherever it appears, in `get` and in `list` alike, including a
@@ -125,6 +142,18 @@ holds the ref (`$body` for a body link), and `written`, the text as it is writte
 which cannot be worked out from the other end and which `mv` needs to keep the written form. A
 body link also has `line` and `col`, 1-based. For `in`, the documents of this project that hold
 the refs are in `path` order.
+
+A reference that does not resolve has no `path` and has `unresolved` instead, one of three values:
+`not-found`, the place the ref names is present and the file or key is not; `import-absent`, the
+import it names is not on this machine, which `imports.absent` reports; and `bad-prefix`, the
+prefix names no namespace and no import, or names a project with several namespaces without saying
+which. A missing `path` alone would make a broken link and a machine that has not been set up look
+the same, and they are different problems with different fixes. `path` and `unresolved` never
+appear together, and `unresolved` occurs only for `out`, since a reference read from a document
+that holds it has been found. Unresolved references are listed: a ref is counted from what is
+written in the field. `--field` keeps only the refs in that field, `$body` for body links, and it
+means the field that holds the ref in both directions, so with `--reverse` it is a field of the
+document that holds it.
 
 ## The write commands
 

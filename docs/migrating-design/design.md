@@ -38,8 +38,6 @@ A document is identified by a key if its schema has a `code`, and by its path ot
 | Path | The identity of a document whose schema has no code | `precedents/secret-handling.md` |
 | Ref | A pointer to another document, from a frontmatter field or a body link | `blocked_by: [WF-1]` |
 
-Before any query or validation, `typdoc` builds one index mapping every key, within its namespace, and every path to its file. Refs of either kind resolve through it, so a keyed ticket can point at a path-identified note and the reverse. Paths are compared exactly as they are written, case included, on every platform: a ref is resolved through the index of names as they are on disk, so a path that differs from the file's name in case does not resolve, even where the file system would open it. Two keys cannot differ only in case, because a code is capital letters and digits (see `code`), so `keys.unique` has nothing to do about case.
-
 **Collection vs schema.** A collection selects files; a schema describes their shape. One schema without a `code` may serve several collections (`notes` and `drafts` both using `note.json`), so anything about choosing documents uses the collection: `list --collection`, the `collection` pseudo-field, a collection's `validation`. Anything about data shape uses the schema: types, fields, `extends`, and a ref field's `target`. `target` names schemas rather than collections because a schema, possibly published remotely, cannot know what a given namespace calls its collections.
 
 ## Config: .typdoc/config.json
@@ -79,23 +77,10 @@ Each project has one `.typdoc/config.json` that sets project-wide options, optio
 
 | Key | Required | Meaning |
 | --- | --- | --- |
-| `match` | yes | Which files belong to the collection. See Match templates. |
+| `match` | yes | Which files belong to the collection. See `docs/design/spec/SPC-17.md`. |
 | `schema` | yes | Relative path or `http://` or `https://` URL of the schema. See Remote schemas. |
 | `refBase` | no | How frontmatter paths resolve: `file` (default, relative to the document) or `namespace` (relative to the namespace folder) |
 | `validation` | no | Rule levels and options for this collection only, merged over `validation.global`. See Validation rules. |
-
-**Loading.** Every `*.json` file in `.typdoc/collections/` is a collection; other files are ignored. A file that cannot be parsed, has an unknown key or names a schema that does not exist is a config error that names the file, and `typdoc` stops rather than skip it, because a skipped collection would silently shrink every result. Collections have no order; anything that lists them sorts by name. A document matched by two collections is an error (`collections.overlap`), never settled by precedence; the overlap is checked in each namespace. This is intended and not a limit waiting to be lifted. A rule that named a winner, the more specific match or the first one, would let someone who reads two collection files fail to say which one wins until they knew a rule that neither file states, and it would decide for them without saying so. `--audit` shows every collection, one that ends with no document included, and names the collections of each overlap, so the overlap is seen from both sides. Numbering state is not kept here: a `last` key in a collection file is an unknown key and a config error.
-
-**Match templates.** For a coded schema, `match` is a template with placeholders; for a schema without a code, it is a glob.
-
-| Placeholder | Stands for | Allowed in |
-| --- | --- | --- |
-| `{key}` | `{code}-{number}`, with the code taken from the schema, e.g. `WF-3` | Coded schemas; exactly once, no globs |
-| `*`, `**` | Glob | Schemas without a code; no placeholders |
-
-One template serves both directions: it decides which files belong to the collection, and `typdoc new` uses it to name new files. Because `{key}` includes the schema's code, several coded collections can share one template in one folder: `tickets/{key}.md` matches `WF-3.md` for one schema and `RFC-4.md` for another. Each code counts on one number sequence of its own in each namespace, so a coded schema serves exactly one collection; two collections naming the same coded schema is a config error, as is a state entry for a collection whose schema has no code.
-
-**Which files a run reads.** A glob does not enter a folder whose name begins with `.`, which is the rule namespaces already follow, so a collection and a namespace answer the question the same way. A literal segment does enter one: a project that keeps its documents under `.agents/` names that folder in `match` and gets them, because naming a folder is saying it is wanted, while a glob is saying "whatever is here". A `*` does match a leading dot in a file name, since a file is named by the template that reaches it rather than found by walking into it. A symbolic link to a folder is not followed, so a run cannot leave the project or read one file twice under two names. `.gitignore` is not read: what a version control system hides is a different question from what a project declares, and a file that no `match` reaches is already outside every collection. A directory entry a template reaches that is a symbolic link, or whose name is not valid UTF-8, is skipped and reported under `files.unreadable` rather than stopping the run: one name that cannot be read should not deny an answer about every other file beside it.
 
 **The .typdoc folder.** Everything typdoc reads as configuration or writes for itself lives in one folder at the top of the project; the folder is also what marks a project.
 
@@ -113,12 +98,6 @@ A pinned copy lives at `vendor/<section>/<sha256>`, with no extension: `vendor/s
 
 There is one config location, `.typdoc/config.json`. The error for a folder with no project names that file as the one looked for, so a person who looked for the config under any other name is told where it is, whatever the name was; no other name is checked for.
 
-**Machine-specific imports.** When an imported project's location differs per machine, put it in an environment variable or in a machine file, `imports.json`, which is merged under the project's own `imports`, so no machine-specific path is committed. The file is found in this order, stopping at the first step that applies:
-
-1. `TYPDOC_CONFIG_DIR`, if set: the file is `$TYPDOC_CONFIG_DIR/imports.json`. The value must be an absolute path to a directory that exists; anything else is an error, since it was set on purpose.
-2. `XDG_CONFIG_HOME`, if set to an absolute path: the file is `$XDG_CONFIG_HOME/typdoc/imports.json`. Unset, empty or relative counts as not set, as the XDG specification says.
-3. The platform default. In v1, on Linux and macOS: `~/.config/typdoc/imports.json`.
-
 Support for another platform is one new line at step 3; steps 1 and 2 do not change. `TYPDOC_CONFIG_DIR` also lets tests and containers with an odd `HOME` move the file without borrowing the system's variable. If the file does not exist there are no machine-specific imports, and a ref into an import that this leaves absent is reported by `imports.absent` (a warning by default); there is no second mechanism. An error about the file names the path that was searched and which of the three steps it came from. No test reads the real home directory of whoever runs it, and each step is exercised with a fake `HOME` or environment.
 
 ## Schema format
@@ -134,8 +113,6 @@ A schema is a JSON file with a name, an optional code, an optional parent, and i
 | `extends` | no | Parent schema: a relative path or an `http://` or `https://` URL. Chains allowed; cycles rejected. A parent is usually abstract (no `code`, not used by any collection). |
 | `fields` | yes | Map of field name to definition |
 
-**Field types:** `string`, `number`, `bool`, `date` (ISO `YYYY-MM-DD`), `datetime` (ISO 8601 with offset, e.g. `2026-09-19T14:30:00+07:00`), `enum`, `list` (array of strings), `ref`, `ref[]`.
-
 **Field options**
 
 | Option | Applies to | Meaning |
@@ -143,11 +120,8 @@ A schema is a JSON file with a name, an optional code, an optional parent, and i
 | `required` | all | Must have a value |
 | `values` | `enum` | Allowed values, in order; the order is also the sort order |
 | `transitions` | `enum` | Map of value → allowed next values. Omitted: any change allowed. |
-| `target` | `ref`, `ref[]` | `"*"` (default: any file) or a list of schema names |
 | `acyclic` | `ref`, `ref[]` | Reject any cycle formed through this field |
 | `override` | all | Required to redefine an inherited field |
-
-**Target names.** A bare name (`"learning"`) means a schema in this project. A qualified name (`"memory::learning"`) means a schema in the imported project `memory`. Qualified names live only in schema JSON, never in Markdown files. `"*"` also accepts files outside any collection, such as a README.
 
 **Extends rules.** New fields merge in. Redefining an inherited field without `"override": true` is a schema error, so a child cannot silently change what a shared field means. Sibling schemas may define same-named fields independently.
 
@@ -267,10 +241,6 @@ A coded document's file name is its key and nothing else, so it never changes wh
 
 **Reference definitions.** Every definition line is checked once, at the definition, whether or not anything uses it, with the number of places that use it (`link target missing: notes/x.md (used 3 times)`); the uses are not reported separately. Labels are compared as CommonMark does: case-folded, whitespace collapsed. When a label is defined twice, CommonMark ignores the later definition; `body.links` reports it (`already defined at line N; this definition is ignored`) even when both point at the same file, and does not check its target. A definition inside a code block is not a definition. A definition that nothing uses is checked but does not appear in `$body`, so `refby` never counts a document that does not actually link to another. `mv` rewrites the active definition and leaves an ignored one alone.
 
-**Text that looks like a link but is not.** Under `body.links`, a `[text](inner)` or `![text](inner)` outside code that the parser does not read as a link, and a line `[label]: inner` that it does not read as a definition, is reported when `inner` has no URL scheme (a namespace name or import alias does not count as one) and, after removing a trailing title (`"…"`, `'…'` or `(…)`), ends with a file extension, optionally followed by `#anchor`. An extension is a `.` followed by one to eight ASCII letters or digits, at least one of them a letter. The usual cause is an unescaped space, which CommonMark does not allow in a bare destination; the message says to write `<my file.md>` or `my%20file.md`. Without this check such a link would be invisible: the reader sees a link and the checker sees text. The finding is at the `[` (or the `!`), or at the definition line; for a rejected definition it cannot say how many places use it. A `[text][ref]` with no definition is not reported: CommonMark reads it as plain text, and the shape is too common in ordinary prose (`a[0][1]`).
-
-**Heading anchors.** The `slug` of a heading follows GitHub's algorithm, so a link that passes `validate` also works on GitHub. Take the heading's plain text (text and code spans; image alt text, line breaks and inline HTML contribute nothing), lowercase it, delete punctuation other than `-` and `_`, symbols and other characters that are not letters or digits, and turn each space into `-`. Marks count as part of a letter, so Thai vowels and tone marks stay; non-ASCII text is kept as written, never transliterated. A slug that repeats an earlier one in the same document gets `-1`, `-2` and so on, skipping any result already taken (`Dup`, `Dup`, `Dup 1` give `dup`, `dup-1`, `dup-1-1`). Every heading counts, including those inside block quotes and list items but not those inside fenced code, so the numbering matches GitHub's. A heading whose slug is empty (`## !!!`, `## 😀`) is not special: the first gets `""` and cannot be linked to, the next `-1`, then `-2`. In a link, the fragment is percent-decoded (a `%` not followed by two hex digits is kept as written) and then compared with the slug without regard to case. Slugs are used only for anchors, never for file names. The exact character classes are pinned by the contract's fixtures, generated from GitHub's renderer.
-
 **Canonical form.** A coded document should be referenced by key in frontmatter; referencing it by path works but `validate` warns, since a path changes when the file is moved and a key does not. Body links always use paths.
 
 **Across namespaces.** A relative path that leaves the namespace, a sibling prefix or an import prefix lands in another namespace or project. `typdoc` finds that file's nearest `.typdoc/config.json` to learn its schema; namespaces of one project share collections and schemas, so a sibling is checked exactly like the document's own namespace. Forward traversal needs no configuration. Reverse lookup (`refby`, `refs --reverse`, `mv`) scans every namespace of this project and the projects it imports. Imports are one-way: `chief` importing `memory` does not let `memory` see `chief`. An imported project is read-only here, with no exception: no command writes a file in it, `mv` included. A `mv` reads the refs of an imported project so that it can report the ones that will be left pointing at the old path, and it changes none of them. Because it writes nothing there, it takes no lock there either: a lock belongs to the project that owns the file, and typdoc never takes one in a project it does not write to.
@@ -295,21 +265,6 @@ ref.all(blocked_by).status=resolved
 
 Arrows are stored only on the document holding the field. `refby` finds incoming arrows through a reverse index built from the frontmatter already loaded, the same index `refs --reverse` uses; nothing is stored twice.
 
-**Grammar**
-
-```
-expr     = ref-expr | plain
-ref-expr = dir "." quant "(" f ")" [ "." plain ]   ; "all" requires the "." plain part
-dir      = "ref" | "refby"
-quant    = "all" | "any" | "none"
-f        = field | "$body"                         ; a ref or ref[] field, or $body
-plain    = field op value
-field    = [A-Za-z_][A-Za-z0-9_-]*                 ; or a pseudo-field
-op       = "!=" | "<=" | ">=" | "=" | "<" | ">"    ; longest match at the first operator after the field
-value    = item { "," item }                       ; one comparison value only for < <= > >=
-item     = { char | "*" | "\" ( "," | "*" | "\" ) }  ; "\" before anything else is an error
-```
-
 **Expressions**
 
 | Expression | Meaning | Example |
@@ -331,9 +286,6 @@ item     = { char | "*" | "\" ( "," | "*" | "\" ) }  ; "\" before anything else 
 
 - **Pseudo-fields** on every document: `path`, `key` (coded only), `code`, `collection`, `schema`, `namespace`. `$body` is a virtual ref field holding body links. A reached document in another namespace reports that namespace's collection name. `namespace` is the namespace's folder name, `default` in a one-namespace project; for a document reached through an import it is the alias, followed by `::` and the namespace when the imported project has several (`chief::story-3`). These names are reserved: `schema.valid` rejects a schema field that uses one, or any name starting with `$`. The list is closed; adding a pseudo-field later is a breaking change. `$body` is valid only as `f` inside `ref.*(f)` and `refby.*(f)`.
 - **Names and scope.** A field name is `[A-Za-z_][A-Za-z0-9_-]*`, and `schema.valid` holds schema fields to the same rule, so every field can be queried. A field name unknown to every schema in scope is an error, not an empty result. For a plain condition the scope is the collections chosen with `--collection` or `--code`, or every collection of the namespaces in scope when none is chosen; a document whose schema lacks the field counts as absent. In `ref.*(f)` and `refby.*(f)`, `f` must be a field of type `ref` or `ref[]`, or `$body`, defined in a schema of this project or one it imports. The scope of the condition after `ref.*(f)` is the schemas named by `f`'s `target` (every schema in this project and its imports when the target is `"*"`); after `refby.*(f)` it is the schemas that define `f`; for `$body` in either it is every schema in this project and its imports.
-- **Syntax.** An expression is read whole, as one argument: spaces belong to names and values, so `status = open` is an error, with the hint `did you mean status=open?`. Field names, values, globs and enum values are case-sensitive. An empty value is an error in `--where` and `--if` (use `k!=*` to test for absent or empty); in `--set`, `k=` removes the field. On an array field `=` means some element matches and `!=` means no element does. The condition after `ref.*(f).` is a plain condition; another `ref.*` inside it is an error, as is anything after `)` that is not `.EXPR`. The ordering comparisons take one value, so `k<a,b` is an error. In a list, each value is coerced by the field's type on its own, and one that cannot be coerced makes the whole expression an error. In `--set`, an unescaped `*` in a value is an error (write `\*` for a literal star), and `,` in the value of a scalar field is an ordinary character.
-- **Coercion.** Values are coerced by schema type. A value outside an `enum` is an error (except with globs), so typos fail loudly.
-- **Comparisons** (`<`, `<=`, `>`, `>=`) apply to `number`, `date` and `datetime` only; on any other type they are an error. `datetime` values compare as instants, offsets included. A date-only value compared with a `datetime` field compares against the field's date part. A document without the field satisfies no ordering comparison. Always quote the expression: `<` and `>` are shell redirections.
 - **Rule of thumb.** "Does such a document exist" → `any`; "is nothing in the way" → `all`; "is there none" → `none`. For a single `ref` field prefer `any`, since `all` is true when the field is empty.
 - **v1 limits.** One hop, no OR across fields. All `--where` conditions are ANDed.
 
@@ -371,7 +323,7 @@ Returns frontmatter plus `path`, `key`, `code`, `collection`, `schema` and `name
 typdoc toc <key|path> [--depth n] [--json]
 ```
 
-Lists body headings with line ranges counted from the top of the file, frontmatter included, so they match editor and file-tool line numbers. Headings inside fenced code are ignored; headings inside block quotes and list items are listed. `--json` returns the headings as described under JSON output; `slug` is what a `#heading` link must use (see Heading anchors under Refs).
+Lists body headings with line ranges counted from the top of the file, frontmatter included, so they match editor and file-tool line numbers. Headings inside fenced code are ignored; headings inside block quotes and list items are listed. `--json` returns the headings as described under JSON output; `slug` is what a `#heading` link must use (see `docs/design/spec/SPC-14.md`).
 
 ### typdoc refs
 
@@ -403,14 +355,8 @@ typdoc validate [<key|path> ...] [--schemas] [--strict] [--audit]
 - **Refs:** missing targets, disallowed target schemas, missing `#heading` anchors, cycles on `acyclic` fields, coded documents referenced by path (warning).
 - **Across namespaces:** a ref into an imported project that is absent on this machine is a warning; a present project missing the file is an error. `--strict` makes both errors.
 
-**Audit mode.** `validate` is a gate: it respects configured levels and fails, so CI, hooks and agents can stop a bad change. `--audit` answers a different question, "what would I have to fix to adopt typdoc here?", and is meant for writing a config for existing files. It runs the same checks, with these differences:
-
 |  | `validate` | `validate --audit` |
 | --- | --- | --- |
-| Rules set to `off` | Skipped | Reported as `info` |
-| Exit code | 2 on any error | 0, unless the config itself is invalid |
-| Files in no collection | Not reported | Listed, with a count |
-| Files with no frontmatter | Errors per schema | Grouped separately |
 | Output | One line per finding | Summary by collection and rule first, then details |
 
 ```
@@ -460,7 +406,6 @@ Correctness rules are always on; quality rules are configured project-wide under
 | --- | --- |
 | `schema.valid` | Duplicate names or codes, `extends` cycles, undeclared overrides, invalid options, field names that break the naming rule or use a reserved name, import names colliding with URL schemes, a qualified `target` that names a schema that does not exist in the imported project |
 | `frontmatter.types` | Types, required fields, enum values |
-| `frontmatter.transitions` | State changes follow `transitions` (checked on write) |
 | `refs.resolve` | Frontmatter refs point at existing files |
 | `refs.target` | Ref targets match the field's `target` |
 | `refs.acyclic` | No cycle on `acyclic` fields |
@@ -476,7 +421,7 @@ Correctness rules are always on; quality rules are configured project-wide under
 
 | Rule | Default | Options | Checks |
 | --- | --- | --- | --- |
-| `body.anchors` | `error` | — | `#heading` in a link exists in the target (percent-decoded, case-insensitive; see Heading anchors) |
+| `body.anchors` | `error` | — | `#heading` in a link exists in the target (percent-decoded, case-insensitive; see `docs/design/spec/SPC-14.md`) |
 | `body.mentions` | `off` | `inlineCode` (`true`), `fencedCode` (`false`) | Keys mentioned in body text exist |
 | `refs.codedByPath` | `warn` | — | A coded document is referenced by path instead of key |
 | `names.shadowed` | `warn` | — | A name that is both a sibling namespace and an import alias, so `name:` and `name::` reach different documents |
@@ -513,13 +458,9 @@ The hash is stable across versions of typdoc. Changing how it is computed would 
 
 ## JSON output
 
-**A field written with no value** is `null` in `--json`, and one written as an empty string is `""`. The output says what the file says, for the same reason a `number` carries its digits: the caller is told what is there, not what typdoc would have made of it. Every rule and every command treats the two alike, so nothing else in the output moves.
-
 **A `number` in `--json`** is printed with the digits written in the document, not with a value converted from them. JSON puts no limit on the digits of a number; the readers do, each in its own way, and a reader that cannot hold one rounds it knowingly from a true value instead of being handed a different one. The reason is the same one that makes the frontmatter reader keep text: nothing between the file and the caller decides what `1e3` is. Converting first loses more than digits. Two documents whose numbers differ by one print the same value and cannot be told apart, and `1e3` becomes `1000.0`, which is not what the file says. A field of any other type is printed as it always was, and a `string` holding the same digits has never been affected.
 
 `path` is the path of the file relative to the folder of the project the document belongs to, the folder that holds that project's `.typdoc`, so it is the same in every namespace and can be opened as it stands from there. `namespace` is not redundant with it: the namespace `default` has no folder of its own, so the paths of its documents contain no namespace name and none can be recovered from them, and that is the commonest case. Where a project has several namespaces, two documents in different ones can have the same path below their namespace folder, and the namespace tells them apart from the path's first segment onward.
-
-**A finding** is the same object in the report of `validate` and in the `details` of an error object. It always has `rule`, `level` and `message`. It has `path`, the file it is about, relative to the project folder, for a document and for a configuration file alike; `namespace`, `collection` and `key` when the file is a document (`collection` when it is in one, `key` for a coded one only); `field` when it is about one field; and `line` and `col`, 1-based, when a position is known. A finding is always located in a file of the project being checked, never in one of an imported project: a broken ref is a fault of the document that holds it, not of its target.
 
 | Command | Prints |
 | --- | --- |
@@ -541,8 +482,6 @@ The hash is stable across versions of typdoc. Changing how it is computed would 
 ```
 
 **Headings.** In `toc`, `document` is the name of the document asked about, and each heading has its `level`, `text`, `slug` and `line`, the line of the heading, counted as `docs/design/spec/SPC-1.md` gives. `end` is the last line of the heading's section: the section runs to the line before the next heading of the same or a shallower level, or to the last line of the file, and it includes the sections of the headings under it. A heading with nothing under it has `end` equal to `line`. The ranges therefore nest and do not tile the file: the range of a heading contains the ranges of the headings under it, so reading every range in turn reads some lines more than once. `end` is a property of the document: `--depth` chooses which headings are listed and never changes the `end` of one that is. Headings are in the order of `line`, and the order is guaranteed.
-
-A reference that does not resolve has no `path` and has `unresolved` instead, one of three values: `not-found`, the place the ref names is present and the file or key is not; `import-absent`, the import it names is not on this machine, which `imports.absent` reports; and `bad-prefix`, the prefix names no namespace and no import, or names a project with several namespaces without saying which. A missing `path` alone would make a broken link and a machine that has not been set up look the same, and they are different problems with different fixes. `path` and `unresolved` never appear together, and `unresolved` occurs only for `out`, since a reference read from a document that holds it has been found. Unresolved references are listed: a ref is counted from what is written in the field. `--field` keeps only the refs in that field, `$body` for body links, and it means the field that holds the ref in both directions, so with `--reverse` it is a field of the document that holds it.
 
 The order of `refs` is guaranteed. For `out` it is the fields in the order they appear in the document, then `$body` by position, and within a field the values in the order they are written. For `in` it is the documents that hold the refs, those of this project first and then those of imported projects by alias, each by `path` as under Order, and then as for `out`.
 
@@ -568,17 +507,6 @@ Exit codes let an agent branch without parsing text.
 | 7 | The destination already exists: the write would replace a file that is there |
 
 A new code is added only when the caller has to act differently: not found may lead to creating the document, bad arguments are a defect in the call and are not retried, and an I/O failure is a problem of the environment that may be retried. A destination that already exists earns its own code by the same test: the call was correct in every part, so it is not code 1, which says the call is a defect and is not retried; what has to happen next is to choose another name or open the file that is there, which is neither of those. Finer detail belongs in an id: every error carries in `details[].rule` an id that names its specific cause, and the ids are listed with the shapes of the output. A malformed query expression exits 1; a well-formed query that matches nothing exits 0 with an empty result and is never an error.
-
-Errors go to stderr. With `--json`, stderr carries one object:
-
-```json
-{ "error": "transition not allowed: open -> resolved", "code": 2,
-  "details": [{ "level": "error", "rule": "frontmatter.transitions",
-                "message": "transition not allowed: open -> resolved",
-                "path": "tickets/WF-3.md", "namespace": "default", "key": "WF-3", "field": "status" }] }
-```
-
-`details` holds findings, in the shape described under JSON output. For a config error, `rule` holds the error's id from the table under Config errors (all start with `config.`) and `path` is the configuration file it is about.
 
 When a key or a write is ambiguous across namespaces, the exit code is 1 and the object carries `candidates`: every choice, written as a prefixed key or a namespace name.
 

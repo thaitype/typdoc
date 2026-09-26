@@ -24,3 +24,20 @@ failure is a problem of the environment that may be retried. Finer detail than t
 
 `docs/design/catalog/exit-codes.md` holds the eight codes as plain numbers — the set a test
 compares the CLI's own exit paths against.
+
+## The error object
+
+An error goes to standard error. With `--json`, standard error carries one object:
+
+```json
+{ "error": "transition not allowed: open -> resolved", "code": 2,
+  "details": [{ "level": "error", "rule": "frontmatter.transitions",
+                "message": "transition not allowed: open -> resolved",
+                "path": "tickets/WF-3.md", "namespace": "default", "collection": "wayfinder",
+                "key": "WF-3", "field": "status" }] }
+```
+
+`details` holds findings, in the shape `SPC-12` gives. A write refused by one finding has that
+finding's `message` as its `error`, as above, not a phrase wrapped around it. For a config error,
+`rule` holds the error's id from `docs/design/catalog/config-errors.md` (every one starts with
+`config.`) and `path` is the configuration file it is about.
