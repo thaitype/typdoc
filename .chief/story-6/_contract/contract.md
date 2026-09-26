@@ -85,23 +85,24 @@ Each later batch branches from `origin/main` after the batch before it has merge
 
 ## Proof that Rust changed only in comments
 
-In every PR body, as a command anyone can rerun on this repository at the base and head commits,
-with its result:
+In every PR body, as a script anyone can rerun on this repository at the base and head commits
+(included in the PR body in full, since it is not part of the repository), with its result:
 
-- For every compile target the PR touches (`--lib`, `--lib` under the test profile, each
-  `--test <name>`), `RUSTC_BOOTSTRAP=1 cargo rustc -p <crate> <target> -- -Zunpretty=expanded`
-  at the base and at the head. The expanded output drops `//` and `/* */` comments; lines that
-  are doc comments (`///`, `//!`) are filtered out; the rest must be byte-identical. Decided:
-  `RUSTC_BOOTSTRAP` is used for this one verification command only and appears nowhere in the
-  build.
+- For every file under `crates/` that differs between base and head, comments are stripped
+  from both versions and what is left is compared. Rust: `//` and nested `/* */` comments, doc
+  comments included, are removed by a lexer that leaves string, raw-string, byte-string and
+  char literals intact, and whitespace outside literals is collapsed. `Cargo.toml` and
+  `clippy.toml`: `#` comments outside strings and blank lines are removed. The result must be
+  identical for every file.
+- It reads source text, not compiler output, so code under any `cfg` is covered.
+- Decided: not `rustc -Zunpretty=expanded`. Its output keeps ordinary `//` comments, so a
+  comment-only change shows up as a difference; checked with a planted comment.
 - The method is shown able to fail before it is trusted: a planted one-token code change makes
-  it report a difference, and a comment-only change does not.
-- Code excluded by `cfg` on the platform running the command (for example a `cfg(not(unix))`
-  branch) is not expanded, so it is not covered: any changed comment in such a region is listed
-  in the PR body and read by hand.
-- `trybuild` fixtures: the `.stderr` expectations may change only in line and column numbers
-  that moved with a comment. Any other change to a `.stderr` file is a stop.
-- `Cargo.toml` and `clippy.toml`: identical once `#` comments and blank lines are removed.
+  it report a difference, a comment-only change does not, and text after `//` inside a string
+  literal is kept.
+- Any other changed file under `crates/` (for example a `trybuild` `.stderr` expectation) is
+  listed and read by hand: a `.stderr` file may change only in line and column numbers that
+  moved with a comment. Any other change to one is a stop.
 
 ## Every PR also shows
 

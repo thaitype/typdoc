@@ -3,8 +3,8 @@
 No behavior changes, so no new tests. What is tested is that nothing but comments changed and
 that the existing suite still passes.
 
-- **Comment-only proof** (see the contract): expanded-source comparison per touched compile
-  target, shown able to fail on a planted code change before it is trusted.
+- **Comment-only proof** (see the contract): each changed file compared with its comments
+  stripped, shown able to fail on a planted code change before it is trusted.
 - **Existing suite:** `scripts/test.sh` locally, and the ubuntu and macOS CI jobs. A red test
   after a comment change means the change was not comment-only (or moved a line a test
   depends on, such as a `trybuild` expectation) — investigate, do not update an expectation to
