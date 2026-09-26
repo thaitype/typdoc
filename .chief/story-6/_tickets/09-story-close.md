@@ -38,4 +38,11 @@ says it does; machine-file errors do not name the lookup step. Fixed in the tick
 no longer says a `frontmatter.parse` finding has a position; the `refs.rs` test named as if the
 import form were not read is renamed for what it asserts.
 
+From the ticket 06 PR. Deferred by decision (bug fix after the story): `refs` prints a document
+of an imported project under a name that `get` does not accept (with the work on imported
+projects); a schema's `code` is not checked against its pattern. Deferred by decision, folded into
+the `pid_alive` fix after the story: every lock records the host name `unknown-host` on macOS; the
+design text that names Linux alone stays in `docs/migrating-design/`. Fixed in the ticket 06 PR:
+SPC-2 no longer says `mv --renumber` prints only the new key.
+
 Done when: that record is reported. The story is accepted outside the loop.
