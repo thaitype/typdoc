@@ -979,7 +979,7 @@ impl Project {
                 path: file.display().to_string(),
                 message: format!(
                     "`{relative}` already exists: the key `{key}` was just allocated and should \
-                     not be reachable (decision 15)"
+                     not be reachable"
                 ),
             });
         }
@@ -1000,7 +1000,7 @@ impl Project {
             candidate.as_bytes(),
             format!(
                 "`{relative}` already exists: the key `{key}` was just allocated and should not \
-                 be reachable, but the file system enforces the refusal either way (decision 15)"
+                 be reachable, but the file system enforces the refusal either way"
             ),
         )?;
 
@@ -2955,13 +2955,10 @@ impl Project {
 
     #[allow(
         clippy::too_many_arguments,
-        reason = "each part is independent context a caller already holds (the document's name,
-    which field and ref, why it failed, the project's moved records, the collection's own rule
-    levels, strict); bundling them would hide which one changes across the call sites that would
-    use it, `check_refs` and a future `body.mentions` (`body.mentions` is not built by the mv
-    command: a mention is always key-shaped, and mv within one project only ever moves a document
-    without a code successfully, so the two never meet there; a future rule that checks mentions
-    against `refs.moved` is still a plausible second caller)"
+        reason = "each part is independent context `check_refs`, the one caller, already holds (the
+    document's name, which field and ref, why it failed, the project's moved records, the
+    collection's own rule levels, strict, audit); `body.mentions` checks a moved mention through
+    `moved_outcome` instead, so a bundle would only move the same list somewhere else"
     )]
     fn unresolved_ref_finding(
         &self,
@@ -3724,7 +3721,7 @@ impl Project {
                 path: to_path.clone(),
                 message: format!(
                     "`{to_path}` already exists: the key `{new_key}` was just allocated and \
-                     should not be reachable (decision 15)"
+                     should not be reachable"
                 ),
             });
         }
