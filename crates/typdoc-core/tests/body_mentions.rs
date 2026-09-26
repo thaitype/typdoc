@@ -1,5 +1,6 @@
-//! Key-shaped mentions in plain body text: `typdoc_core::mentions`, pure over one document's
-//! text. The design's own table under `body.mentions` is the spec.
+//! Covers SPC-1.
+//!
+//! `typdoc_core::mentions`, pure over one document's text.
 
 use typdoc_core::{Mention, mentions};
 

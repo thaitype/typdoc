@@ -1,5 +1,6 @@
+//! Covers SPC-15.
+//!
 //! The schema format as declared data: what a schema file says, and nothing decided from it.
-//! The schemas are the design's own examples.
 
 use std::collections::BTreeMap;
 
@@ -206,11 +207,8 @@ fn a_schema_that_has_not_the_shape_of_the_format_cannot_be_read() {
     }
 }
 
-/// Ticket 5 read a wrongly typed option strictly, which crashed the whole read before
-/// `schema.valid` (ticket 9) could report it, unlike an unknown type, `auto` or `target` name,
-/// already read tolerantly for the same reason. Decided here: `required` (and `acyclic` and
-/// `override`, the format's other boolean options) are relaxed the same way, so a schema like
-/// this one is read, with the field's `required` false, and `schema.valid` is what reports it.
+/// `required`, `acyclic` and `override` are read tolerantly, as an unknown type, `auto` or
+/// `target` name is, so that `schema.valid` reports the schema instead of the whole read failing.
 #[test]
 fn a_boolean_option_written_as_something_else_is_read_tolerantly_and_not_refused() {
     let schema =

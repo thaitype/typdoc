@@ -1,5 +1,6 @@
-//! A value read by the type its schema gives it. Each expectation is written by hand from the
-//! design's field types.
+//! Covers SPC-15.
+//!
+//! A value read by the type its schema gives it. Each expectation is written by hand.
 
 use typdoc_core::{FieldType, Number, Value, coerce};
 
@@ -195,9 +196,6 @@ fn a_type_the_format_does_not_name_leaves_a_value_as_written() {
     assert_eq!(coerce(&kind, &items), Some(items));
 }
 
-/// Equality is on the converted value and not on the digits, which is what a `--where num=v`
-/// has always matched on. Telling two numbers apart that convert to one value is the
-/// comparison question, and printing the digits does not answer it.
 #[test]
 fn two_numbers_are_equal_when_the_values_they_convert_to_are() {
     assert_eq!(number("1e3"), number("1000.0"));
@@ -212,9 +210,8 @@ fn two_numbers_are_equal_when_the_values_they_convert_to_are() {
 
 #[test]
 fn a_number_keeps_the_digits_written_and_converts_out_of_them() {
-    // Nothing holds 123456789012345678901 exactly. The digits are kept whole all the same, and
-    // the value converted out of them is a float to the precision a float has (the last digit
-    // or two are the reader's).
+    // Nothing holds 123456789012345678901 exactly: the digits are kept whole, and the converted
+    // value is a float to a float's precision.
     for (written, nearest) in [
         ("123456789012345678901", 1.2345678901234568e20),
         ("-9223372036854775809", -9.223372036854776e18),
@@ -236,9 +233,7 @@ fn a_number_keeps_the_digits_written_and_converts_out_of_them() {
     assert_eq!(max.written(), "18446744073709551615");
     assert_eq!(max.as_u64(), Some(u64::MAX));
 
-    // The converted value is what a comparison, a sort and a table cell go on using, and it is
-    // where two documents whose digits differ by one meet. Each expectation is written out by
-    // hand from the pairs the decision behind this measured.
+    // The converted value is where two documents whose digits differ by one meet.
     for (written, converted) in [
         ("3", "3"),
         ("1.10", "1.1"),

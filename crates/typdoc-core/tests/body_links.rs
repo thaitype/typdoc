@@ -1,6 +1,6 @@
-//! Body links, reference definitions, duplicate labels and text that looks like a link but is
-//! not: `typdoc_core::scan`, pure over one document's text (ticket 10 of the decisions is the
-//! spec; see `docs/archived-design/design-decision-phase-1/_tickets/10-link-forms-checked.md`).
+//! Covers SPC-1.
+//!
+//! `typdoc_core::scan`, pure over one document's text.
 
 use typdoc_core::{BodyLink, DuplicateDefinition, Suspect, scan};
 
@@ -8,8 +8,7 @@ fn of(text: &str) -> typdoc_core::BodyLinks {
     scan(text).unwrap()
 }
 
-/// An inline or image occurrence (`is_reference: false`); reference-style occurrences are built
-/// by hand where a test needs one, since the shape they come in varies with the test.
+/// An inline or image occurrence; reference-style ones are built by hand where a test needs one.
 fn link(
     written: &str,
     target: Option<&str>,
@@ -269,8 +268,6 @@ fn a_real_link_is_never_also_reported_as_a_suspect() {
 
 #[test]
 fn a_plain_shortcut_shaped_run_of_text_is_not_a_suspect_no_parens_follow() {
-    // The common false-positive shape ticket 10 names: `a[0][1]` has brackets but no
-    // parenthesis right after either `]`, so it never becomes a bracket-paren candidate.
     let found = of("a[0][1] and [t][ref]\n");
 
     assert_eq!(found.suspects, []);

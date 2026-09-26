@@ -1,6 +1,8 @@
-//! Evaluating `ref.*`/`refby.*` conditions: the seam is `Project::list`, since following an
-//! arrow reads more than the one schema and one document `query::evaluate` sees. Every case here
-//! reads `fixtures/valid/ref-query`, described in the fixture's own schemas:
+//! Covers SPC-13.
+//!
+//! `ref.*`/`refby.*` conditions, through `Project::list`, since following an arrow reads more
+//! than the one schema and one document `query::evaluate` sees. Every case reads
+//! `fixtures/valid/ref-query`:
 //!
 //! - `tickets/{key}.md` (schema `ticket`, code `T`): `status` (enum), `blocked_by` (`ref[]`,
 //!   `target: "*"`) and `sources` (`ref[]`, `target: ["archive"]`).
@@ -60,8 +62,7 @@ fn everything(project: &Project) -> Scope {
 }
 
 /// `list`'s matching paths for one `--where` expression, scoped to `collections` (empty means
-/// every collection). Panics on a parse or evaluation error, since every test below that expects
-/// success names its own expression by hand and already knows it parses.
+/// every collection).
 fn paths(project: &Project, collections: &[&str], expr: &str) -> Vec<String> {
     let scope = everything(project);
     let collections: Vec<String> = collections.iter().map(|s| (*s).to_owned()).collect();
@@ -83,7 +84,6 @@ fn paths(project: &Project, collections: &[&str], expr: &str) -> Vec<String> {
     matched
 }
 
-/// The error `list` gives for one `--where` expression, or a panic if it unexpectedly succeeds.
 fn error_of(project: &Project, collections: &[&str], expr: &str) -> String {
     let scope = everything(project);
     let collections: Vec<String> = collections.iter().map(|s| (*s).to_owned()).collect();
@@ -103,21 +103,10 @@ fn error_of(project: &Project, collections: &[&str], expr: &str) -> String {
     }
 }
 
-// -------------------------------------------------------------------------------------------
-// The ticket's own criterion: a pair of complementary queries over a set with a dangling ref.
-// -------------------------------------------------------------------------------------------
-
-/// The design's own worked example (`ref.all(blocked_by).status=resolved` and
-/// `ref.any(blocked_by).status!=resolved`), over a set that has a dangling ref: every document is
-/// in exactly one half, the two halves sum to the whole set, and the dangling-ref documents
-/// (`T-1`, mixed with a resolved blocker; `T-5`, only a dangling one) fall into the `any`/`!=`
-/// half, never the `all`/`=` half — which is what "a dangling ref counts as absent" has to mean
-/// for the pair to split cleanly at all (a reached document lacking `status` would count the same
-/// way, but `blocked_by`'s targets all declare `status`, so only the dangling ref is at work
-/// here). If a dangling ref were skipped instead of counted, `T-1` and `T-5` would each be
-/// evaluated over `[T-2]` alone (`status: resolved`): `ref.all(...)` would then be true for both
-/// (moving them into `all_resolved`) and `ref.any(...)status!=resolved` would be false for both
-/// (emptying `any_not_resolved`) — both halves below would read differently.
+/// The dangling-ref documents (`T-1`, beside a resolved blocker; `T-5`, with only a dangling one)
+/// fall in the `any`/`!=` half. Were a dangling ref skipped, both would be evaluated over `[T-2]`
+/// alone (`status: resolved`) and land in the `all`/`=` half. Every target of `blocked_by`
+/// declares `status`, so only the dangling ref is at work.
 #[test]
 fn ref_all_and_ref_any_negated_split_a_set_with_a_dangling_ref_counted_as_absent() {
     let project = project();
@@ -162,18 +151,13 @@ fn ref_all_and_ref_any_negated_split_a_set_with_a_dangling_ref_counted_as_absent
             "tickets/T-6.md"
         ]
     );
-    // The dangling-ref documents land in exactly one half.
     for dangling in ["tickets/T-1.md", "tickets/T-5.md"] {
         assert!(any_not_resolved.contains(&dangling.to_owned()));
         assert!(!all_resolved.contains(&dangling.to_owned()));
     }
 }
 
-/// The design's own sentence: "a ticket whose only blocker points at nothing does not look
-/// unblocked". `T-5`'s only `blocked_by` value is the dangling `T-99`: omitting `.EXPR` counts
-/// arrows from the value written, so `ref.any(blocked_by)` must still find one for `T-5` (and for
-/// `T-1` and `T-6`, which each have a real arrow too), while `T-2` and `T-4` (`blocked_by: []`)
-/// have none.
+/// `T-5`'s only blocker is the dangling `T-99`; `T-2` and `T-4` have `blocked_by: []`.
 #[test]
 fn ref_any_with_no_inner_counts_a_dangling_ref_as_an_existing_arrow() {
     let project = project();
@@ -193,26 +177,17 @@ fn ref_any_with_no_inner_counts_a_dangling_ref_as_an_existing_arrow() {
     assert_eq!(has_no_blocker, ["tickets/T-2.md", "tickets/T-4.md"]);
 }
 
-// -------------------------------------------------------------------------------------------
-// `refby.*`: arrows pointing at me, never dangling, `$body` included.
-// -------------------------------------------------------------------------------------------
-
 #[test]
 fn refby_any_finds_the_document_some_other_documents_field_points_at() {
     let project = project();
 
-    // Only T-2 is ever named by another ticket's `blocked_by` (T-1, T-3 and T-6 all point at
-    // it); T-99 does not exist, and nothing points at T-1, T-3, T-4, T-5 or T-6 this way.
     let pointed_at = paths(&project, &["tickets"], "refby.any(blocked_by)");
     assert_eq!(pointed_at, ["tickets/T-2.md"]);
 }
 
-/// `T-2` is the only ticket with any holder at all: `T-1` and `T-3` (`status: open`), `T-6`
-/// (`status: closed`). Every other ticket has zero holders, so `all`/`none` are vacuously true for
-/// them regardless of `status` — the interesting case is `T-2`, where a real, non-matching holder
-/// (`T-6`) makes `all(...status=open)` and `none(...status=closed)` false, while `any(...
-/// status=open)` stays true because of `T-1`/`T-3`. A test that only checked "no holders at all"
-/// would never tell "vacuously true" apart from "checked and true".
+/// Every ticket but `T-2` has no holder, so `all` and `none` are vacuously true for it. `T-2`'s
+/// holders, `T-1` and `T-3` (open) and `T-6` (closed), tell "vacuously true" apart from "checked
+/// and true".
 #[test]
 fn refby_any_with_an_inner_condition_checks_the_holders_not_me() {
     let project = project();
@@ -224,16 +199,12 @@ fn refby_any_with_an_inner_condition_checks_the_holders_not_me() {
         "tickets/T-6.md",
     ];
 
-    // Only T-2 has a holder with status=open (T-1 or T-3 is enough for `any`).
     let matched = paths(&project, &["tickets"], "refby.any(blocked_by).status=open");
     assert_eq!(matched, ["tickets/T-2.md"]);
 
-    // T-2 fails `all(...status=open)` because of T-6 (closed); everyone else is vacuously true.
     let matched = paths(&project, &["tickets"], "refby.all(blocked_by).status=open");
     assert_eq!(matched, everyone_but_t2);
 
-    // T-2 fails `none(...status=closed)` because T-6 (a real holder) is closed; everyone else,
-    // having no holder at all, is vacuously true.
     let matched = paths(
         &project,
         &["tickets"],
@@ -246,24 +217,16 @@ fn refby_any_with_an_inner_condition_checks_the_holders_not_me() {
 fn dollar_body_works_in_both_directions() {
     let project = project();
 
-    // T-1's body links to archive/x.md; no other ticket has a body link.
     let has_body_ref = paths(&project, &["tickets"], "ref.any($body)");
     assert_eq!(has_body_ref, ["tickets/T-1.md"]);
 
-    // archive/x.md is the only document any body link points at.
     let linked_to = paths(&project, &["archive"], "refby.any($body)");
     assert_eq!(linked_to, ["archive/x.md"]);
 }
 
-// -------------------------------------------------------------------------------------------
-// The scope of the condition after `ref.*(f)` follows `f`'s target, not the outer scope.
-// -------------------------------------------------------------------------------------------
-
-/// `sources`' `target` is `["archive"]`, never `"*"`. `resolved_note` is declared only by
-/// `archive`, not by `ticket` — the `--collection tickets` outer scope this query itself runs
-/// under — so a check that (wrongly) used the outer scope would refuse this as an unknown field;
-/// one that (wrongly) fell back to "every schema in the project" would not be able to tell this
-/// case apart from the next one. Only reading `sources`' own `target` gets both right.
+/// `resolved_note` is declared only by `archive`, the target of `sources`, and not by `ticket`, the
+/// outer scope: a check against the outer scope would refuse it, and one against every schema
+/// could not tell this case from the next.
 #[test]
 fn the_condition_after_ref_star_is_checked_against_the_targets_schemas() {
     let project = project();
@@ -272,9 +235,8 @@ fn the_condition_after_ref_star_is_checked_against_the_targets_schemas() {
     assert_eq!(matched, ["tickets/T-1.md"]);
 }
 
-/// `bogus_marker` is declared only by `person`, which `sources`' `target` (`["archive"]`) does
-/// not name — even though `person` is a real schema of this project. Erroring here is what
-/// proves the scope is `sources`' own target and not "every schema of the project".
+/// `bogus_marker` is declared only by `person`, a schema of this project that the target of
+/// `sources` does not name.
 #[test]
 fn a_field_outside_the_targets_schemas_is_an_error_even_though_some_other_schema_has_it() {
     let project = project();
@@ -283,8 +245,6 @@ fn a_field_outside_the_targets_schemas_is_an_error_even_though_some_other_schema
     assert!(message.contains("bogus_marker"), "{message}");
 }
 
-/// `f` itself must be a ref/ref[] field (or `$body`) of some schema of the project; nothing here
-/// declares `nope`, so `ref.any(nope)` is an error before any document is read.
 #[test]
 fn a_ref_field_no_schema_declares_is_an_error() {
     let project = project();
