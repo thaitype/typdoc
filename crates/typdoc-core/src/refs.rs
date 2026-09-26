@@ -4,19 +4,13 @@
 //! same `resolve_one`, and turned into findings by `cyclic_findings`). `names.shadowed` lives in
 //! `project.rs`, since it is a fact about the config and never reads a document.
 //!
-//! A ref is not an argument (ticket 7's report): a bare form always means the document's own
-//! namespace, whatever the working directory, and a prefix that names neither a sibling
-//! namespace nor an import is `bad-prefix`, never a relative path. The import form (`name::`)
-//! resolves into the alias's own project (`Ctx::imports`): an alias this project does not
-//! configure is `bad-prefix`; one that is absent on this machine is `import-absent`; one that is
-//! present is resolved inside it, by the same rules a document of that project would use.
+//! A ref is not an argument: a bare form always means the document's own namespace, whatever the
+//! working directory, and a prefix that names neither a sibling namespace nor an import is
+//! `bad-prefix`, never a relative path (SPC-14).
 //!
-//! `classify` reads no file and touches no index: it decides which of the design's forms a
-//! written ref is and, for a path form, the base it is joined against, all from the string and
-//! the project's namespaces alone. `resolve_one` is the only part that reads the index and the
-//! disk (`resolve_key`, `resolve_path`), so the form rules are tested here with no filesystem,
-//! and the disk-touching part is tested through `validate` in the binary's own tests, the same
-//! way the rest of this crate's index-reading behaviour already is.
+//! `classify` reads no file and no index, so the form rules are tested here without a file
+//! system; the part of `resolve_one` that reads the disk is tested through `validate` in the
+//! binary's tests.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
@@ -29,9 +23,8 @@ use crate::index::Index;
 use crate::project::ImportState;
 use crate::schema::{Target, normalize};
 
-/// Why a ref did not resolve, under the design's own `unresolved` ids. `ImportAbsent` carries why
-/// the import itself is absent, so a caller can build `imports.absent`'s message naming the
-/// variable, the same way the design's own example does ("TYPMEM_DIR is not set").
+/// Why a ref did not resolve: the `unresolved` ids of SPC-12. `ImportAbsent` carries why the
+/// import is absent, so `imports.absent`'s message can name the variable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Reason {
     NotFound,
@@ -47,11 +40,9 @@ pub(crate) enum Via {
     Path,
 }
 
-/// A ref that resolved: the path of the document or file it names, the collection it belongs to
-/// (`None` for a file outside every collection, reachable only through `target: "*"`), the form
-/// it was written in, and, when it landed in an imported project rather than this one, the alias
-/// it was reached through (`collection` then indexes that project's own collections, never this
-/// one's — a caller that reads `collection` to look up a schema must first check `project`).
+/// `collection` is `None` for a file outside every collection. When `project` names an import,
+/// `collection` indexes that project's collections, not this one's, so a caller that looks up a
+/// schema checks `project` first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Resolved {
     pub path: String,
@@ -60,22 +51,16 @@ pub(crate) struct Resolved {
     pub project: Option<String>,
 }
 
-/// What one written ref resolves to.
 pub(crate) type Outcome = Result<Resolved, Reason>;
 
-/// The name and code of a schema a collection uses, by the collection's position in the project
-/// (`Index::Entry::collection`), so `refs.target` and `refs.codedByPath` can read them without
-/// depending on `project.rs`'s own, private `Loaded` type. `Copy`: a caller reads one out of a
-/// project's list (this project's own, or an imported project's) and holds it alone, never the
-/// list it came from.
+/// The name and code of a collection's schema, so the ref rules can read them without
+/// `project.rs`'s private `Loaded` type.
 #[derive(Clone, Copy)]
 pub(crate) struct SchemaInfo<'a> {
     pub name: &'a str,
     pub code: Option<&'a str>,
 }
 
-/// What a ref is resolved against: the namespace and collection of the document that holds it,
-/// and the index and project root every ref reads through. Built fresh per document.
 pub(crate) struct Ctx<'a> {
     pub doc_namespace: usize,
     pub doc_path: &'a str,
@@ -84,14 +69,9 @@ pub(crate) struct Ctx<'a> {
     pub codes: &'a BTreeSet<String>,
     pub index: &'a Index,
     pub root: &'a Path,
-    /// This project's own `imports`, resolved once at load (`Project::imports`): every alias not
-    /// a key here names neither a sibling namespace nor an import, and is `bad-prefix`.
     pub imports: &'a BTreeMap<String, ImportState>,
 }
 
-/// What a written ref's form decides, before anything is looked up: a key in one namespace, or a
-/// path already joined against its base (the document's own folder or namespace under `refBase`
-/// for the unprefixed form, always the named namespace's folder for a sibling prefix).
 enum Form {
     Key {
         namespace: usize,
@@ -101,9 +81,8 @@ enum Form {
         base: String,
         rest: String,
     },
-    /// `name::rest`: an import prefix, not yet looked up against `Ctx::imports` (`classify`
-    /// itself reads no index, and telling `bad-prefix` from `import-absent` from a real
-    /// resolution needs it).
+    /// Not yet looked up: `classify` reads no index, and `Ctx::imports` decides between
+    /// `bad-prefix`, `import-absent` and a resolution.
     Import {
         alias: String,
         rest: String,
@@ -111,12 +90,8 @@ enum Form {
     BadPrefix,
 }
 
-/// What a body link's destination is, before anything is looked up: a path to resolve (in this
-/// project, or, for `Import`, in the alias's own project — its path is already joined against
-/// that project's folder, never this one's, so the caller resolves it against the imported
-/// project's own index and root), `bad-prefix`, `import-absent`, or skipped entirely — an
-/// ordinary URL scheme (`https:`, `mailto:` and so on), which the design says is "always
-/// skipped; no configuration is needed", never a finding of any kind.
+/// An `Import` path is already joined against the imported project's folder, so it is resolved
+/// against that project's index and root. A URL scheme is `Skip`, never a finding.
 pub(crate) enum BodyDestination {
     Path(String),
     Import { alias: String, path: String },
@@ -125,8 +100,7 @@ pub(crate) enum BodyDestination {
     Skip,
 }
 
-/// Resolves one ref as written in frontmatter, through the forms the design's Refs table gives:
-/// bare key, sibling prefix, relative path with `refBase`, and the import form.
+/// Resolves one frontmatter ref by the forms in SPC-14.
 pub(crate) fn resolve_one(written: &str, ctx: &Ctx) -> Outcome {
     match classify(
         written,
@@ -143,28 +117,18 @@ pub(crate) fn resolve_one(written: &str, ctx: &Ctx) -> Outcome {
     }
 }
 
-/// The identity a write's own candidate is about to carry, real enough for
-/// [`resolve_one_for_candidate`] to resolve a ref to it even though it is not yet in `Ctx::index`
-/// or on disk: `set`'s candidate already has both (it is only its *fields* — not its key or
-/// path — that are about to change), and `new`'s has its path (given or allocated) and, for a
-/// coded collection, the key `Project::allocate_key` already committed to before the file exists.
+/// The identity a write's candidate is about to carry. `new`'s is not in `Ctx::index` or on disk
+/// yet, though its path and any key are already decided.
 pub(crate) struct Candidate<'a> {
     pub namespace: usize,
     pub key: Option<&'a str>,
     pub path: &'a str,
 }
 
-/// Identical to [`resolve_one`], except a ref that names `candidate`'s own identity — its key in
-/// its namespace, written as such, or a path that joins to its own — resolves to it directly,
-/// without reading `Ctx::index` or the disk for either. `Project::prescan_refs`'s substituted
-/// scan (ticket 30, M-18) needs this in both directions: not only for the candidate's own
-/// fields (already handled by substituting its text for what would otherwise be read from disk),
-/// but for every *other* document's fields too — a `new` candidate is not indexed and its file
-/// does not exist yet, so nothing already on disk that names its key or path would ever resolve
-/// against the real index, which would make it structurally impossible for `new` to ever close a
-/// cycle with a document that already points at the one about to be created. A `set` candidate's
-/// key and path are already real and already resolve through `Ctx::index` on their own, so this
-/// changes nothing for it — the check here simply never matches before falling through.
+/// Like [`resolve_one`], except a ref naming `candidate`'s own key or path resolves to it without
+/// reading the index or the disk. The write-time cycle check (SPC-2) needs this for the refs of
+/// every other document: without it, nothing on disk could resolve to a `new` candidate, and
+/// `new` could never be seen to close a cycle.
 pub(crate) fn resolve_one_for_candidate(
     written: &str,
     ctx: &Ctx,
@@ -206,12 +170,6 @@ pub(crate) fn resolve_one_for_candidate(
     }
 }
 
-/// `name::rest`: `alias` looked up against `imports` (`Project::imports`, resolved once at
-/// load). An alias this project does not configure is `bad-prefix`, the same reading a namespace
-/// prefix naming no sibling already gets; one absent on this machine is `import-absent`
-/// (`imports.absent`'s reason); one present is resolved inside it by `resolve_into_project`, and
-/// the result is tagged with the alias so the caller can name the document correctly (`project`
-/// in its `path`, `namespace` and `key`).
 fn resolve_into_import(
     alias: &str,
     rest: &str,
@@ -234,18 +192,10 @@ fn resolve_into_import(
     }
 }
 
-/// `rest` after an import prefix, resolved inside the project it names: `namespace:rest` is a
-/// key or a path in that project's namespace `namespace`, or `bad-prefix` when it has none by
-/// that name; a bare, key-shaped `rest` whose code the imported project has is a key in its one
-/// namespace, or `bad-prefix` when it has more than one (design: "a ref into a project with
-/// several namespaces must name one" — an unconditional syntax requirement, not "ambiguous only
-/// when the key happens to collide"); anything else is a path relative to the imported project's
-/// own folder, never to the referring document's (imports name a document by `project::path`,
-/// design's Arguments that name a document table, and a ref's path form follows the same rule
-/// Body links already gives a sibling-prefixed path: from the named project's folder, not
-/// `refBase`, which is a property of the *referring* document's own collection and has no
-/// meaning once the ref has crossed into another project entirely). A further `::` inside `rest`
-/// is `bad-prefix`: imports of imports are ignored.
+/// `rest` after an import prefix (SPC-14). A bare key into a project with several namespaces is
+/// `bad-prefix` even when no key collides. A path is read from the imported project's folder,
+/// never by `refBase`, which belongs to the referring document's collection. A further `::` is
+/// `bad-prefix`: imports of imports are ignored.
 fn resolve_into_project(
     rest: &str,
     namespaces: &[Namespace],
@@ -273,17 +223,10 @@ fn resolve_into_project(
     resolve_path(rest, index, root)
 }
 
-/// What a body link's destination (`target`, already percent-decoded, with any `#anchor` already
-/// split off by `links::scan`) is, before it is looked up: the same prefix rules a frontmatter
-/// ref uses (a leading `./` or `../` escapes a colon that is part of the path; `::` is always
-/// `bad-prefix`, the import form this story does not read; a single `name:` is the sibling
-/// namespace `name` when one exists), except that a body link is always a path and never a key
-/// (design.md's Body links paragraph: "after the prefix comes a path, never a key" — read here as
-/// holding for the unprefixed form too, since nothing in Body links gives a body link a bare-key
-/// reading the way a frontmatter `ref` field's Refs table does), and a single colon whose prefix
-/// names no sibling is an ordinary URL scheme rather than `bad-prefix`: body text carries real
-/// URLs a typed frontmatter field never does, and the design's own words for this case are "a URL
-/// scheme... that is not a namespace name or an import alias are always skipped".
+/// `target` is percent-decoded with any `#anchor` split off. The prefix rules are a frontmatter
+/// ref's, except that a body link is always a path, never a key, and a single colon whose prefix
+/// names no sibling is a URL scheme, skipped rather than `bad-prefix`, since body text holds
+/// real URLs.
 pub(crate) fn classify_body(target: &str, ctx: &Ctx) -> BodyDestination {
     if target.starts_with("./") || target.starts_with("../") {
         let base = base_of(
@@ -299,10 +242,8 @@ pub(crate) fn classify_body(target: &str, ctx: &Ctx) -> BodyDestination {
             None => BodyDestination::BadPrefix,
             Some(ImportState::Absent(absence)) => BodyDestination::ImportAbsent(absence.clone()),
             Some(ImportState::Loaded(imported)) => {
-                // Mirrors the sibling-prefix branch below: an explicit namespace before the path
-                // is accepted, though a path is self-qualifying either way, since the design
-                // gives a sibling-prefixed path this same form and gives no reason an import
-                // should differ.
+                // `alias::namespace:path` is accepted as a frontmatter ref accepts it, though the
+                // path alone would already be unambiguous.
                 let (base, rest) = match rest.split_once(':') {
                     Some((namespace, sub)) => {
                         match namespace_named(imported.namespaces(), namespace) {
@@ -334,13 +275,8 @@ pub(crate) fn classify_body(target: &str, ctx: &Ctx) -> BodyDestination {
     BodyDestination::Path(join(&base, target))
 }
 
-/// A path that really contains a colon is written with a leading `./` or `../`; that escape is
-/// read first and skips prefix detection entirely, so a literal file name is never misread as a
-/// namespace. Otherwise: `name::rest` is an import prefix (looked up against `Ctx::imports` by
-/// the caller, not here); `name:rest` is a key or a path in the sibling namespace `name`, or
-/// `bad-prefix` when no sibling has that name; anything else is a bare key in the document's own
-/// namespace when it has the shape of one and the code exists somewhere in the project, and a
-/// relative path otherwise.
+/// A leading `./` or `../` is read before any prefix, so a file name holding a colon is never
+/// read as a namespace (SPC-14).
 fn classify(
     written: &str,
     doc_namespace: usize,
@@ -386,8 +322,6 @@ fn classify(
     }
 }
 
-/// The base the unprefixed, "anything else" form is joined against: the document's own folder
-/// (`refBase: file`) or its namespace's folder (`refBase: namespace`).
 fn base_of(
     ref_base: RefBase,
     doc_path: &str,
@@ -406,8 +340,6 @@ fn namespace_named(namespaces: &[Namespace], name: &str) -> Option<usize> {
         .position(|namespace| namespace.name == name)
 }
 
-/// The part of a key before its dash: `WF` in `WF-3`. Only called once `looks_like_key` has
-/// already shown a dash is there.
 #[expect(
     clippy::expect_used,
     reason = "each of the three calls first checks that the text has the key shape, which needs a \
@@ -422,8 +354,6 @@ pub(crate) fn code_of(key: &str) -> &str {
         .expect("looks_like_key already found a dash")
 }
 
-/// The document's own namespace's key index, for a bare key, or the named namespace's for a
-/// sibling-prefixed one.
 fn resolve_key(namespace: usize, key: &str, index: &Index) -> Outcome {
     let path = index.key(namespace, key).ok_or(Reason::NotFound)?;
     #[expect(
@@ -444,8 +374,7 @@ fn resolve_key(namespace: usize, key: &str, index: &Index) -> Outcome {
     })
 }
 
-/// The folder a project-relative path sits in, or the project folder itself for a path with no
-/// folder of its own.
+/// `""` (the project folder) for a path with no folder.
 fn folder_of(path: &str) -> String {
     match path.rsplit_once('/') {
         Some((folder, _)) => folder.to_owned(),
@@ -453,8 +382,6 @@ fn folder_of(path: &str) -> String {
     }
 }
 
-/// `base` and `rest` joined and normalized, the same way a schema reference is joined against
-/// the folder that names it (`schema::normalize`).
 fn join(base: &str, rest: &str) -> String {
     if base.is_empty() {
         normalize(rest)
@@ -463,20 +390,12 @@ fn join(base: &str, rest: &str) -> String {
     }
 }
 
-/// A path already indexed as a document resolves with its collection known; a path that exists
-/// on disk but matches no collection resolves too, with no collection (only `target: "*"`
-/// accepts it: design.md's Target names, "`*` also accepts files outside any collection, such as
-/// a README"); anything else is `not-found`.
+/// A file on disk that matches no collection resolves with no collection; only `target: "*"`
+/// accepts it (SPC-15).
 ///
-/// The index lookup above is case-exact by construction (`Index` keys itself off the real
-/// on-disk path strings it discovered while walking the project). This fallback has to be
-/// case-exact too, and for that it cannot lean on any single syscall whose case sensitivity
-/// depends on the filesystem: `Path::is_file` (a `stat`) answers `true` for a wrongly-cased path
-/// on a case-insensitive-but-preserving filesystem such as macOS's default APFS, which would
-/// contradict the design's own guarantee that a ref compares "exactly as it is written, case
-/// included, on every platform". `case_exact_file` does the check by reading real directory
-/// entries instead, so it gives the same answer regardless of what the filesystem's own lookup
-/// would have folded.
+/// The fallback must be as case-exact as the index (SPC-14): `Path::is_file` finds a wrongly
+/// cased path on a case-insensitive file system such as macOS's APFS, so `case_exact_file`
+/// compares real directory entries.
 pub(crate) fn resolve_path(path: &str, index: &Index, root: &Path) -> Outcome {
     if let Some(entry) = index.get(path) {
         return Ok(Resolved {
@@ -497,25 +416,14 @@ pub(crate) fn resolve_path(path: &str, index: &Index, root: &Path) -> Outcome {
     Err(Reason::NotFound)
 }
 
-/// Whether `path` names a real file under `root`, with every path component matched against the
-/// real on-disk name byte for byte — never trusting a single `stat`-style syscall whose case
-/// sensitivity varies by filesystem (case-sensitive on Linux's ext4, case-insensitive but
-/// case-preserving on macOS's default APFS; Windows is out of scope). `path` can have more than
-/// one component (`join`, above, can join a multi-segment `rest` onto a base folder), and a
-/// filesystem that case-folds does so for every component of a lookup, not only the last one, so
-/// each directory along the way is opened and its entries compared exactly, the same as the
-/// final filename.
+/// Every component is compared, not only the last: a file system that folds case does so for
+/// each component of a lookup.
 ///
-/// Normalizes first (a `::`-import's own trailing `resolve_path` call in
-/// `resolve_into_project` can reach here unjoined and unnormalized, unlike every other caller,
-/// which already ran the written path through `join`) so `.` and `..` segments are read as path
-/// syntax, never as literal directory-entry names to search for.
+/// Normalizes first because `resolve_into_project` passes an import's path here without `join`,
+/// so `.` and `..` must not be searched for as names.
 ///
-/// Reading a directory that does not exist (a missing parent, or a path that plain does not
-/// exist at all) is answered `false`, the same as `is_file()` on a nonexistent path was answered
-/// before this change — never a panic, never a propagated `Err`. A symlink is followed the same
-/// way `is_file()` already followed it: the check is only ever about whether the *name* at each
-/// level is spelled exactly as written, not about how the entry got there.
+/// A missing or unreadable directory answers `false`. A symbolic link is followed: only the
+/// spelling of each name is checked.
 fn case_exact_file(root: &Path, path: &str) -> bool {
     let normalized = normalize(path);
     let relative = normalized.strip_prefix('/').unwrap_or(&normalized);
@@ -537,13 +445,8 @@ fn case_exact_file(root: &Path, path: &str) -> bool {
     false
 }
 
-/// The real on-disk path of `dir`'s child named exactly `name` (raw `OsStr` comparison, never
-/// case-folded or Unicode-normalized), or `None` when no entry matches or `dir` cannot be read
-/// at all — a missing directory, a path that is not a directory, or a permissions error are all
-/// read the same way a genuinely absent entry is, since the caller only ever wants a clean yes
-/// or no. An entry `read_dir` itself could not read (`Result::Err` from the iterator) is skipped
-/// rather than aborting the whole scan, the same reasoning: one unreadable sibling should not
-/// turn a real match elsewhere in the directory into a false negative.
+/// `None` also when `dir` cannot be read. An entry the iterator cannot read is skipped, so one
+/// unreadable sibling does not hide a real match.
 fn exact_entry(dir: &Path, name: &str) -> Option<PathBuf> {
     let entries = std::fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
@@ -554,22 +457,9 @@ fn exact_entry(dir: &Path, name: &str) -> Option<PathBuf> {
     None
 }
 
-/// Whether a resolved ref's target is one `target` allows. `None` (the option was not written)
-/// reads as `Target::Any`, the design's stated default. `Target::Other` is a value `schema.valid`
-/// already reports as invalid on its own; treated here as no restriction, so the same fault is
-/// not reported twice under two different rules.
-///
-/// `info` is the schema the ref actually resolved to, already read by the caller for whichever
-/// project `resolved.collection` indexes (this one, or, once a ref has crossed an import, the
-/// alias's own — `Project::schema_info_of`); `None` when the target has no schema at all (a
-/// file outside every collection, reachable only through `target: "*"`, which never reaches the
-/// `Target::Schemas` arm below since a written target list never allows it either way).
-///
-/// A bare name in `target` (design, Target names: "a bare name... means a schema in this
-/// project") never allows a ref that crossed into an import, and a qualified name
-/// (`"alias::name"`) never allows one that stayed inside this project: `resolved.project` picks
-/// which reading of `target`'s own list applies, so the two forms are never compared against
-/// the wrong kind of ref.
+/// No `target` allows any file (SPC-15). `Target::Other` is already reported by `schema.valid`,
+/// so it restricts nothing here rather than being reported twice. A bare name allows only a
+/// schema of this project and a qualified name only one of that import (SPC-15).
 pub(crate) fn target_allowed(
     target: Option<&Target>,
     resolved: &Resolved,
@@ -589,12 +479,8 @@ pub(crate) fn target_allowed(
     }
 }
 
-/// The nodes that lie on a cycle, from a project-wide list of directed edges (source path,
-/// target path) collected for one `acyclic` field: depth-first search with the classic three
-/// colours, where a back edge to a node still on the stack closes a cycle and every node from
-/// there to the top of the stack is part of it. `refs.acyclic`'s findings are one per node this
-/// returns (its own outgoing edge is what is wrong with it), never one per cycle, since a node
-/// can sit on more than one.
+/// `refs.acyclic` reports once per node returned, never once per cycle, since a node can sit on
+/// more than one.
 pub(crate) fn cyclic_nodes(edges: &[(String, String)]) -> BTreeSet<String> {
     let mut outgoing: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     let mut nodes: BTreeSet<&str> = BTreeSet::new();
@@ -614,14 +500,8 @@ pub(crate) fn cyclic_nodes(edges: &[(String, String)]) -> BTreeSet<String> {
         Black,
     }
 
-    // Explicit iterative DFS over a heap-allocated work stack (`frames`), one frame per node on
-    // the walk's current path, each tracking how far through that node's own child list it has
-    // got — the recursive version's call-stack frame and its position in `for &child in
-    // children`, made into data instead of a call. Same three-colour algorithm, same push/pop/
-    // colour order as the recursive form it replaces, so the four cycle-shape tests below (and
-    // ticket 9's long-chain regression test) see the same output either way; only the growth
-    // moves from the (fixed, small) thread stack to the heap, which is what removes the ceiling
-    // ticket 1 found (`refs.rs`, `cyclic_nodes`'s `visit`).
+    // Iterative, with one frame per node on the current path, so a long chain grows the heap
+    // rather than the thread stack.
     fn visit<'a>(
         start: &'a str,
         outgoing: &BTreeMap<&'a str, Vec<&'a str>>,
@@ -631,7 +511,6 @@ pub(crate) fn cyclic_nodes(edges: &[(String, String)]) -> BTreeSet<String> {
     ) {
         struct Frame<'a> {
             node: &'a str,
-            /// How many of `node`'s outgoing edges this frame has already followed.
             next_child: usize,
         }
 
@@ -718,9 +597,7 @@ mod tests {
         )
     }
 
-    /// `classify_body` on a document `tickets/WF-1.md` of the two-namespace project `namespaces`
-    /// gives: `classify_body` itself never reads `codes` or `index` (a body link is never a bare
-    /// key), so an empty index stands in.
+    /// `classify_body` reads neither `codes` nor `index`, so empty ones stand in.
     fn classify_body_default(target: &str, ref_base: RefBase) -> BodyDestination {
         let namespaces = namespaces();
         let codes = BTreeSet::new();
@@ -759,9 +636,7 @@ mod tests {
 
     #[test]
     fn a_double_colon_is_an_import_form_never_a_relative_path() {
-        // `classify` itself reads no index and cannot yet know whether `chief` is configured;
-        // that is `resolve_one`'s job once it has `Ctx::imports` in hand (see the module doc and
-        // `resolve_into_import`'s own tests through `Project`, in `crates/typdoc/tests`).
+        // Whether `chief` is configured is decided later, against `Ctx::imports`.
         let form = classify_default("chief::WF-5", RefBase::File, &code_set(&[]));
 
         assert!(
@@ -771,10 +646,6 @@ mod tests {
 
     #[test]
     fn a_double_colon_is_an_import_form_whatever_the_project_has() {
-        // The ticket's own example: `chief::WF-5` in a project with several namespaces. The
-        // alias and the rest after it are read the same way whether or not this project happens
-        // to have a namespace of that name, since `::` and `:` are never confused with each
-        // other (design: the two syntaxes never fall back to each other).
         let form = classify(
             "chief::WF-5",
             0,
@@ -800,9 +671,8 @@ mod tests {
     fn a_single_colon_naming_a_sibling_with_a_key_shaped_rest_is_a_key_in_that_namespace() {
         let form = classify_default("story-2:WF-5", RefBase::File, &code_set(&[]));
 
-        // No "code exists in the project" gate here, unlike the bare form (design.md's table
-        // gives the sibling key row only "story-2 is a namespace" as its condition): a key shape
-        // is enough once the namespace is real, even when the code is not used anywhere.
+        // No code is known on purpose: a sibling key needs only a real namespace, unlike a bare
+        // key (SPC-14).
         assert!(matches!(form, Form::Key { namespace: 1, key } if key == "WF-5"));
     }
 
@@ -810,9 +680,8 @@ mod tests {
     fn a_single_colon_naming_a_sibling_with_a_path_rest_is_a_path_from_that_namespaces_folder() {
         let form = classify_default("story-2:notes/x.md", RefBase::Namespace, &code_set(&[]));
 
-        // `RefBase::Namespace` is passed on purpose: the sibling path form always reads from the
-        // named namespace's own folder, never from `refBase`, which applies only to the
-        // unprefixed form.
+        // `RefBase::Namespace` on purpose: a sibling path reads from that namespace's folder,
+        // never by `refBase`.
         assert!(
             matches!(form, Form::Path { base, rest } if base == "story-2" && rest == "notes/x.md")
         );
@@ -827,9 +696,6 @@ mod tests {
 
     #[test]
     fn a_body_link_with_no_prefix_is_a_path_never_a_key_even_when_key_shaped() {
-        // Unlike a frontmatter ref, a body link never reads the "bare key" row: design.md's Body
-        // links paragraph gives it no bare-key form at all, only the forms a Markdown link
-        // destination can take, all of them paths.
         let form = classify_body_default("WF-1", RefBase::File);
 
         assert!(matches!(form, BodyDestination::Path(path) if path == "tickets/WF-1"));
@@ -968,21 +834,11 @@ mod tests {
         );
     }
 
-    /// Ticket 1's finding: a long **one-way** chain through one `acyclic` field recurses to depth
-    /// N with no cycle required at all. Run on a thread built with an explicitly small stack
-    /// (never this machine's own default, so the result does not depend on which machine runs
-    /// it): before the iterative rewrite, `visit` recurses once per node and overflows that
-    /// stack; after it, the walk grows on the heap instead, so it survives a chain far longer
-    /// than any call stack could hold. 200_000 nodes matches the floor ticket 1 and ticket 9 both
-    /// name; the existing four `cyclic_nodes` tests above already cover the two-node cycle,
-    /// self-loop, no-cycle-chain and cycle-with-a-tail shapes this rewrite must keep giving the
-    /// same answers for.
+    /// A walk that recursed once per node would overflow the small stack this runs on.
     #[test]
     fn a_very_long_one_way_chain_with_no_cycle_does_not_overflow_the_stack() {
         const CHAIN_LENGTH: usize = 200_000;
-        // 1 MiB: far below this process's own default test-thread stack, chosen explicitly so
-        // the regression does not depend on which machine or harness runs it (testing-decisions.md,
-        // "The stack-overflow fix").
+        // Set explicitly, so the result does not depend on the machine or the harness.
         const SMALL_STACK_BYTES: usize = 1024 * 1024;
 
         let edges: Vec<(String, String)> = (0..CHAIN_LENGTH)

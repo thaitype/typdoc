@@ -65,7 +65,6 @@ impl<'de> Deserialize<'de> for FieldType {
     }
 }
 
-/// What `auto` asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Auto {
     Create,
@@ -114,10 +113,8 @@ impl<'de> Deserialize<'de> for Target {
 }
 
 /// A `bool` option (`required`, `acyclic`, `override`), read tolerantly: a value that is not
-/// `true` or `false` is kept so `schema.valid` can report it as an invalid option instead of
-/// refusing the whole schema, and reads as `false` wherever the option's value is used (ticket
-/// 5 read `required` strictly, which crashed the read before `schema.valid` could report it;
-/// this is the relaxing that ticket left for this ticket to make).
+/// `true` or `false` is kept so `schema.valid` can report it rather than the whole schema failing
+/// to read, and reads as `false` wherever the option's value is used.
 #[derive(Debug, Clone, PartialEq)]
 pub enum OptBool {
     Given(bool),
@@ -231,40 +228,28 @@ impl Resolved {
     }
 }
 
-/// The scheme of a URL such as `ftp://host/x`, and `None` for a path.
 fn scheme_of(reference: &str) -> Option<&str> {
     let (scheme, _) = reference.split_once("://")?;
     is_scheme_name(scheme).then_some(scheme)
 }
 
-/// Whether `text` has the shape of a URL scheme (a letter, then letters, digits, `+`, `-` or
-/// `.`), whether or not it is followed by `://`. Used only to tell a schema reference's URL
-/// scheme from a path, so `ftp://`, `git+ssh://` and the like are still read as a scheme (and,
-/// for `schema.valid`, as `config.schema-url` when they name a collection's schema or an
-/// `extends`). Not used for the narrower "does this name collide with a URL scheme" question
-/// `reserved_url_scheme` answers below — a schema reference can be any URL, but the design
-/// reserves only four literal scheme names against a sibling namespace or an import alias.
+/// Any scheme shape, so `ftp://` and `git+ssh://` are read as URLs and reported as
+/// `config.schema-url`. The names reserved against a namespace or an import alias are
+/// `reserved_url_scheme`'s, not these.
 fn is_scheme_name(text: &str) -> bool {
     let mut chars = text.chars();
     chars.next().is_some_and(|c| c.is_ascii_alphabetic())
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
 }
 
-/// The four names design.md's Refs section actually reserves against a sibling namespace name
-/// or an import alias ("Sibling names and import aliases may not collide with URL schemes
-/// (`http`, `https`, `mailto`, `file`)") — not every string with the shape of a scheme
-/// (`is_scheme_name`, above): the design names four literal schemes, not a shape, and its own
-/// worked examples use aliases (`memory::precedents/x.md`, `chief::story-3:WF-5`) that
-/// `is_scheme_name` would itself refuse, since any all-letters word has the shape of a scheme.
-/// Compared case-sensitively, the same way `config.schema-url` already treats a scheme, and the
-/// same four spellings the design writes.
+/// Only these four are reserved against a namespace name or an import alias (SPC-14), not every
+/// word with the shape of a scheme: an alias such as `memory` has that shape. Case-sensitive, as
+/// `config.schema-url` is.
 pub(crate) fn reserved_url_scheme(name: &str) -> bool {
     matches!(name, "http" | "https" | "mailto" | "file")
 }
 
 /// A path with `.` and empty segments removed and each `..` taken against the segment before it.
-/// Shared with `refs`, which joins a relative ref against its base the same way a schema
-/// reference is joined against the folder that names it.
 pub(crate) fn normalize(path: &str) -> String {
     let mut kept: Vec<&str> = Vec::new();
     for part in path.split('/') {
@@ -311,13 +296,10 @@ pub(crate) struct Loaded {
     pub cycle: Option<(String, String)>,
 }
 
-/// The schema a collection names, read from the project folder with the schemas it extends. A
-/// fault of the collection's config goes to `report` and gives `None`. A URL other than
-/// `http://` and `https://` is a config error. `http://` and `https://` are read from their
-/// pinned copy (`vendor::read`): nothing is fetched (contract, decision 5), and a URL with no
-/// pin, or a pin whose copy is missing or edited, is a config error the same way an unreadable
-/// local schema is. A schema that extends one already read ends the chain there, with the cycle
-/// recorded for `schema.valid` to reject; ticket 5 left it ending silently.
+/// The schema a collection names, with the schemas it extends. A fault of the collection's config
+/// goes to `report` and gives `None`. An `http://` or `https://` schema is read from its pinned
+/// copy and never fetched (SPC-16). A schema that extends one already read ends the chain, with
+/// the cycle recorded for `schema.valid`.
 pub(crate) fn load(
     root: &Path,
     collection: &Collection,
@@ -361,16 +343,9 @@ pub(crate) fn load(
                 schema,
             });
             let Some(parent) = parent else { break };
-            // A relative `extends` inside a schema read from a pin is resolved against the
-            // project folder on the next turn of this loop, the same as any other relative
-            // schema reference, rather than against the schema's own URL (design: "Relative
-            // references inside a remote schema, such as its own `extends`, resolve against
-            // its URL"). No fixture of this story needs a remote schema that itself extends a
-            // relative reference — the design's own worked example only ever extends a URL
-            // *from* a local schema — and resolving one against a URL correctly needs URL
-            // joining this crate has no other use for. Left as a gap, not a silent success: an
-            // unresolved relative reference here is still `config.collection-schema`, naming a
-            // path under `vendor/`, rather than quietly fetching nothing.
+            // A relative `extends` inside a pinned schema is resolved against the project
+            // folder, not against the schema's URL: joining against a URL is not built. One that
+            // names no file is `config.collection-schema`.
             said_in = reference.clone();
             reference = parent;
             extended_by = None;
@@ -416,9 +391,7 @@ pub(crate) fn load(
     Ok(Some(Loaded { chain, cycle }))
 }
 
-/// The chain from the collection's schema up to its most distant parent. `pub(crate)` so a
-/// test elsewhere in the crate can build a `Resolved` from a `Schema` it wrote by hand, without
-/// going through a project on disk.
+/// `chain` runs from the collection's own schema to its most distant parent.
 pub(crate) fn merge(chain: &[ChainLink]) -> Resolved {
     let mut fields = BTreeMap::new();
     for link in chain.iter().rev() {
@@ -440,8 +413,6 @@ pub(crate) fn identity(collection: &Collection) -> String {
     }
 }
 
-/// A fault `schema.valid` reports: the schema file it is about, the field it names when it is
-/// about one, and the message.
 pub(crate) struct Problem {
     pub path: String,
     pub field: Option<String>,
@@ -456,17 +427,13 @@ fn problem(path: &str, field: Option<&str>, message: String) -> Problem {
     }
 }
 
-/// The message for a boolean option (`required`, `override`, `acyclic`) written as something
-/// other than `true` or `false`.
 fn not_a_bool_message(option: &str, field: &str, written: &serde_json::Value) -> String {
     format!("the option `{option}` of `{field}` is {written}: it is `true` or `false`")
 }
 
-/// Names reserved for a document's own pseudo-fields: a schema field may not use one, and
-/// neither may a name starting with `$`.
+/// The pseudo-fields, which a schema field may not use.
 const RESERVED_FIELD_NAMES: &[&str] = &["path", "key", "code", "collection", "schema", "namespace"];
 
-/// Whether `name` fits the field naming rule, `[A-Za-z_][A-Za-z0-9_-]*`.
 fn plain_field_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars
@@ -475,10 +442,6 @@ fn plain_field_name(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
-/// What `schema.valid` finds in one field: a name that breaks the naming rule or uses a
-/// reserved name, and an option that is not valid for the field (a boolean written as something
-/// else, an unknown type, `auto` or `target` name, an option that does not apply to the field's
-/// type, or a key the format has no option of).
 fn check_field(path: &str, name: &str, field: &Field, problems: &mut Vec<Problem>) {
     if let Some(message) = field_name_problem(name) {
         problems.push(problem(path, Some(name), message));
@@ -545,8 +508,7 @@ fn check_field(path: &str, name: &str, field: &Field, problems: &mut Vec<Problem
             ));
         }
     }
-    // The option's own value was already checked above, alongside `required` and `override`;
-    // only a value of the right shape (`true` or `false`) needs a type-applicability check.
+    // An invalid value is already reported above, so only `true` or `false` is checked here.
     if matches!(field.acyclic, Some(OptBool::Given(_))) && !is_ref {
         problems.push(problem(
             path,
@@ -617,26 +579,17 @@ pub(crate) struct Checked {
     cycles: BTreeSet<String>,
 }
 
-/// A `ref`/`ref[]` field's `target`, as written in one schema file, when it lists at least one
-/// qualified name (`"memory::learning"`): the file it is declared in, the field name, and just
-/// the qualified names, in written order (a bare name means a schema of this project — Target
-/// names — and is not a candidate for the drift check the qualified form needs). Gathered by
-/// `check`, the same file-by-file pass and dedup `schema.valid`'s own field checks already use,
-/// so `project.rs` can turn each into a `schema.valid` finding once it has the imported
-/// project's own schema names to check them against, which needs every import loaded first
-/// (ticket 18's).
+/// The qualified names (`"memory::learning"`) in one field's `target`, in written order.
+/// `project.rs` checks them for schema drift (SPC-14) once every import is loaded, since that
+/// needs the imported projects' schema names.
 pub(crate) struct QualifiedTarget {
     pub path: String,
     pub field: String,
     pub names: Vec<String>,
 }
 
-/// The `schema.valid` findings of one collection's chain: an extends cycle, an undeclared
-/// override and, for every schema file not already checked through another collection, its
-/// field names and options; alongside them, every `target` of that same pass that names a
-/// schema of an imported project, for the caller to check once every import is loaded. `state`
-/// is threaded across every collection of the project so a shared parent is checked once and a
-/// cycle is reported once.
+/// `state` is shared by every collection of the project, so a shared parent is checked once and
+/// a cycle is reported once.
 pub(crate) fn check(loaded: &Loaded, state: &mut Checked) -> (Vec<Problem>, Vec<QualifiedTarget>) {
     let mut problems = Vec::new();
     let mut targets = Vec::new();
@@ -724,9 +677,7 @@ mod tests {
         for name in ["http", "https", "mailto", "file"] {
             assert!(reserved_url_scheme(name), "{name}");
         }
-        // The design's own worked examples: aliases that have the shape of a scheme
-        // (`is_scheme_name` would accept any letters-only word) but are not one of the four
-        // reserved names.
+        // Shaped like a scheme, but not reserved.
         for name in ["memory", "chief", "ftp", "git", "HTTPS", "Http"] {
             assert!(!reserved_url_scheme(name), "{name}");
         }

@@ -1,18 +1,7 @@
-//! The query language's grammar: a plain condition (`field op value`) and a `ref.*`/`refby.*`
-//! condition that wraps at most one plain condition. Escaping, the glob, the pseudo-fields every
-//! document carries, coercion by a field's type, and the rules for absence and negation are all
-//! plain-condition concerns.
-//!
-//! `parse` turns one `--where`/`--if`-style expression into a [`Condition`], checking nothing
-//! but the expression's own shape: a [`Condition::Plain`] or a [`Condition::Ref`] wrapping at
-//! most one [`PlainCondition`] (the grammar's `ref-expr = dir "." quant "(" f ")" [ "." plain ]`
-//! allows no second `ref.*`/`refby.*` inside the first). `evaluate` checks one [`PlainCondition`]
-//! against one schema and one document: unknown fields, values that do not fit their field's
-//! type, and an ordering comparison on a field that is not `number`, `date` or `datetime`, are
-//! reported there, since only there is the field's declared type known. A `ref.*`/`refby.*`
-//! condition reads more than one schema and more than one document — the arrows it follows, and
-//! the scope its own field name and its inner condition's field name are checked against — so
-//! evaluating one is `Project`'s job, not this module's; `parse` only shapes it.
+//! The query language (SPC-13). `parse` checks only an expression's shape. `evaluate` checks one
+//! plain condition against one schema and one document, since only there is a field's declared
+//! type known. A `ref.*`/`refby.*` condition reads more than one schema and more than one
+//! document, so `Project` evaluates it.
 
 use std::cmp::Ordering as CmpOrdering;
 
@@ -22,8 +11,8 @@ use crate::coerce;
 use crate::document::{Document, Value};
 use crate::schema::{FieldType, Resolved};
 
-/// The field a condition names: one of the six pseudo-fields every document carries, or a name
-/// looked up in the schema of the document being tested.
+/// The field a condition names: a pseudo-field, or a field of the schema of the document being
+/// tested.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldRef {
     Path,
@@ -35,7 +24,6 @@ pub enum FieldRef {
     Named(String),
 }
 
-/// A comparison operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     Eq,
@@ -51,12 +39,9 @@ impl Op {
         matches!(self, Op::Lt | Op::Le | Op::Gt | Op::Ge)
     }
 
-    /// What this operator gives for something wholly absent, independent of the value or items
-    /// on the other side of it (design, Absence and negation: "fails every positive condition
-    /// (`=` in any form, `k=*`) and satisfies every `!=`"; the ordering comparisons fail too).
-    /// `evaluate` reaches this indirectly, through a document that lacks a named field; a
-    /// dangling ref reached by `ref.*`/`refby.*` has no document at all, not even the
-    /// pseudo-fields one would carry, so `Project` calls this directly instead of building one.
+    /// The result for something wholly absent, whatever the value: only `!=` holds (SPC-13). A
+    /// dangling ref reached by `ref.*`/`refby.*` has no document to evaluate, so `Project` calls
+    /// this directly.
     pub fn absent_result(self) -> bool {
         matches!(self, Op::Ne)
     }
@@ -65,7 +50,7 @@ impl Op {
 /// One alternative of a condition's value, once escaping is resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item {
-    /// The bare, unescaped `*` alone: "present", and, on the whole value, not empty.
+    /// An unescaped `*` alone: the field is present and not empty.
     Present,
     /// No unescaped `*`: matched by exact text.
     Literal(String),
@@ -82,9 +67,8 @@ pub struct PlainCondition {
     pub items: Vec<Item>,
 }
 
-/// One `--where`/`--if` expression, once its own shape is known: `me`'s own fields tested
-/// directly, or arrows followed to other documents (`docs/design.md`, Query: `expr = ref-expr |
-/// plain`).
+/// One `--where`/`--if` expression: the document's own fields tested directly, or arrows
+/// followed to other documents.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Condition {
     Plain(PlainCondition),
@@ -98,7 +82,6 @@ pub enum Dir {
     RefBy,
 }
 
-/// `all`, `any` or `none` of the arrows a `ref.*`/`refby.*` condition follows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Quant {
     All,
@@ -114,8 +97,7 @@ pub enum RefField {
 }
 
 impl RefField {
-    /// The name a message or a `RefsReference.field` comparison can use for this field: `$body`
-    /// for the virtual field, the name as written otherwise.
+    /// The name a message or a `RefsReference.field` comparison uses for this field.
     pub fn name(&self) -> &str {
         match self {
             RefField::Body => "$body",
@@ -125,9 +107,8 @@ impl RefField {
 }
 
 /// A `ref.*`/`refby.*` condition: which arrows (`dir`, `quant`, `field`) and, when given, the
-/// plain condition each document reached must satisfy (`inner`). `inner: None` is the design's
-/// "omitting `.EXPR`": the condition tests only whether an arrow exists, so `quant` is never
-/// `All` when `inner` is `None` (parsing refuses that combination with a hint).
+/// plain condition each document reached must satisfy (`inner`). `inner: None` tests only
+/// whether an arrow exists, so `quant` is never `All` then.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefCondition {
     pub dir: Dir,
@@ -136,8 +117,7 @@ pub struct RefCondition {
     pub inner: Option<PlainCondition>,
 }
 
-/// Why an expression could not be parsed or type-checked. Every variant is one of the errors
-/// the grammar names (`docs/design.md`, Query).
+/// Why an expression could not be parsed or type-checked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryError {
     /// The expression does not fit the grammar. `hint` is filled when the likely cause is a
@@ -149,16 +129,12 @@ pub enum QueryError {
     /// A field name that is no pseudo-field and no field of the schema this condition was
     /// checked against.
     UnknownField(String),
-    /// An ordering comparison (`<`, `<=`, `>`, `>=`) on a field whose type is not `number`,
-    /// `date` or `datetime`.
     OrderingNotAllowed { field: String, kind: String },
-    /// A value that cannot be read as the field's type.
     CannotCoerce {
         field: String,
         value: String,
         kind: String,
     },
-    /// A value that is not one of the field's declared `enum` values.
     NotAnEnumValue { field: String, value: String },
 }
 
@@ -202,10 +178,8 @@ fn syntax(message: String) -> QueryError {
 // Parsing
 // ---------------------------------------------------------------------------------------------
 
-/// Parses one `--where`/`--if`-style expression: a plain condition (`field op value`) or a
-/// `ref.*`/`refby.*` condition. An empty value is always an error, since this is the grammar
-/// `--where` and `--if` share (`--set` has its own rule for an empty value, and the read core
-/// has no write command to use it in).
+/// Parses one `--where`/`--if` expression. An empty value is always an error here: `--set`, where
+/// `k=` removes a field, is read by its own parser.
 pub fn parse(expr: &str) -> Result<Condition, QueryError> {
     let first = parse_strict(expr);
     if let Err(QueryError::Syntax {
@@ -225,9 +199,7 @@ pub fn parse(expr: &str) -> Result<Condition, QueryError> {
     first
 }
 
-/// One field name on its own, read the same way a condition's own field is (`[A-Za-z_]
-/// [A-Za-z0-9_-]*`, or a pseudo-field): for `list`'s `--sort field[:asc|:desc]`, whose field
-/// part names a sort key and not a condition.
+/// One field name on its own, read as a condition's field is: the field part of `list --sort`.
 pub fn parse_field(name: &str) -> Result<FieldRef, QueryError> {
     let (parsed, rest) = take_field_name(name)?;
     if !rest.is_empty() {
@@ -256,10 +228,8 @@ fn parse_strict(expr: &str) -> Result<Condition, QueryError> {
     parse_plain_from(name, rest).map(Condition::Plain)
 }
 
-/// `plain = field op value`, for the condition after `ref.*(f).` — `parse_strict` is not reused
-/// here on purpose: the grammar gives that position `plain`, never `ref-expr`, so a value that
-/// itself starts `ref.`/`refby.` must fail the same way any other field followed by `.` does
-/// (`take_operator` finds no operator at the start of `.something`), not be read as nesting.
+/// The condition after `ref.*(f).`. Not `parse_strict`: the grammar allows only `plain` there, so
+/// a nested `ref.`/`refby.` must fail as any other field followed by `.` does.
 fn parse_plain(expr: &str) -> Result<PlainCondition, QueryError> {
     let (name, rest) = take_field_name(expr)?;
     parse_plain_from(name, rest)
@@ -275,8 +245,6 @@ fn parse_plain_from(name: &str, rest: &str) -> Result<PlainCondition, QueryError
     })
 }
 
-/// `ref-expr`'s tail once `dir "."` is behind it: `quant "(" f ")" [ "." plain ]`. `dir_name` is
-/// `"ref"` or `"refby"`, kept only to name it in a message.
 fn parse_ref_expr(dir: Dir, dir_name: &str, rest: &str) -> Result<RefCondition, QueryError> {
     let (quant_word, rest) = take_word(rest);
     let quant = match quant_word {
@@ -330,8 +298,6 @@ fn parse_ref_expr(dir: Dir, dir_name: &str, rest: &str) -> Result<RefCondition, 
     })
 }
 
-/// `f = field | "$body"`: the literal `$body`, or a field name read the same way a plain
-/// condition's own field is.
 fn take_ref_field(rest: &str) -> Result<(RefField, &str), QueryError> {
     if let Some(after) = rest.strip_prefix("$body") {
         return Ok((RefField::Body, after));
@@ -340,10 +306,8 @@ fn take_ref_field(rest: &str) -> Result<(RefField, &str), QueryError> {
     Ok((RefField::Named(name.to_owned()), after))
 }
 
-/// `[A-Za-z0-9_-]*` at the start of `s`, with no requirement that it start with a letter (unlike
-/// a field name): used only for the quantifier word, which `parse_ref_expr` checks against the
-/// three the grammar allows, so a leading digit or `-` simply fails that check with a useful
-/// "found" value instead of the field-name error's wording.
+/// The quantifier word, read without a field name's leading-letter rule, so a bad quantifier is
+/// reported with what was found.
 fn take_word(s: &str) -> (&str, &str) {
     let bytes = s.as_bytes();
     let mut end = 0;
@@ -358,8 +322,7 @@ fn take_word(s: &str) -> (&str, &str) {
     (&s[..end], &s[end..])
 }
 
-/// `[A-Za-z_][A-Za-z0-9_-]*` at the start of `expr`. Field names are ASCII, so scanning bytes
-/// always stops on a character boundary.
+/// Field names are ASCII, so scanning bytes always stops on a character boundary.
 fn take_field_name(expr: &str) -> Result<(&str, &str), QueryError> {
     let bytes = expr.as_bytes();
     if bytes.is_empty() {
@@ -380,7 +343,7 @@ fn take_field_name(expr: &str) -> Result<(&str, &str), QueryError> {
     Ok((&expr[..end], &expr[end..]))
 }
 
-/// The longest of `!=`, `<=`, `>=`, `=`, `<`, `>` at the start of `rest`.
+/// Two-character operators are tried first, so the longest match wins.
 fn take_operator(rest: &str) -> Result<(Op, &str), QueryError> {
     const OPERATORS: [(&str, Op); 6] = [
         ("!=", Op::Ne),
@@ -412,9 +375,6 @@ fn to_field_ref(name: &str) -> FieldRef {
     }
 }
 
-/// `value = item { "," item }`, each item read for `\` escapes and unescaped `*`. An empty
-/// value, or an empty alternative in a list (`k=a,`), is the same error: there is no text to
-/// read as an item.
 fn parse_value(value: &str, op: Op) -> Result<Vec<Item>, QueryError> {
     if value.is_empty() {
         return Err(syntax(
@@ -499,8 +459,6 @@ fn finish_item(segments: Vec<String>) -> Result<Item, QueryError> {
 // Evaluation
 // ---------------------------------------------------------------------------------------------
 
-/// What a condition's field resolves to against one schema: its type, whether it holds several
-/// values, and, for an `enum`, the values it allows.
 struct FieldPlan<'s> {
     kind: FieldType,
     is_array: bool,
@@ -517,8 +475,6 @@ fn resolve_field<'s>(field: &FieldRef, schema: &'s Resolved) -> Option<FieldPlan
                 enum_values: field.values.as_deref(),
             })
         }
-        // Every pseudo-field is a plain string: present whenever it applies to the document,
-        // never a list, never an enum.
         _ => Some(FieldPlan {
             kind: FieldType::String,
             is_array: false,
@@ -539,10 +495,7 @@ fn field_display_name(field: &FieldRef) -> String {
     }
 }
 
-/// The value a document holds for `field`, own fields and pseudo-fields alike, as one `Value`.
-/// `None` is absence: the field is not in `doc.fields`, or the pseudo-field does not apply to
-/// this document (`key`, `code`, on one with no code). `pub(crate)` so `list` (`project.rs`) can
-/// read a sort key's value the same way a condition does, without a second lookup.
+/// Shared with `list --sort`, so a sort key reads a field as a condition does.
 pub(crate) fn field_value(field: &FieldRef, doc: &Document) -> Option<Value> {
     match field {
         FieldRef::Path => Some(Value::Text(doc.path.clone())),
@@ -559,14 +512,10 @@ pub(crate) fn field_value(field: &FieldRef, doc: &Document) -> Option<Value> {
     }
 }
 
-/// Checks one plain condition against `schema`, then evaluates it against `doc`: absence, `!=`
-/// as exactly NOT `=`, and, for `<`, `<=`, `>`, `>=`, a document without the field failing the
-/// comparison. Filtering a list of candidate documents calls this once per document with the
-/// schema each was read under; a plain condition's scope, when it spans more than one
-/// collection, is for that caller to resolve field by field before calling this. A `ref.*`/
-/// `refby.*` condition's own field and quantifier are never seen here: `Project` walks the
-/// arrows and calls this once per document reached, with that document's own schema, for the
-/// inner condition alone.
+/// Checks one plain condition against `schema`, then evaluates it against `doc`. A caller
+/// whose scope spans several collections resolves the field before calling this. For a
+/// `ref.*`/`refby.*` condition, `Project` calls this for the inner condition once per document
+/// reached, with that document's own schema.
 pub fn evaluate(
     condition: &PlainCondition,
     schema: &Resolved,
@@ -611,9 +560,6 @@ pub fn evaluate(
     })
 }
 
-/// A value list's item, checked against a field's declared type: either a typed value to
-/// compare exactly (`number`, `bool`, `date`, `datetime`), or one to match as text (every other
-/// type, and every glob or bare `*`, which are never coerced).
 enum Matcher {
     ExactValue(Value),
     Text(Item),
@@ -626,8 +572,7 @@ fn check_item(
     field: &str,
 ) -> Result<Matcher, QueryError> {
     let Item::Literal(text) = item else {
-        // A glob or a bare `*` is never coerced: it is matched against the value as written,
-        // whatever the field's type (see the module doc).
+        // A glob or a bare `*` is never coerced, whatever the field's type.
         return Ok(Matcher::Text(item.clone()));
     };
     match kind {
@@ -700,8 +645,6 @@ fn item_matches_text(item: &Item, text: &str) -> bool {
     }
 }
 
-/// Whether `text` matches a pattern split into `segments` at each unescaped `*`: a prefix, an
-/// optional run of inner segments found in order, and a suffix.
 fn glob_matches(segments: &[String], text: &str) -> bool {
     let last = segments.len() - 1;
     let Some(mut rest) = text.strip_prefix(segments[0].as_str()) else {
@@ -722,17 +665,15 @@ fn glob_matches(segments: &[String], text: &str) -> bool {
 fn value_is_empty(value: &Value) -> bool {
     match value {
         Value::Text(text) => text.is_empty(),
-        // A field written with no value reads as text with none in it here as everywhere else.
+        // A field written with no value holds no text, here as everywhere else (SPC-4).
         Value::Empty => true,
         Value::List(items) => items.is_empty(),
         Value::Number(_) | Value::Bool(_) | Value::Date(_) | Value::Datetime(_) => false,
     }
 }
 
-/// `value` rendered the way it was written, for a glob or a bare `*` to match against: `Date`
-/// and `Datetime` already hold their original text, and `Number` and `Bool` render the value
-/// they convert to (which, for a number written in scientific notation, may not equal what was
-/// written, and which two numbers past what a primitive holds can share).
+/// A glob matches a `Number` against its converted value, which may differ from what was written
+/// (`1e3`) and may be shared by two numbers too large for a primitive.
 fn value_as_text(value: &Value) -> Option<String> {
     match value {
         Value::Text(text) | Value::Date(text) | Value::Datetime(text) => Some(text.clone()),
@@ -743,11 +684,9 @@ fn value_as_text(value: &Value) -> Option<String> {
     }
 }
 
-/// `<`, `<=`, `>`, `>=`: a document without the field fails, and a stored value that does not
-/// fit its declared type (kept as written) is treated the same as absent, since it is not a
-/// `number`, `date` or `datetime` to compare against. A `date`-shaped value compares against a
-/// `datetime` field's date part, per the design's Comparisons paragraph; the reverse (a
-/// datetime-shaped value against a `date` field) is not offered, and fails to coerce.
+/// A document without the field fails, and so does a stored value that does not fit its type. A
+/// date compares against a `datetime` field's date part; a datetime against a `date` field fails
+/// to coerce.
 fn ordering_matches(
     op: Op,
     item: &Item,
@@ -885,9 +824,7 @@ fn compare(op: Op, ordering: Option<CmpOrdering>) -> bool {
     }
 }
 
-/// A calendar date read the same way a `date` field's value is, for `list`'s `--sort` (a date
-/// compares by value, the Sorting table under `list`). `pub(crate)` for the same reason as
-/// `field_value`.
+/// Read as a `date` field's value is; shared with `list --sort`.
 pub(crate) fn parse_date(text: &str) -> Option<NaiveDate> {
     match coerce::coerce(&FieldType::Date, &Value::Text(text.to_owned())) {
         Some(Value::Date(text)) => NaiveDate::parse_from_str(&text, "%Y-%m-%d").ok(),
@@ -895,8 +832,7 @@ pub(crate) fn parse_date(text: &str) -> Option<NaiveDate> {
     }
 }
 
-/// A datetime read the same way a `datetime` field's value is, for `list`'s `--sort`.
-/// `pub(crate)` for the same reason as `field_value`.
+/// Read as a `datetime` field's value is; shared with `list --sort`.
 pub(crate) fn parse_datetime(text: &str) -> Option<DateTime<FixedOffset>> {
     match coerce::coerce(&FieldType::Datetime, &Value::Text(text.to_owned())) {
         Some(Value::Datetime(text)) => DateTime::parse_from_rfc3339(&text).ok(),

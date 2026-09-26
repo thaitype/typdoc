@@ -12,7 +12,6 @@ pub const TYPDOC_DIR: &str = ".typdoc";
 pub(crate) const CONFIG_FILE: &str = ".typdoc/config.json";
 const COLLECTIONS_DIR: &str = ".typdoc/collections";
 
-/// A name made of ASCII letters, digits, `-` and `_`, as collections and namespaces are.
 pub(crate) fn plain_name(name: &str) -> bool {
     !name.is_empty()
         && name
@@ -24,7 +23,6 @@ pub fn config_file(project: &Path) -> PathBuf {
     project.join(CONFIG_FILE)
 }
 
-/// A namespace of a project.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Namespace {
     pub name: String,
@@ -32,8 +30,7 @@ pub struct Namespace {
     pub folder: String,
 }
 
-/// A directory entry a run reached and does not read, by its path from the project folder, and
-/// why: it becomes a `files.unreadable` finding.
+/// A directory entry a run reached and does not read: a `files.unreadable` finding.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Skipped {
     pub path: String,
@@ -46,11 +43,8 @@ pub(crate) const SYMBOLIC_LINK: &str = "a symbolic link is not read: a run does 
 pub(crate) const NAME_NOT_UTF8: &str = "the name is not valid UTF-8, so no path can name it; it is written here \
                         with a replacement character for each byte that cannot be read";
 
-/// Why a walk skips a file of the reserved temp-file shape: it is a leftover of a write that
-/// did not finish (decision: "a file whose name has that shape is never a document, whatever
-/// any `match` says"), so it is never taken as one, whatever glob reaches it. Reported at
-/// `warn` rather than at the `error` `files.unreadable` carries, and so a rule of its own: one
-/// rule has one level.
+/// A leftover temp file is reported at `warn`, not at `files.unreadable`'s `error`, so it is a
+/// rule of its own: one rule has one level (SPC-10).
 pub(crate) const LEFTOVER_TEMP_FILE: &str = "this is a leftover of a write that did not finish, in the reserved shape typdoc's own temp \
      files use; it is never a document, whatever the collection's match says";
 
@@ -78,8 +72,7 @@ pub enum RefBase {
     Namespace,
 }
 
-/// `lock` in `config.json` (design, Model: "`local` (default) or `git-common`. See
-/// Concurrency."): which lock table a write command reads a namespace's lock path from.
+/// `lock` in `config.json`: where a write command puts a namespace's lock file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LockMode {
     #[default]
@@ -108,35 +101,23 @@ pub struct Config {
     /// The entries of the project folder that a `namespaces` glob reached and skipped, sorted by
     /// path.
     pub(crate) skipped: Vec<Skipped>,
-    /// Names `namespaces`' own patterns matched and a later `!` excluded — fed to
-    /// `state::orphans` so an excluded namespace's leftover state file reads as known, not
-    /// orphaned, while it stays out of `namespaces` above and everything that reads that field.
+    /// Names a `namespaces` pattern matched and a later `!` excluded, so that `state::orphans`
+    /// does not report their state files.
     pub(crate) excluded: BTreeSet<String>,
     /// `validation.global`.
     pub validation: Rules,
     /// Sorted by name.
     pub collections: Vec<Collection>,
-    /// `imports`, alias to the path as written, `${NAME}` included: read here, resolved (the
-    /// machine file merged in, `${NAME}` substituted, the project loaded) by `Project::load`,
-    /// which is the one place that has `Env`.
+    /// `imports`, alias to the path as written: `Project::load`, which has `Env`, substitutes
+    /// `${NAME}` and merges the machine file.
     pub imports: BTreeMap<String, String>,
-    /// `lock`, absent meaning `Local` (design, Model: "`local` (default)").
     pub lock: LockMode,
 }
 
-/// The config errors found so far.
-///
-/// Every error added here stops the command today, whichever way it was added: `stop` ends the
-/// list at once (`complete: false`, the rest of the config could not be interpreted); `finish`
-/// turns whatever `add` collected into the same kind of failure (`complete: true`, everything
-/// else was determined). The design's own question for a config error, "does it make checking
-/// impossible?", is answered here only once, for the whole type, and not error by error: an
-/// error added through `add`, not `stop`, has already been read as one that leaves the rest of
-/// the config readable (parsing continues past it), which is the design's condition for a
-/// finding in `validate`'s report rather than a stopped command. None of the errors this crate
-/// adds answers that question on its own yet: `finish` stops the command for all of them alike.
-/// Letting one answer it on its own, so it could reach `validate` as a finding instead, is a
-/// change to this type and is not made here.
+/// The config errors found so far, each of which stops the command. `stop` ends the list at once
+/// (`complete: false`): the rest of the config cannot be interpreted. `finish` fails with
+/// everything `add` collected (`complete: true`). Every error added through `add` stops the
+/// command, including one that would leave checking possible (SPC-6).
 #[derive(Default)]
 pub(crate) struct Report {
     errors: Vec<ConfigError>,
@@ -151,8 +132,6 @@ impl Report {
         });
     }
 
-    /// Adds one error and ends the list there, because the rest of the config cannot be
-    /// interpreted.
     fn stop(&mut self, id: &'static str, path: &str, message: String) -> Error {
         self.add(id, path, message);
         Error::ConfigErrors {
@@ -171,25 +150,21 @@ impl Report {
         })
     }
 
-    /// What `add` collected so far, for a test that resolves namespaces directly against a
-    /// `Report` rather than through a full `Config::load`.
     #[cfg(test)]
     pub(crate) fn errors(&self) -> &[ConfigError] {
         &self.errors
     }
 }
 
-/// By path, then id, then message: the order of findings, with no position to break a tie.
+/// The order of findings (SPC-12), less the position a config error does not have.
 fn ordered(mut errors: Vec<ConfigError>) -> Vec<ConfigError> {
     errors.sort_by(|a, b| (&a.path, a.id, &a.message).cmp(&(&b.path, b.id, &b.message)));
     errors
 }
 
 impl Config {
-    /// Reads `config.json` and every collection file into `report`, which the caller finishes,
-    /// so that the errors of what is read next can join them. Every config error that can be
-    /// determined is reported together, and `Err` is a config that cannot be interpreted any
-    /// further, with the list ended there.
+    /// The caller finishes `report`, so that the errors of what it reads next join these. `Err`
+    /// is a config that cannot be interpreted any further.
     pub(crate) fn load(root: &Path, report: &mut Report) -> Result<Config, Error> {
         let top = read_config_json(root, report)?;
         let mut validation = Rules::new();
@@ -228,10 +203,8 @@ impl Config {
     }
 }
 
-/// `imports`: an object of alias to a text path (`${NAME}` allowed, substituted later, by
-/// `Project::load`, which is the one place that has `Env`). A shape other than an object of text
-/// values is `config.parse`, the same treatment ticket 4 already gave a wrong-typed `validation`
-/// or `lock`: no other id fits a value of the wrong shape.
+/// A shape other than an object of text values is `config.parse`, as a wrongly typed
+/// `validation` or `lock` is: no other id fits a value of the wrong shape.
 fn parse_imports(value: &Value, report: &mut Report) -> Result<BTreeMap<String, String>, Error> {
     let Value::Object(entries) = value else {
         let message = "`imports` must be an object of alias to path".to_owned();
@@ -417,7 +390,7 @@ fn level_named(name: &str) -> Option<Level> {
     }
 }
 
-/// The type of each option, from the table of rules in the design.
+/// Every option but `ignore` is a boolean (SPC-1).
 fn option_fits(option: &str, value: &Value) -> bool {
     match option {
         "ignore" => matches!(value, Value::Array(items) if items.iter().all(Value::is_string)),
@@ -425,7 +398,6 @@ fn option_fits(option: &str, value: &Value) -> bool {
     }
 }
 
-/// Every `*.json` file in `.typdoc/collections/`, sorted by name; other files are ignored.
 fn read_collections(root: &Path, report: &mut Report) -> Result<Vec<Collection>, Error> {
     let dir = root.join(COLLECTIONS_DIR);
     let entries = match fs::read_dir(&dir) {

@@ -1,9 +1,6 @@
-//! The rules `validate` checks on one document's frontmatter, and the merge of rule levels:
-//! typdoc's own default, then `validation.global`, then the collection's own `validation`,
-//! with `--strict` raising a remaining `warn` to `error`. The always-on rules, `frontmatter.parse`
-//! and `frontmatter.types`, are never merged: their level is always `error` (project rule and
-//! ticket decision), and `config.rule-always-on` already refuses a project that tries to
-//! configure them.
+//! The rules `validate` checks on one document's frontmatter, and the merge of rule levels
+//! (SPC-1). An always-on rule is never merged: its level is `error`, and
+//! `config.rule-always-on` refuses a project that configures one.
 
 use crate::config::{Level, Rules};
 use crate::document::Value;
@@ -19,12 +16,8 @@ pub enum ValidateScope {
     Schemas,
 }
 
-/// The level a finding is reported at. `frontmatter.parse` and `frontmatter.types` are always
-/// `Error`; a configurable rule is whatever the merge and `--strict` give it. A rule merged to
-/// `off` produces no finding at all in plain `validate`, so `Off` never appears here for a plain
-/// run; under `--audit` a rule merged to `off` is reported as `Info` instead of being skipped
-/// (design, Audit mode: "Rules set to `off`... Reported as `info`"), which is the only way `Info`
-/// is ever produced.
+/// The level a finding is reported at. `Info` comes only from `--audit`, which reports a rule
+/// set to `off` rather than skipping it (SPC-2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Info,
@@ -32,12 +25,8 @@ pub enum Severity {
     Error,
 }
 
-/// One thing `validate` found. Its name is `path` always, plus `namespace`, `collection` and
-/// `key` when the file is a document, as the design's finding shape gives it (a `schema.valid`
-/// finding is about a schema file or `config.json`, not a document, so it carries none of the
-/// three; `filename.pattern` is about a file in a namespace that no collection matched, so it
-/// carries `namespace` and not `collection` or `key`). `field` is present when the finding is
-/// about one field, and a position when one is known.
+/// One thing `validate` found, in the finding shape of SPC-12. A finding about a file that is
+/// not a document carries no `collection` or `key`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
     pub level: Severity,
@@ -51,8 +40,6 @@ pub struct Finding {
     pub position: Option<Position>,
 }
 
-/// The name of the document a finding is about, gathered once per document so the checks below
-/// do not each have to thread every part of it through.
 pub struct DocName<'a> {
     pub path: &'a str,
     pub namespace: &'a str,
@@ -60,26 +47,18 @@ pub struct DocName<'a> {
     pub key: Option<&'a str>,
 }
 
-/// Sorts findings by `path`, then position (a finding with no position first), then `rule` and
-/// `message`, the order the design guarantees.
+/// The order SPC-12 guarantees.
 pub fn order(findings: &mut [Finding]) {
     findings.sort_by(|a, b| {
         (&a.path, a.position, a.rule, &a.message).cmp(&(&b.path, b.position, b.rule, &b.message))
     });
 }
 
-/// The findings of one document: `frontmatter.parse` first, and, only when the block parsed,
-/// `frontmatter.types` and `frontmatter.unknown`. A block that cannot be parsed stops here, as
-/// the design asks: no other rule is evaluated for that file. A file with no block, and one
-/// whose block is empty, both reach the field checks with no fields, since neither fails to
-/// parse: the block that is absent is never handed to the reader, and the block that is empty
-/// parses to nothing.
+/// A block that cannot be parsed stops here: no other rule is evaluated for that file (SPC-1). A
+/// file with no block and one with an empty block both reach the field checks, with no fields.
 ///
-/// A file with no block at all is never handed to this function under `--audit` (the caller
-/// lists it in `no_frontmatter` and evaluates nothing about it instead, design: "`--audit` does
-/// not evaluate it"); `audit` is still threaded through to `frontmatter.unknown`'s level so a
-/// project that turns it `off` still sees it as `info` here, the same as every other configurable
-/// rule.
+/// Under `--audit` a file with no block never reaches here (SPC-12); `audit` is passed so that a
+/// `frontmatter.unknown` set to `off` is reported at `info`.
 pub fn check_document(
     text: &str,
     schema: &Resolved,
@@ -190,25 +169,11 @@ pub fn check_document(
     findings
 }
 
-/// `frontmatter.transitions`, always on and checked on write (design, Validation rules table):
-/// a field the schema marks `transitions` may not change to a value the map does not allow from
-/// where it was. Only a write reaches this — the read core has no "before" to compare against,
-/// which is why the design says "checked on write" rather than listing it among what `validate`
-/// reports on an existing file.
+/// Checked on write only, since a read has no value to compare against (SPC-1). A field is
+/// checked only when its typed value changed and both sides have it.
 ///
-/// **Only a field that actually changed is checked.** The same document reached another way
-/// carries the same value, so "changed" is decided by equality of the typed [`Value`] `before`
-/// and `after` hold for that field, not of its text — the same value promise `auto: update`'s
-/// own stamping reuses (decision 20/ticket 5). A field neither side has (removed by `k=`, or
-/// never in the document) is not a transition either: there is no "from" or no "to" to compare.
-///
-/// **A source value the map does not name has no allowed next value.** `transitions`'s own doc
-/// says an *omitted option* allows any change; it does not say what an omitted *source value*
-/// inside a present map means. Read literally, a map from a value to its allowed next values
-/// simply has nothing for a value it does not list, so a value not named as a source is treated
-/// as one this field may not leave. This is a choice where the design is silent, not a settled
-/// reading, and it is why the design's own example (`base-ticket.json`, `docs/design.md`) never
-/// transitions a document away from `resolved` or `closed`, only into them.
+/// A value the map does not name as a source may not change at all: a map from a value to its
+/// next values has nothing for a value it does not list.
 pub fn check_transitions(
     schema: &Resolved,
     before: &[(String, Value)],
@@ -258,9 +223,6 @@ fn find_field<'a>(fields: &'a [(String, Value)], name: &str) -> Option<&'a Value
         .map(|(_, value)| value)
 }
 
-/// A value read as `enum` text: [`Value::Text`] as itself, [`Value::Empty`] as the empty text
-/// (the same reading `check_document`'s own enum-membership check gives a bare field), anything
-/// else `None`.
 fn enum_text(value: &Value) -> Option<&str> {
     match value {
         Value::Text(text) => Some(text.as_str()),
@@ -269,13 +231,8 @@ fn enum_text(value: &Value) -> Option<&str> {
     }
 }
 
-/// The level `rule` is reported at once the defaults, `validation.global` and the collection's
-/// own `validation` are merged, with `strict` raising a remaining `warn` to `error`. `None` is
-/// `off`: the rule produces no finding, unless `audit` is set, in which case an `off` rule is
-/// still checked and reported at `Info` instead of being skipped (design, Audit mode: "Rules set
-/// to `off`... Reported as `info`"). `strict` never touches an `off` rule: raising `warn` to
-/// `error` and reporting `off` as `info` are two different questions, and a rule that is `off`
-/// has no `warn` for `strict` to raise.
+/// `None` is `off`. Under `audit` an `off` rule is reported at `Info` (SPC-2), and `strict`
+/// never raises it: an `off` rule has no `warn` to raise.
 pub(crate) fn effective_level(
     default: Level,
     rule: &str,
@@ -300,10 +257,6 @@ pub(crate) fn effective_level(
     }
 }
 
-/// Every finding this crate's rules construct is built here, so the nine-field shape of
-/// `Finding` is written out once; each rule below calls this with the parts it has and `None`
-/// for the parts a file that is not a document (a schema file, `config.json`, a stray file)
-/// does not carry.
 #[allow(
     clippy::too_many_arguments,
     reason = "a finding has this many parts; grouping them
@@ -334,12 +287,8 @@ fn build_finding(
     }
 }
 
-/// A finding about `name`'s document, at `field` when it is about one field. No position-tracking
-/// is built yet for any rule that uses this (frontmatter.parse: contract item 7, checked by
-/// running; the others: nothing maps a field or a ref back to a line yet), so this is the one
-/// place that constructs one. `pub(crate)` so `project.rs`'s ref rules (`refs.resolve`,
-/// `refs.target`, `refs.codedByPath`, `refs.moved`, `refs.acyclic`) build their findings the same
-/// way `frontmatter.types` and `frontmatter.unknown` do, rather than a second shape for refs.
+/// A finding with no position: `frontmatter.parse` keeps none, since the YAML reader's position
+/// is imprecise for some errors, and nothing maps a frontmatter field or ref back to a line.
 pub(crate) fn finding(
     name: &DocName,
     level: Severity,
@@ -360,10 +309,7 @@ pub(crate) fn finding(
     )
 }
 
-/// A finding about `name`'s document at a known position: the body-side rules (`body.links`,
-/// `body.anchors`) are the first this crate builds whose position is known, from `links::scan`'s
-/// own line and column (`col` at the `[` or `!`, or at a definition's `[`, per the design's
-/// Output paragraph).
+/// `col` is at a link's `[` or `!`, or at a definition's `[` (SPC-1).
 pub(crate) fn finding_at(
     name: &DocName,
     level: Severity,
@@ -385,8 +331,6 @@ pub(crate) fn finding_at(
     )
 }
 
-/// A finding about a schema file or `config.json`: not a document, so it carries no
-/// `namespace`, `collection` or `key`. Used by `schema.valid`.
 pub(crate) fn schema_finding(path: &str, field: Option<&str>, message: String) -> Finding {
     build_finding(
         Severity::Error,
@@ -401,8 +345,6 @@ pub(crate) fn schema_finding(path: &str, field: Option<&str>, message: String) -
     )
 }
 
-/// A finding about a file in a namespace that no collection matched: not a document, so it
-/// carries `namespace` but no `collection` or `key`. Used by `filename.pattern`.
 pub(crate) fn stray_file_finding(
     level: Severity,
     path: &str,
@@ -422,10 +364,6 @@ pub(crate) fn stray_file_finding(
     )
 }
 
-/// A finding about a directory entry a `match` or a `namespaces` glob reached and the walk could
-/// not read (`files.unreadable`): it was skipped, so it is no document and carries no
-/// `collection` or `key`, and carries `namespace` when it was found inside one, the same shape
-/// `stray_file_finding` uses. Always on, so its level is always `error`.
 pub(crate) fn unreadable_finding(path: &str, namespace: Option<&str>, message: String) -> Finding {
     build_finding(
         Severity::Error,
@@ -440,11 +378,8 @@ pub(crate) fn unreadable_finding(path: &str, namespace: Option<&str>, message: S
     )
 }
 
-/// A finding about a leftover temp file a `match` or a `namespaces` glob reaches
-/// (`files.leftover`): a rule of its own rather than `files.unreadable`'s, since one rule has
-/// one level and this one is `warn` — a leftover is expected after a kill or a power cut and is
-/// not itself damage (decision 4). Carries `namespace` when found inside one, the same shape
-/// `unreadable_finding` uses.
+/// A rule of its own rather than `files.unreadable`, since a rule has one level: a leftover is
+/// expected after a kill or a power cut and is not damage, so it is `warn` (SPC-10).
 pub(crate) fn leftover_finding(path: &str, namespace: Option<&str>, message: String) -> Finding {
     build_finding(
         Severity::Warn,
@@ -459,9 +394,7 @@ pub(crate) fn leftover_finding(path: &str, namespace: Option<&str>, message: Str
     )
 }
 
-/// A finding about a document matched by more than one collection (`collections.overlap`):
-/// which collection is "the" collection of this document is exactly what is wrong, so it is
-/// left out rather than guessed; the message names every collection that matched.
+/// No `collection`: which one is the document's is exactly what is wrong.
 pub(crate) fn overlap_finding(path: &str, namespace: &str, message: String) -> Finding {
     build_finding(
         Severity::Error,
@@ -476,9 +409,6 @@ pub(crate) fn overlap_finding(path: &str, namespace: &str, message: String) -> F
     )
 }
 
-/// A finding about a name that is both a sibling namespace and an import alias
-/// (`names.shadowed`): a fact about the config, not about one document, so it carries no
-/// `namespace`, `collection` or `key`, the same shape `schema_finding` uses.
 pub(crate) fn names_shadowed_finding(level: Severity, path: &str, message: String) -> Finding {
     build_finding(
         level,
@@ -493,9 +423,7 @@ pub(crate) fn names_shadowed_finding(level: Severity, path: &str, message: Strin
     )
 }
 
-/// A finding about a document whose key is also used by another document in the same namespace
-/// (`keys.unique`): the key and the collection are not in doubt, only which document is the
-/// right holder of it, so both are carried and the message names the other document.
+/// The key and the collection are not in doubt, only which document holds the key rightly.
 pub(crate) fn duplicate_key_finding(
     path: &str,
     namespace: &str,
@@ -516,10 +444,7 @@ pub(crate) fn duplicate_key_finding(
     )
 }
 
-/// A finding about a coded collection with documents in a namespace and no `last` recorded for
-/// it there (`state.missing`): nothing about one document is wrong, so the file it is about is
-/// the state file, not a document of the collection; `collection` names which one, and there is
-/// no `key`, the same reasoning `collections.overlap` already gives a file matched by two.
+/// About the state file, since nothing about one document is wrong.
 pub(crate) fn state_missing_finding(
     path: &str,
     namespace: &str,
@@ -539,10 +464,7 @@ pub(crate) fn state_missing_finding(
     )
 }
 
-/// A finding about a coded collection whose recorded `last` is present but not a usable whole
-/// number (`state.malformed`): the record is there, unlike `state.missing`, so this is `Error`
-/// the same way `state.missing` is — `new` and `mv --renumber` refuse to issue a number for the
-/// same reason, a guessed one is a key that already belongs to a document.
+/// `Error`: a number guessed from it could be a key that already belongs to a document (SPC-8).
 pub(crate) fn state_malformed_finding(
     path: &str,
     namespace: &str,
@@ -562,10 +484,8 @@ pub(crate) fn state_malformed_finding(
     )
 }
 
-/// A finding about a coded collection whose recorded `last` is a valid number lower than the
-/// highest number that exists for it in the namespace (`state.behind`, `warn`): allocation
-/// already takes the larger of the two, so the number issued next is still right, but the
-/// record itself is telling a reader something untrue.
+/// `Warn`: allocation takes the larger of the two numbers, so the next one is still right
+/// (SPC-8).
 pub(crate) fn state_behind_finding(
     path: &str,
     namespace: &str,
@@ -585,10 +505,8 @@ pub(crate) fn state_behind_finding(
     )
 }
 
-/// A finding about a state entry naming a collection this project no longer has
-/// (`state.retired`, `warn`): kept rather than removed, since it is the only record that those
-/// numbers were issued, and unlike its predecessor as a config error, this stops nothing —
-/// reads included.
+/// `Warn`, and it stops nothing: the entry is the only record that its numbers were issued
+/// (SPC-8).
 pub(crate) fn state_retired_finding(
     path: &str,
     namespace: &str,
@@ -608,13 +526,7 @@ pub(crate) fn state_retired_finding(
     )
 }
 
-/// A finding about a project with no collections at all (`collections.empty`, `warn`, M-24):
-/// `.typdoc/config.json` being optional means a bare `.typdoc/` folder is a valid project, so
-/// this only warns that nothing is configured to check yet — it stops nothing, reads included,
-/// the same non-fatal shape `state_retired_finding` already has. Project-level, not about any
-/// one document: `path` is `TYPDOC_DIR` (`.typdoc`) and `namespace`/`collection`/`key`/`field`
-/// are all `None`, the same shape `schema.valid` uses for a finding that is not about one
-/// document.
+/// `Warn`, and it stops nothing (SPC-1). About the project, so `path` is the `.typdoc` folder.
 pub(crate) fn collections_empty_finding(path: &str) -> Finding {
     build_finding(
         Severity::Warn,
@@ -746,8 +658,7 @@ mod tests {
     fn a_block_that_holds_a_second_yaml_document_is_frontmatter_parse_with_no_position() {
         // The closing fence must be a line that is exactly `---`; a line that starts with
         // `---` but carries more (here, a comment) is not it, and survives into the block as
-        // ordinary YAML, where it opens a second document. `yaml_serde` gives no position for
-        // this error (checked by running, ticket 18), so neither does the finding.
+        // ordinary YAML, where it opens a second document.
         let text = "---\ntitle: x\n--- # hi\nfoo: 1\n---\n\nBody.\n";
         let schema = schema(&[("title", "string", false)]);
 
@@ -888,9 +799,7 @@ mod tests {
         assert_eq!(findings, Vec::new());
     }
 
-    /// Design, Audit mode: "Rules set to `off`... Reported as `info`". The same `off` setting
-    /// that produces nothing above produces one `info` finding once `audit` is set, and `strict`
-    /// has nothing to raise it from, since `off` carries no `warn`.
+    /// `strict` is set as well: an `off` rule has no `warn` for it to raise.
     #[test]
     fn frontmatter_unknown_off_is_info_under_audit() {
         let schema = schema(&[]);
@@ -1024,8 +933,6 @@ mod tests {
         }
     }
 
-    /// A schema of one enum field, `status`, with the design's own example transitions
-    /// (`docs/design.md`, Schema format: `base-ticket.json`).
     fn status_schema() -> Resolved {
         let text = json!({
             "name": "ticket",

@@ -1,17 +1,5 @@
-//! The body-side ref forms `body.links`, `body.anchors` and `body.mentions` read: standard
-//! Markdown links (inline, image, reference-style), reference definitions, duplicate labels, and
-//! text that looks like a link but the parser did not read as one. Pure parsing over the text of
-//! one document: no filesystem, no index, no config. Resolving a destination against the project
-//! (the same prefix rules frontmatter refs use, per the design's Body links paragraph) is
-//! `refs::classify_body`; this module only says what a document's body contains and where.
-//!
-//! The definition scan (`definitions`, `duplicate_definitions`) reads every reference definition
-//! `pulldown_cmark::Parser::reference_definitions()` finds, not only the first per label: the
-//! parser itself keeps only the first, so each later one is found by blanking out (with spaces,
-//! so line numbers do not move) the definitions already found and reparsing, until none are left.
-//! This reuses the parser's own CommonMark rules for what a definition is (never inside code,
-//! never inside a fenced or indented block) instead of a hand-written scanner for the same
-//! grammar ticket 6's research already showed is not small to reproduce correctly.
+//! Pure parsing of one document's body: no file system, no index, no config. Resolving a
+//! destination is `refs::classify_body`.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -25,13 +13,10 @@ fn markdown_options() -> Options {
     Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES
 }
 
-/// One checked link occurrence: an inline link, an image, or a reference-style use with a
-/// definition (`[t][ref]`, `[ref][]`, `[ref]`, each checked once per occurrence — ticket 10's
-/// answer: "counted in `$body`"). `written` is the destination exactly as authored (for a
-/// reference-style use, the destination of the definition it resolved to, which is what actually
-/// decides where the link goes); `target` and `anchor` are that destination's path and fragment,
-/// percent-decoded, split at the first literal `#`. `target` is `None` when the destination has
-/// no path at all (`[t](#local)`), which names the document itself.
+/// One link occurrence: an inline link, an image, or a reference-style use with a definition.
+/// `written` is the destination as written; for a reference-style use, its definition's. `target`
+/// and `anchor` are percent-decoded, split at the first `#`; `target` is `None` for `[t](#local)`,
+/// which names the document itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BodyLink {
     pub written: String,
@@ -39,17 +24,14 @@ pub struct BodyLink {
     pub anchor: Option<String>,
     pub line: usize,
     pub col: usize,
-    /// Whether this occurrence is a reference-style use (`[t][ref]`, `[ref][]`, `[ref]`): its
-    /// destination is checked once already, at its definition, and "the uses are not reported
-    /// separately" (design's Reference definitions paragraph), so a caller building `body.links`
-    /// and `body.anchors` findings checks only the occurrences where this is `false` and leaves a
-    /// reference-style one to the matching `Definition` — it still belongs in `$body` (ticket 12),
-    /// which is why it stays in `links` rather than being dropped here.
+    /// A reference-style use is checked once, at its `Definition`, so `body.links` and
+    /// `body.anchors` check only occurrences where this is `false`. It is still kept, since it
+    /// counts in `$body`.
     pub is_reference: bool,
 }
 
-/// A reference definition (`[ref]: path`), checked once at its own position regardless of use,
-/// with the number of reference-style links and images that resolved to it.
+/// A reference definition (`[ref]: path`), checked once at its own position whether or not
+/// anything uses it; `uses` counts the reference-style links and images that resolved to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Definition {
     pub written: String,
@@ -102,10 +84,8 @@ pub struct Mention {
     pub col: usize,
 }
 
-/// The body of `file`, parsed once: every checked link, every reference definition (active and
-/// duplicate), and every "looks like a link but is not" candidate. `Err` only when the
-/// frontmatter block is never closed (`frontmatter::split`'s one failure), which a caller that
-/// has already read `frontmatter.parse` clean for this document never reaches.
+/// Every link, reference definition and suspect in the body of `file`. `Err` only when the
+/// frontmatter block is never closed, which `frontmatter.parse` reports first.
 pub fn scan(file: &str) -> Result<BodyLinks, String> {
     let body_at = frontmatter::split(file)?.body;
     let body = &file[body_at..];
@@ -247,13 +227,9 @@ pub fn mentions(file: &str, inline_code: bool, fenced_code: bool) -> Result<Vec<
     Ok(found)
 }
 
-/// Only the forms the design's Body links paragraph checks: inline, image and reference-style
-/// (`Reference`, `Collapsed`, `Shortcut`); autolinks, email autolinks and wikilinks are URL-scheme
-/// or off-by-default forms and are never checked (design: "Autolinks... are URL-scheme links and
-/// are skipped"). The `*Unknown` variants (a reference with no definition) never reach here: with
-/// no broken-link callback given to the parser, an undefined reference is plain text, never a
-/// `Link` event (ticket 10's research), which is itself how "an undefined `[t][ref]` is not
-/// reported" holds.
+/// Autolinks are never checked. The `*Unknown` variants never reach here: with no broken-link
+/// callback, the parser reads an undefined `[t][ref]` as plain text, which is how it goes
+/// unreported.
 fn checked_link_type(link_type: LinkType) -> bool {
     matches!(
         link_type,
@@ -261,9 +237,7 @@ fn checked_link_type(link_type: LinkType) -> bool {
     )
 }
 
-/// `dest`, percent-decoded, split at the first literal `#` (before decoding, so a literal `%23`
-/// in a path is never mistaken for the fragment separator). `None` for an empty path: `[t](#a)`
-/// has no path at all, and names the document itself.
+/// Split before decoding, so `%23` in a path is never taken for the fragment separator.
 fn split_destination(dest: &str) -> (Option<String>, Option<String>) {
     let (path, anchor) = match dest.split_once('#') {
         Some((path, anchor)) => (path, Some(anchor)),
@@ -273,9 +247,8 @@ fn split_destination(dest: &str) -> (Option<String>, Option<String>) {
     (target, anchor.map(percent_decode))
 }
 
-/// A `%` not followed by two hex digits is kept as written (the same rule the design gives for a
-/// heading anchor's fragment; applied here to every percent-decoded destination for one rule
-/// rather than a different one for paths and another for fragments).
+/// A `%` not followed by two hex digits is kept as written, in paths and fragments alike
+/// (SPC-14).
 pub(crate) fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -310,10 +283,9 @@ type ActiveDefinitions = Vec<(Range<usize>, String)>;
 /// starts at.
 type DuplicateDefinitions = Vec<(Range<usize>, usize)>;
 
-/// Every reference definition `body` holds, active (the first of its label, what `RefDefs` keeps)
-/// and duplicate (every later one): found by reparsing with what is already found blanked out
-/// (spaces only, line endings kept), so a definition inside a code block never surfaces (the
-/// parser itself already refuses it there) without a second, hand-written definition grammar.
+/// The parser keeps only the first definition of a label, so later ones are found by blanking
+/// what is already found and reparsing until none are left: the parser alone decides what a
+/// definition is, and there is no second grammar to keep in step with it.
 fn definitions(body: &str, options: Options) -> (ActiveDefinitions, DuplicateDefinitions) {
     let first_parser = Parser::new_ext(body, options);
     let mut active: Vec<(Range<usize>, String)> = first_parser
@@ -352,10 +324,7 @@ fn definitions(body: &str, options: Options) -> (ActiveDefinitions, DuplicateDef
     (active, duplicates)
 }
 
-/// Replaces `span` in `text` with spaces, line endings kept, so a reparse cannot find the same
-/// definition again but every other line keeps its own line number. `span` always lies on
-/// character boundaries (it comes from `pulldown_cmark`'s own byte offsets into this text), and
-/// every byte in it is replaced, so the result is always valid UTF-8.
+/// Line endings are kept, so every line keeps its number.
 fn blank(text: &mut String, span: Range<usize>) {
     let mut bytes = std::mem::take(text).into_bytes();
     for b in &mut bytes[span] {
@@ -375,10 +344,7 @@ fn blank(text: &mut String, span: Range<usize>) {
     *text = blanked;
 }
 
-/// Text outside `excluded` that looks like `[t](inner)`, `![t](inner)` or `[label]: inner` but
-/// the parser did not read as a link, an image or a definition, and whose `inner`, once a
-/// trailing title is removed, ends in a file extension (design's Text that looks like a link but
-/// is not).
+/// Text that looks like a link but is not (SPC-1).
 fn suspects(
     body: &str,
     excluded: &[Range<usize>],
@@ -387,8 +353,6 @@ fn suspects(
     let mut found = Vec::new();
     let is_excluded = |pos: usize| excluded.iter().any(|range| range.contains(&pos));
 
-    // Bracket-paren candidates: `[` or `![`, a `]` on the same line, immediately followed by `(`,
-    // and a `)` on the same line.
     let bytes = body.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
@@ -420,7 +384,6 @@ fn suspects(
         i += 1;
     }
 
-    // Definition-lookalikes: a line, once leading spaces are trimmed, starting `[label]:`.
     let mut line_start = 0;
     while line_start < body.len() {
         let line_end = crate::lines::next_line(body, line_start);
@@ -451,10 +414,6 @@ fn suspects(
     found
 }
 
-/// `raw`, trimmed, with a trailing title removed and percent-decoded, if it ends in a file
-/// extension (`.` plus one to eight ASCII letters or digits, at least one a letter) with an
-/// optional `#anchor` after it; `None` otherwise (the usual case: `raw` is ordinary prose that
-/// happens to contain a `[...](...)` shape, such as `[0][1]`).
 fn candidate_inner(raw: &str) -> Option<String> {
     let stripped = strip_title(raw.trim());
     if stripped.is_empty() {
@@ -464,8 +423,6 @@ fn candidate_inner(raw: &str) -> Option<String> {
     has_extension(before_anchor).then(|| percent_decode(stripped))
 }
 
-/// A trailing title (`"…"`, `'…'` or `(…)`, preceded by whitespace or at the very start) removed
-/// from `text`, per the design's own three title forms.
 fn strip_title(text: &str) -> &str {
     let trimmed = text.trim_end();
     for (open, close) in [('"', '"'), ('\'', '\''), ('(', ')')] {
@@ -479,8 +436,7 @@ fn strip_title(text: &str) -> &str {
     trimmed
 }
 
-/// An extension: `.` plus one to eight ASCII letters or digits, at least one of them a letter
-/// (ticket 10's decision default: `version 1.2` is not reported, `ask Mr.Smith` still is).
+/// `version 1.2` has no extension and `ask Mr.Smith` has one, by this rule (SPC-1).
 fn has_extension(text: &str) -> bool {
     let Some((_, ext)) = text.rsplit_once('.') else {
         return false;
@@ -505,16 +461,12 @@ fn find_on_line(text: &str, from: usize, target: u8) -> Option<usize> {
         .filter(|&i| bytes[i] == target)
 }
 
-/// A run of characters a mention token may be made of: ASCII letters, digits, `-` and `:`, so a
-/// maximal run captures a whole prefixed or bare token and nothing beside it (the same word
-/// boundary the design's `WF-3a` and `xWF-3` counter-examples ask for: either extends the run and
-/// so fails the key shape).
+/// A maximal run of these is one token, so `WF-3a` and `xWF-3` fail the key shape (SPC-1).
 fn is_mention_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '-' || c == ':'
 }
 
-/// Every mention-shaped token (a bare key, or one with a sibling or import prefix) in `text`,
-/// `base` being its offset in the whole body.
+/// `base` is the offset of `text` in the body.
 fn scan_mentions(
     text: &str,
     base: usize,
@@ -550,11 +502,6 @@ fn scan_mentions(
     }
 }
 
-/// Whether `token` has the shape of a mention: a bare key, or a key after a `name:` or `name::`
-/// prefix (the key shape itself, `argument::looks_like_key`, is not reachable from here without
-/// making this module depend on `argument`'s private item; the same regex is repeated by hand,
-/// as `refs.rs`'s own tests already keep two independent copies of small shape rules apart from
-/// their callers).
 fn mention_shape(token: &str) -> Option<&str> {
     let key_part = match token.rfind(':') {
         Some(at) => &token[at + 1..],
