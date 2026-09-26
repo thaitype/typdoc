@@ -73,3 +73,19 @@ sibling prefix (`story-2:WF-5`) in the namespace it names. A mention has one out
 lookup that fails, not found, unlike a ref, whose `unresolved` tells the causes apart.
 `fencedCode` defaults to `false` because code blocks often hold logs, commands and diffs that
 contain key-like text.
+
+## Lines and columns
+
+A finding's `path` is relative to the project folder, in the text output and in `--json` alike,
+so a reader of either means the same file in any namespace; every path `validate` prints, in a
+finding or in the audit summary, is written that way. `line` and `col` are 1-based. `line` counts
+from the top of the file, frontmatter included, so it matches editors and file tools. A line ends
+at a line feed, at a carriage return and a line feed together, or at a carriage return alone, as
+in CommonMark, and a line ending at the end of the file does not begin another line, so `a\nb`
+and `a\nb\n` both have two lines. Every command that reports a line counts this way, and the
+frontmatter block is found by the same count. `col` counts Unicode scalar values, so a Thai
+consonant, a Thai vowel or tone mark, an emoji and a tab each count as 1. That agrees with a
+UTF-16 count, the Language Server Protocol default, except after a character outside the Basic
+Multilingual Plane, such as an emoji, which UTF-16 counts as 2. `col` marks where the offending
+element starts: for a link, its `[`, or the `!` before it for an image. `--json` carries no byte
+offset.

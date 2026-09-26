@@ -78,16 +78,6 @@ design says plainly what a write does not keep.** `yaml-edit` is not added.
 
 The reasoning, in the order it decided the question:
 
-**A write that cannot be made is worse than a write that reformats.** `yaml-edit` has documents
-it cannot edit at all: a block scalar or an anchor in the block turns `set` into a refusal, and
-the user's way forward is to open the file and do by hand what the tool exists to do. Writing
-from text has no such case. Every document the read path accepts, the write path can write.
-
-**The blast radius moves, it does not grow.** `yaml-edit` keeps every line it does not touch and
-damages the line it does, sometimes silently. `yaml_serde` rewrites the block and damages no
-value in it, ever, in a way that is identical on every run and can be described in a table in
-advance. A user can be told the second; the first they find out about one document at a time.
-
 **The existing promise already allows it.** The design said, before this decision, that existing
 YAML style is kept "as a best effort, which is not a promise". This decision does not withdraw
 that promise, because there was none; it replaces an effort nobody could predict with a
@@ -95,42 +85,12 @@ statement of exactly what survives. The promises that remain — a key never mov
 at the end, an unknown field survives, the body is never reformatted — all hold, and the body is
 untouched because frontmatter is split from it before either is read.
 
-**The dependency is the smallest part of it, and still counts.** One crate instead of two, and
-the one that remains is the one the reader already trusts, so the writer and the reader cannot
-disagree with each other about what a document says.
-
 **What is lost is written down rather than left to be discovered.** The design now carries the
 table: comments, blank lines, flow style, quote style and spacing go, and so do anchors, aliases
 and tags. The last two are called out as changing what the file means and not only how it looks,
 with the advice that such a document should be edited by hand. That advice is the honest one:
 typdoc cannot keep an alias through a write, and a tool that quietly turned one value into
 several would be worse than one that says so.
-
-**Kept from phase 1:** the trait of three operations in front of the writer, so that a
-line-based editor or `yaml-edit` can take the place behind it later without the call sites
-changing.
-
-**Dropped from phase 1: the mandatory re-read guard.** It was carried forward here at first, on
-the reasoning that a guard across one crate still catches a mistake in typdoc's own code. That
-reasoning does not survive being asked what event the guard prevents.
-
-With `yaml-edit` the event was immediate and had been reproduced: a block scalar fused four lines
-into one and swallowed the following field; an anchor's key, once set, left an alias pointing at
-nothing. With `yaml_serde` writing the text the reader already holds, there is no such event to
-tell. Sixty-five cases were run, covering every value shape YAML reinterprets, every odd key name
-and every list shape, and none of them came back changed.
-
-If one were found, it would be a round-trip defect in `yaml_serde` — the crate every read in the
-program already trusts without a second check. A guard would be that crate checking itself, and a
-defect in it is not one typdoc can fix; the read path would be wrong long before the write path
-was. Guarding the write and not the read would also be inconsistent: a misread document is a
-wrong answer to every command, and nothing re-reads to catch that.
-
-What replaces it is a test rather than code that ships: that typdoc assembles the block it meant
-to — the right fields, the right text, the right order — is checked at the boundary of typdoc's
-own code, which is where a test belongs. The atomic write stays, and so does the refusal to
-replace an existing file; both prevent events that can be told, an interrupted run and a
-destination that already holds someone's work.
 
 **Verified since, by [decision 21](21-warning-on-a-write-that-drops-something.md):** across 486
 real frontmatter blocks in every repository typdoc is meant for, comments, anchors, aliases and
