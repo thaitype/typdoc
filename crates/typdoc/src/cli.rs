@@ -15,8 +15,6 @@ use typdoc_core::{
     ValidateScope, Value, discover, discover_for, parse_field, parse_query, resolve_on_disk,
 };
 
-/// `--lock-timeout`'s default (design, Concurrency: "Retries with backoff until a timeout
-/// (default 5 s, `--lock-timeout`)").
 const DEFAULT_LOCK_TIMEOUT_SECS: u64 = 5;
 
 #[derive(Parser)]
@@ -360,13 +358,8 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                     ),
                 );
             }
-            // `--schemas` and `--audit` each describe the whole project in their own,
-            // incompatible way (design: `--schemas` "checks schemas only"; `--audit` "runs the
-            // same checks" with a different report). Nothing in the design says what the two
-            // together would mean, and without this check `Project::validate`'s `schemas_only`
-            // branch runs first and silently answers `--schemas` alone, dropping `--audit`'s
-            // report with no word said — the same silent-drop this file already refuses for
-            // `--json`'s absence and for `--audit` combined with arguments.
+            // Refused here (SPC-2): `Project::validate`'s `schemas_only` branch would otherwise
+            // answer `--schemas` alone and drop `--audit`'s report without a word.
             if schemas && audit {
                 return failure_text(
                     json,
@@ -374,11 +367,6 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                     "--schemas and --audit cannot be combined: each describes the whole project in its own way",
                 );
             }
-            // Every other command still refuses the output without `--json` as not built yet.
-            // `validate` no longer does, in any of its three shapes: `--audit` had its own text
-            // form already (Audit mode, the worked "typdoc audit: ..." example); plain and
-            // `--schemas` get theirs here, one line per finding (design, the paragraph
-            // beginning "Output.").
             match validate(
                 deps,
                 &documents,
@@ -433,11 +421,6 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                     cli.namespace.as_deref(),
                 ) {
                     Ok((report, _)) if json => success_raw(&mv_json(&report)),
-                    // **Changed (M-10h), deliberate:** the same labeled block plus
-                    // `rewritten:`/`unrewritten:`/`findings:` every other write command's text
-                    // mode prints, replacing what used to be the bare new key on its own line —
-                    // a caller that only wants the key reads it out of `--json` instead, the same
-                    // as any other field (contract, text-output shapes, `mv --renumber`).
                     Ok((report, multi_namespace)) => Outcome {
                         code: 0,
                         stdout: mv_text(&report, multi_namespace),
@@ -450,8 +433,6 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
     }
 }
 
-/// A run that ends with 0 and prints `result` on standard output. A command whose result
-/// holds a document has already built its JSON text and calls `success_raw` instead.
 fn success(result: Json) -> Outcome {
     success_raw(&raw(&result))
 }
@@ -464,14 +445,9 @@ fn success_raw(result: &RawValue) -> Outcome {
     }
 }
 
-/// The scope to pass into `Project::get`/`toc`/`refs`: chosen the ordinary way (`Project::
-/// scope`) for a document of this project, or an unused placeholder for a `project::` argument.
-/// A project prefix picks a different project entirely, and `Project::get`/`toc`/`refs` compute
-/// their own scope inside it (`imported_scope`) before ever reading the `scope` this function
-/// returns; choosing this project's scope from `arg`'s inner `namespace:` prefix would validate
-/// it against the *wrong* project's namespaces (that prefix names one of the import's, not this
-/// project's) and refuse arguments such as `several::story-2:WF-5` for a reason that has nothing
-/// to do with them.
+/// A `project::` argument gets an unused placeholder: `Project::get`/`toc`/`refs` compute the
+/// imported project's scope themselves, and its `namespace:` prefix names one of that project's
+/// namespaces, so checking it against this project's would refuse a valid argument.
 fn scope_for(
     project: &Project,
     arg: &DocumentArg,
@@ -499,11 +475,6 @@ fn get(
     project.get(&arg, &scope, deps.env)
 }
 
-/// `new`'s one argument, once its shape is known: `[A-Z][A-Z0-9]*` is a coded schema's code and
-/// needs `title`; anything ending in `.md` is a path and takes none (design, `typdoc new`: two
-/// forms, told apart by shape, the same way every argument that could be either always is in
-/// this design). Anything else, or a form given the title shape it does not take, is bad
-/// arguments.
 fn parse_new_target(target: &str, title: Option<&str>) -> Result<NewTarget, Error> {
     if target.ends_with(".md") {
         if title.is_some() {
@@ -533,7 +504,6 @@ fn parse_new_target(target: &str, title: Option<&str>) -> Result<NewTarget, Erro
     )))
 }
 
-/// `[A-Z][A-Z0-9]*`, the shape of a schema's own `code` (design, Schema format).
 fn looks_like_code(text: &str) -> bool {
     let mut chars = text.chars();
     chars.next().is_some_and(|c| c.is_ascii_uppercase())
@@ -570,9 +540,6 @@ fn set(
     project.set(&arg, &scope, deps, sets, ifs, lock_timeout)
 }
 
-/// One `set` argument as the design's grammar reads it: `field=value` sets it, `field=` (nothing
-/// after the `=`) removes it (design, `typdoc set`: "`k=` removes a field"). An argument with no
-/// `=` at all, or with nothing before it, is bad arguments: `=v` and `v` alike name no field.
 fn parse_set_op(raw: &str) -> Result<SetOp, Error> {
     let Some((field, value)) = raw.split_once('=') else {
         return Err(Error::BadArgument(format!(
@@ -596,9 +563,7 @@ fn parse_set_op(raw: &str) -> Result<SetOp, Error> {
     }
 }
 
-/// Every `--if` expression, parsed by the same grammar `--where` uses (design, `typdoc set`:
-/// "`--if` uses `--where` expressions"), kept beside its own original text so a false condition's
-/// message can quote exactly what the caller wrote.
+/// Each condition keeps the text the caller wrote, which a false condition's message quotes.
 fn parse_ifs(raw: &[String]) -> Result<Vec<(String, Condition)>, Error> {
     raw.iter()
         .map(|expr| {
@@ -616,12 +581,8 @@ fn toc(deps: &Deps, document: &std::ffi::OsStr, namespace: Option<&str>) -> Resu
     project.toc(&arg, &scope, deps.env)
 }
 
-/// `list`: no document argument, so the scope is chosen with no namespace prefix (`--namespace`,
-/// `TYPDOC_NAMESPACE` and the current directory still apply). Returns every matching document,
-/// sorted, `--limit` not yet applied: the caller (`list_outcome`) cuts the result for it, so a
-/// value the table prints (a column's width) can be computed from the whole match and stay the
-/// same whatever `--limit` is (design: a flag that limits what is listed never changes the
-/// values of an item).
+/// Returns every match, before `--limit`: `list_outcome` applies it, so `total` and the table's
+/// column widths come from the whole match (SPC-5, SPC-12).
 fn list(
     deps: &Deps,
     collection: Option<&str>,
@@ -654,15 +615,12 @@ fn list(
     Ok((result, multi_namespace))
 }
 
-/// `--collection`/`--code`'s value, split on `,`; absent is the same as empty (every collection).
 fn split_list(value: Option<&str>) -> Vec<String> {
     value
         .map(|v| v.split(',').map(str::to_owned).collect())
         .unwrap_or_default()
 }
 
-/// One `--sort` entry: `field` alone (ascending) or `field:asc`/`field:desc`. Any other suffix
-/// after the `:` is an error (design, Sorting: "anything else is an error").
 fn parse_sort_key(spec: &str) -> Result<SortKey, Error> {
     let (name, dir) = match spec.split_once(':') {
         Some((name, dir)) => (name, Some(dir)),
@@ -681,13 +639,7 @@ fn parse_sort_key(spec: &str) -> Result<SortKey, Error> {
     Ok(SortKey { field, desc })
 }
 
-/// `list`'s three output shapes, chosen by `--json`/`--ids`/neither: `total` and `truncated`
-/// (design: `truncated` is true exactly when `total`, the count before `--limit`, is larger than
-/// the number listed) are computed here, once, from `matched` (every document `list` matched, in
-/// order) and `limit`, so every shape agrees with the other two. `result.dangling_refs` goes to
-/// stderr the same way whichever of the three shapes is chosen (design, Query: "dangling refs
-/// also warn on stderr" — the warning is not part of any of the three shapes `--json` names, so
-/// it is not conditioned on `json` the way `stdout` is).
+/// Dangling refs warn on stderr in every shape, `--json` included (SPC-13).
 fn list_outcome(
     result: &ListResult,
     limit: Option<usize>,
@@ -731,9 +683,6 @@ fn list_outcome(
     }
 }
 
-/// Every dangling ref a `ref.*` condition reached, one per line, for stderr (design, Query,
-/// "Reached documents": "dangling refs also warn on stderr"). Empty when none were reached, the
-/// ordinary case, which prints nothing.
 fn dangling_refs_stderr(dangling_refs: &[String]) -> String {
     if dangling_refs.is_empty() {
         return String::new();
@@ -752,16 +701,10 @@ fn list_json(documents: &[Document], total: usize, truncated: bool) -> Box<RawVa
     ])
 }
 
-/// The default table's extra columns (beyond the key-or-path identity and `title`): `--fields`
-/// when given, or else every field named by a `--where` condition, each once, in the order it
-/// first appears (design: "Default output is a table of key or path, title, and every field
-/// used in `--where`"). A `--where` expression that failed to parse never reaches here (`list`
-/// already returned its error), so re-parsing it for its field name alone is safe.
+/// A `--where` that fails to parse never reaches here: `list` has already returned its error.
 ///
-/// A `ref.*`/`refby.*` condition names one of my own fields too — the ref field `f` itself, e.g.
-/// `blocked_by` in `ref.all(blocked_by).status=resolved` — so that field is added the same way a
-/// plain condition's field is; `status` in that example belongs to the document reached, not to
-/// "me", and is left out, the same as `$body` (not a printable frontmatter field of "me") is.
+/// A `ref.*`/`refby.*` condition adds its ref field (`blocked_by` in
+/// `ref.all(blocked_by).status=resolved`), not the field of the document it reaches (`status`).
 fn table_columns(fields: Option<&str>, wheres: &[String]) -> Vec<String> {
     if let Some(fields) = fields {
         return fields.split(',').map(str::to_owned).collect();
@@ -798,31 +741,9 @@ fn field_name(field: &FieldRef) -> String {
     }
 }
 
-/// The default text table: a header row (`path`, `key` or `document`, `title`, then `columns`,
-/// in that order), then one row per document of `matched[..listed_len]`, columns padded to the
-/// width their longest value takes across the whole of `matched` (not only the rows printed)
-/// *and* the header's own labels, so that a value the table prints does not change with `--limit`
-/// (the ticket's own criterion: a column's width computed from the listed rows only would move
-/// when `--limit` changes which rows are listed, and this construction cannot do that, since
-/// every row's cells are measured before any row is left out) and the header stays aligned with
-/// the rows under it. Columns are separated by two spaces.
-///
-/// No header, and nothing at all, when `listed_len` is 0 — whether because `matched` itself is
-/// empty (`list`'s empty-result case, unchanged from before this row existed) or because
-/// `--limit 0` leaves nothing to list: either way a header with no rows under it would be exactly
-/// the "header-with-no-rows" shape the ticket for this row rules out, so both cases are treated
-/// alike rather than only the first.
-///
-/// The identity column is labeled `key` when every document in `matched` has one (a coded
-/// collection), `path` when none does (an uncoded collection) — matching the identity `table_row`
-/// already prints per row (`doc.key.unwrap_or(doc.path)`, qualified `namespace:key` instead of
-/// the bare key when the project has more than one namespace) — and `document` when `matched` is
-/// a genuine mix of both (spanning collections with and without a code): a header must not claim
-/// a column holds something a row in it plainly doesn't, so neither `key` nor `path` alone is
-/// accurate once even one row of each shape is present. The label itself never depends on
-/// `multi_namespace` — it names what kind of value the column holds (a key or a path), not how a
-/// key happens to be spelled. Decided once for the whole table rather than per row so the header
-/// names a single column consistently.
+/// Widths are measured over the whole of `matched`, so they do not move with `--limit`. A
+/// `--limit 0` prints nothing, header included, as an empty result does. The identity column is
+/// `document` when `matched` mixes keyed and unkeyed documents (SPC-5).
 fn list_table(
     matched: &[Document],
     listed_len: usize,
@@ -852,12 +773,8 @@ fn list_table(
     render_table(&header, &rows, listed_len)
 }
 
-/// The shared column-aligned table shape behind `list_table`, `refs_text` and `validate_text`: a
-/// header row, then up to `listed_len` of `rows`, every column padded to its widest entry across
-/// the whole of `rows` (not only the ones rendered) *and* the header's own labels — see
-/// `list_table`'s doc comment for why widths are measured over every row rather than only the
-/// printed ones. `listed_len == 0` prints nothing at all, not even the header, which is the one
-/// rule every one of these three callers shares: a header with no rows under it is never printed.
+/// Widths are measured over all of `rows`, not only the first `listed_len`, so they do not move
+/// with `--limit` (SPC-5).
 fn render_table(header: &[String], rows: &[Vec<String>], listed_len: usize) -> String {
     if listed_len == 0 {
         return String::new();
@@ -880,9 +797,6 @@ fn render_table(header: &[String], rows: &[Vec<String>], listed_len: usize) -> S
     out
 }
 
-/// One line of `list_table` (the header or a data row): cells joined by two spaces, each padded
-/// to its column's width except the last, which is trimmed instead — see `list_table`'s own doc
-/// comment for why the last column is trimmed rather than padded.
 fn render_row(out: &mut String, row: &[String], widths: &[usize]) {
     let mut line = String::new();
     for (i, cell) in row.iter().enumerate() {
@@ -894,10 +808,7 @@ fn render_row(out: &mut String, row: &[String], widths: &[usize]) {
             line.push_str(&" ".repeat(widths[i] - cell.chars().count()));
         }
     }
-    // The padding above never trails past a row's last non-empty cell except when that very
-    // last cell is itself empty (an unset field in the rightmost column): trimmed here so an
-    // empty trailing column leaves no trailing whitespace, without touching a column's own
-    // width (computed above, from `matched` and the header, and untouched by this).
+    // An empty last cell would leave the padding before it as trailing whitespace.
     out.push_str(line.trim_end());
     out.push('\n');
 }
@@ -911,15 +822,8 @@ fn table_row(doc: &Document, columns: &[String], multi_namespace: bool) -> Vec<S
     row
 }
 
-/// A document's identity as `list`'s table and `--ids` print it (the design's naming table, "In
-/// this project"): a coded document is its bare `key` when the project has exactly one
-/// namespace, `{namespace}:{key}` when it has several — the same qualification rule
-/// `ref_name_text` applies to a `refs`/`mv` name, and the same separator, so a name either one
-/// prints is always one another command can resolve. An uncoded document (no `key`) is always
-/// its `path`, unaffected by namespace count either way. A coded document with no namespace
-/// should not occur — coding requires a collection, which requires a namespace (`Document::key`'s
-/// own doc comment) — but is handled defensively here by falling back to the bare key rather than
-/// panicking or silently dropping it.
+/// Qualified as `namespace:key` only when the project has several namespaces, so a printed name
+/// is one every command accepts (SPC-2).
 fn identity_text(doc: &Document, multi_namespace: bool) -> String {
     match (&doc.key, &doc.namespace) {
         (Some(key), Some(namespace)) if multi_namespace => format!("{namespace}:{key}"),
@@ -928,10 +832,6 @@ fn identity_text(doc: &Document, multi_namespace: bool) -> String {
     }
 }
 
-/// One cell of the default table: a pseudo-field read straight off `doc`, a named field read
-/// from `doc.fields` (as `get`'s own `fields` already holds it), and a field this document has
-/// no value for as an empty cell (a document whose collection lacks it, or a document simply
-/// never given it).
 fn cell_value(doc: &Document, field: &str) -> String {
     match field {
         "path" => doc.path.clone(),
@@ -949,9 +849,7 @@ fn cell_value(doc: &Document, field: &str) -> String {
     }
 }
 
-/// A field's value as the table prints it: as written for text-shaped values, the value a
-/// number or a bool converts to, and comma-joined for a list (the table has one cell per
-/// document, not one per element). `--json` is where a number's own digits are printed.
+/// A number prints the value it converts to; `field_text` and `--json` print its digits.
 fn render_cell(value: &Value) -> String {
     match value {
         Value::Text(text) | Value::Date(text) | Value::Datetime(text) => text.clone(),
@@ -962,18 +860,8 @@ fn render_cell(value: &Value) -> String {
     }
 }
 
-/// The labeled block `get`, `set`, and both forms of `new` print without `--json` (contract,
-/// text-output shapes): one `name: value` line per field — `path`, `collection`, `schema`,
-/// `namespace` (present only when the document has one, absent for a file outside every
-/// namespace folder), `key` (present only for a coded document), then the frontmatter fields in
-/// file order (`document.fields` is already "in the order of the file", `Document`'s own doc
-/// comment). `collection` and `schema` are left out when `collection` is empty, the same case
-/// `document_json` already carries its own reason for: a collection name is never empty except
-/// when `mv` has moved a document out of every collection (decision 16), and there is then no
-/// schema to report either.
-///
-/// This is the one function every ticket that prints this block calls (ticket 21's `mv` reuses
-/// it for the destination's `get`-shaped block), so a caller only ever writes this shape once.
+/// The labeled block of `get`, `set`, `new` and `mv` (SPC-5). An empty `collection` means `mv`
+/// moved the document out of every collection, and then there is no schema either (SPC-2).
 fn document_text(document: &Document) -> String {
     let mut out = String::new();
     push_line(&mut out, "path", &document.path);
@@ -993,9 +881,7 @@ fn document_text(document: &Document) -> String {
     out
 }
 
-/// One `name: value` line, `name` never escaped or quoted: the field-names principle asks only
-/// that a value be labeled, not that the block be machine-parsed back (that reader uses `--json`
-/// instead).
+/// `name` is not escaped: the block is labeled for people, and a program reads `--json` (SPC-5).
 fn push_line(out: &mut String, name: &str, value: &str) {
     out.push_str(name);
     out.push_str(": ");
@@ -1003,13 +889,8 @@ fn push_line(out: &mut String, name: &str, value: &str) {
     out.push('\n');
 }
 
-/// A field's value for [`document_text`]'s labeled block: as written for text-shaped values,
-/// comma-joined for a list — the same as `render_cell`, which is `list`'s own table cell — except
-/// for a `number`, which prints the digits the document itself holds (`Number::written`) rather
-/// than the value they convert to. This is the write path's existing `[number-text]` rule
-/// (`value_json`, below, holds `--json` to the same rule already); reused here rather than
-/// reimplemented, so a text reader and a `--json` reader are never told two different digit
-/// strings for the same field.
+/// As `render_cell`, except that a number prints the digits the document holds, as `--json` does
+/// (SPC-5).
 fn field_text(value: &Value) -> String {
     match value {
         Value::Text(text) | Value::Date(text) | Value::Datetime(text) => text.clone(),
@@ -1035,11 +916,8 @@ fn refs(
     Ok((report, multi_namespace))
 }
 
-/// `mv`: `to` is read the same way `from` is (design.md, Arguments that name a document: "`mv`
-/// reads both its arguments in this way"), resolved against the project `from` already found —
-/// an on-disk `to` is read against that same root, the same way a second `validate` argument is
-/// (`validate_args`), since a destination on disk in a different project names no document `mv`
-/// could ever reach.
+/// `to` is read as `from` is (SPC-2), and an on-disk `to` against the project `from` found: a
+/// destination in another project is one `mv` cannot write.
 fn mv(
     deps: &Deps,
     from: &std::ffi::OsStr,
@@ -1059,10 +937,8 @@ fn mv(
     Ok((report, multi_namespace))
 }
 
-/// `mv --renumber`: `namespace` is a bare namespace name, never a document argument, so it is
-/// read as plain text rather than through `Argument::parse`/`DocumentArg` the way `from` and
-/// `to` are — decision 11's own shape, `typdoc mv WF-2 --renumber story-3`, where the value
-/// after the flag names a namespace, not a document.
+/// `namespace` is a bare namespace name, not a document argument, so `Argument::parse` does not
+/// read it (SPC-2).
 fn mv_renumber(
     deps: &Deps,
     from: &std::ffi::OsStr,
@@ -1086,12 +962,8 @@ fn mv_renumber(
     Ok((report, multi_namespace))
 }
 
-/// Both forms of `mv`'s text-mode shape (contract, text-output shapes, `mv`/`mv --renumber`;
-/// ticket 21): the destination's `get`-shaped block (`document_text`, ticket 16's shared
-/// renderer, reused rather than reimplemented), then three lines always present so a clean move
-/// is as loud as a busy one — nothing printed would look indistinguishable from "not built yet"
-/// — `rewritten:` (a count), `unrewritten:` (its own count plus one line per entry), and
-/// `findings:` (its entries or `none`).
+/// The three lines after the block are always printed, so a clean move reads as loud as a busy
+/// one (SPC-5).
 fn mv_text(report: &MvReport, multi_namespace: bool) -> String {
     let mut out = document_text(&report.document);
     push_line(&mut out, "rewritten", &rewritten_summary(&report.rewritten));
@@ -1100,11 +972,6 @@ fn mv_text(report: &MvReport, multi_namespace: bool) -> String {
     out
 }
 
-/// `rewritten: N ref(s) in M document(s)`: `N` is `rewritten.len()`, but `M` is the number of
-/// *distinct* holders among them, not the same count — a holder rewritten in two fields (or in
-/// one field and its body) still counts as one document. Singular/plural on both counts
-/// independently, since `N` and `M` can differ (one holder, two rewritten refs: "2 refs in 1
-/// document").
 fn rewritten_summary(rewritten: &[RewrittenRef]) -> String {
     let documents: BTreeSet<&str> = rewritten.iter().map(|r| r.document.as_str()).collect();
     format!(
@@ -1114,9 +981,7 @@ fn rewritten_summary(rewritten: &[RewrittenRef]) -> String {
     )
 }
 
-/// `N noun` or `N nouns` — plural is the noun plus `s`, true of every noun this prints
-/// (`ref`/`refs`, `document`/`documents`); `1` is the only count that takes the singular form,
-/// including `0` ("0 documents", not "0 document").
+/// The plural adds `s`, which holds for every noun passed in.
 fn count_noun(n: usize, noun: &str) -> String {
     if n == 1 {
         format!("1 {noun}")
@@ -1125,10 +990,6 @@ fn count_noun(n: usize, noun: &str) -> String {
     }
 }
 
-/// `unrewritten:`'s own count, then one line per entry naming the project, document, field and
-/// written form of the ref that was not rewritten (contract, `mv` (plain)); `none` in place of
-/// the count, with no entry lines, when there are none (testing-decisions.md, "Text output": a
-/// clean move's `unrewritten:` shows `none`).
 fn push_unrewritten_lines(out: &mut String, unrewritten: &[UnrewrittenRef], multi_namespace: bool) {
     if unrewritten.is_empty() {
         push_line(out, "unrewritten", "none");
@@ -1141,11 +1002,8 @@ fn push_unrewritten_lines(out: &mut String, unrewritten: &[UnrewrittenRef], mult
     }
 }
 
-/// One `unrewritten` entry: the holder's identity (`ref_outcome_text`), the field it lives in
-/// (`"$body"` for a body link) and the written form `mv` left untouched. `item.reference.other`
-/// is always `Resolved` here — `mv_reverse_scan` (`typdoc-core`) only ever builds an
-/// `UnrewrittenRef` from a reference it has already destructured as `Resolved` — but this reads
-/// defensively rather than assuming it, since nothing here enforces that invariant across crates.
+/// `item.reference.other` is always `Resolved` (`mv_reverse_scan` builds no other), but nothing
+/// across the crate boundary enforces it, so the unresolved form is rendered too.
 fn unrewritten_text(item: &UnrewrittenRef, multi_namespace: bool) -> String {
     let name = ref_outcome_text(&item.reference.other, multi_namespace);
     format!(
@@ -1154,10 +1012,6 @@ fn unrewritten_text(item: &UnrewrittenRef, multi_namespace: bool) -> String {
     )
 }
 
-/// The other end of a reference, text-mode: the resolved document's name (`ref_name_text`), or
-/// `(unresolved: {reason})` when it did not resolve. Shared by `unrewritten_text` (`mv`'s own
-/// `unrewritten:` lines) and `refs_text` (ticket 29) — both name "the document at the other end
-/// of this reference" and must render it identically, so this is the one place that does.
 fn ref_outcome_text(outcome: &RefOutcome, multi_namespace: bool) -> String {
     match outcome {
         RefOutcome::Resolved(name) => ref_name_text(name, multi_namespace),
@@ -1165,15 +1019,6 @@ fn ref_outcome_text(outcome: &RefOutcome, multi_namespace: bool) -> String {
     }
 }
 
-/// A document's identity, text-mode (the design's naming table, "In this project"/"In an
-/// imported project"): a coded document is its bare `key` when the project has exactly one
-/// namespace, `namespace:key` (e.g. `chief:WF-7`) when it has several; anything else (no `key`
-/// at all) is its bare path either way — with a `project::` prefix in front when the name is of
-/// another project's document (decision 2's `imported-project` reason — not reachable by any
-/// fixture yet, since it needs the reverse-into-imports scan a separate part of this story leaves
-/// as a known gap; see `mv.rs`'s own test file). The `project::` prefix is a wholly separate
-/// concern — the imported project's own namespace count, not this one's — and is unaffected by
-/// `multi_namespace` either way (ticket 32).
 fn ref_name_text(name: &RefName, multi_namespace: bool) -> String {
     let mut out = String::new();
     if let Some(project) = &name.project {
@@ -1192,10 +1037,6 @@ fn ref_name_text(name: &RefName, multi_namespace: bool) -> String {
     out
 }
 
-/// `findings:`, listing its entries or the word `none` (contract, `mv` (plain)) — the same
-/// schema-satisfaction check `mv --json` already carries (`report.findings`), one line per
-/// finding rather than a count, since a caller reading the text at all is reading it to see what
-/// to go fix.
 fn push_findings_lines(out: &mut String, findings: &[Finding]) {
     if findings.is_empty() {
         push_line(out, "findings", "none");
@@ -1208,11 +1049,7 @@ fn push_findings_lines(out: &mut String, findings: &[Finding]) {
     }
 }
 
-/// One finding, text-mode, for `mv`'s own `findings:` block: `<path>[#field]: <rule> <level>:
-/// <message>`. No shared convention exists yet for a finding's text-mode line — plain/`--schemas`
-/// `validate`'s own text mode is a different ticket, not built on this branch — so this is `mv`'s
-/// own, deterministic rendering, built from the same [`Finding`] shape `--json` already exposes
-/// (`finding_json`).
+/// `mv`'s own finding line; `validate` prints its findings as a table instead (`validate_text`).
 fn finding_text(finding: &Finding) -> String {
     let mut out = finding.path.clone();
     if let Some(field) = &finding.field {
@@ -1237,20 +1074,12 @@ fn validate(
     namespace: Option<&str>,
 ) -> Result<ValidateReport, Error> {
     let (root, args) = validate_args(deps.env, documents)?;
-    // A config error stops here today (`Error::ConfigErrors`, see `config::Report`'s own
-    // comment on why), before `project.validate` below ever runs: nothing reaches it as a
-    // finding yet. This `?` is where a config error that answered the design's question on its
-    // own, "does it make checking impossible?", with no, would instead let the project load and
-    // reach `validate`'s report. This is also `--audit`'s own "unless the config itself is
-    // invalid" exception (design, Audit mode): a config error still ends here with its own exit
-    // code, before `project.validate` ever produces a report for `audit` to make exit 0.
+    // A config error ends the run here, before a report exists, so `--audit` does not turn it
+    // into exit 0 (SPC-2).
     let project = Project::load(&root, deps.env)?;
     project.validate(&args, schemas, strict, audit, namespace, deps.env)
 }
 
-/// The project every argument is read against, found from the first argument as `get` finds
-/// it, and the arguments themselves. An on-disk argument after the first is read against that
-/// same, already-known root rather than walking up from its own folder again.
 fn validate_args(env: &dyn Env, raw: &[OsString]) -> Result<(PathBuf, Vec<DocumentArg>), Error> {
     let Some((first, rest)) = raw.split_first() else {
         return Ok((discover(env)?, Vec::new()));
@@ -1266,13 +1095,8 @@ fn validate_args(env: &dyn Env, raw: &[OsString]) -> Result<(PathBuf, Vec<Docume
     Ok((root, args))
 }
 
-/// `validate`'s own outcome: the report on standard output whether or not it is favourable
-/// (design, JSON output), with exit 2 when a finding is an error and 0 otherwise — except under
-/// `--audit`, whose exit code is 0 unless the config itself is invalid (design, Audit mode), and
-/// a config error never reaches this far: it ends the run before a report exists (`validate`'s
-/// own comment on its `?`). `json` chooses `--json`'s shape; otherwise `--audit` keeps its own
-/// summary text (unchanged, ticket 20), and plain/`--schemas` get `validate_text`'s one line per
-/// finding.
+/// The report is a verdict, printed on standard output whatever it says (SPC-12); `--audit`
+/// exits 0 (SPC-2).
 fn validate_outcome(report: &ValidateReport, json: bool) -> Outcome {
     let code = if report.audit.is_some() {
         0
@@ -1295,18 +1119,8 @@ fn validate_outcome(report: &ValidateReport, json: bool) -> Outcome {
     }
 }
 
-/// The text form of plain `validate` and `validate --schemas` (ticket 20, header row added by
-/// M-16), built from the same finding shape `--json` already carries. A header row (`path`,
-/// `level`, `rule`, `message` — matching `finding_json`'s own field names exactly; `path` even
-/// though the printed value can be `path:line:col`, since that is still the `path` field with a
-/// position folded in), then one line per finding, rendered with `render_table` — the same
-/// column-aligned, two-space-separated shape `list_table` uses, each column padded to its widest
-/// entry across every finding *and* the header labels. A finding with no known position prints
-/// its bare `path`, the same value `--json` gives `line`/`col` when they are absent
-/// (`finding_json`). No findings at all is not a "clean" line — decided (ticket 20, following
-/// `list`'s own precedent, extended by M-16 to the header too): `render_table` returns an empty
-/// string when there is nothing to list, so neither a header nor any row prints, and the exit
-/// code alone carries a clean result.
+/// The columns are named and ordered as `finding_json`'s fields, with the position folded into
+/// `path`. No findings prints nothing: the exit code carries a clean result (SPC-5).
 fn validate_text(report: &ValidateReport) -> String {
     let header = vec![
         "path".to_owned(),
@@ -1366,17 +1180,9 @@ fn validate_json(report: &ValidateReport) -> Json {
                 "no_frontmatter": audit.no_frontmatter.len(),
             }),
         );
-        // Beside `unreported`, not inside it (design, the paragraph beginning "The summary of
-        // `validate`"): an overlapping file is reported under `collections.overlap`, so it is
-        // not outside `findings`, which is what `unreported` means. Contract item 8's own
-        // accounting equation reads `summary.overlapping` directly, so this is the number a
-        // caller who only reads the summary needs to reconcile the run.
+        // `overlapping` and `not_read` sit beside `unreported`, not in it: both are reported in
+        // `findings` (SPC-12).
         summary.insert("overlapping".to_owned(), json!(audit.overlapping.len()));
-        // Beside `unreported` and `overlapping` for the same reason as `overlapping` itself:
-        // every one of these is already reported in `findings` (`files.unreadable` or
-        // `files.leftover`), so it is not `unreported`. Without it the account a reader takes
-        // from the summary would be short by every entry the run skipped (design, the
-        // paragraph on `not_read`).
         summary.insert("not_read".to_owned(), json!(audit.not_read.len()));
     }
     let findings: Vec<Json> = report.findings.iter().map(finding_json).collect();
@@ -1389,12 +1195,7 @@ fn validate_json(report: &ValidateReport) -> Json {
     Json::Object(object)
 }
 
-/// The `audit` object of `--json`'s report (design, JSON output, "Audit"): `collections`, one
-/// `{ "name", "documents" }` per collection of the project, sorted by name (already sorted by
-/// `AuditReport::collections`); `uncollected` and `no_frontmatter`, the sorted `path` of every file
-/// the design names; `overlapping`, one `{ "path", "collections" }` per file, sorted by path; and
-/// `not_read`, one `{ "path", "reason" }` per directory entry the run met and did not read,
-/// sorted by path.
+/// Every list keeps the order `AuditReport` gives it (SPC-12, Audit).
 fn audit_json(audit: &AuditReport) -> Json {
     let collections: Vec<Json> = audit
         .collections
@@ -1436,32 +1237,12 @@ fn severity_name(level: Severity) -> &'static str {
     }
 }
 
-/// The text form of `--audit` (design, Audit mode, the worked `typdoc audit: ...` example): a
-/// header, one line per collection (its document count and, grouped by rule, the count and level
-/// of its findings, or `clean` when it has none), and a line naming every file in no collection,
-/// every file with no frontmatter and every file matched by more than one collection, when the
-/// list is not empty. `overlapping` is not part of the design's worked example (contract item 8
-/// is what gives it its own list), so this function lists it the same way it already lists
-/// `no_frontmatter` beyond that example: one line, only when the list holds something, so the
-/// text's own total agrees with `summary.overlapping` in the JSON; each path is followed by the
-/// names of the collections that match it. The design's own worked example is not spaced by an
-/// algorithm this reads out consistently (`precedents`/`learnings`, the same length short of
-/// their suffix, are padded two different amounts there), so the padding here is this function's
-/// own, simple and deterministic: the name column is as wide as the
-/// longest collection name, plus two spaces, and every group is separated by " · " as the example
-/// shows. Design line 577 also promises "then details" after the summary for audit's text form,
-/// the per-finding lines plain `validate` prints one of per line; no command's plain-text output
-/// is built yet (every one of them still refuses the output without `--json`, this ticket's own
-/// `--audit` exception aside), so there is no such renderer yet to append here, and this stays a
-/// summary only, carried forward for whichever ticket gives `validate` its own text form.
 fn audit_text(report: &ValidateReport) -> String {
     let Some(audit) = &report.audit else {
         return String::new();
     };
-    // Contract item 8's equation, in text form: `checked.documents` plus every count of what was
-    // not checked, `uncollected`, `no_frontmatter`, `overlapping` and `not_read`, is the number
-    // of directory entries the run met. Leaving any one of them out of `total` would make a
-    // reader of the text see fewer entries than a reader of the JSON's `summary` does.
+    // The summary's account (SPC-12): leaving a count out would show fewer entries than
+    // `--json` does.
     let total = report.documents
         + audit.uncollected.len()
         + audit.no_frontmatter.len()
@@ -1530,15 +1311,9 @@ fn audit_text(report: &ValidateReport) -> String {
     out
 }
 
-/// One collection's part of the audit summary line: every rule that found something in it,
-/// grouped (a rule's findings in one collection always share one level, since `--audit` computes
-/// one effective level per rule per collection), as `{rule} {count} {level}`, joined by " · ".
-/// The design does not say how the groups are ordered, and its own worked example is not
-/// alphabetical (`frontmatter.types, body.links, body.mentions`); what it is consistent with is
-/// the order `findings` is already guaranteed to carry (by `path`, then position, then `rule`):
-/// a rule's group appears where its first finding does in that order, which is what `findings`
-/// is passed in here already sorted by (`report.findings`, ordered by `validate::order`). `clean`
-/// when the collection has no finding.
+/// A rule's group appears where its first finding does in `findings`, which is already ordered
+/// (SPC-12, Order). Its level is the first finding's: `--audit` gives a rule one level per
+/// collection.
 fn collection_summary(collection: &str, findings: &[Finding]) -> String {
     let mut order: Vec<&str> = Vec::new();
     let mut groups: BTreeMap<&str, (Severity, u32)> = BTreeMap::new();
@@ -1604,8 +1379,6 @@ fn exit_code(kind: ErrorKind) -> u8 {
     }
 }
 
-/// `{ "error": text, "code": code, "details": [] }`, the error object every failure starts
-/// from; a failure that has more to say adds to it.
 fn error_object(text: &str, code: u8) -> Map<String, Json> {
     let mut object = Map::new();
     object.insert("error".to_owned(), json!(text));
@@ -1614,7 +1387,6 @@ fn error_object(text: &str, code: u8) -> Map<String, Json> {
     object
 }
 
-/// The error object on standard error with `--json`, and one line of text without.
 fn failure_text(json: bool, code: u8, text: &str) -> Outcome {
     let stderr = if json {
         format!("{}\n", Json::Object(error_object(text, code)))
@@ -1628,8 +1400,6 @@ fn failure_text(json: bool, code: u8, text: &str) -> Outcome {
     }
 }
 
-/// The error object of a failure that ended a command, with the config errors as `details`, or
-/// with `candidates` when a key was ambiguous across namespaces.
 fn failure(json: bool, code: u8, error: &Error) -> Outcome {
     let mut object = error_object(&error.to_string(), code);
     match error {
@@ -1663,14 +1433,11 @@ fn failure(json: bool, code: u8, error: &Error) -> Outcome {
     }
 }
 
-/// Whether a heading at `level` belongs in a result cut off at `depth`: every heading when
-/// `depth` is absent, or only those no deeper than it. Shared by `toc_json` and `toc_outcome` so
-/// the two shapes cannot silently drift onto different headings from a copy of the same filter.
 fn within_depth(level: u8, depth: Option<u8>) -> bool {
     depth.is_none_or(|depth| level <= depth)
 }
 
-/// The headings down to `depth`, each with the `end` it has in the whole document.
+/// A heading's `end` is its end in the whole document, whatever `depth` leaves out (SPC-12).
 fn toc_json(toc: &Toc, depth: Option<u8>) -> Json {
     let headings: Vec<Json> = toc
         .headings
@@ -1697,26 +1464,14 @@ fn toc_json(toc: &Toc, depth: Option<u8>) -> Json {
     })
 }
 
-/// `toc`'s text-mode table: a header row (`line`, `end`, `level`, `heading`), then one row per
-/// heading down to `depth` — the same filter `toc_json` applies, so both shapes agree on which
-/// headings are listed.
-///
-/// Two different empty results, told apart on stderr (M-14, 2026-09-24): a document with no
-/// headings at all prints nothing at all, `list`'s own silent-empty precedent — but a document
-/// that HAS headings, all of them filtered out by `--depth`, says so on stderr in one line
-/// (`no headings at depth ≤ N (M heading(s) is/are deeper)`), stdout still empty, exit still 0.
-/// Silence alone can't tell "nothing here" from "wrong depth for this document," which is the
-/// gap M-14 closes; `--json` is unaffected either way.
+/// A document whose headings are all deeper than `depth` says so on stderr, so it is not taken
+/// for one with no headings (SPC-5).
 fn toc_outcome(toc: &Toc, depth: Option<u8>) -> Outcome {
     let headings: Vec<&Heading> = toc
         .headings
         .iter()
         .filter(|heading| within_depth(heading.level, depth))
         .collect();
-    // `within_depth` with `depth: None` keeps every heading, so a non-empty document's filtered
-    // result can only come up empty when `depth` is `Some` — this `if let` is what makes that
-    // the only way into the branch below, rather than a separate check the two conditions have
-    // to be kept in sync with by hand.
     if let Some(depth) = depth
         && headings.is_empty()
         && !toc.headings.is_empty()
@@ -1739,10 +1494,6 @@ fn toc_outcome(toc: &Toc, depth: Option<u8>) -> Outcome {
     }
 }
 
-/// Renders `headings` as a table with a header row, columns padded to the width their longest
-/// value takes (header included), the same two-space-separated, last-column-unpadded convention
-/// `list_table` uses for its own table. Empty when `headings` is empty: no header line for a
-/// document (or `--depth`) with nothing to show.
 fn toc_table(headings: &[&Heading]) -> String {
     if headings.is_empty() {
         return String::new();
@@ -1773,9 +1524,6 @@ fn toc_table(headings: &[&Heading]) -> String {
     out
 }
 
-/// One padded, trimmed row of `toc_table`: cells separated by two spaces, each padded to its
-/// column's width except the last, which is never padded (so a trailing `heading` column carries
-/// no dangling whitespace).
 fn push_toc_row(out: &mut String, cells: &[String; 4], widths: &[usize; 4]) {
     let mut line = String::new();
     for (i, cell) in cells.iter().enumerate() {
@@ -1791,13 +1539,6 @@ fn push_toc_row(out: &mut String, cells: &[String; 4], widths: &[usize; 4]) {
     out.push('\n');
 }
 
-/// `refs`'s text-mode shape (design.md, `typdoc refs`'s own worked example, header row added by
-/// M-16, corrected by ticket 29 to name the other document): a header row, then one line per
-/// reference — the document at the other end (`document`), the field it was found in
-/// (`field`), and, for the forward direction only, the target as it is written (`written`) — in
-/// the order `Project::refs` already gives them (respecting `--reverse` and `--field`, both
-/// applied before `refs_text` ever sees the report). No header and no output at all when there
-/// are no refs.
 fn refs_outcome(report: &RefsReport, multi_namespace: bool) -> Outcome {
     Outcome {
         code: 0,
@@ -1806,18 +1547,8 @@ fn refs_outcome(report: &RefsReport, multi_namespace: bool) -> Outcome {
     }
 }
 
-/// A header row, then one row per reference, rendered with `render_table` — the same
-/// column-aligned, two-space-separated shape `list_table` uses, each column padded to its widest
-/// entry across every reference *and* the header labels. No header and no output at all when
-/// there are no refs — `render_table` returns an empty string when there is nothing to list.
-///
-/// The first two columns are always `document` (`ref_outcome_text` — the resolved name, or
-/// `(unresolved: {reason})`) and `field`. `written` is a third column only for
-/// `RefsDirection::Out`: there, `written` can genuinely differ from the resolved `document` (an
-/// alias, a relative form), so it is real information. For `RefsDirection::In` (`--reverse`),
-/// `written` is only how the holder happened to write the ref back to the document already named
-/// on the command line — it adds nothing `document` doesn't already say, so it is dropped, header
-/// included (ticket 29).
+/// `written` is a column only for `out`: with `--reverse` it only repeats the document named on
+/// the command line (SPC-5).
 fn refs_text(report: &RefsReport, multi_namespace: bool) -> String {
     let forward = report.direction == RefsDirection::Out;
     let mut header = vec!["document".to_owned(), "field".to_owned()];
@@ -1842,8 +1573,6 @@ fn refs_text(report: &RefsReport, multi_namespace: bool) -> String {
     render_table(&header, &rows, listed_len)
 }
 
-/// `refs`' report: the document asked about, `direction`, and its references in the order
-/// `Project::refs` already gives them.
 fn refs_json(report: &RefsReport) -> Json {
     let refs: Vec<Json> = report
         .refs
@@ -1869,11 +1598,8 @@ fn direction_name(direction: RefsDirection) -> &'static str {
     }
 }
 
-/// One reference: the name of the document at the other end when it resolved, `unresolved`
-/// otherwise (never both — the ticket's own guarantee), plus `field`, `written` and, for a body
-/// link, `line` and `col`. Returns the object's own fields rather than `Json::Object` of them,
-/// so `mv`'s `unrewritten` (decision 17) can add `reason` to the same object instead of nesting
-/// one inside another.
+/// Returns the fields rather than an object, so `unrewritten_json` can add `reason` to the same
+/// object (SPC-12).
 fn reference_json(reference: &RefsReference) -> Map<String, Json> {
     let mut object = Map::new();
     match &reference.other {
@@ -1902,13 +1628,7 @@ fn reference_json(reference: &RefsReference) -> Map<String, Json> {
     object
 }
 
-/// `mv`'s own shape (decision 17): the document under its new name, in the same object `get`
-/// prints; `rewritten` (ticket 21, M-10h, additive to every field this already printed), one
-/// `{document, field, before, after}` per ref `mv` actually rewrote; `unrewritten`, the reference
-/// object `refs --reverse` uses (`reference_json`) with `reason` added; and `findings`, the
-/// finding object `validate` already prints. Built as JSON text rather than `serde_json::Value`,
-/// the same reason `document_json` is: `document` may hold a `number` whose digits
-/// `serde_json::Number` cannot carry unchanged.
+/// Built as JSON text for the same reason as `document_json` (SPC-12, The write commands).
 fn mv_json(report: &MvReport) -> Box<RawValue> {
     let rewritten: Vec<Box<RawValue>> = report.rewritten.iter().map(rewritten_json).collect();
     let unrewritten: Vec<Box<RawValue>> = report.unrewritten.iter().map(unrewritten_json).collect();
@@ -1925,10 +1645,6 @@ fn mv_json(report: &MvReport) -> Box<RawValue> {
     ])
 }
 
-/// One entry of `mv`'s `rewritten` (ticket 21): the holder's path, the field it lives in
-/// (`"$body"` for a body link), and its written form before and after — the full detail behind
-/// the text summary's count, per the contract's own reasoning for there being no `--verbose`
-/// flag (`git diff` or `--json` is where that detail lives).
 fn rewritten_json(item: &RewrittenRef) -> Box<RawValue> {
     raw(&json!({
         "document": item.document,
@@ -1938,8 +1654,6 @@ fn rewritten_json(item: &RewrittenRef) -> Box<RawValue> {
     }))
 }
 
-/// One entry of `mv`'s `unrewritten`: the reference object plus `reason`, one of the three
-/// decision 17 names.
 fn unrewritten_json(item: &UnrewrittenRef) -> Box<RawValue> {
     let mut object = reference_json(&item.reference);
     object.insert("reason".to_owned(), json!(reason_name(item.reason)));
@@ -1954,9 +1668,6 @@ fn reason_name(reason: UnrewrittenReason) -> &'static str {
     }
 }
 
-/// The name of a document: `path` always, `namespace` unless the file is outside every
-/// namespace folder, `key` only for a coded document, `project` only for a document of an
-/// imported project (design: "`project`... is absent for a document of this project").
 fn document_name(
     path: &str,
     namespace: Option<&str>,
@@ -1977,11 +1688,9 @@ fn document_name(
     object
 }
 
-/// A document as the design's JSON output has it. It is built as JSON text rather than as a
-/// `serde_json::Value` for one reason: a `number` is printed with the digits written in the
-/// document, and no `serde_json::Number` holds `1e3` as `1e3` — it is either converted to
-/// `1000.0` or, with the digits kept, written back with an exponent sign the file never had.
-/// Everything else here is an ordinary value turned into its JSON text first.
+/// Built as JSON text so that a `number` keeps the digits written in the document (SPC-12): no
+/// `serde_json::Number` holds `1e3` as `1e3`. It is either converted to `1000.0` or, with the
+/// digits kept, written back with an exponent sign the file never had.
 fn document_json(document: &Document) -> Box<RawValue> {
     let name = document_name(
         &document.path,
@@ -1998,10 +1707,9 @@ fn document_json(document: &Document) -> Box<RawValue> {
         .iter()
         .map(|(name, value)| (&**name, value_json(value)))
         .collect();
-    // A collection name is never empty (`config.rs`'s `plain_name` refuses one), so an empty
-    // string here can only mean `mv` moved the document out of every collection (decision 16,
-    // "Allowed, and said out loud"): there is then no schema and no code to report, and printing
-    // `""` for either would claim a collection that does not exist rather than say there is none.
+    // A collection name is never empty (`config.rs`'s `plain_name` refuses one), so an empty one
+    // means `mv` moved the document out of every collection (SPC-2): `""` would name a collection
+    // that does not exist.
     if !document.collection.is_empty() {
         object.push(("code", raw(&json!(document.code))));
         object.push(("collection", raw(&json!(document.collection))));
@@ -2014,8 +1722,7 @@ fn document_json(document: &Document) -> Box<RawValue> {
 fn value_json(value: &Value) -> Box<RawValue> {
     match value {
         Value::Text(text) => raw(&json!(text)),
-        // A field written with no value at all, kept apart from one written as the empty
-        // string (design, "Document files" and "JSON output": "the first is `null`").
+        // Kept apart from a field written as `""` (SPC-12).
         Value::Empty => raw(&json!(null)),
         Value::List(items) => raw(&json!(items)),
         // The one value that does not go through `serde_json::Value`: the digits as the
@@ -2026,12 +1733,10 @@ fn value_json(value: &Value) -> Box<RawValue> {
     }
 }
 
-/// `value` as the JSON text that stands for it.
 fn raw(value: &Json) -> Box<RawValue> {
     raw_text(value.to_string())
 }
 
-/// `text`, which is already JSON, as a value that can be put inside another.
 #[expect(
     clippy::expect_used,
     reason = "every caller passes either the printed form of a `serde_json::Value`, or an \
@@ -2042,7 +1747,6 @@ fn raw_text(text: String) -> Box<RawValue> {
     RawValue::from_string(text).expect("assembled from JSON")
 }
 
-/// A JSON object of values that are already JSON text, in the order given.
 fn raw_object(entries: &[(&str, Box<RawValue>)]) -> Box<RawValue> {
     let parts = entries
         .iter()
@@ -2050,12 +1754,10 @@ fn raw_object(entries: &[(&str, Box<RawValue>)]) -> Box<RawValue> {
     joined('{', parts, '}')
 }
 
-/// A JSON array of values that are already JSON text, in the order given.
 fn raw_array(items: &[Box<RawValue>]) -> Box<RawValue> {
     joined('[', items.iter().map(|item| item.get().to_owned()), ']')
 }
 
-/// `parts`, each of them JSON text, separated by commas and wrapped in `open` and `close`.
 fn joined(open: char, parts: impl Iterator<Item = String>, close: char) -> Box<RawValue> {
     let mut text = String::from(open);
     for (at, part) in parts.enumerate() {
