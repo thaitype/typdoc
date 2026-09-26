@@ -377,7 +377,7 @@ fn state_retired_does_not_stop_a_read_where_its_predecessor_as_a_config_error_di
 /// `validate` reports nothing. `new.rs`'s `new_never_reissues_a_number_whose_document_was_deleted`
 /// runs `new` itself.
 #[test]
-fn the_measurement_behind_decision_13_deriving_last_reissues_a_retired_key_silently() {
+fn deriving_last_reissues_a_retired_key_silently() {
     let schema = r#"{ "name": "wf", "code": "WF", "fields": { "title": { "type": "string" } } }"#;
     let files = [
         (
