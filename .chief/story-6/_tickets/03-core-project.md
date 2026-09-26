@@ -1,5 +1,5 @@
 Type: implementation
-Status: open
+Status: claimed
 Blocked by: 02, and the batch before it has merged, and the pilot's judgment is accepted
 
 # Ticket 03 — `typdoc-core/src/project.rs`

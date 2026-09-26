@@ -12,4 +12,9 @@ No code or comment changes. On `origin/main` after every batch has merged:
 - every Investigate item from every batch is listed in one place with its decision, or named as
   still waiting for one.
 
+Known so far: `crates/typdoc-core/src/json_body.rs`, the test named
+`a_document_with_no_frontmatter_block_at_all_is_reported_as_its_own_case` asserts
+`MissingContentType` (pilot batch). Deferred by decision to a later story; list it as deferred,
+not as waiting.
+
 Done when: that record is reported. The story is accepted outside the loop.
