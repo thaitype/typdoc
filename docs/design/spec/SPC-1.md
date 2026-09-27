@@ -2,6 +2,7 @@
 title: Validation rules explained
 status: active
 migrated_from: docs/archived-design/design.md#validation-rules
+follows: [PRN-2, PRN-3, PRN-7]
 ---
 
 Every rule `typdoc validate` can report falls into one of two groups.

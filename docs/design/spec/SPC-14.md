@@ -2,6 +2,7 @@
 title: Refs explained
 status: active
 migrated_from: docs/archived-design/design.md#refs
+follows: [PRN-2, PRN-6]
 ---
 
 Refs come from two places, frontmatter fields and body links, and both resolve through the same

@@ -2,6 +2,7 @@
 title: Config errors explained
 status: active
 migrated_from: docs/archived-design/design.md#validation-rules
+follows: [PRN-8]
 ---
 
 A config error is reported when `.typdoc/config.json` or a collection file loads, not when a

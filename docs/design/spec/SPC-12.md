@@ -2,6 +2,7 @@
 title: JSON output explained
 status: active
 migrated_from: docs/archived-design/design.md#json-output
+follows: [PRN-2, PRN-8]
 ---
 
 Every command accepts `--json`, and its result is one JSON object on standard output. Commands

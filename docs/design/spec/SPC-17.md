@@ -2,6 +2,7 @@
 title: Collections explained
 status: active
 migrated_from: docs/archived-design/design.md#config-typdocconfigjson
+follows: [PRN-1, PRN-2, PRN-3, PRN-5, PRN-6, PRN-7]
 ---
 
 A collection is one file in `.typdoc/collections/` that maps files to a schema: which files belong
