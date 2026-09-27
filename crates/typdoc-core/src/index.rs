@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::config::{LEFTOVER_TEMP_FILE, NAME_NOT_UTF8, Namespace, SYMBOLIC_LINK, config_file};
 use crate::error::Error;
 use crate::fs::is_temp_name;
-use crate::template::{Segment, Step, Template};
+use crate::template::{NameState, Segment, Step, Template};
 
 /// A collection as the index reads it.
 pub struct Member {
@@ -22,6 +22,11 @@ pub struct Entry {
     pub namespace: usize,
     pub file: PathBuf,
     pub key: Option<String>,
+    /// The slug after the key in the file name; `None` for a name without one, and for a
+    /// document without a code.
+    pub slug: Option<String>,
+    /// `None` for a document without a code.
+    pub name_state: Option<NameState>,
 }
 
 /// Every document of the project by its path from the project folder, as the names are on disk,
@@ -126,7 +131,8 @@ impl Index {
                             }
                         }
                         MapEntry::Vacant(slot) => {
-                            let key = member.template.key(&below);
+                            let name = member.template.read(&below);
+                            let key = name.as_ref().map(|name| name.key.clone());
                             if let Some(key) = &key {
                                 index
                                     .keys
@@ -139,6 +145,8 @@ impl Index {
                                 namespace,
                                 file,
                                 key,
+                                slug: name.as_ref().and_then(|name| name.slug.clone()),
+                                name_state: name.map(|name| name.state),
                             });
                         }
                     }

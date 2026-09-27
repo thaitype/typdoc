@@ -1,7 +1,7 @@
 ---
 title: Config errors catalog
 content_type: json
-explained_by: [SPC-6]
+explained_by: [SPC-6, SPC-17]
 ---
 
 {
@@ -24,8 +24,12 @@ explained_by: [SPC-6]
     { "id": "config.rule-unknown", "reported_when": "a rule name or option is unknown" },
     { "id": "config.rule-always-on", "reported_when": "an always-on rule is configured" },
     {
+      "id": "config.collection-slug",
+      "reported_when": "a collection's `slug` is not `optional`, `required` or `none`, is not a string, or is set in a collection whose schema has no code"
+    },
+    {
       "id": "config.match-template",
-      "reported_when": "a `match` template breaks the placeholder rules"
+      "reported_when": "a `match` template breaks the placeholder rules, or has a digit or `-` right after `{key}` in a collection whose `slug` is not `none`"
     },
     {
       "id": "config.coded-schema-shared",

@@ -357,3 +357,69 @@ fn a_coded_schema_with_a_wildcard_or_no_key_or_two_is_refused() {
         );
     }
 }
+
+fn coded_with(pattern: &str, slug: Option<&str>, files: &[&str]) -> Scratch {
+    let mut collection = json!({ "match": pattern, "schema": "ticket.json" });
+    if let Some(slug) = slug {
+        collection["slug"] = json!(slug);
+    }
+    let project = Scratch::project(&[]);
+    project.file(".typdoc/collections/tickets.json", &collection.to_string());
+    project.file(
+        "ticket.json",
+        r#"{ "name": "ticket", "code": "WF", "fields": {} }"#,
+    );
+    for file in files {
+        project.file(file, "");
+    }
+    project
+}
+
+fn key_of(project: &Scratch, path: &str) -> Value {
+    let ran = get(project.path(), path);
+    assert_eq!(ran.code, 0, "{path}: {}", ran.stderr);
+    ran.stdout_json()["document"]["key"].clone()
+}
+
+/// The text after `{key}` cannot be told from a slug, so the default `optional` and `required`
+/// refuse to load rather than read the same files differently.
+#[test]
+fn a_digit_or_a_dash_right_after_the_key_is_config_match_template_unless_slug_is_none() {
+    for pattern in ["{key}1.md", "{key}-notes.md"] {
+        for slug in [None, Some("optional"), Some("required")] {
+            let project = coded_with(pattern, slug, &["WF-31.md"]);
+
+            let ran = get(project.path(), "WF-31.md");
+
+            assert_eq!(ran.code, 2, "{pattern} {slug:?}: {}", ran.stderr);
+            let object = ran.stderr_json();
+            assert_eq!(
+                object["details"][0]["rule"],
+                json!("config.match-template"),
+                "{object}"
+            );
+            assert!(
+                object["details"][0]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("set `slug` to `none`"),
+                "{object}"
+            );
+        }
+    }
+}
+
+#[test]
+fn under_none_a_digit_or_a_dash_after_the_key_reads_names_as_before_slugs() {
+    let digit = coded_with("{key}1.md", Some("none"), &["WF-31.md", "WF-3111.md"]);
+    let dash = coded_with(
+        "{key}-notes.md",
+        Some("none"),
+        &["WF-3-notes.md", "WF-4-x-notes.md"],
+    );
+
+    assert_eq!(key_of(&digit, "WF-31.md"), json!("WF-3"));
+    assert_eq!(key_of(&digit, "WF-3111.md"), json!("WF-311"));
+    assert_eq!(key_of(&dash, "WF-3-notes.md"), json!("WF-3"));
+    assert!(!found(&dash, "WF-4-x-notes.md"));
+}

@@ -61,6 +61,7 @@ collection's name.
 | --- | --- | --- |
 | `match` | yes | Which files belong to the collection, relative to each namespace folder |
 | `schema` | yes | Path to the schema, from the project folder |
+| `slug` | no | Numbered schemas only: whether a file name carries a slug after its key. `optional` (default), `required` or `none`. See [Slugs](#slugs) |
 | `validation` | no | Rule levels for this collection's documents, merged over `validation.global` |
 
 In `match`:
@@ -74,6 +75,32 @@ Wildcards don't enter folders whose names start with `.`, but a folder named exp
 collections is an error.
 
 Two collections can't share a numbered schema.
+
+### Slugs
+
+A numbered document's file name may carry a slug after its key: `tickets/WF-8-lock-order.md` is
+the document `WF-8`, with the slug `lock-order`. The key identifies the document; the slug is
+only there for a person reading the folder. The number is every digit after the code, so
+`WF-12-x.md` is `WF-12` with the slug `x`, and `WF-1-2x.md` is `WF-1` with the slug `2x`. In
+`{key}/README.md` the slug goes on the folder: `WF-1-x/README.md`.
+
+A slug may hold any characters a file name can, in any language, except whitespace, `/`, `#` and
+`:`, and it isn't empty.
+
+The collection's `slug` says which form it expects:
+
+| `slug` | Expected file names |
+| --- | --- |
+| `optional` (default) | `WF-1.md` and `WF-1-<slug>.md` |
+| `required` | `WF-1-<slug>.md` |
+| `none` | `WF-1.md` |
+
+A file in the other form, or with a slug that breaks the character rule, is still the document
+its key names: it's listed and checked, and refs to it resolve. `filename.pattern` reports its
+name.
+
+A `match` with a digit or `-` right after `{key}` (`{key}-notes.md`) can't tell a slug from its
+own text. It needs `"slug": "none"`; otherwise it's `config.match-template`.
 
 ## Schemas
 

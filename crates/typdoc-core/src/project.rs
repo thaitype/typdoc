@@ -31,7 +31,7 @@ use crate::refs;
 use crate::schema::{self, Auto, Field, FieldType, Resolved};
 use crate::scope::{self, Scope, Source};
 use crate::state;
-use crate::template::{Step, Template};
+use crate::template::{NameState, Step, Template};
 use crate::validate::{self, DocName, Finding, Severity, ValidateScope};
 
 /// The folder that holds `.typdoc/config.json`: `TYPDOC_DIR` when it is set, and otherwise
@@ -357,8 +357,23 @@ impl Project {
                     ),
                 }
             }
+            if collection.slug.is_some() && schema.code.is_none() {
+                report.add(
+                    "config.collection-slug",
+                    &collection.path,
+                    format!(
+                        "`slug` is set, and the schema `{}` has no code: only a coded document's \
+                         file name carries a slug",
+                        collection.schema
+                    ),
+                );
+            }
             let Some(template) = template else { continue };
-            match template.bind(&collection.pattern, schema.code.as_deref()) {
+            match template.bind(
+                &collection.pattern,
+                schema.code.as_deref(),
+                collection.slug.unwrap_or_default(),
+            ) {
                 Ok(template) => members.push(Member {
                     name: collection.name.clone(),
                     template,
@@ -1118,11 +1133,18 @@ impl Project {
             name,
         ));
         if !findings.iter().any(|f| f.rule == "frontmatter.parse") {
+            let below = strip_namespace_folder(path, &self.config.namespaces[namespace_idx].folder);
+            let file_name = key
+                .is_some()
+                .then(|| self.members[collection_idx].template.read(&below))
+                .flatten();
             let entry = Indexed {
                 collection: collection_idx,
                 namespace: namespace_idx,
                 file: file.to_owned(),
                 key,
+                slug: file_name.as_ref().and_then(|name| name.slug.clone()),
+                name_state: file_name.map(|name| name.state),
             };
             // This document is not in `self.index` yet; `ref_project_for_candidate` scans it
             // anyway, so a document on disk that names its key or path sees it for this scan.
@@ -1309,7 +1331,7 @@ impl Project {
                       `None` for a shape a bound coded template cannot have"
         )]
         let below = template
-            .render(&key)
+            .render(&key, None)
             .expect("a bound coded template always renders its own key");
         let namespace_folder = &self.config.namespaces[namespace_idx].folder;
         let relative = if namespace_folder.is_empty() {
@@ -2424,6 +2446,24 @@ impl Project {
                     "the key `{key}` is also used in this namespace by `{}`",
                     others.join("`, `")
                 ),
+            ));
+        }
+        if let Some(message) = name_state_message(entry, &collection.name)
+            && let Some(level) = validate::effective_level(
+                Level::Error,
+                "filename.pattern",
+                &self.config.validation,
+                &collection.validation,
+                strict,
+                audit,
+            )
+        {
+            findings.push(validate::finding(
+                &name,
+                level,
+                "filename.pattern",
+                None,
+                message,
             ));
         }
         if !findings.iter().any(|f| f.rule == "frontmatter.parse") {
@@ -5070,6 +5110,35 @@ fn reserved_alias_finding(file: &str, alias: &str) -> Finding {
             "the import name `{alias}` is a URL scheme (`http`, `https`, `mailto` and `file` are reserved), and the two would be told apart wrongly"
         ),
     )
+}
+
+/// Why a coded document's file name is not in the form its collection's `slug` expects, if it
+/// is not. The file is still the document its key names (SPC-17).
+fn name_state_message(entry: &Indexed, collection: &str) -> Option<String> {
+    let key = entry.key.as_deref()?;
+    match (entry.name_state?, entry.slug.as_deref()) {
+        (NameState::Expected, _) => None,
+        (NameState::UnexpectedForm, None) => Some(format!(
+            "the file name has no slug after the key `{key}`, and the collection `{collection}` \
+             has `slug` set to `required`: it needs one"
+        )),
+        (NameState::UnexpectedForm, Some("")) => Some(format!(
+            "the file name has a `-` after the key `{key}`, and the collection `{collection}` has \
+             `slug` set to `none`: it takes no slug"
+        )),
+        (NameState::UnexpectedForm, Some(slug)) => Some(format!(
+            "the file name has the slug `{slug}` after the key `{key}`, and the collection \
+             `{collection}` has `slug` set to `none`: it takes no slug"
+        )),
+        (NameState::InvalidSlug, Some("") | None) => Some(format!(
+            "the file name has a `-` after the key `{key}` and no slug after it: a slug is not \
+             empty"
+        )),
+        (NameState::InvalidSlug, Some(slug)) => Some(format!(
+            "the slug `{slug}` after the key `{key}` holds whitespace, `/`, `#` or `:`, which a \
+             slug cannot hold"
+        )),
+    }
 }
 
 fn read_template(collection: &Collection, report: &mut Report) -> Option<Template> {

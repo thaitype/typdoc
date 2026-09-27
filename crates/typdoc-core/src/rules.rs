@@ -41,6 +41,7 @@ pub const RULES: &[&str] = &[
     "config.collection-schema",
     "config.rule-unknown",
     "config.rule-always-on",
+    "config.collection-slug",
     "config.match-template",
     "config.coded-schema-shared",
     "config.schema-url",
