@@ -131,8 +131,8 @@ from the top of the file, frontmatter included, so it matches editors and file t
 at a line feed, at a carriage return and a line feed together, or at a carriage return alone, as
 in CommonMark, and a line ending at the end of the file does not begin another line, so `a\nb`
 and `a\nb\n` both have two lines. Every command that reports a line counts this way, and the
-frontmatter block is found by the same count. `col` counts Unicode scalar values, so a Thai
-consonant, a Thai vowel or tone mark, an emoji and a tab each count as 1. That agrees with a
+frontmatter block is found by the same count. `col` counts Unicode scalar values, so a
+consonant, a combining vowel or tone mark, an emoji and a tab each count as 1. That agrees with a
 UTF-16 count, the Language Server Protocol default, except after a character outside the Basic
 Multilingual Plane, such as an emoji, which UTF-16 counts as 2. `col` marks where the offending
 element starts: for a link, its `[`, or the `!` before it for an image. `--json` carries no byte

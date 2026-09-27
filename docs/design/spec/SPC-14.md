@@ -130,12 +130,12 @@ The `slug` of a heading follows GitHub's algorithm, so a link that passes `valid
 GitHub. Take the heading's plain text (text and code spans; image alt text, line breaks and inline
 HTML contribute nothing), lowercase it, delete punctuation other than `-` and `_`, symbols and other
 characters that are not letters or digits, and turn each space into `-`. Marks count as part of a
-letter, so Thai vowels and tone marks stay; non-ASCII text is kept as written, never transliterated.
-A slug that repeats an earlier one in the same document gets `-1`, `-2` and so on, skipping any
-result already taken (`Dup`, `Dup`, `Dup 1` give `dup`, `dup-1`, `dup-1-1`). Every heading counts,
-including those inside block quotes and list items but not those inside fenced code, so the
-numbering matches GitHub's. A heading whose slug is empty (`## !!!`, `## 😀`) is not special: the
-first gets `""` and cannot be linked to, the next `-1`, then `-2`. In a link, the fragment is
+letter, so a combining vowel or tone mark stays; non-ASCII text is kept as written, never
+transliterated. A slug that repeats an earlier one in the same document gets `-1`, `-2` and so on,
+skipping any result already taken (`Dup`, `Dup`, `Dup 1` give `dup`, `dup-1`, `dup-1-1`). Every
+heading counts, including those inside block quotes and list items but not those inside fenced code,
+so the numbering matches GitHub's. A heading whose slug is empty (`## !!!`, `## 😀`) is not special:
+the first gets `""` and cannot be linked to, the next `-1`, then `-2`. In a link, the fragment is
 percent-decoded (a `%` not followed by two hex digits is kept as written) and then compared with the
 slug without regard to case. A heading's slug is used only for anchors; it is not the slug in a
 coded document's file name (`SPC-17`), which the caller chooses. A fixture of headings rendered by

@@ -8,8 +8,8 @@ the number in a key, which it issues so that no two documents share one.
 
 ## Why
 
-A name is how a person or an agent finds a document again, and only the caller knows what it
-should say. A name typdoc derives, from a title for example, has to guess: a title in Thai or with
+A name is how a person or an agent finds a document again, and only the caller knows what it should
+say. A name typdoc derives, from a title for example, has to guess: a non-English title or one with
 an emoji has no obvious file name, and a derived name changes meaning when the title does. A name
 typdoc corrects is a name the caller did not choose and may not recognise.
 

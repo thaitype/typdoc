@@ -11,7 +11,7 @@ template's public functions. They do not check private helpers.
   - `WF-1-2x.md` is `WF-1` + `2x`;
   - `WF-1-v1.2.md` gives the slug `v1.2`;
   - `WF-1-.md`, `WF-1-a b.md`, `WF-1-a#b.md` and `WF-1-a:b.md` are members with `InvalidSlug`;
-  - a slug in Thai is a valid member;
+  - a non-English slug is a valid member;
   - `WF-1x.md` is not a member;
   - `{key}/README.md` with the folder `WF-1-x/`;
   - `render` is the inverse of `key` with a slug and without one;
