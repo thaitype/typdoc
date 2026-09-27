@@ -24,7 +24,7 @@ than `~/.local/bin`. The script reads them, not `curl`, so put them after the pi
 `sh`:
 
 ```console
-$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.4.0 sh
+$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.5.0 sh
 $ curl -fsSL https://typdoc.thaitype.dev/install | INSTALL_DIR="$HOME/bin" sh
 ```
 
