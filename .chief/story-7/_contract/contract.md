@@ -76,10 +76,9 @@ other.
 - The finding is placed at the ref, like `refs.moved`. Default level `warn`
   (`effective_level(Level::Warn, "refs.slug", …)`).
 - Message: `` `story-2:WF-5-json-output-shape` refers to `WF-5`, whose file is now `WF-5-json-shapes.md` ``.
-- The spec does not settle what `new` and `set` do with it before they write. They do not check
-  `refs.slug`, so a stale slug never refuses a write; it is `validate`'s. SPC-2's "What `new`
-  and `set` check before they write" lists only `imports.absent` and `refs.moved` as
-  level-dependent, and it stays so.
+- `new` and `set` check it before they write, as they check `refs.moved` (`SPC-2`, What `new`
+  and `set` check before they write): reported at its level, refusing the write only at `error`.
+  At the default `warn` a stale slug never refuses a write.
 
 ## `new --slug`
 
@@ -137,8 +136,8 @@ other.
 
 ## Mode
 
-Standard mode (no mandatory TDD or review subagent per ticket). Each ticket is built by a
-subagent and verified by me by running the gates, reading the diff, and planting a fault in each
-new check to see it go red. Every commit keeps `typdoc validate`, fmt, clippy, `scripts/test.sh`
-and the public-text check green. A catalog id lands in the same commit as the code that reports
-it.
+Strict mode: each ticket is built test-first at the seams the testing decisions name, and
+`/chief-review-code` runs before each commit. On top of that I verify every ticket myself: gates,
+the diff, and a planted fault in each new check to see it go red. Every commit keeps
+`typdoc validate`, fmt, clippy, `scripts/test.sh` and the public-text check green. A catalog id
+lands in the same commit as the code that reports it.

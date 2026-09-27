@@ -27,6 +27,8 @@ template's public functions. They do not check private helpers.
   - `refs.slug` fires on a stale slug and on a target with no slug;
   - it never fires on a key-only ref;
   - its level can be raised, lowered and turned off;
+  - before a write, `new` and `set` refuse on a stale slug only when `refs.slug` is `error`, and
+    write at the default `warn`;
   - `refs.codedByPath` does not fire on a full-form ref.
   `fixtures/broken/refs.slug/`.
 - **`filename.pattern`.** `validate.rs`: `WF-1.md` under `required`, `WF-1-x.md` under `none`,
