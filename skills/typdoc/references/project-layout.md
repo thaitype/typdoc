@@ -1,6 +1,6 @@
 # Reading a typdoc project
 
-typdoc 0.3.0. How to read what a project declares, so you know what its documents may hold. This
+typdoc 0.3.1. How to read what a project declares, so you know what its documents may hold. This
 page is for understanding an existing project, not for designing one.
 
 ## The layout
@@ -186,5 +186,5 @@ document's number from being issued again, so:
 
 ## Remote schemas
 
-A schema path may be an `http(s)://` URL in the design, but 0.2.0 cannot fetch one: an unpinned
+A schema path may be an `http(s)://` URL in the design, but typdoc cannot fetch one: an unpinned
 remote schema is the config error `config.schema-unpinned`. Use local schema files.

@@ -1,7 +1,7 @@
 # Validation
 
-typdoc 0.3.0. `typdoc validate` checks the project, or the documents named, against its schemas
-and rules. Every finding carries a `rule` id; this page lists every id 0.3.0 can report, what it
+typdoc {{version}}. `typdoc validate` checks the project, or the documents named, against its schemas
+and rules. Every finding carries a `rule` id; this page lists every id {{version}} can report, what it
 means, and the usual fix.
 
 ## Running it
@@ -125,7 +125,7 @@ finding in `validate`'s report.
 | Id | Reported when |
 | --- | --- |
 | `config.parse` | `config.json` cannot be parsed |
-| `config.version` | `version` is missing or unknown (0.2.0 knows `1`) |
+| `config.version` | `version` is missing or unknown (`1` is the only version) |
 | `config.unknown-key` | `config.json` or a collection file has an unknown key |
 | `config.collection-parse` | a collection file cannot be parsed |
 | `config.collection-name` | a collection file's name uses anything but ASCII letters, digits, `-`, `_` |
@@ -140,15 +140,15 @@ finding in `validate`'s report.
 | `config.namespace-name` | a namespace folder's name uses anything but ASCII letters, digits, `-`, `_`, or is `default`, `http`, `https`, `mailto`, `file` |
 | `config.namespace-nested` | a namespace folder holds its own `.typdoc` |
 | `config.schema-url` | a schema URL uses a scheme other than `http://` or `https://` |
-| `config.schema-unpinned` | a remote schema has no pin. **0.2.0 cannot fetch remote schemas**, so any unpinned `http(s)://` schema is this error |
+| `config.schema-unpinned` | a remote schema has no pin. **typdoc cannot fetch remote schemas**, so any unpinned `http(s)://` schema is this error |
 | `config.vendor-missing` | a pinned copy of a remote schema is missing |
 | `config.vendor-edited` | a pinned copy was edited by hand |
 | `config.config-dir` | `TYPDOC_CONFIG_DIR` is set but is not an absolute path to an existing directory |
 
-The messages of `config.vendor-*` mention `typdoc pull`; that command does not exist in 0.2.0.
+The messages of `config.vendor-*` mention `typdoc pull`; that command does not exist yet.
 Restore the pinned copy from version control instead.
 
-## Known gaps in 0.2.0
+## Known gaps in {{version}}
 
 - `refs --reverse` scans this project's namespaces only, not the projects it imports, so a ref
   held in an imported project that points back here is missing from its result.

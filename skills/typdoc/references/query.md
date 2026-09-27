@@ -1,6 +1,6 @@
 # Queries: `--where`, `--if`, `--set`
 
-typdoc 0.3.0. `list --where` and `set --if` share one expression language. `set`'s
+typdoc 0.3.1. `list --where` and `set --if` share one expression language. `set`'s
 `field=value` arguments and `new --set` look similar but follow their own, simpler rules (last
 section).
 
@@ -86,7 +86,7 @@ ref.all(blocked_by).status=done
 - Rule of thumb: "is there such a document" → `any`; "is nothing in the way" → `all`; "is there
   none" → `none`. For a single `ref` field prefer `any`, since `all` is true when it is empty.
 
-Worked examples (verified on 0.2.0):
+Worked examples:
 
 ```console
 $ typdoc list --where 'ref.any(blocked_by).status!=done' --ids     # blocked by something unfinished

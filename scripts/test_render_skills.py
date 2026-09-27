@@ -50,6 +50,10 @@ class Fill(unittest.TestCase):
         with self.assertRaises(TemplateError):
             fill("{{verion}}", {"version": "1"}, "t")
 
+    def test_a_version_written_out_is_an_error_naming_its_line(self):
+        with self.assertRaisesRegex(TemplateError, r"t:2: a literal version 0\.3\.0"):
+            fill("intro\ntypdoc 0.3.0.\n", {"version": "1"}, "t")
+
     def test_single_braces_and_json_are_left_alone(self):
         text = '{"a":{"b":[1]}} {x}'
         self.assertEqual(fill(text, {"version": "1"}, "t"), text)

@@ -10,7 +10,8 @@ and a note meant for maintainers would be an instruction it cannot follow. The C
 `--check` is what stops a hand edit, and `.gitattributes` marks `skills/` as generated on GitHub.
 
 A template names a value as `{{name}}`. The only value is `version`. Any other `{{...}}` is an
-error rather than text copied through, so a misspelled name cannot reach a published skill.
+error rather than text copied through, so a misspelled name cannot reach a published skill, and
+so is a version written out (`1.2.3`), which a release would forget to bump.
 
 Usage (from anywhere in the repository):
     python3 scripts/render_skills.py           # rewrite skills/ from templates/skills/
@@ -31,6 +32,8 @@ OUTPUT = Path("skills")
 VERSION_SOURCE = Path("crates/typdoc/Cargo.toml")
 
 PLACEHOLDER = re.compile(r"\{\{\s*([^{}]*?)\s*\}\}")
+# A version written out in a template is one a release forgets to bump.
+LITERAL_VERSION = re.compile(r"\b\d+\.\d+\.\d+\b")
 
 
 class TemplateError(Exception):
@@ -43,6 +46,13 @@ def read_version(root: Path) -> str:
 
 
 def fill(text: str, values: dict[str, str], template: str) -> str:
+    literal = LITERAL_VERSION.search(text)
+    if literal:
+        line = text.count("\n", 0, literal.start()) + 1
+        raise TemplateError(
+            f"{template}:{line}: a literal version {literal.group(0)}; write {{{{version}}}}"
+        )
+
     def replace(match: re.Match[str]) -> str:
         name = match.group(1)
         if name not in values:

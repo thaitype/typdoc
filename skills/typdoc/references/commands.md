@@ -1,6 +1,6 @@
 # Commands
 
-typdoc 0.3.0. Eight commands. `get`, `list`, `refs`, `toc` and `validate` read; `new`, `set` and
+typdoc 0.3.1. Eight commands. `get`, `list`, `refs`, `toc` and `validate` read; `new`, `set` and
 `mv` write. `validate` is in [validation.md](validation.md).
 
 Every command takes `--json` and `--namespace <list>`. A write command also takes
@@ -90,7 +90,7 @@ typdoc refs <key|path> [--reverse] [--field <f>] [--json]
 ```
 
 The refs a document holds, or with `--reverse` the refs that point at it (this project's
-namespaces only; imported projects are not scanned in 0.2.0). `--field` keeps one field; `$body`
+namespaces only; imported projects are not scanned). `--field` keeps one field; `$body`
 means body links.
 
 ```console
