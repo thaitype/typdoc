@@ -1,6 +1,6 @@
 [package]
 name = "typdoc"
-version = "0.3.1"
+version = "0.4.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -16,8 +16,8 @@ serde_json = { version = "1.0.151", features = ["preserve_order", "raw_value"] }
 # Catches SIGINT and SIGTERM, moves the cleanup off the handler onto an ordinary thread, and
 # re-raises so the process ends by the signal (SPC-3, SPC-10), all in one dependency.
 signal-hook = "0.4.4"
-typdoc-core = { version = "0.3.0", path = "../typdoc-core" }
-typdoc-fs = { version = "0.3.0", path = "../typdoc-fs" }
+typdoc-core = { version = "0.4.0", path = "../typdoc-core" }
+typdoc-fs = { version = "0.4.0", path = "../typdoc-fs" }
 
 [dev-dependencies]
 # `kill(2)`, for the CLI spawn helper's `RunningChild::signal`: `std::process::Child::kill` sends

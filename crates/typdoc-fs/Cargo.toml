@@ -1,6 +1,6 @@
 [package]
 name = "typdoc-fs"
-version = "0.3.1"
+version = "0.4.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -8,7 +8,7 @@ repository.workspace = true
 description = "File system access for typdoc: the only crate that writes files."
 
 [dependencies]
-typdoc-core = { version = "0.3.0", path = "../typdoc-core" }
+typdoc-core = { version = "0.4.0", path = "../typdoc-core" }
 
 [dev-dependencies]
 tempfile = "3.27.0"
