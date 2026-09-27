@@ -7,13 +7,14 @@ one of them and requires exit 0: a project that passed before an upgrade passes 
 | Folder | Made for | Copied from |
 | --- | --- | --- |
 | `0.1.0/examples` | typdoc 0.1.0 | `examples/` of this repository at tag `v0.1.0` |
-| `0.2.0/typdoc-design` | typdoc 0.2.0 | `.typdoc/` and `docs/design/` of this repository at tag `v0.2.0` |
-| `0.3.1/typdoc-design` | typdoc 0.3.1 | `.typdoc/` and `docs/design/` of this repository at tag `v0.3.1` |
+| `0.3.1/examples` | typdoc 0.2.0 to 0.3.1 | `examples/` of this repository at tag `v0.3.1` (unchanged since `v0.2.0`) |
 | `0.3.1/chief-example` | typdoc 0.3.1 | `docs/example-chief/` of https://github.com/thaitype/chief at `abd1dda` |
 
-Not every release needs a folder. Add one when a release changes what a project can hold, or when
-a project in real use has a shape these do not cover: copy it unchanged under the version it was
-made for, and add a row here.
+`examples/` at the repository root is where a release shows what a project can hold, with
+made-up content that stands for real use. At a release that changes `examples/`, copy it here
+unchanged as `<version>/examples` and add a row. Not every release needs a folder: one whose
+`examples/` did not change adds nothing. A project in real use with a shape the examples do not
+cover can be added the same way, under the version it was made for.
 
 A change that makes one of these fail is a break for projects in use. Either the change is
 wrong, or the break is intended and the changelog names it as an upgrade note. Never edit a

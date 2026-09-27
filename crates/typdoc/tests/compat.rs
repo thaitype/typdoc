@@ -42,12 +42,7 @@ fn the_compat_folder_holds_the_projects_its_readme_lists() {
         .collect();
     assert_eq!(
         names,
-        [
-            "0.1.0/examples",
-            "0.2.0/typdoc-design",
-            "0.3.1/chief-example",
-            "0.3.1/typdoc-design",
-        ]
+        ["0.1.0/examples", "0.3.1/chief-example", "0.3.1/examples",]
     );
 }
 

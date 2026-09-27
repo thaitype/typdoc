@@ -1,1 +1,0 @@
-{ "match": "docs/design/catalog/*.md", "schema": ".typdoc/schemas/catalog.json" }

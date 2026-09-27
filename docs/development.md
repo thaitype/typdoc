@@ -102,4 +102,6 @@ those.
 2. Add the release to `CHANGELOG.md`.
 3. Run `python3 scripts/render_skills.py` so the skill names the new version, and update the
    install tag in the README and docs.
-4. Merge to `main`, then tag `vX.Y.Z`.
+4. If `examples/` changed since the last release, copy it unchanged to
+   `fixtures/compat/<version>/examples` and add its row to `fixtures/compat/README.md`.
+5. Merge to `main`, then tag `vX.Y.Z`.
