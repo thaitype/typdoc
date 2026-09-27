@@ -1,7 +1,7 @@
 # 03: `new --slug`
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 01
 
 ## What this delivers
