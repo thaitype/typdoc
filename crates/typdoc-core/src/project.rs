@@ -2468,22 +2468,17 @@ impl Project {
                 ),
             ));
         }
-        if let Some(message) = name_state_message(entry, &collection.name)
-            && let Some(level) = validate::effective_level(
-                Level::Error,
-                "filename.pattern",
-                &self.config.validation,
-                &collection.validation,
+        if let Some(key) = &entry.key
+            && let Some(state) = entry.name_state
+        {
+            findings.extend(self.name_state_finding(
+                &name,
+                entry.collection,
+                key,
+                entry.slug.as_deref(),
+                state,
                 strict,
                 audit,
-            )
-        {
-            findings.push(validate::finding(
-                &name,
-                level,
-                "filename.pattern",
-                None,
-                message,
             ));
         }
         if !findings.iter().any(|f| f.rule == "frontmatter.parse") {
@@ -2491,6 +2486,43 @@ impl Project {
             findings.extend(self.check_body(path, entry, text, &name, strict, audit, ref_project));
         }
         findings
+    }
+
+    /// `filename.pattern` for a coded file name not in the form its collection's `slug` expects,
+    /// at the rule's level; `None` for a name in that form, or with the rule `off`.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the name read from the file (key, slug, state) and the run's strict and audit \
+                  flags come from two callers that hold them in different shapes: an index entry \
+                  and a destination read from a path"
+    )]
+    fn name_state_finding(
+        &self,
+        name: &DocName,
+        collection: usize,
+        key: &str,
+        slug: Option<&str>,
+        state: NameState,
+        strict: bool,
+        audit: bool,
+    ) -> Option<Finding> {
+        let collection = &self.collections[collection];
+        let message = name_state_message(key, slug, state, &collection.name)?;
+        let level = validate::effective_level(
+            Level::Error,
+            "filename.pattern",
+            &self.config.validation,
+            &collection.validation,
+            strict,
+            audit,
+        )?;
+        Some(validate::finding(
+            name,
+            level,
+            "filename.pattern",
+            None,
+            message,
+        ))
     }
 
     /// A value that does not fit its field's type is skipped: `frontmatter.types` already
@@ -2911,7 +2943,14 @@ impl Project {
                     match refs::resolve_path(&joined, &self.index, &self.root) {
                         Ok(resolved) => Some(resolved.path),
                         Err(_) => {
-                            missing(findings, target);
+                            // A move records the path from the project folder, which a link
+                            // written from another folder names only once joined (SPC-1).
+                            let lookup = if doc.moved.contains_key(&joined) {
+                                joined.as_str()
+                            } else {
+                                target
+                            };
+                            missing(findings, lookup);
                             None
                         }
                     }
@@ -3467,9 +3506,19 @@ impl Project {
                 && let Value::List(items) = value
             {
                 for item in items {
-                    moved
-                        .entry(item.clone())
-                        .or_insert_with(|| identity.clone());
+                    // A recorded path is pointed to the path the document has now, even for a
+                    // coded document, whose slug change records the path and keeps the key
+                    // (SPC-2).
+                    let recorded_key = item
+                        .rsplit(':')
+                        .next()
+                        .is_some_and(|last| crate::argument::read_key(last).is_some());
+                    let now = if recorded_key {
+                        identity.clone()
+                    } else {
+                        path.to_owned()
+                    };
+                    moved.entry(item.clone()).or_insert(now);
                 }
             }
             if field.is_acyclic()
@@ -3640,35 +3689,32 @@ impl Project {
             });
         }
 
-        // A coded document's path is fixed by its key, and the one path its key names was
-        // refused above, so only `--renumber` can move it (SPC-2).
-        if let Some(key) = &from_key {
-            let to_namespace = mv::namespace_of(&self.config.namespaces, &to_path);
-            let message = if to_namespace != Some(from_namespace) {
-                format!(
-                    "`{from_path}` is a coded document: its key `{key}` belongs to the \
-                     namespace that issued it, so `mv` cannot move it to another namespace; use \
-                     `mv --renumber` instead"
-                )
-            } else {
-                format!(
-                    "`{from_path}` is a coded document: its path is fixed by its key `{key}` \
-                     within its own namespace, so it cannot be moved to `{to_path}`"
-                )
-            };
-            return Err(Error::BadArgument(message));
-        }
+        let to_slug = match &from_key {
+            Some(key) => Some(self.mv_slug_destination(
+                &from_path,
+                from_namespace,
+                from_collection,
+                key,
+                &to_path,
+            )?),
+            None => None,
+        };
 
         let to_namespace = mv::namespace_of(&self.config.namespaces, &to_path);
         let to_below = to_namespace
             .map(|ns| strip_namespace_folder(&to_path, &self.config.namespaces[ns].folder));
-        let to_collection = to_below.as_deref().and_then(|below| {
-            self.members
-                .iter()
-                .position(|member| member.template.matches_path(below))
-        });
+        let to_collection = if to_slug.is_some() {
+            Some(from_collection)
+        } else {
+            to_below.as_deref().and_then(|below| {
+                self.members
+                    .iter()
+                    .position(|member| member.template.matches_path(below))
+            })
+        };
         // A document without a code has no key to fill a coded template with.
-        if let Some(ci) = to_collection
+        if to_slug.is_none()
+            && let Some(ci) = to_collection
             && self.collections[ci].schema.code.is_some()
         {
             return Err(Error::BadArgument(format!(
@@ -3678,7 +3724,9 @@ impl Project {
             )));
         }
 
-        let (rewrite_by_holder, unrewritten) = self.mv_reverse_scan(from, scope, deps)?;
+        // A slug change keeps the key, so a mention of it is still right.
+        let (rewrite_by_holder, unrewritten) =
+            self.mv_reverse_scan(from, scope, to_slug.is_none(), deps)?;
         let locks = self.mv_lock(
             from_namespace,
             to_namespace,
@@ -3696,8 +3744,15 @@ impl Project {
             });
         }
 
+        let key_change = from_key
+            .as_deref()
+            .zip(to_slug.as_ref())
+            .map(|(key, slug)| mv::KeyChange::Slug {
+                key,
+                slug: slug.as_deref(),
+            });
         let (mut changes, rewritten) =
-            self.mv_rewrite_changes(&rewrite_by_holder, &to_path, None)?;
+            self.mv_rewrite_changes(&rewrite_by_holder, &to_path, key_change)?;
         if let Some(change) = self.mv_document_change(
             &from_path,
             from_collection,
@@ -3779,7 +3834,7 @@ impl Project {
             )));
         }
 
-        let (rewrite_by_holder, unrewritten) = self.mv_reverse_scan(from, scope, deps)?;
+        let (rewrite_by_holder, unrewritten) = self.mv_reverse_scan(from, scope, true, deps)?;
         let locks = self.mv_lock(
             from_namespace,
             Some(to_namespace),
@@ -3812,8 +3867,14 @@ impl Project {
             });
         }
 
-        let (mut changes, rewritten) =
-            self.mv_rewrite_changes(&rewrite_by_holder, &to_path, Some((&from_key, &new_key)))?;
+        let (mut changes, rewritten) = self.mv_rewrite_changes(
+            &rewrite_by_holder,
+            &to_path,
+            Some(mv::KeyChange::Renumber {
+                old_key: &from_key,
+                new_key: &new_key,
+            }),
+        )?;
         // With its namespace prefix: a bare key would not say which namespace issued it.
         let previous_name = format!("{}:{from_key}", self.config.namespaces[from_namespace].name);
         if let Some(change) = self.mv_document_change(
@@ -3859,6 +3920,7 @@ impl Project {
         &self,
         from: &DocumentArg,
         scope: &Scope,
+        mentions: bool,
         deps: &Deps,
     ) -> Result<(RewriteByHolder, Vec<UnrewrittenRef>), Error> {
         let reverse = self.refs(from, scope, true, None, deps.env)?;
@@ -3894,13 +3956,14 @@ impl Project {
                 .or_default()
                 .push(reference);
         }
-        unrewritten.extend(self.mv_reverse_mentions(&reverse.document)?);
+        if mentions {
+            unrewritten.extend(self.mv_reverse_mentions(&reverse.document)?);
+        }
         Ok((rewrite_by_holder, unrewritten))
     }
 
     /// A mention is never rewritten, so every mention of `from`'s key is reported (SPC-2). A
-    /// mention is always a key, so a plain `mv`, which cannot move a coded document, reads no
-    /// file here.
+    /// mention is always a key, so a move of a document without a code reads no file here.
     ///
     /// A second full read of the project: the reverse scan keeps no raw text, and
     /// `links::mentions` needs the whole file to compute positions.
@@ -3992,7 +4055,7 @@ impl Project {
         &self,
         rewrite_by_holder: &RewriteByHolder,
         to_path: &str,
-        key_rewrite: Option<(&str, &str)>,
+        key_change: Option<mv::KeyChange>,
     ) -> Result<(Vec<ContentChange>, Vec<RewrittenRef>), Error> {
         let mut changes = Vec::new();
         let mut rewritten = Vec::new();
@@ -4008,7 +4071,7 @@ impl Project {
                 .expect("holder paths in this map were already looked up above");
             let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
             let (new_text, holder_rewritten) =
-                self.rewrite_holder(holder_path, entry, &text, refs, to_path, key_rewrite)?;
+                self.rewrite_holder(holder_path, entry, &text, refs, to_path, key_change)?;
             if new_text != text {
                 changes.push(ContentChange {
                     path: entry.file.clone(),
@@ -4056,6 +4119,49 @@ impl Project {
         Ok(())
     }
 
+    /// The slug a coded document's new name carries, or `None` for a name without one. Its path
+    /// is fixed by its key, so it moves only to another name its own collection's template gives
+    /// the same key: a slug change (SPC-2). Anything else keeps the refusal that names the key,
+    /// or `--renumber` for another namespace. A slug that breaks the character rule is refused
+    /// under every `slug`, `none` included, where the name is read as the form the collection
+    /// does not expect: typdoc never writes an invalid slug (SPC-17).
+    fn mv_slug_destination(
+        &self,
+        from_path: &str,
+        from_namespace: usize,
+        from_collection: usize,
+        key: &str,
+        to_path: &str,
+    ) -> Result<Option<String>, Error> {
+        if mv::namespace_of(&self.config.namespaces, to_path) != Some(from_namespace) {
+            return Err(Error::BadArgument(format!(
+                "`{from_path}` is a coded document: its key `{key}` belongs to the namespace that \
+                 issued it, so `mv` cannot move it to another namespace; use `mv --renumber` \
+                 instead"
+            )));
+        }
+        let below = strip_namespace_folder(to_path, &self.config.namespaces[from_namespace].folder);
+        let template = &self.members[from_collection].template;
+        let Some(name) = template
+            .read(&below)
+            .filter(|name| name.key == key && template.matches_path(&below))
+        else {
+            return Err(Error::BadArgument(format!(
+                "`{from_path}` is a coded document: its path is fixed by its key `{key}` within \
+                 its own namespace, so it cannot be moved to `{to_path}`"
+            )));
+        };
+        if let Some(slug) = &name.slug
+            && !template::valid_slug(slug)
+        {
+            return Err(Error::BadArgument(format!(
+                "`{to_path}` gives the key `{key}` the slug `{slug}`, and a slug is not empty and \
+                 holds no whitespace, `/`, `#` or `:`: nothing was written"
+            )));
+        }
+        Ok(name.slug)
+    }
+
     /// A key names the path it already has, which is then refused as existing: `mv` never
     /// invents a key for its destination.
     fn mv_destination_path(&self, to: &DocumentArg, scope: &Scope) -> Result<String, Error> {
@@ -4076,7 +4182,7 @@ impl Project {
         text: &str,
         refs: &[RefsReference],
         new_target: &str,
-        key_rewrite: Option<(&str, &str)>,
+        key_change: Option<mv::KeyChange>,
     ) -> Result<(String, Vec<RewrittenRef>), Error> {
         let collection = &self.collections[entry.collection];
         let bad = |message| Error::Frontmatter {
@@ -4102,8 +4208,12 @@ impl Project {
                 holder_path,
                 &self.config.namespaces,
                 new_target,
-                key_rewrite,
+                key_change,
             );
+            // A key written alone, or a ref a stopped run already rewrote, is left as it is.
+            if new_written == reference.written {
+                continue;
+            }
             let after = new_written.clone();
             if reference.field == "$body" {
                 let Some(position) = reference.position else {
@@ -4243,17 +4353,17 @@ impl Project {
                 let namespace_idx =
                     to_namespace.expect("to_collection is Some only when to_namespace is");
                 let namespace_name = self.config.namespaces[namespace_idx].name.clone();
-                // `Some` only for a coded destination, which only `--renumber` reaches.
                 let below =
                     strip_namespace_folder(to_path, &self.config.namespaces[namespace_idx].folder);
-                let key = self.members[ci].template.key(&below);
+                let file_name = self.members[ci].template.read(&below);
+                let key = file_name.as_ref().map(|name| name.key.clone());
                 let name = DocName {
                     path: to_path,
                     namespace: &namespace_name,
                     collection: &collection.name,
                     key: key.as_deref(),
                 };
-                let findings = validate::check_document(
+                let mut findings = validate::check_document(
                     &text,
                     &collection.schema,
                     &self.config.validation,
@@ -4262,6 +4372,19 @@ impl Project {
                     false,
                     &name,
                 );
+                // A name in the form the collection does not expect is moved and reported, as a
+                // schema the document fails is (SPC-2).
+                if let Some(file_name) = &file_name {
+                    findings.extend(self.name_state_finding(
+                        &name,
+                        ci,
+                        &file_name.key,
+                        file_name.slug.as_deref(),
+                        file_name.state,
+                        false,
+                        false,
+                    ));
+                }
                 Ok((
                     Document {
                         path: to_path.to_owned(),
@@ -5199,9 +5322,13 @@ fn check_new_slug(
 
 /// Why a coded document's file name is not in the form its collection's `slug` expects, if it
 /// is not. The file is still the document its key names (SPC-17).
-fn name_state_message(entry: &Indexed, collection: &str) -> Option<String> {
-    let key = entry.key.as_deref()?;
-    match (entry.name_state?, entry.slug.as_deref()) {
+fn name_state_message(
+    key: &str,
+    slug: Option<&str>,
+    state: NameState,
+    collection: &str,
+) -> Option<String> {
+    match (state, slug) {
         (NameState::Expected, _) => None,
         (NameState::UnexpectedForm, None) => Some(format!(
             "the file name has no slug after the key `{key}`, and the collection `{collection}` \

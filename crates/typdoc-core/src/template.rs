@@ -412,15 +412,10 @@ impl Template {
         }
     }
 
-    /// The key `below` carries, counted from the namespace folder, if this template names one.
-    /// A coded template has exactly one `{key}`, in exactly one step, so the component at that
-    /// step is the only place it can come from; a template without a code never matches here.
-    pub fn key(&self, below: &str) -> Option<String> {
-        self.read(below).map(|name| name.key)
-    }
-
-    /// The key `below` carries, with its slug and how its name stands against the collection's
-    /// `slug`, if this template names one.
+    /// The key `below` carries, counted from the namespace folder, with its slug and how its
+    /// name stands against the collection's `slug`, if this template names one. A coded template
+    /// has exactly one `{key}`, in exactly one step, so the component at that step is the only
+    /// place it can come from; a template without a code never matches here.
     pub fn read(&self, below: &str) -> Option<FileName> {
         let (capture, reads_slug) =
             below
@@ -455,7 +450,7 @@ impl Template {
         fits_steps(&self.steps, &components)
     }
 
-    /// The inverse of [`Template::key`], for `typdoc new` to name the file of a key it issued.
+    /// The inverse of [`Template::read`], for `typdoc new` to name the file of a key it issued.
     /// `None` for `**`, `*` or an unbound `{key}`, none of which a bound coded template holds.
     pub fn render(&self, key: &str, slug: Option<&str>) -> Option<String> {
         let mut parts = Vec::with_capacity(self.steps.len());
@@ -703,16 +698,38 @@ mod tests {
     #[test]
     fn a_coded_template_reads_back_the_key_a_matched_path_carries() {
         assert_eq!(
-            coded("tickets/{key}.md").key("tickets/WF-3.md").as_deref(),
+            coded("tickets/{key}.md")
+                .read("tickets/WF-3.md")
+                .map(|name| name.key)
+                .as_deref(),
             Some("WF-3")
         );
-        assert_eq!(coded("{key}.md").key("WF-30.md").as_deref(), Some("WF-30"));
         assert_eq!(
-            coded("{key}/index.md").key("WF-3/index.md").as_deref(),
+            coded("{key}.md")
+                .read("WF-30.md")
+                .map(|name| name.key)
+                .as_deref(),
+            Some("WF-30")
+        );
+        assert_eq!(
+            coded("{key}/index.md")
+                .read("WF-3/index.md")
+                .map(|name| name.key)
+                .as_deref(),
             Some("WF-3")
         );
-        assert_eq!(coded("tickets/{key}.md").key("tickets/wf-3.md"), None);
-        assert_eq!(coded("tickets/{key}.md").key("notes/a.md"), None);
+        assert_eq!(
+            coded("tickets/{key}.md")
+                .read("tickets/wf-3.md")
+                .map(|name| name.key),
+            None
+        );
+        assert_eq!(
+            coded("tickets/{key}.md")
+                .read("notes/a.md")
+                .map(|name| name.key),
+            None
+        );
     }
 
     #[test]
@@ -725,7 +742,11 @@ mod tests {
             let template = coded(text);
             let rendered = template.render(key, None).unwrap();
 
-            assert_eq!(template.key(&rendered).as_deref(), Some(key), "{text}");
+            assert_eq!(
+                template.read(&rendered).map(|name| name.key).as_deref(),
+                Some(key),
+                "{text}"
+            );
         }
 
         assert_eq!(
@@ -788,7 +809,7 @@ mod tests {
             .bind("notes/*.md", None, SlugMode::Optional)
             .unwrap();
 
-        assert_eq!(uncoded.key("notes/a.md"), None);
+        assert_eq!(uncoded.read("notes/a.md").map(|name| name.key), None);
     }
 
     fn uncoded(text: &str) -> Template {
@@ -986,7 +1007,6 @@ mod tests {
 
             assert_eq!(name.key, key, "{text}");
             assert_eq!(name.slug.as_deref(), slug, "{text}");
-            assert_eq!(template.key(&rendered).as_deref(), Some(key), "{text}");
         }
         assert_eq!(
             coded("tickets/{key}.md").render("WF-8", Some("lock-order")),

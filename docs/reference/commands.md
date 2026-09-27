@@ -295,8 +295,15 @@ Each ref keeps the form it was written in.
 | --- | --- |
 | `--renumber <namespace>` | Move a numbered document into another namespace under the next key there |
 
-A numbered document can't change its path inside its namespace; use `--renumber` to move it to
-another one.
+A numbered document keeps its key inside its namespace, so the one move it takes there is a
+change of slug: to the name its collection gives the same key with another slug, or with none
+(`typdoc mv story-2:WF-5 story-2/_tickets/WF-5-json-shapes.md`). A ref by the key alone stays as
+it is, a ref written with the old slug gets the new one (or the key alone when the slug is
+removed), and body links name the new file. A field with `auto: moves` records the previous path.
+A destination with another key, or outside the collection's folder, is exit 1; so is a slug with
+whitespace, `/`, `#` or `:`, or an empty one, with nothing written. A name in the form the
+collection's `slug` does not expect is moved, with `filename.pattern` in `findings`. Use
+`--renumber` to move a numbered document to another namespace.
 
 ```console
 $ typdoc mv notes/site-ideas.md notes/website.md

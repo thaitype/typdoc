@@ -28,9 +28,49 @@ You can move a document into another folder, or into another collection, the sam
 location's schema doesn't accept the document, the move still happens and `findings` lists what's
 wrong; run `typdoc validate` afterwards and fix the document.
 
+## Change the slug of a numbered document
+
+A document with a key, like `WF-5`, keeps its key. The slug after the key in its file name is
+for people, and changing it is a move to the same key with another slug:
+
+```console
+$ typdoc mv story-2:WF-5 story-2/_tickets/WF-5-json-shapes.md
+path: story-2/_tickets/WF-5-json-shapes.md
+collection: tickets
+schema: ticket
+namespace: story-2
+key: WF-5
+title: JSON output shapes
+rewritten: 3 refs in 2 documents
+unrewritten: none
+findings: none
+```
+
+Each ref keeps the form it was written in. `blocked_by: [WF-5]` stays as it is, since the key did
+not change. `WF-5-json-output-shape` becomes `WF-5-json-shapes`, and
+`story-2:WF-5-json-output-shape` becomes `story-2:WF-5-json-shapes`. A link in a body names the
+new file. Adding a slug (`WF-5.md` to `WF-5-json-shapes.md`) and removing one work the same way;
+when the slug is removed, a ref written with it becomes the key alone.
+
+If the ticket schema has a field with `auto: moves`, it records the previous path. A link someone
+writes later to the old file name is then reported by `validate` as `refs.moved`, naming the new
+path.
+
+The new name must be the same key in the same folder. Another key is refused, and so is a slug
+typdoc would not write itself: an empty one, or one with whitespace, `/`, `#` or `:`.
+
+```console
+$ typdoc mv story-2:WF-5 'story-2/_tickets/WF-5-json shapes.md'
+typdoc: `story-2/_tickets/WF-5-json shapes.md` gives the key `WF-5` the slug `json shapes`, and a slug is not empty and holds no whitespace, `/`, `#` or `:`: nothing was written
+```
+
+If the collection's `slug` is `none` or `required` and the new name is in the other form, the
+move still happens and `findings` lists `filename.pattern`, exit 0.
+
 ## Move a numbered document to another namespace
 
-A document with a key, like `WF-2`, can't be renamed: its file name is its key. Trying is refused:
+A document with a key, like `WF-2`, can't move to another key or out of its folder: its key names
+its file. Trying is refused:
 
 ```console
 $ typdoc mv WF-2 tickets/moved.md

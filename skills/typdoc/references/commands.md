@@ -252,10 +252,16 @@ $ typdoc mv notes/install.md notes/setup.md --json
   rewritten), `links-rule-off` (a body link where `body.links` is off). Fix these yourself.
 - `findings`: what the destination's schema rejects. The move still happened and exits 0 —
   branch on `findings`, not on the code.
-- A coded document cannot change path inside its namespace (its file name is its key): exit 1.
-  `--renumber <namespace>` moves it to another namespace under the next key there, and refs to it
-  are rewritten to the new name — `blocked_by: [WF-1]` in `story-2` becomes `[story-1:WF-2]` after
-  `typdoc mv story-2:WF-1 --renumber story-1`.
+- A coded document keeps its key inside its namespace. The one move it takes there is a slug
+  change: `typdoc mv story-2:WF-5 story-2/_tickets/WF-5-json-shapes.md` (add, change or remove
+  the slug). A key-only ref is untouched, a ref written with the old slug gets the new one (or the
+  key alone when the slug is removed), body links name the new file, and `auto: moves` records
+  the previous path. Another key or another folder is exit 1; so is an empty slug or one holding
+  whitespace, `/`, `#` or `:`, with nothing written. The form the collection's `slug` does not
+  expect is moved, with `filename.pattern` in `findings`, exit 0.
+- `--renumber <namespace>` moves a coded document to another namespace under the next key
+  there, and refs to it are rewritten to the new name — `blocked_by: [WF-1]` in `story-2`
+  becomes `[story-1:WF-2]` after `typdoc mv story-2:WF-1 --renumber story-1`.
 - The destination existing, or naming the same file as the source, is exit 7 with nothing written.
 - A `mv` in a large repository holds the lock longer; raise `--lock-timeout` if it hits exit 4.
 - A `mv` that stops partway can be finished by running the exact same command again.

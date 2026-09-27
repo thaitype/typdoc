@@ -125,16 +125,42 @@ fn sibling_prefix<'a>(written: &'a str, namespaces: &[Namespace]) -> Option<(&'a
         .then_some((prefix, rest))
 }
 
+/// How the key form of a ref to the moved document changes with the move.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum KeyChange<'a> {
+    /// `mv --renumber`: the document takes `new_key` in another namespace.
+    Renumber { old_key: &'a str, new_key: &'a str },
+    /// A slug change: `key` stays, and its file name now carries `slug`, or no slug.
+    Slug { key: &'a str, slug: Option<&'a str> },
+}
+
+/// `written` read as a key form: the sibling prefix with its `:` (`""` for none), the key, and
+/// the slug written after it.
+fn key_form<'a>(
+    written: &'a str,
+    namespaces: &[Namespace],
+) -> Option<(&'a str, &'a str, Option<&'a str>)> {
+    match written.split_once(':') {
+        Some((prefix, rest)) if namespaces.iter().any(|ns| ns.name == prefix) => {
+            let (key, slug) = read_key(rest)?;
+            Some((&written[..=prefix.len()], key, slug))
+        }
+        Some(_) => None,
+        None => read_key(written).map(|(key, slug)| ("", key, slug)),
+    }
+}
+
 /// The written form a ref to the document now at `new_target` takes, keeping the kind of form
 /// `written` used: key, sibling-prefixed or relative path (SPC-2). A prefixed form whose target
 /// has left every namespace falls back to a relative path: there is no namespace left to name.
 ///
-/// `key_rewrite` comes only from `mv --renumber`, the one caller that meets a key form: a plain
-/// `mv` never moves a coded document, and a key, with or without a slug, never ends in `.md`, so
-/// a path form cannot be read as `old_key` by chance. `written` already resolves to the moved
-/// document, so a form that reads as `old_key` is that document's own key. A bare key is always
-/// given the target's prefix: it means the holder's own namespace, and `--renumber` always moves
-/// to another one (SPC-2).
+/// `key_change` is `None` for a document without a code, which no key form names. With it, a key
+/// never ends in `.md`, so a path form cannot be read as the moved key by chance, and `written`
+/// already resolves to the moved document, so a form that reads as that key is the document's
+/// own. Under `--renumber` a bare key is always given the target's prefix: it means the holder's
+/// own namespace, and `--renumber` always moves to another one. Under a slug change the key and
+/// its namespace stay, so the written prefix does too, and a key written alone is returned as it
+/// is (SPC-2).
 pub(crate) fn rewritten_path_ref(
     written: &str,
     ref_base: RefBase,
@@ -142,23 +168,31 @@ pub(crate) fn rewritten_path_ref(
     holder_path: &str,
     namespaces: &[Namespace],
     new_target: &str,
-    key_rewrite: Option<(&str, &str)>,
+    key_change: Option<KeyChange>,
 ) -> String {
-    if let Some((old_key, new_key)) = key_rewrite
-        && let Some(target_ns) = namespace_of(namespaces, new_target)
-    {
-        let key_form = match written.split_once(':') {
-            Some((prefix, rest)) if namespaces.iter().any(|ns| ns.name == prefix) => read_key(rest),
-            Some(_) => None,
-            None => read_key(written),
-        };
-        // A slug written with the key is kept under the new key (SPC-2).
-        if let Some((key, slug)) = key_form
-            && key == old_key
-        {
-            let slug = slug.map(|slug| format!("-{slug}")).unwrap_or_default();
-            return format!("{}:{new_key}{slug}", namespaces[target_ns].name);
+    match key_change {
+        Some(KeyChange::Renumber { old_key, new_key }) => {
+            if let Some(target_ns) = namespace_of(namespaces, new_target)
+                && let Some((_, key, slug)) = key_form(written, namespaces)
+                && key == old_key
+            {
+                // A slug written with the key is kept under the new key (SPC-2).
+                let slug = slug.map(|slug| format!("-{slug}")).unwrap_or_default();
+                return format!("{}:{new_key}{slug}", namespaces[target_ns].name);
+            }
         }
+        Some(KeyChange::Slug { key, slug }) => {
+            if let Some((prefix, written_key, written_slug)) = key_form(written, namespaces)
+                && written_key == key
+            {
+                return match (written_slug, slug) {
+                    (None, _) => written.to_owned(),
+                    (Some(_), Some(slug)) => format!("{prefix}{key}-{slug}"),
+                    (Some(_), None) => format!("{prefix}{key}"),
+                };
+            }
+        }
+        None => {}
     }
     if let Some((_, _)) = sibling_prefix(written, namespaces)
         && let Some(target_ns) = namespace_of(namespaces, new_target)
@@ -379,7 +413,10 @@ mod tests {
             "story-1/notes/holder.md",
             &namespaces,
             "story-3/tickets/WF-1.md",
-            Some(("WF-5", "WF-1")),
+            Some(KeyChange::Renumber {
+                old_key: "WF-5",
+                new_key: "WF-1",
+            }),
         );
         assert_eq!(new, "story-3:WF-1");
     }
@@ -398,7 +435,10 @@ mod tests {
             "holder.md",
             &namespaces,
             "story-3/tickets/WF-1.md",
-            Some(("WF-5", "WF-1")),
+            Some(KeyChange::Renumber {
+                old_key: "WF-5",
+                new_key: "WF-1",
+            }),
         );
         assert_eq!(
             new, "story-3:WF-1",
@@ -419,7 +459,10 @@ mod tests {
             "story-1/notes/holder.md",
             &namespaces,
             "story-1/tickets/WF-1.md",
-            Some(("WF-5", "WF-1")),
+            Some(KeyChange::Renumber {
+                old_key: "WF-5",
+                new_key: "WF-1",
+            }),
         );
         assert_eq!(new, "story-1:WF-1");
     }
@@ -435,7 +478,10 @@ mod tests {
                 "story-1/notes/a.md",
                 &namespaces,
                 "story-3/tickets/WF-8-lock-order.md",
-                Some(("WF-5", "WF-8")),
+                Some(KeyChange::Renumber {
+                    old_key: "WF-5",
+                    new_key: "WF-8",
+                }),
             );
 
             assert_eq!(new, "story-3:WF-8-lock-order", "{written}");
@@ -452,9 +498,39 @@ mod tests {
             "story-1/notes/holder.md",
             &namespaces,
             "story-3/tickets/WF-1.md",
-            Some(("WF-5", "WF-1")),
+            Some(KeyChange::Renumber {
+                old_key: "WF-5",
+                new_key: "WF-1",
+            }),
         );
         assert_eq!(new, "../../story-3/tickets/WF-1.md");
+    }
+
+    #[test]
+    fn a_slug_change_keeps_a_key_written_alone_and_gives_a_slugged_key_the_new_slug_or_none() {
+        let namespaces = ns(&[("story-1", "story-1"), ("story-2", "story-2")]);
+        let rewrite = |written: &str, slug: Option<&str>| {
+            rewritten_path_ref(
+                written,
+                RefBase::File,
+                1,
+                "story-2/notes/a.md",
+                &namespaces,
+                "story-2/tickets/WF-5-new.md",
+                Some(KeyChange::Slug { key: "WF-5", slug }),
+            )
+        };
+
+        assert_eq!(rewrite("WF-5", Some("new")), "WF-5");
+        assert_eq!(rewrite("story-2:WF-5", Some("new")), "story-2:WF-5");
+        assert_eq!(rewrite("WF-5-old", Some("new")), "WF-5-new");
+        assert_eq!(rewrite("story-2:WF-5-old", Some("new")), "story-2:WF-5-new");
+        assert_eq!(rewrite("story-2:WF-5-old", None), "story-2:WF-5");
+        assert_eq!(
+            rewrite("../tickets/WF-5-old.md", Some("new")),
+            "../tickets/WF-5-new.md",
+            "a path form stays a path"
+        );
     }
 
     #[test]
