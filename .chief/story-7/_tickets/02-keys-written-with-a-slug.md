@@ -1,7 +1,7 @@
 # 02: Keys written with a slug — arguments, refs by key, `refs.slug`
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 01
 
 ## What this delivers

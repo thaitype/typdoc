@@ -60,9 +60,10 @@ other.
 - `links::looks_like_key_shape` (mentions) does not change: a key written with its slug is not a
   mention (`SPC-1`).
 - `refs::code_of` keeps working on the key part alone.
-- **Arguments.** `WF-5-anything` (with any `ns:` or `project::` prefix) is `DocumentArg::Key` for
-  `WF-5`. The written slug is dropped and never compared with the file: a stale slug prints
-  nothing (`SPC-2`).
+- **Arguments.** `WF-5-<slug>` with a valid slug (with any `ns:` or `project::` prefix) is
+  `DocumentArg::Key` for `WF-5`. Text after the key that is not a valid slug makes no key (SPC-14
+  reads the form only when the rest is a slug), and nothing ending in `.md` is a key (SPC-2). The
+  written slug is dropped and never compared with the file: a stale slug prints nothing (`SPC-2`).
 - **Refs.** A frontmatter value in key form keeps its written slug next to the key. It resolves
   by the key (`Via::Key`), and `refs.codedByPath` does not fire for it.
 
