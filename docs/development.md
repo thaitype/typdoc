@@ -69,6 +69,14 @@ GitHub Actions runs those three checks on every push to `main` and every pull re
 The Linux and macOS test counts differ by a small fixed number: a handful of tests create files
 whose names aren't valid UTF-8, which macOS file systems don't allow, so those are skipped there.
 
+## Projects from earlier releases
+
+`fixtures/compat/` holds typdoc projects copied unchanged from earlier releases, and
+`crates/typdoc/tests/compat.rs` requires every one of them to pass `validate`. A change that makes
+one fail breaks projects in use: either the change is wrong, or the break is intended and the
+changelog names it. Never edit those projects to make them pass. How to add one is in
+`fixtures/compat/README.md`.
+
 ## Where things are documented
 
 | For | Where |

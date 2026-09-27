@@ -1,0 +1,10 @@
+{
+  "name": "spec",
+  "code": "SPC",
+  "fields": {
+    "title": { "type": "string", "required": true },
+    "status": { "type": "enum", "values": ["draft", "active", "superseded"] },
+    "superseded_by": { "type": "ref", "target": ["spec"], "acyclic": true },
+    "migrated_from": { "type": "string" }
+  }
+}

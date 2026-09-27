@@ -1,0 +1,15 @@
+{
+  "name": "base-ticket",
+  "fields": {
+    "title": { "type": "string", "required": true },
+    "status": {
+      "type": "enum",
+      "values": ["open", "claimed", "resolved", "closed"],
+      "default": "open",
+      "transitions": { "open": ["claimed", "closed"], "claimed": ["resolved", "open", "closed"] }
+    },
+    "blocked_by": { "type": "ref[]", "target": "*", "acyclic": true, "default": [] },
+    "created_at": { "type": "datetime", "auto": "create" },
+    "updated_at": { "type": "datetime", "auto": "update" }
+  }
+}

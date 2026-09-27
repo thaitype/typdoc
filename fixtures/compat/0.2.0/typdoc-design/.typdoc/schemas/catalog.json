@@ -1,0 +1,8 @@
+{
+  "name": "catalog",
+  "fields": {
+    "title": { "type": "string", "required": true },
+    "content_type": { "type": "enum", "values": ["json"], "required": true },
+    "explained_by": { "type": "ref[]", "target": ["spec"] }
+  }
+}
