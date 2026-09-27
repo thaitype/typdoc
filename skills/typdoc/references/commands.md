@@ -1,6 +1,6 @@
 # Commands
 
-typdoc 0.4.0. Eight commands. `get`, `list`, `refs`, `toc` and `validate` read; `new`, `set` and
+typdoc 0.5.0. Eight commands. `get`, `list`, `refs`, `toc` and `validate` read; `new`, `set` and
 `mv` write. `validate` is in [validation.md](validation.md).
 
 Every command takes `--json` and `--namespace <list>`. A write command also takes

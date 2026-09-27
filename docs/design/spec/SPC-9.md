@@ -37,7 +37,7 @@ instead of the latest one) and `INSTALL_DIR` (install into this directory instea
 before `sh`, not before `curl`:
 
 ```console
-$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.4.0 sh
+$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.5.0 sh
 ```
 
 The script never edits `PATH` or any shell startup file. If the install directory isn't already
