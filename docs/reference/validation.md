@@ -1,7 +1,7 @@
 # Validation rules
 
 `typdoc validate` reports findings. Each finding has a rule id, a level and a message. This page
-lists every rule in typdoc 0.2.0.
+lists every rule typdoc has.
 
 ## Levels
 
@@ -78,7 +78,7 @@ exit 2 and lists every config error it found. Otherwise it's reported as a findi
 | `config.namespace-name` | A namespace folder name that isn't allowed |
 | `config.namespace-nested` | A namespace folder with its own `.typdoc/` |
 | `config.schema-url` | A schema URL that isn't `http://` or `https://` |
-| `config.schema-unpinned` | A remote schema; 0.2.0 can't fetch these |
+| `config.schema-unpinned` | A remote schema; typdoc can't fetch these yet |
 | `config.vendor-missing` | A saved copy of a remote schema is missing |
 | `config.vendor-edited` | A saved copy of a remote schema was edited by hand |
 | `config.config-dir` | `TYPDOC_CONFIG_DIR` isn't an absolute path to an existing folder |

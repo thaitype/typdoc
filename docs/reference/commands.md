@@ -1,6 +1,6 @@
 # Commands
 
-typdoc 0.2.0 has eight commands. `get`, `list`, `refs`, `toc` and `validate` read a project and
+typdoc has eight commands. `get`, `list`, `refs`, `toc` and `validate` read a project and
 never change a file. `new`, `set` and `mv` write.
 
 ## Options every command takes
