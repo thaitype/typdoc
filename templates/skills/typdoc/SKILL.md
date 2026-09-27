@@ -2,11 +2,10 @@
 name: typdoc
 description: Work with a typdoc project — a folder of Markdown documents whose frontmatter is checked against schemas and whose references are tracked. Find documents, read them, create them, change their fields, move them without breaking links, and check the project before committing. Use whenever a repository has a `.typdoc/` folder, when a task mentions typdoc, or when asked to create, update, move, query or validate documents such as tickets, notes, learnings or decisions that live in one.
 ---
-<!-- Generated from templates/skills/typdoc/SKILL.md by scripts/render_skills.py. Edit the template, not this file. -->
 
 # typdoc
 
-Written for **typdoc 0.3.1**. Source and issues: https://github.com/thaitype/typdoc —
+Written for **typdoc {{version}}**. Source and issues: https://github.com/thaitype/typdoc —
 use it only when something here does not match what the binary does.
 
 typdoc treats a folder of Markdown files as typed, linked documents. Each document is YAML
@@ -22,7 +21,7 @@ does not decide for you.
 
 ```console
 $ typdoc --version
-typdoc 0.3.1
+typdoc {{version}}
 ```
 
 **Not found** (`command not found`, exit 127): typdoc is not installed, or its directory is not
@@ -35,14 +34,14 @@ internet. Tell the user, and install only when they agree. This installs the ver
 is written for:
 
 ```console
-$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.3.1 sh
+$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v{{version}} sh
 ```
 
 - macOS and Linux, amd64 and arm64, with no Rust toolchain. The script checks the SHA-256
   checksum and installs to `~/.local/bin`; `INSTALL_DIR` changes the directory.
 - Put the variables after the pipe, right before `sh`. Written before `curl`, they never reach
   the script, and you get the latest release in the default directory.
-- With a Rust toolchain instead: `cargo install typdoc --version 0.3.1`.
+- With a Rust toolchain instead: `cargo install typdoc --version {{version}}`.
 - Windows is not supported yet, by the script or by `cargo install`. Use WSL.
 
 **A different version:** say so to the user before relying on this skill, and prefer what

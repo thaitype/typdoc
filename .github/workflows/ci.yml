@@ -71,6 +71,19 @@ jobs:
       - run: rustc --version
       - run: cargo fmt --check
 
+  skills:
+    # skills/ is rendered from templates/skills/ with the version in crates/typdoc/Cargo.toml.
+    # This fails when skills/ was edited by hand or not re-rendered after a version bump.
+    name: skills/ matches templates/skills/
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - run: python3 scripts/test_render_skills.py -v
+      - run: python3 scripts/render_skills.py --check
+
   clippy:
     name: cargo clippy
     strategy:

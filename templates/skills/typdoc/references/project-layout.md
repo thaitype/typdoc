@@ -1,4 +1,3 @@
-<!-- Generated from templates/skills/typdoc/references/project-layout.md by scripts/render_skills.py. Edit the template, not this file. -->
 # Reading a typdoc project
 
 typdoc 0.3.0. How to read what a project declares, so you know what its documents may hold. This

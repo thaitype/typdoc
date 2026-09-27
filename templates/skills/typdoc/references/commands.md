@@ -1,4 +1,3 @@
-<!-- Generated from templates/skills/typdoc/references/commands.md by scripts/render_skills.py. Edit the template, not this file. -->
 # Commands
 
 typdoc 0.3.0. Eight commands. `get`, `list`, `refs`, `toc` and `validate` read; `new`, `set` and

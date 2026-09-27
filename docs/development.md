@@ -74,12 +74,15 @@ whose names aren't valid UTF-8, which macOS file systems don't allow, so those a
 | For | Where |
 | --- | --- |
 | People using typdoc | `README.md` and `docs/` |
-| Coding agents using typdoc | `skills/typdoc/`, the agent skill |
+| Coding agents using typdoc | `templates/skills/typdoc/`, rendered into `skills/typdoc/` (the agent skill) |
 | What typdoc should do | `docs/design/spec/` (prose) and `docs/design/catalog/` (the data tests read) |
 | Past decisions | `docs/archived-design/`, frozen |
 
 When a change alters what a command prints or accepts, update the user docs and the agent skill
-in the same pull request. The skill states the typdoc version it describes on its first line.
+in the same pull request. Edit the skill in `templates/skills/`, then run
+`python3 scripts/render_skills.py`, which writes `skills/` with the version from
+`crates/typdoc/Cargo.toml` in place of `{{version}}`. CI fails when `skills/` is not what the
+script would write, so never edit `skills/` by hand.
 
 The tests never read Markdown to learn what typdoc should do. Rule ids, commands, exit codes and
 similar lists live as JSON in `docs/design/catalog/`, and the tests compare the code against
@@ -89,6 +92,6 @@ those.
 
 1. Bump `version` in every crate's `Cargo.toml`.
 2. Add the release to `CHANGELOG.md`.
-3. Update the version on the first line of `skills/typdoc/SKILL.md`, and the install tag in the
-   README and docs.
+3. Run `python3 scripts/render_skills.py` so the skill names the new version, and update the
+   install tag in the README and docs.
 4. Merge to `main`, then tag `vX.Y.Z`.
