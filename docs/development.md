@@ -102,8 +102,29 @@ those.
 
 ## Releasing
 
-1. Bump `version` in every crate's `Cargo.toml`.
-2. Add the release to `CHANGELOG.md`.
-3. Run `python3 scripts/render_skills.py` so the skill names the new version, and update the
-   install tag in the README and docs.
-4. Merge to `main`, then tag `vX.Y.Z`.
+A release is published from its pull request's branch, before that branch merges, so that
+nothing on `main` names a version that does not exist yet: the agent skill and these docs are
+read straight from `main`.
+
+1. On a branch named `release-X.Y.Z`:
+   - bump `version` in every published crate's `Cargo.toml`, and their requirements on each
+     other;
+   - turn `[Unreleased]` in `CHANGELOG.md` into `[X.Y.Z] - <date>`;
+   - write the release notes for users in `docs/releases/X.Y.Z.md`: an opening sentence,
+     Install, What's new (examples first), Fixed, and Before you upgrade when there is anything
+     to say. The changelog stays the complete list, and the notes link to it;
+   - run `python3 scripts/render_skills.py`, and update the install pins in the docs.
+2. Open the pull request. It needs green CI and an approval before anything is published,
+   because publishing cannot be undone.
+3. Run the `publish` workflow from the release branch (Actions, publish, "Use workflow from"
+   `release-X.Y.Z`) with `version` `X.Y.Z`: first with `dry_run` on, then off. It refuses to run
+   from any other branch, without `docs/releases/X.Y.Z.md`, or when the tag already exists. It
+   publishes the crates, creates the tag `vX.Y.Z` on the branch's last commit, attaches the
+   binaries with the notes as the release body, and installs the release from the live installer.
+4. Merge the pull request with **Create a merge commit**, not squash, so the tagged commit is in
+   `main`'s history. CI on `main` fails when the newest release tag is not. If the pull request
+   was squashed by mistake, record the tag with a merge commit that changes no file:
+   `git checkout main && git merge -s ours vX.Y.Z && git push`.
+
+A change needed after step 3 is a new patch release: a published version is never replaced.
+Projects for `fixtures/compat/` are added later, during work on the next version.

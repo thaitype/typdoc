@@ -13,8 +13,40 @@ on:
         type: boolean
 
 jobs:
+  preflight:
+    # A release is published from its release-X.Y.Z branch before the branch merges, so that
+    # nothing on main names a version that does not exist yet (docs/development.md, Releasing).
+    # These checks run before anything is built or published, in dry runs too.
+    name: release preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run from the release branch, not main
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_NAME" != "release-${{ inputs.version }}" ]; then
+            echo "::error::run publish from the branch release-${{ inputs.version }}, not $REF_NAME: a release is published before its branch merges"
+            exit 1
+          fi
+      - name: Release notes exist
+        run: |
+          if [ ! -s "docs/releases/${{ inputs.version }}.md" ]; then
+            echo "::error::docs/releases/${{ inputs.version }}.md is missing or empty: write the release notes for users first"
+            exit 1
+          fi
+      - name: The tag does not exist yet
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh api "repos/${{ github.repository }}/git/ref/tags/v${{ inputs.version }}" >/dev/null 2>&1; then
+            echo "::error::the tag v${{ inputs.version }} already exists: a published version is never replaced; release a new patch instead"
+            exit 1
+          fi
+
   gate:
     name: cargo test + clippy
+    needs: preflight
     strategy:
       fail-fast: false
       matrix:
@@ -144,22 +176,8 @@ jobs:
           pattern: dist-*
           path: dist-artifacts
           merge-multiple: true
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
-      # scripts/test_extract_release_notes.py is this script's own self-test, exercised
-      # against fixed sample changelog text -- the same "prove the mechanism before trusting
-      # it" step the gate job's --self-test and the Windows pass-rate job's self-test already
-      # follow in this repo, run once here before the real extraction below.
-      - name: Self-test the CHANGELOG extraction logic
-        run: python scripts/test_extract_release_notes.py -v
-      # Generates the release body from CHANGELOG.md's own entry for this version, instead of
-      # a hand-written body (how v0.1.0/v0.2.0/v0.3.0 were each done) -- see
-      # scripts/extract_release_notes.py's header for why (the two can never drift apart).
-      - name: Extract release notes from CHANGELOG.md
-        run: |
-          python scripts/extract_release_notes.py CHANGELOG.md "${{ inputs.version }}" \
-            > "$RUNNER_TEMP/release-notes.md"
+      # The release body is the notes written for users in docs/releases/<version>.md, which the
+      # preflight job already required; the changelog stays the complete list.
       # Creates the tag and the release together, pointed at the commit this workflow ran
       # against, only if a release for this tag doesn't already exist -- re-running this job
       # (e.g. after the upload step below failed) must not error out trying to recreate it.
@@ -174,8 +192,8 @@ jobs:
             gh release create "$tag" \
               --repo "${{ github.repository }}" \
               --target "${{ github.sha }}" \
-              --title "$tag" \
-              --notes-file "$RUNNER_TEMP/release-notes.md"
+              --title "typdoc ${{ inputs.version }}" \
+              --notes-file "docs/releases/${{ inputs.version }}.md"
           fi
       # --clobber lets a re-run overwrite a partial upload from a previous failed attempt
       # instead of erroring on an asset that's already there.
