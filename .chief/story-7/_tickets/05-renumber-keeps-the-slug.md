@@ -1,7 +1,7 @@
 # 05: `mv --renumber` keeps the slug
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 03, 04
 
 ## What this delivers

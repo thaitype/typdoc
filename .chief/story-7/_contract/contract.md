@@ -112,6 +112,11 @@ other.
   `render`. A ref written with the slug gets the new key and the same slug. A destination
   collection whose `slug` does not expect the form is still written, with `filename.pattern` in
   the findings, exit 0.
+  A slug already on disk that breaks the character rule is kept as it is too, and reported the
+  same way: the caller gives no slug in a renumber, so the rule that typdoc never writes an
+  invalid slug (Changing a slug) is about a slug the caller gives. Collections are project-wide,
+  so the destination's `slug` is the source's, and the other form arises only from a name
+  already in it.
 
 ## Output
 
