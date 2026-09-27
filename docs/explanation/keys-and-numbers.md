@@ -98,7 +98,9 @@ lock of every namespace it writes to.
 A write that can't get the lock within `--lock-timeout` seconds (default 5) gives up with exit 4
 and says who holds it. typdoc never deletes a lock it didn't create, however old it is: a lock
 that looks stale might belong to a slow command that's still running. If the owning process has
-really gone, the message says so and names the file to delete.
+really gone, the message says so and names the file to delete. When typdoc can't tell, because
+the lock came from another machine or the system can't be asked, the message says that instead
+of guessing, and leaves the decision to you.
 
 A command interrupted with Ctrl-C removes its lock before it exits. A process killed outright, or a
 machine losing power, leaves the lock behind, and the next write reports it.

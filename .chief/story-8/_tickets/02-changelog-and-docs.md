@@ -1,7 +1,7 @@
 # 02: Changelog and docs
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 01
 
 ## What this delivers

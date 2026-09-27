@@ -70,10 +70,11 @@ owner:
 
 - **still running on this machine** — another write is in progress: wait and retry, or raise
   `--lock-timeout` (a `mv` in a large repository holds the lock longer);
-- **no longer running on this machine** — the lock is stale and the message names the file to
-  delete;
-- **on another host** — typdoc cannot check; delete it only when that process is known to have
-  stopped.
+- **not running on this machine** — the lock is stale and the message names the file to
+  delete; this is the only ending that says "stale";
+- **on another host**, **its host is not known**, or **on this machine, but whether it is
+  running cannot be checked here** — typdoc cannot check; delete it only when that process is
+  known to have stopped.
 
 typdoc never deletes or takes over a lock itself. Remove a stale lock only when you are sure
 nobody else is about to do the same, since two parties deleting "the stale lock" can delete a
