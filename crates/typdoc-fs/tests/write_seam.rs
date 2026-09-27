@@ -44,7 +44,7 @@ fn a_lock<'a>(fs: &'a dyn Fs, lock_path: &Path) -> NamespaceLock<'a> {
         fs,
         &FixedClock::new(),
         lock_path.to_path_buf(),
-        "write-seam-test-host",
+        &typdoc_testkit::fake::HostEnv::new("write-seam-test-host"),
         Duration::from_secs(5),
     )
     .unwrap_or_else(|e| panic!("the scenario's own lock could not be acquired: {e}"))

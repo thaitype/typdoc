@@ -6,7 +6,7 @@ use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use typdoc_core::{Clock, Deps, Env, acquire, at_one_second, write_atomically};
+use typdoc_core::{Clock, Deps, Env, ProcessStatus, acquire, at_one_second, write_atomically};
 use typdoc_testkit::fake::{FIXED_INSTANT, FakeFs, FixedClock};
 
 struct NoEnv;
@@ -22,6 +22,10 @@ impl Env for NoEnv {
 
     fn hostname(&self) -> String {
         "no-host".to_owned()
+    }
+
+    fn process_status(&self, _pid: u32) -> ProcessStatus {
+        ProcessStatus::Unknown
     }
 }
 
@@ -79,7 +83,7 @@ fn a_write_reaches_a_file_system_only_through_the_seam_in_deps() {
         deps.fs,
         deps.clock,
         PathBuf::from("/locks/note.lock"),
-        "test-host",
+        &typdoc_testkit::fake::HostEnv::new("test-host"),
         Duration::from_secs(5),
     )
     .expect("the lock can be acquired");

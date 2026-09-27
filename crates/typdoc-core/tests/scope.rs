@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use std::io;
 use std::path::PathBuf;
 
-use typdoc_core::{Env, Error, Project, Scope, Source};
+use typdoc_core::{Env, Error, ProcessStatus, Project, Scope, Source};
 use typdoc_testkit::fixtures::path;
 
 struct FakeEnv {
@@ -24,6 +24,10 @@ impl Env for FakeEnv {
 
     fn hostname(&self) -> String {
         "fake-host".to_owned()
+    }
+
+    fn process_status(&self, _pid: u32) -> ProcessStatus {
+        ProcessStatus::Unknown
     }
 }
 

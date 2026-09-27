@@ -10,6 +10,10 @@ description = "A CLI that treats a folder of Markdown files as typed, linked doc
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 clap = { version = "4.6.7", features = ["derive"] }
+# `gethostname(3)` and `kill(2)`, which word a lock's timeout message on every Unix (SPC-10).
+# The CLI spawn helper's `RunningChild::signal` uses `kill(2)` too: `std::process::Child::kill`
+# sends `SIGKILL` only. Already an indirect dependency through `signal-hook`.
+libc = "0.2.189"
 # `raw_value` lets `--json` print a `number` with the digits written in the document, which no
 # `serde_json::Number` keeps. `preserve_order` keeps a document's fields in the order of the file.
 serde_json = { version = "1.0.151", features = ["preserve_order", "raw_value"] }
@@ -20,9 +24,6 @@ typdoc-core = { version = "0.4.0", path = "../typdoc-core" }
 typdoc-fs = { version = "0.4.0", path = "../typdoc-fs" }
 
 [dev-dependencies]
-# `kill(2)`, for the CLI spawn helper's `RunningChild::signal`: `std::process::Child::kill` sends
-# `SIGKILL` only. Already an indirect dependency through `signal-hook`.
-libc = "0.2.189"
 tempfile = "3.27.0"
 typdoc-testkit = { path = "../typdoc-testkit" }
 

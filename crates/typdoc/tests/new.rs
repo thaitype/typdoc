@@ -1052,7 +1052,7 @@ fn a_refused_slug_is_reported_without_waiting_for_the_lock() {
             &fs,
             &typdoc_testkit::fake::FixedClock::new(),
             project.path().join(".typdoc/locks/default.lock"),
-            "slug-test-host",
+            &typdoc_testkit::fake::HostEnv::new("slug-test-host"),
             std::time::Duration::from_secs(5),
         )
         .expect("the lock is acquired");

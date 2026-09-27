@@ -4,6 +4,26 @@ All notable, user-visible changes to typdoc are documented here. Internal reorga
 example, how the project's own design documents are structured and read in its own test suite)
 are left out unless they change something a user of the `typdoc` binary sees.
 
+## [Unreleased]
+
+### Fixed
+
+- On macOS, a lock held by a running typdoc was reported as stale when a write timed out (exit 4),
+  with the file to delete: the hostname and whether a process runs were read from `/proc`, which
+  macOS does not have. Both are now asked of the system on every Unix. A lock held by a process
+  of another user reads as running.
+- The exit-4 message says the lock is stale only when the system answered that no process has
+  the recorded id. Where that cannot be known it says so, with one of two new endings: `its host
+  is not known`, when this machine's hostname cannot be read or the lock records that its owner's
+  could not, and `whether it is running cannot be checked here`, when the process cannot be asked
+  about.
+
+### Changed
+
+- `typdoc-core` (library): `acquire` takes `env: &dyn Env` in place of `host: &str`, and `Env`
+  has a new required method, `process_status`, returning the new `ProcessStatus`. A caller of
+  `acquire` or an implementation of `Env` must change.
+
 ## [0.4.0] - 2026-09-27
 
 ### Added
