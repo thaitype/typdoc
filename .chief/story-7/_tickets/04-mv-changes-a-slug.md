@@ -1,7 +1,7 @@
 # 04: `mv` changes a slug
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 01, 02
 
 ## What this delivers
