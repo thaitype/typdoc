@@ -1,0 +1,8 @@
+{
+  "name": "base",
+  "fields": {
+    "title": { "type": "string", "required": true },
+    "created_at": { "type": "datetime", "auto": "create" },
+    "updated_at": { "type": "datetime", "auto": "update" }
+  }
+}

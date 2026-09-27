@@ -1,0 +1,10 @@
+{
+  "name": "wayfinder",
+  "code": "WF",
+  "fields": {
+    "title": { "type": "string", "required": true },
+    "status": { "type": "enum", "values": ["open", "resolved"], "required": true },
+    "blocked_by": { "type": "ref[]", "target": ["wayfinder"], "acyclic": true },
+    "context": { "type": "ref[]", "target": ["note"] }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "wayfinder",
+  "code": "WF",
+  "extends": "./base-ticket.json",
+  "fields": {
+    "kind": { "type": "enum", "values": ["research", "prototype", "grilling", "task", "feature"], "required": true },
+    "owner": { "type": "string" }
+  }
+}

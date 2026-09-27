@@ -1,0 +1,8 @@
+{
+  "name": "note",
+  "extends": "./base.json",
+  "fields": {
+    "tags": { "type": "list" },
+    "moved_from": { "type": "list", "auto": "moves" }
+  }
+}
