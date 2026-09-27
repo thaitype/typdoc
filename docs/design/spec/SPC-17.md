@@ -93,11 +93,11 @@ and never `WF-1` followed by something. A slug begins with the `-` right after t
 slug sits between the key and whatever the template has after `{key}`: `tickets/{key}.md` names
 `tickets/WF-1-<slug>.md`, and `{key}/README.md` names the folder `WF-1-<slug>/`.
 
-> **Open question (technical).** A template whose text right after `{key}` starts with a digit or
-> a `-` (`{key}1.md`, `{key}-notes.md`) cannot tell a slug from its own text. Proposed: with
-> `slug` `optional` or `required`, such a template is `config.match-template`, whose message
-> says to set `slug` to `none`. This is the one case where a project valid before slugs existed
-> stops loading under the default, and it is loud (exit 2) rather than a changed reading.
+A template whose text right after `{key}` starts with a digit or a `-` (`{key}1.md`,
+`{key}-notes.md`) cannot tell a slug from its own text. With `slug` `optional` or `required` such
+a template is `config.match-template`, and the message says to set `slug` to `none`. It is the
+one case where a project that loaded before slugs existed stops loading under the default, and
+it stops loudly, with exit 2, rather than reading the same files differently.
 
 **What a slug may contain.** Lowercase ASCII letters and digits, in words joined by single `-`:
 it begins and ends with a letter or digit and holds no `--`. `new --slug` given anything else
@@ -136,11 +136,11 @@ files, never fewer: a `WF-1-x.md` that `filename.pattern` reports today becomes 
 
 > **Open question (contradiction).** "Nothing valid today becomes invalid" does not hold in three
 > cases, each about a `WF-1-x.md` that exists today: `filename.pattern` is `off` or `warn` and the
-> file does not satisfy the schema, or shares its key with a `WF-1.md` (both newly errors); a
-> glob collection in the same folder also matches it (`tickets/*-notes.md` and
-> `WF-1-notes.md`), which is now `collections.overlap`; and the template case in the first
-> question. Proposed: state these three in the changelog as the upgrade note, and keep
-> `optional` as the default.
+> file does not satisfy the schema, or shares its key with a `WF-1.md` (both newly errors); a glob
+> collection in the same folder also matches it (`tickets/*-notes.md` and `WF-1-notes.md`), which
+> is now `collections.overlap`; and a template with a digit or `-` right after `{key}` (Where the
+> key ends). Proposed: state these three in the changelog as the upgrade note, and keep `optional`
+> as the default.
 
 ## Which files a run reads
 

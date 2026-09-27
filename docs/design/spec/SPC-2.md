@@ -87,12 +87,9 @@ path with the new slug, under the same key: `typdoc mv story-2:WF-5
 story-2/_tickets/WF-5-json-shapes.md`. Adding a slug and removing one are the same kind of move,
 within what the collection's `slug` accepts. The refs are rewritten as for any `mv`, each in the
 form it was written: a ref by the key alone does not change, a ref written with the old slug is
-rewritten with the new one, and a body link names the new file.
-
-> **Open question (technical).** What a schema's `auto: moves` field records for a slug change.
-> Proposed: the previous path, so that a body link left pointing at the old file name is
-> reported by `refs.moved` with the new path rather than as a plain missing file. The key does
-> not change, so recording the key would say nothing.
+rewritten with the new one, and a body link names the new file. A schema's `auto: moves` field
+records the previous path, not the key, which has not changed: a body link left pointing at the
+old file name is then reported by `refs.moved` with the new path, rather than as a missing file.
 
 **`--renumber`.** Moves a coded document to another namespace under a new key. The destination
 is the value of the flag, not a second positional argument: `typdoc mv WF-2 --renumber story-3`.
@@ -179,23 +176,20 @@ new document, which is the ref meaning what it says.
 An argument that names a document is a path or a key, told apart by its form and never guessed.
 After any `project::` prefix, an argument that ends in `.md` is a path, and one that has the form of
 a key is a key. A key followed by its slug (`WF-5-json-output-shape`, `SPC-17`) has the form of a
-key and names the document `WF-5`, as it does in a ref (`SPC-14`). A key never ends in `.md` and a
-document is always a `.md` file, so the two cannot be confused. Anything else is bad arguments (exit
-1). A path that begins with `/`, `./` or `../` is a path on disk, absolute or relative to the
-current directory. Any other path is relative to the project folder, the folder that holds
-`.typdoc`, which is what `path` is in `--json`. The path of a document of an imported project is
-written `project::path`, relative to that project's folder. `mv` reads both its arguments in this
-way, except that neither may carry a `project::` prefix: `mv` writes only in the project it is run
-in, so an argument naming a document of another project is bad arguments (exit 1). Its second names
-a file that does not exist yet: a `mv` whose destination is already there writes nothing and exits
-7, and so does a `--renumber` whose destination name is taken. When a path relative to the project
-names nothing in it but a file of that name exists relative to the current directory, the error is
-exit 5 and says that `./name` exists. That is a suggestion; nothing is done in its place.
-
-> **Open question (technical).** An argument whose slug is not the file's (`typdoc get
-> WF-5-old-name`). Proposed: it names `WF-5` all the same, with nothing printed about the slug,
-> as a ref resolves by its key; a command has no findings of its own to put the difference in,
-> and refusing would make the full form worse than the key alone for no gain.
+key and names the document `WF-5`, as it does in a ref (`SPC-14`), whatever its slug: `typdoc get
+WF-5-old-name` prints `WF-5` and nothing about the slug, since a command has no findings of its own
+to put the difference in. A key never ends in `.md` and a document is always a `.md` file, so the
+two cannot be confused. Anything else is bad arguments (exit 1). A path that begins with `/`, `./`
+or `../` is a path on disk, absolute or relative to the current directory. Any other path is
+relative to the project folder, the folder that holds `.typdoc`, which is what `path` is in
+`--json`. The path of a document of an imported project is written `project::path`, relative to that
+project's folder. `mv` reads both its arguments in this way, except that neither may carry a
+`project::` prefix: `mv` writes only in the project it is run in, so an argument naming a document
+of another project is bad arguments (exit 1). Its second names a file that does not exist yet: a
+`mv` whose destination is already there writes nothing and exits 7, and so does a `--renumber` whose
+destination name is taken. When a path relative to the project names nothing in it but a file of
+that name exists relative to the current directory, the error is exit 5 and says that `./name`
+exists. That is a suggestion; nothing is done in its place.
 
 The string that names a document in an argument follows from the name it is printed with
 (`SPC-12`):

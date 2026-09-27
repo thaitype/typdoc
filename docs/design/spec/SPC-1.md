@@ -100,8 +100,9 @@ this one, or a file renamed without `mv`.
 
 ## `body.mentions`
 
-It checks plain-text keys and never turns them into refs, so `refby` never counts a mention and
-`mv` never rewrites one.
+It checks plain-text keys and never turns them into refs, so `refby` never counts a mention and `mv`
+never rewrites one. Mentions are keys alone: text that writes a key followed by its slug (`SPC-17`)
+is not read as a mention, so neither it nor its key is checked.
 
 | Text | Checked |
 | --- | --- |
@@ -111,6 +112,7 @@ It checks plain-text keys and never turns them into refs, so `refby` never count
 | `[WF-3](WF-3.md)` | no; `body.links` checks it |
 | `UTF-8`, `SHA-256` | no; not a known code |
 | `WF-3a`, `xWF-3` | no; word boundaries required |
+| `WF-3-lock-order` | no; a key written with its slug is not a mention |
 
 A mention with no prefix is looked up in the document's own namespace only, and a mention with a
 sibling prefix (`story-2:WF-5`) in the namespace it names. A mention has one outcome for every
