@@ -84,12 +84,14 @@ depend on the user working it out.
 
 **Changing a slug.** A coded document's slug is part of its path, so a new slug is a `mv` to the
 path with the new slug, under the same key: `typdoc mv story-2:WF-5
-story-2/_tickets/WF-5-json-shapes.md`. Adding a slug and removing one are the same kind of move,
-within what the collection's `slug` accepts. The refs are rewritten as for any `mv`, each in the
-form it was written: a ref by the key alone does not change, a ref written with the old slug is
-rewritten with the new one, and a body link names the new file. A schema's `auto: moves` field
-records the previous path, not the key, which has not changed: a body link left pointing at the
-old file name is then reported by `refs.moved` with the new path, rather than as a missing file.
+story-2/_tickets/WF-5-json-shapes.md`. Adding a slug and removing one are the same kind of move. A
+move to the form the collection's `slug` does not expect (`SPC-17`) is carried out, and
+`filename.pattern` is reported in its output, as a schema the document does not satisfy is. The refs
+are rewritten as for any `mv`, each in the form it was written: a ref by the key alone does not
+change, a ref written with the old slug is rewritten with the new one, and a body link names the new
+file. A schema's `auto: moves` field records the previous path, not the key, which has not changed:
+a body link left pointing at the old file name is then reported by `refs.moved` with the new path,
+rather than as a missing file.
 
 **`--renumber`.** Moves a coded document to another namespace under a new key. The destination
 is the value of the flag, not a second positional argument: `typdoc mv WF-2 --renumber story-3`.
@@ -122,10 +124,10 @@ used is skipped, and a skipped number is ordinary: a collection that runs `WF-3`
 is not missing a document. The alternative — letting a document exist under a number the state
 file has not recorded — is what issues that number a second time.
 
-> **Open question (seen by users).** A `--renumber` into a collection whose `slug` does not
-> accept the name: a slug into `none`, or no slug into `required`. Proposed: refused with
-> nothing written, exit 1, saying which `slug` setting refused it; a slug is never dropped or
-> invented to make the move fit.
+If the destination collection's `slug` expects the other form, a slug into `none` or no slug
+into `required`, the move is carried out all the same, the slug kept as it was, and
+`filename.pattern` is reported in its output with exit 0, as for a schema the document does not
+satisfy (below). A slug is never dropped or made up to fit.
 
 **The collection a document lands in.** `mv` changes a path, and a path decides which collection
 a document belongs to, so a move can change a document's schema or take it out of every

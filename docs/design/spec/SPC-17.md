@@ -75,23 +75,30 @@ caller gives it (`typdoc new WF "Decide lock order" --slug lock-order`), as the 
 path of a document without a code. The title and the slug are independent, so changing the
 title never renames the file, and changing the slug is a `mv` (`SPC-2`).
 
-The collection's `slug` says which file names it accepts:
+A file whose name fits the template up to the end of its key is a document of the collection,
+with a slug or without one. The collection's `slug` says which of the two forms it expects:
 
-| `slug` | Accepts | `new` |
+| `slug` | Expected file names | `new` |
 | --- | --- | --- |
 | `optional` (the default) | `WF-1.md` and `WF-1-<slug>.md` | With or without `--slug` |
-| `required` | `WF-1-<slug>.md` only | Without `--slug`: exit 1, nothing written |
-| `none` | `WF-1.md` only, as before slugs existed | With `--slug`: exit 1, nothing written |
+| `required` | `WF-1-<slug>.md` | Without `--slug`: exit 1, nothing written |
+| `none` | `WF-1.md` | With `--slug`: exit 1, nothing written |
+
+A file in the form the collection does not expect, `WF-1.md` under `required` or `WF-1-x.md`
+under `none`, stays a document of the collection: it is read, listed and checked against the
+schema, and refs to it keep resolving. `filename.pattern` reports it at its level. So turning
+`required` on in an existing project gives one finding per file to rename, and breaks no ref.
 
 A `slug` value other than these three, or a `slug` in a collection whose schema has no code, is
-the config error `config.collection-slug`. A name the collection does not accept is outside it,
-like any other name its `match` does not fit, and `filename.pattern` reports it.
+the config error `config.collection-slug`.
 
 **Where the key ends.** The number is every digit after the code's `-`, so `WF-10.md` is `WF-10`
 and never `WF-1` followed by something. A slug begins with the `-` right after the last digit:
 `WF-12-x.md` is `WF-12` with the slug `x`, and `WF-1-2x.md` is `WF-1` with the slug `2x`. The
 slug sits between the key and whatever the template has after `{key}`: `tickets/{key}.md` names
-`tickets/WF-1-<slug>.md`, and `{key}/README.md` names the folder `WF-1-<slug>/`.
+`tickets/WF-1-<slug>.md`, and `{key}/README.md` names the folder `WF-1-<slug>/`. What follows
+`{key}` in a template is plain text, never a glob, so the slug is what is left once that text is
+taken off the end of the name: in `WF-1-v1.2.md` under `{key}.md` the slug is `v1.2`.
 
 A template whose text right after `{key}` starts with a digit or a `-` (`{key}1.md`,
 `{key}-notes.md`) cannot tell a slug from its own text. With `slug` `optional` or `required` such
@@ -99,48 +106,45 @@ a template is `config.match-template`, and the message says to set `slug` to `no
 one case where a project that loaded before slugs existed stops loading under the default, and
 it stops loudly, with exit 2, rather than reading the same files differently.
 
-**What a slug may contain.** Lowercase ASCII letters and digits, in words joined by single `-`:
-it begins and ends with a letter or digit and holds no `--`. `new --slug` given anything else
-exits 1 with nothing written, and the message states the rule; typdoc does not rewrite the value
-into a valid one, since that would be making a slug up. A file whose text after the key is not a
-valid slug (`WF-1-Lock Order.md`) is a name the collection does not accept.
+> **Open question (technical).** The fix above, `slug: none`, works only if `none` does not look
+> for a slug at all, but the paragraph on the form a collection does not expect makes `none` read
+> `WF-1-x.md` as `WF-1`. With `{key}1.md` that brings the ambiguity back (`WF-31.md`). Proposed:
+> a template of this kind under `none` reads names exactly as before slugs existed and never
+> looks for a slug; every other template under `none` reads a slug as that paragraph says.
 
-> **Open question (seen by users).** The character rule above. The reasons for it: a body link
-> names the file exactly and GitHub opens it literally, so a space or a non-ASCII letter has to
-> be percent-encoded in every link to the file; paths are compared with their case (`SPC-14`)
-> while the default file system on macOS ignores it, so two slugs that differ only in case would
-> be two documents on Linux and one file on macOS; and with one spelling per slug nobody has to
-> guess which one a file uses. The cost: a Thai slug is not possible. No length limit of its
-> own; the file system's limit on a name applies.
+**What a slug may contain.** Any characters a file name can hold, in any language, except
+whitespace, `/` (a slug is part of one path segment), `#` (a Markdown link reads what follows it
+as an anchor) and `:` (a ref reads what comes before it as a namespace, `SPC-14`). It is not
+empty, and its case is kept as written. `new --slug` given anything else exits 1 with nothing
+written, and the message states the rule; typdoc does not rewrite the value into a valid one,
+since that would be making a slug up.
+
+> **Open question (technical).** Two points on the rule above. `:` is not in the answer given; it
+> is proposed because `story-2:WF-5-a:b` cannot be read as a ref, and namespace names may hold
+> `-` and letters, so `WF-5-a:b` alone reads as a ref into a namespace `WF-5-a`, an error when
+> there is none. And a file whose
+> text after the key is not a valid slug (`WF-1-lock order.md`): proposed, a document of the
+> collection that `filename.pattern` reports, as for the form the collection does not expect,
+> so that the key alone decides what a file is.
 
 **One key, one file.** `WF-5.md` and `WF-5-x.md` in one namespace are two files with the key
-`WF-5`, which `keys.unique` reports, as it reports any two files that share a key. The key is
-what counts; a namespace issues numbers as before, and the slug plays no part in them (`SPC-8`).
+`WF-5`, which `keys.unique` reports, as it reports any two files that share a key. So are
+`WF-5-a.md` and `WF-5-A.md`, which are two files on Linux and one on the default file system of
+macOS: `keys.unique` reports them before the difference in case matters. The key is what
+counts; a namespace issues numbers as before, and the slug plays no part in them (`SPC-8`).
 
-**A collection that requires a slug and has files without one.** Under `required`, `WF-1.md` is
-a name the collection does not accept: it is outside the collection, `filename.pattern` reports
-it, and every ref to `WF-1` no longer resolves until the file is renamed with `mv`.
+**A project from before slugs.** An existing project reads more files, never fewer: a
+`WF-1-x.md` that `filename.pattern` reports today becomes the document `WF-1`. Such a file then
+has to satisfy the schema, is counted by `keys.unique` against any `WF-1.md` beside it, and a
+path ref to it gets `refs.codedByPath`. A project where `filename.pattern` is at its default
+level (`error`) was already failing on that file. A project that loaded and passed before can
+fail after the upgrade in three cases, and the changelog lists them:
 
-> **Open question (seen by users).** The paragraph above follows the table literally: `required`
-> accepts only names with a slug, and a name a collection does not accept is outside it. The
-> other reading keeps `WF-1.md` a document of the collection, so its refs still resolve, and
-> reports it under `filename.pattern` as missing its slug. Proposed: the literal reading, so that
-> `slug` has one meaning (which names the collection accepts) and turning `required` on in an
-> existing project is loud. Its cost is noise: one broken ref per ref, not one finding per file.
-
-**A project from before slugs.** With `optional` as the default, an existing project reads more
-files, never fewer: a `WF-1-x.md` that `filename.pattern` reports today becomes the document
-`WF-1`. Such a file then has to satisfy the schema, is counted by `keys.unique` against any
-`WF-1.md` beside it, and a path ref to it gets `refs.codedByPath`. A project where
-`filename.pattern` is at its default level (`error`) was already failing on that file.
-
-> **Open question (contradiction).** "Nothing valid today becomes invalid" does not hold in three
-> cases, each about a `WF-1-x.md` that exists today: `filename.pattern` is `off` or `warn` and the
-> file does not satisfy the schema, or shares its key with a `WF-1.md` (both newly errors); a glob
-> collection in the same folder also matches it (`tickets/*-notes.md` and `WF-1-notes.md`), which
-> is now `collections.overlap`; and a template with a digit or `-` right after `{key}` (Where the
-> key ends). Proposed: state these three in the changelog as the upgrade note, and keep `optional`
-> as the default.
+1. `filename.pattern` is `off` or `warn`, and a `WF-1-x.md` does not satisfy the schema or shares
+   its key with a `WF-1.md`.
+2. A collection with a glob in the same folder also matches a `WF-1-x.md` (`tickets/*-notes.md`
+   and `WF-1-notes.md`), which is now `collections.overlap`.
+3. A template with a digit or `-` right after `{key}` (Where the key ends).
 
 ## Which files a run reads
 
