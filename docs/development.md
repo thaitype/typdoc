@@ -78,6 +78,9 @@ one fail breaks projects in use: either the change is wrong, or the break is int
 changelog names it. Never edit those projects to make them pass. How to add one is in
 `fixtures/compat/README.md`.
 
+A release's project is added after that release is out, during work on the next version, not
+as a release step; `fixtures/compat/README.md` says how.
+
 ## Where things are documented
 
 | For | Where |
@@ -103,6 +106,4 @@ those.
 2. Add the release to `CHANGELOG.md`.
 3. Run `python3 scripts/render_skills.py` so the skill names the new version, and update the
    install tag in the README and docs.
-4. If the release lets a project hold something new, add a project that uses it under
-   `fixtures/compat/<version>/`, as `fixtures/compat/README.md` describes.
-5. Merge to `main`, then tag `vX.Y.Z`.
+4. Merge to `main`, then tag `vX.Y.Z`.

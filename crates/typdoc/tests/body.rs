@@ -385,3 +385,33 @@ fn a_mention_that_matches_a_recorded_move_is_refs_moved_not_body_mentions() {
         "{object}"
     );
 }
+
+/// A key written with its slug is not a mention, so neither it nor its key is checked:
+/// `WF-3` does not exist here, and nothing is reported.
+#[test]
+fn a_key_written_with_its_slug_in_text_is_not_a_mention() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/config.json",
+            r#"{ "version": 1, "validation": { "global": { "body.mentions": { "level": "error" } } } }"#,
+        ),
+        (
+            ".typdoc/collections/tickets.json",
+            r#"{ "match": "tickets/{key}.md", "schema": "wf.json" }"#,
+        ),
+        ("wf.json", r#"{ "name": "wf", "code": "WF", "fields": {} }"#),
+        (
+            ".typdoc/state/default.json",
+            r#"{ "tickets": { "last": 1 } }"#,
+        ),
+        (
+            "tickets/WF-1.md",
+            "---\n---\n\nSee WF-3-lock-order and story-2:WF-3-lock-order.\n",
+        ),
+    ]);
+
+    let ran = validate(project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout_json()["findings"], json!([]));
+}

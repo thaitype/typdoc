@@ -55,10 +55,13 @@ found, and treats both the same way in queries and checks.
 
 ## Two kinds of name
 
-A document with a code is named by its **key**, and the key is its file name: `tickets/WF-3.md`
-is `WF-3`. The title can change as often as you like and the file name never does, so links to
-it never break because someone reworded a ticket. typdoc never builds a file name from a title:
-a title can be an emoji, or a Thai sentence longer than a file system allows.
+A document with a code is named by its **key**, and the key begins its file name:
+`tickets/WF-3.md` is `WF-3`, and so is `tickets/WF-3-lock-order.md`, whose file name carries the
+slug `lock-order` for people reading the folder. The title can change as often as you like and
+the file name never follows it, so links to it never break because someone reworded a ticket.
+typdoc never builds a file name from a title: a title can be an emoji, or a non-English sentence
+longer than a file system allows. A slug is given by you, and changing it is a `typdoc mv`; see
+[keys and numbers](keys-and-numbers.md#the-key-identifies-the-slug-is-for-readers).
 
 A document without a code is named by its **path**, which you choose.
 

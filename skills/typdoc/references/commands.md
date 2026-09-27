@@ -20,6 +20,11 @@ a list prints as a table with a header row, and an empty result prints nothing.
 - A `number` is printed with the digits the document holds (`1e3` stays `1e3`).
 - Output may gain fields in later versions: ignore any field you do not know.
 
+A `<key>` argument may carry the slug its file name has: `WF-5-json-output-shape`,
+`story-2:WF-5-json-output-shape` and `chief::story-3:WF-5-json-output-shape` name `WF-5`, and a
+slug that is out of date is not checked or reported. The text after the digits must be a valid
+slug (not empty; no whitespace, `/`, `#` or `:`), or the argument is exit 1.
+
 ---
 
 ## get
@@ -130,8 +135,8 @@ To read one section: take `line` and `end` from `toc`, then read those lines of 
 ## new
 
 ```
-typdoc new <CODE> "<title>" [--set k=v]...     # coded: the key is allocated
-typdoc new <path.md> [--set k=v]...            # uncoded: you name the file
+typdoc new <CODE> "<title>" [--slug <slug>] [--set k=v]...  # coded: the key is allocated
+typdoc new <path.md> [--set k=v]...                         # uncoded: you name the file
 ```
 
 ```console
@@ -152,6 +157,11 @@ $ typdoc new notes/setup.md --set title="Setup notes" --json
 - Coded: takes the namespace lock, issues the larger of (highest existing number, recorded
   `last`) + 1, writes the file and records the number. A deleted document's number is never
   reissued. The title is required; `WF` alone is exit 1.
+- `--slug lock-order` names the file `tickets/WF-8-lock-order.md`; the key is still `WF-8`, and
+  `--json` gives `key` without the slug and `path` with it. The slug is used as given: not empty,
+  no whitespace, `/`, `#` or `:`. The collection's `slug` says whether it is allowed
+  (`optional`, the default), needed (`required`) or refused (`none`). Each refusal, and `--slug`
+  with a path, is exit 1 before the lock, with no number used.
 - Uncoded: the path must fit an uncoded collection's `match` (else exit 1); no title argument —
   set `title` with `--set`.
 - Defaults and `auto` fields are filled in; the output (text or `--json`) is the whole new
@@ -242,10 +252,21 @@ $ typdoc mv notes/install.md notes/setup.md --json
   rewritten), `links-rule-off` (a body link where `body.links` is off). Fix these yourself.
 - `findings`: what the destination's schema rejects. The move still happened and exits 0 —
   branch on `findings`, not on the code.
-- A coded document cannot change path inside its namespace (its file name is its key): exit 1.
-  `--renumber <namespace>` moves it to another namespace under the next key there, and refs to it
-  are rewritten to the new name — `blocked_by: [WF-1]` in `story-2` becomes `[story-1:WF-2]` after
-  `typdoc mv story-2:WF-1 --renumber story-1`.
+- A coded document keeps its key inside its namespace. The one move it takes there is a slug
+  change: `typdoc mv story-2:WF-5 story-2/_tickets/WF-5-json-shapes.md` (add, change or remove
+  the slug). A key-only ref is untouched, a ref written with the old slug gets the new one (or the
+  key alone when the slug is removed), body links name the new file, and `auto: moves` records
+  the previous path. Another key or another folder is exit 1; so is an empty slug or one holding
+  whitespace, `/`, `#` or `:`, with nothing written. The form the collection's `slug` does not
+  expect is moved, with `filename.pattern` in `findings`, exit 0.
+- `--renumber <namespace>` moves a coded document to another namespace under the next key
+  there, and refs to it are rewritten to the new name — `blocked_by: [WF-1]` in `story-2`
+  becomes `[story-1:WF-2]` after `typdoc mv story-2:WF-1 --renumber story-1`. The file keeps its
+  slug under the new key: `story-2/_tickets/WF-5-json-output-shape.md` renumbered into `story-3`
+  becomes `story-3/_tickets/WF-8-json-output-shape.md`, and a ref written with the slug keeps it
+  (`story-3:WF-8-json-output-shape`). A slug is never dropped or made up: a name the
+  collection's `slug` does not expect keeps its form and gets `filename.pattern` in `findings`,
+  exit 0. `auto: moves` records the old key with its namespace (`story-2:WF-5`).
 - The destination existing, or naming the same file as the source, is exit 7 with nothing written.
 - A `mv` in a large repository holds the lock longer; raise `--lock-timeout` if it hits exit 4.
 - A `mv` that stops partway can be finished by running the exact same command again.

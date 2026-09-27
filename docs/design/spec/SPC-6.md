@@ -2,6 +2,7 @@
 title: Config errors explained
 status: active
 migrated_from: docs/archived-design/design.md#validation-rules
+follows: [PRN-8]
 ---
 
 A config error is reported when `.typdoc/config.json` or a collection file loads, not when a
@@ -18,6 +19,6 @@ the list early because the rest of the config could not be interpreted marks the
 leaves checking possible is instead a finding in `validate`'s report, with its `config.` id and
 `file`, and stops nothing.
 
-`docs/design/catalog/config-errors.md` holds the machine-readable form of this same list: twenty
+`docs/design/catalog/config-errors.md` holds the machine-readable form of this same list: twenty-one
 ids, each with the short text naming when it is reported. This document explains why the ids
 exist and what happens once one fires; the catalog is what code and tests read.

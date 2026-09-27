@@ -1,0 +1,15 @@
+{
+  "document": {
+    "path": "tickets/WF-2-lock-order.md",
+    "namespace": "default",
+    "key": "WF-2",
+    "code": "WF",
+    "collection": "tickets",
+    "schema": "ticket",
+    "fields": {
+      "status": "open",
+      "title": "Decide lock order",
+      "kind": "task"
+    }
+  }
+}

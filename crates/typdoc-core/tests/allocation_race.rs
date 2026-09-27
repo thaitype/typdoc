@@ -121,6 +121,7 @@ fn target(title: &str) -> NewTarget {
     NewTarget::Coded {
         code: "WF".to_owned(),
         title: title.to_owned(),
+        slug: None,
     }
 }
 

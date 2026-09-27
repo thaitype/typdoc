@@ -17,6 +17,35 @@ exactly where to look.
 So typdoc would rather leave a gap in the numbers than reuse one. Gaps are ordinary: they're what a
 deleted document leaves behind.
 
+## The key identifies, the slug is for readers
+
+A numbered document's file name can carry a slug after its key: `tickets/WF-12-lock-order.md`.
+A bare `WF-12.md` tells someone reading a folder listing nothing about what's inside, and the slug
+is there for them. It isn't part of the document's name. The document is `WF-12`: refs,
+arguments, the output of `list` and `refs`, and `key` in `--json` all use the key alone, and the
+slug shows up only in `path`.
+
+The reason is the same promise as above. A slug describes the document, and descriptions go out of
+date. If the slug were part of the name, rewording it would turn the document into a different
+one, and every ref to it would break. Because the key is the name, a slug can be fixed at any time
+with `typdoc mv`, a move to the same key with another slug, and every ref by the key alone stays
+exactly as it was.
+
+A ref can be written with the slug too, `blocked_by: [WF-12-lock-order]`, for whoever reads the
+frontmatter. It resolves by the key, so it still points at the right document after the slug
+changes. `validate` reports that the written slug is stale (`refs.slug`, a warning by default),
+and `mv` rewrites such a ref to the new slug when it changes the slug itself.
+
+Slugs play no part in numbering. `WF-12-lock-order.md` counts as number 12, exactly like
+`WF-12.md`, and `typdoc new` picks the next number from `last` and the highest key without
+looking at any slug. `typdoc mv --renumber` gives a document a new key and keeps its slug.
+
+Since the key is what counts, two files with one key are two documents claiming one name, whatever
+their slugs: `WF-5.md` and `WF-5-draft.md` in the same namespace are both `WF-5`, and `validate`
+reports them as `keys.unique`. So are `WF-5-a.md` and `WF-5-A.md`, which are two files on Linux
+and one on the default file system of macOS: `keys.unique` reports them before the difference in
+case can matter.
+
 ## The state file
 
 The number that matters isn't the highest key on disk. It's the highest key ever issued. Those

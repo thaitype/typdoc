@@ -2,6 +2,7 @@
 title: Validation rules explained
 status: active
 migrated_from: docs/archived-design/design.md#validation-rules
+follows: [PRN-2, PRN-3, PRN-7]
 ---
 
 Every rule `typdoc validate` can report falls into one of two groups.
@@ -15,16 +16,31 @@ their level. `collections.empty` fires once, at `warn`, when the project has no 
 all, regardless of what else `.typdoc/` holds — it is a finding of `validate`'s, not a config
 error, so it never stops another command from running.
 
-**Configurable.** Nine rules — `body.links`, `body.anchors`, `body.mentions`,
-`refs.codedByPath`, `refs.moved`, `names.shadowed`, `frontmatter.unknown`, `filename.pattern`,
-and `imports.absent` — have a default level and can be raised, lowered, or turned off
-project-wide under `validation.global` in `config.json`, or per collection in that collection's
-own file. `--strict` raises every remaining `warn` to `error`.
+**Configurable.** Ten rules — `body.links`, `body.anchors`, `body.mentions`, `refs.codedByPath`,
+`refs.moved`, `refs.slug`, `names.shadowed`, `frontmatter.unknown`, `filename.pattern`, and
+`imports.absent` — have a default level and can be raised, lowered, or turned off project-wide under
+`validation.global` in `config.json`, or per collection in that collection's own file. `--strict`
+raises every remaining `warn` to `error`.
 
 `docs/design/catalog/rules.md` holds the machine-readable form of this same list: one entry per
 rule id, each carrying `configurable: true` for a rule in the second group and `configurable:
 false` for a rule in the first. This document explains why the split exists; that one is what
 code and tests read.
+
+## Default levels
+
+| Rule | Default | Options | Checks |
+| --- | --- | --- | --- |
+| `body.links` | `error` | `ignore` | Links in the body point at existing files (below) |
+| `body.anchors` | `error` | — | `#heading` in a link exists in the target (percent-decoded, case-insensitive; `SPC-14`) |
+| `body.mentions` | `off` | `inlineCode` (`true`), `fencedCode` (`false`) | Keys mentioned in body text exist |
+| `refs.codedByPath` | `warn` | — | A coded document is referenced by path instead of key |
+| `refs.moved` | `error` | — | A ref points at a key or path recorded as moved (below) |
+| `refs.slug` | `warn` | — | A ref written with a slug that is not the file's slug now (below) |
+| `names.shadowed` | `warn` | — | A name that is both a sibling namespace and an import alias, so `name:` and `name::` reach different documents |
+| `frontmatter.unknown` | `warn` | — | Frontmatter fields not in the schema |
+| `filename.pattern` | `error` | — | A file in a coded collection's folder that fits no `match` template, e.g. `tickets/README.md`; also a coded document whose name is not in the form its collection's `slug` expects, or whose slug is empty or holds an excluded character, which stays a document (`SPC-17`) |
+| `imports.absent` | `warn` | — | Refs into an imported project that is absent on this machine, including one whose path uses an environment variable that is unset or empty. A project that needs its imports to be there should set this to `error` in CI, because a mistyped variable name is otherwise only a warning. An import that is absent and that no ref names is not reported, even at `error`; a misspelt alias is caught where a ref names it (`bad-prefix`, `SPC-12`) |
 
 ## Merge order
 
@@ -73,10 +89,22 @@ so a body link to a moved target is `refs.moved`, not `body.links`; it is looked
 `#anchor`, since a recorded move never has one. Without a field with `auto: moves`, a moved ref
 is still reported as missing, without the new key.
 
+## `refs.slug`
+
+A ref written with a slug (`story-2:WF-5-json-output-shape`) whose slug is not the one the file
+carries now, including a file that now carries none. The ref still resolves, by its key
+(`SPC-14`); the finding names the key and the file's current name: `story-2:WF-5-json-output-shape`
+refers to `WF-5`, whose file is now `WF-5-json-shapes.md`. A ref by the key alone is never
+reported, since it cannot go out of date. `mv` rewrites every ref this project holds, so what
+this rule finds is a ref `mv` did not reach: one edited by hand, one in a project that imports
+this one, or a file renamed without `mv`. `new` and `set` check it before they write, at its
+level (`SPC-2`).
+
 ## `body.mentions`
 
-It checks plain-text keys and never turns them into refs, so `refby` never counts a mention and
-`mv` never rewrites one.
+It checks plain-text keys and never turns them into refs, so `refby` never counts a mention and `mv`
+never rewrites one. Mentions are keys alone: text that writes a key followed by its slug (`SPC-17`)
+is not read as a mention, so neither it nor its key is checked.
 
 | Text | Checked |
 | --- | --- |
@@ -86,6 +114,7 @@ It checks plain-text keys and never turns them into refs, so `refby` never count
 | `[WF-3](WF-3.md)` | no; `body.links` checks it |
 | `UTF-8`, `SHA-256` | no; not a known code |
 | `WF-3a`, `xWF-3` | no; word boundaries required |
+| `WF-3-lock-order` | no; a key written with its slug is not a mention |
 
 A mention with no prefix is looked up in the document's own namespace only, and a mention with a
 sibling prefix (`story-2:WF-5`) in the namespace it names. A mention has one outcome for every
@@ -102,8 +131,8 @@ from the top of the file, frontmatter included, so it matches editors and file t
 at a line feed, at a carriage return and a line feed together, or at a carriage return alone, as
 in CommonMark, and a line ending at the end of the file does not begin another line, so `a\nb`
 and `a\nb\n` both have two lines. Every command that reports a line counts this way, and the
-frontmatter block is found by the same count. `col` counts Unicode scalar values, so a Thai
-consonant, a Thai vowel or tone mark, an emoji and a tab each count as 1. That agrees with a
+frontmatter block is found by the same count. `col` counts Unicode scalar values, so a
+consonant, a combining vowel or tone mark, an emoji and a tab each count as 1. That agrees with a
 UTF-16 count, the Language Server Protocol default, except after a character outside the Basic
 Multilingual Plane, such as an emoji, which UTF-16 counts as 2. `col` marks where the offending
 element starts: for a link, its `[`, or the `!` before it for an image. `--json` carries no byte

@@ -64,24 +64,6 @@ Each project has one `.typdoc/config.json` that sets project-wide options, optio
 | `validation` | no | Rule levels and options that apply project-wide, under `global`. A collection tunes them in its own file. See Validation rules. |
 | `lock` | no | `local` (default) or `git-common`. See Concurrency. |
 
-**Collection files.** Each collection is one file, `.typdoc/collections/<name>.json`. The file name without `.json` is the collection's name: ASCII letters, digits, `-` and `_`, so it is unique by construction. The file maps files to a schema. It is configuration only: numbering state lives in `.typdoc/state/`.
-
-```json
-// .typdoc/collections/wayfinder.json
-{
-  "match": "tickets/{key}.md",
-  "schema": "schemas/wayfinder.json",
-  "validation": { "body.mentions": { "level": "error" } }
-}
-```
-
-| Key | Required | Meaning |
-| --- | --- | --- |
-| `match` | yes | Which files belong to the collection. See `docs/design/spec/SPC-17.md`. |
-| `schema` | yes | Relative path or `http://` or `https://` URL of the schema. See Remote schemas. |
-| `refBase` | no | How frontmatter paths resolve: `file` (default, relative to the document) or `namespace` (relative to the namespace folder) |
-| `validation` | no | Rule levels and options for this collection only, merged over `validation.global`. See Validation rules. |
-
 **The .typdoc folder.** Everything typdoc reads as configuration or writes for itself lives in one folder at the top of the project; the folder is also what marks a project.
 
 ```
@@ -412,18 +394,6 @@ Correctness rules are always on; quality rules are configured project-wide under
 | `state.behind` | A recorded `last` is not lower than the highest existing number of that collection in the namespace. At `warn`: allocation takes the larger of the two, so the next number is still right |
 | `state.retired` | At `warn`: a state entry names a collection this project no longer has. It is kept, because it is the only record that those numbers were issued; nothing removes it |
 | `files.unreadable` | A directory entry a `match` reaches, or a folder a `namespaces` glob reaches, that is a symbolic link, or whose name is not valid UTF-8; it is skipped and the run continues. A `namespaces` glob leaves a file that is a symbolic link alone, as it leaves any file, since only a folder can be a namespace |
-
-**Configurable**
-
-| Rule | Default | Options | Checks |
-| --- | --- | --- | --- |
-| `body.anchors` | `error` | — | `#heading` in a link exists in the target (percent-decoded, case-insensitive; see `docs/design/spec/SPC-14.md`) |
-| `body.mentions` | `off` | `inlineCode` (`true`), `fencedCode` (`false`) | Keys mentioned in body text exist |
-| `refs.codedByPath` | `warn` | — | A coded document is referenced by path instead of key |
-| `names.shadowed` | `warn` | — | A name that is both a sibling namespace and an import alias, so `name:` and `name::` reach different documents |
-| `frontmatter.unknown` | `warn` | — | Frontmatter fields not in the schema |
-| `filename.pattern` | `error` | — | A file in a coded collection's folder that fits no `match` template, e.g. `tickets/README.md` |
-| `imports.absent` | `warn` | — | Refs into an imported project that is absent on this machine, including one whose path uses an environment variable that is unset or empty. A project that needs its imports to be there should set this to `error` in CI, because a mistyped variable name is otherwise only a warning. An import that is absent and that no ref names is not reported, even at `error`; a misspelt alias is caught where a ref names it (`bad-prefix`, see JSON output) |
 
 **body.mentions.** Checks plain-text keys; it never turns them into refs, so `refby` and `mv` ignore mentions. The codes to look for come from the schemas of this project and the projects it imports; nothing is listed in config.
 

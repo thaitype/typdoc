@@ -9,6 +9,7 @@ use crate::config::config_file;
 use crate::env::Env;
 use crate::error::Error;
 use crate::project::discover;
+use crate::template::valid_slug;
 
 /// The argument of a command that names a document, once the project is known. A path or a
 /// key may carry a namespace prefix (`story-2:notes/x.md`, `story-2:WF-5`), an import prefix
@@ -82,9 +83,10 @@ pub enum Argument {
 
 impl Argument {
     /// Classifies `arg` by its form alone (SPC-2): on disk (`/`, `./`, `../`, ending in `.md`), a
-    /// project-relative path (ending in `.md`), or a key (`CODE-number`). The path and key forms
-    /// may carry a `project::` prefix, a `namespace:` prefix, or both. Nothing here reads the
-    /// disk or knows which project the argument is in or which aliases are configured.
+    /// project-relative path (ending in `.md`), or a key (`CODE-number`, alone or with a slug).
+    /// The path and key forms may carry a `project::` prefix, a `namespace:` prefix, or both.
+    /// Nothing here reads the disk or knows which project the argument is in or which aliases are
+    /// configured.
     pub fn parse(arg: &OsStr) -> Result<Argument, Error> {
         let text = arg.to_str().ok_or_else(|| {
             Error::BadArgument(format!(
@@ -122,11 +124,13 @@ impl Argument {
                 path: rest.to_owned(),
             }));
         }
-        if looks_like_key(rest) {
+        // A written slug is dropped: an argument names the key's document whatever its slug,
+        // and a command has no findings to report a stale one in (SPC-2).
+        if let Some((key, _slug)) = read_key(rest) {
             return Ok(Argument::Named(DocumentArg::Key {
                 project,
                 namespace,
-                key: rest.to_owned(),
+                key: key.to_owned(),
             }));
         }
         Err(Error::BadArgument(format!(
@@ -135,18 +139,33 @@ impl Argument {
     }
 }
 
-/// `^[A-Z][A-Z0-9]*-\d+$`, written by hand so the crate takes on no regex engine for it. `refs`
-/// shares it to tell a bare key from a relative path; where the two readings differ (a prefix,
-/// scope), each module keeps its own rule.
-pub(crate) fn looks_like_key(text: &str) -> bool {
-    let Some((code, digits)) = text.split_once('-') else {
-        return false;
-    };
+/// A key, `^[A-Z][A-Z0-9]*-\d+$`, alone or followed by `-` and a slug (SPC-17): the key and the
+/// slug as written, or `None` when `text` is neither. The number is every digit after the code's
+/// `-`, and the slug is the rest; text there that breaks the slug character rule makes `text` no
+/// key at all, since SPC-14 reads a key written with a slug only when the rest is a slug. A key
+/// never ends in `.md` (SPC-2): `WF-5-x.md` is a path, even where `x.md` would pass as a slug.
+/// Written by hand so the crate takes on no regex engine for it. `refs` shares it; where the two readings
+/// differ (a prefix, scope), each module keeps its own rule.
+pub(crate) fn read_key(text: &str) -> Option<(&str, Option<&str>)> {
+    if text.ends_with(".md") {
+        return None;
+    }
+    let (code, after) = text.split_once('-')?;
     let mut chars = code.chars();
-    chars.next().is_some_and(|c| c.is_ascii_uppercase())
-        && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
-        && !digits.is_empty()
-        && digits.bytes().all(|b| b.is_ascii_digit())
+    let code_fits = chars.next().is_some_and(|c| c.is_ascii_uppercase())
+        && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
+    let digits = after.bytes().take_while(u8::is_ascii_digit).count();
+    if !code_fits || digits == 0 {
+        return None;
+    }
+    let key = &text[..code.len() + 1 + digits];
+    match &after[digits..] {
+        "" => Some((key, None)),
+        rest => {
+            let slug = rest.strip_prefix('-')?;
+            valid_slug(slug).then_some((key, Some(slug)))
+        }
+    }
 }
 
 /// Finds the project for a command with a document argument. An on-disk path names the
@@ -452,10 +471,53 @@ mod tests {
     #[test]
     fn a_key_is_one_or_more_letters_or_digits_starting_with_a_letter_then_a_dash_and_digits() {
         for text in ["WF-3", "A1-30", "AB-007"] {
-            assert!(looks_like_key(text), "{text}");
+            assert_eq!(read_key(text), Some((text, None)), "{text}");
         }
-        for text in ["wf-3", "3F-3", "WF-3a", "WF--3", "WF", "WF-"] {
-            assert!(!looks_like_key(text), "{text}");
+        for text in ["wf-3", "3F-3", "WF-3a", "WF--3", "WF", "WF-", "-3", ""] {
+            assert_eq!(read_key(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_key_with_a_slug_ends_at_the_last_digit_and_the_slug_runs_to_the_end() {
+        assert_eq!(read_key("WF-12-x"), Some(("WF-12", Some("x"))));
+        assert_eq!(read_key("WF-1-2x"), Some(("WF-1", Some("2x"))));
+        assert_eq!(read_key("WF-1-v1.2"), Some(("WF-1", Some("v1.2"))));
+        assert_eq!(read_key("WF-1-a-b"), Some(("WF-1", Some("a-b"))));
+        assert_eq!(read_key("WF-1-ลำดับ"), Some(("WF-1", Some("ลำดับ"))));
+    }
+
+    #[test]
+    fn text_after_the_key_that_is_not_a_slug_makes_no_key() {
+        for text in [
+            "WF-1-",
+            "WF-1-a b",
+            "WF-1-a#b",
+            "WF-1-a:b",
+            "WF-1-a/b",
+            "WF-1x",
+            "WF-1-x.md",
+        ] {
+            assert_eq!(read_key(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_key_argument_written_with_a_slug_is_the_key_alone_in_every_prefix_form() {
+        for (text, project, namespace) in [
+            ("WF-5-x", None, None),
+            ("story-2:WF-5-x", None, Some("story-2")),
+            ("chief::story-3:WF-5-x", Some("chief"), Some("story-3")),
+        ] {
+            assert_eq!(
+                parse(text),
+                Argument::Named(DocumentArg::Key {
+                    project: project.map(str::to_owned),
+                    namespace: namespace.map(str::to_owned),
+                    key: "WF-5".to_owned()
+                }),
+                "{text}"
+            );
         }
     }
 

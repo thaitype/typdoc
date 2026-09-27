@@ -1,4 +1,4 @@
-//! Covers SPC-2, SPC-5, SPC-10, SPC-12.
+//! Covers SPC-1, SPC-2, SPC-5, SPC-10, SPC-12, SPC-17.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -268,8 +268,8 @@ fn a_body_link_in_a_document_whose_body_links_rule_is_off_is_reported_unrewritte
     );
 }
 
-/// A mention is always a key (`links::mentions`), and a plain `mv` never moves a coded document,
-/// so it has no mention to report.
+/// A mention is always a key (`links::mentions`), so a move of a document without a code has no
+/// mention to report.
 #[test]
 fn a_plain_mv_never_reports_a_mention_since_the_moved_document_has_no_key() {
     let project = Scratch::project(&[
@@ -732,4 +732,391 @@ fn mv_without_json_prints_a_plain_text_error() {
     );
     assert_eq!(project.read("a.md"), "---\ntitle: A\n---\n");
     assert_eq!(project.read("b.md"), "---\ntitle: B\n---\n");
+}
+
+// --- Changing a slug ---
+
+/// Two namespaces: `story-2` holds the tickets, under `slug` when one is given, and `story-1`
+/// holds the notes whose refs a test reads. The ticket schema records moves.
+fn slug_project(slug: Option<&str>) -> Scratch {
+    let slug = slug
+        .map(|mode| format!(r#", "slug": "{mode}""#))
+        .unwrap_or_default();
+    let project = Scratch::project(&[]);
+    project.file(
+        ".typdoc/config.json",
+        r#"{ "version": 1, "namespaces": ["story-1", "story-2"] }"#,
+    );
+    project.file(
+        ".typdoc/collections/tickets.json",
+        &format!(r#"{{ "match": "tickets/{{key}}.md", "schema": "ticket.json"{slug} }}"#),
+    );
+    project.file(
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "notes/*.md", "schema": "note.json" }"#,
+    );
+    project.file(
+        "ticket.json",
+        r#"{ "name": "ticket", "code": "WF", "fields": {
+            "title": { "type": "string" },
+            "moved_from": { "type": "list", "auto": "moves" }
+        } }"#,
+    );
+    project.file(
+        "note.json",
+        r#"{ "name": "note", "fields": { "see": { "type": "ref[]", "target": "*" } } }"#,
+    );
+    project.file(
+        ".typdoc/state/story-2.json",
+        "{\n  \"tickets\": {\n    \"last\": 5\n  }\n}\n",
+    );
+    project.file("story-1/notes/.keep", "");
+    project
+}
+
+fn validate_json(project: &Scratch) -> Ran {
+    common::Spawn::args(["validate", "--json"])
+        .cwd(project.path())
+        .run()
+}
+
+#[test]
+fn a_slug_changes_under_the_same_key_and_the_output_names_the_key_alone() {
+    let project = slug_project(None);
+    project.file(
+        "story-2/tickets/WF-5-json-output-shape.md",
+        "---\ntitle: Five\n---\n",
+    );
+
+    let ran = mv(
+        &project,
+        "story-2:WF-5",
+        "story-2/tickets/WF-5-json-shapes.md",
+    );
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let out = ran.stdout_json();
+    assert_eq!(out["document"]["key"], json!("WF-5"));
+    assert_eq!(
+        out["document"]["path"],
+        json!("story-2/tickets/WF-5-json-shapes.md")
+    );
+    assert_eq!(out["document"]["collection"], json!("tickets"));
+    assert_eq!(out["findings"], json!([]));
+    assert!(
+        !project
+            .path()
+            .join("story-2/tickets/WF-5-json-output-shape.md")
+            .exists()
+    );
+    assert_eq!(
+        project.read("story-2/tickets/WF-5-json-shapes.md"),
+        "---\ntitle: Five\nmoved_from:\n- story-2/tickets/WF-5-json-output-shape.md\n---\n"
+    );
+    assert_eq!(validate_json(&project).code, 0);
+}
+
+#[test]
+fn a_slug_is_added_to_a_name_that_had_none() {
+    let project = slug_project(None);
+    project.file("story-2/tickets/WF-5.md", "---\ntitle: Five\n---\n");
+
+    let ran = mv(
+        &project,
+        "story-2:WF-5",
+        "story-2/tickets/WF-5-lock-order.md",
+    );
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let out = ran.stdout_json();
+    assert_eq!(out["document"]["key"], json!("WF-5"));
+    assert_eq!(
+        out["document"]["path"],
+        json!("story-2/tickets/WF-5-lock-order.md")
+    );
+    assert!(!project.path().join("story-2/tickets/WF-5.md").exists());
+    assert!(
+        project
+            .path()
+            .join("story-2/tickets/WF-5-lock-order.md")
+            .exists()
+    );
+}
+
+#[test]
+fn a_slug_is_removed_and_a_ref_written_with_it_becomes_the_key_alone_with_its_prefix() {
+    let project = slug_project(None);
+    project.file("story-2/tickets/WF-5-old.md", "---\ntitle: Five\n---\n");
+    project.file("story-1/notes/a.md", "---\nsee:\n- story-2:WF-5-old\n---\n");
+
+    let ran = mv(
+        &project,
+        "story-2/tickets/WF-5-old.md",
+        "story-2/tickets/WF-5.md",
+    );
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(
+        ran.stdout_json()["document"]["path"],
+        json!("story-2/tickets/WF-5.md")
+    );
+    assert_eq!(
+        project.read("story-1/notes/a.md"),
+        "---\nsee:\n- story-2:WF-5\n---\n"
+    );
+    assert_eq!(validate_json(&project).code, 0);
+}
+
+/// Each ref keeps the form it was written in: the key alone does not change, a key written with
+/// the old slug gets the new one under the prefix it had, and a body link, `<…>` form kept, names
+/// the new file. A key written with a slug that does not match the key is another document's and
+/// is left alone.
+#[test]
+fn refs_are_rewritten_in_the_form_each_was_written_in_across_namespaces() {
+    let project = slug_project(None);
+    project.file("story-2/tickets/WF-4.md", "---\ntitle: Four\n---\n");
+    project.file("story-2/tickets/WF-5-old.md", "---\ntitle: Five\n---\n");
+    project.file(
+        "story-1/notes/a.md",
+        "---\nsee:\n- story-2:WF-5\n- story-2:WF-5-old\n- story-2:WF-4\n---\n\n\
+         See [five](../../story-2/tickets/WF-5-old.md) and [again](<../../story-2/tickets/WF-5-old.md>).\n",
+    );
+    project.file(
+        "story-2/notes/b.md",
+        "---\nsee:\n- WF-5-old\n- WF-5\n---\n\nWF-5 is mentioned here.\n",
+    );
+
+    let ran = mv(&project, "story-2:WF-5-old", "story-2/tickets/WF-5-new.md");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(
+        project.read("story-1/notes/a.md"),
+        "---\nsee:\n- story-2:WF-5\n- story-2:WF-5-new\n- story-2:WF-4\n---\n\n\
+         See [five](../../story-2/tickets/WF-5-new.md) and [again](<../../story-2/tickets/WF-5-new.md>).\n"
+    );
+    assert_eq!(
+        project.read("story-2/notes/b.md"),
+        "---\nsee:\n- WF-5-new\n- WF-5\n---\n\nWF-5 is mentioned here.\n"
+    );
+    let out = ran.stdout_json();
+    let rewritten = out["rewritten"].as_array().expect("an array");
+    assert_eq!(
+        rewritten.len(),
+        4,
+        "a ref by the key alone is not rewritten, so it is not listed: {rewritten:?}"
+    );
+    assert!(
+        rewritten
+            .iter()
+            .any(|r| r["document"] == json!("story-2/notes/b.md")
+                && r["before"] == json!("WF-5-old")
+                && r["after"] == json!("WF-5-new")),
+        "{rewritten:?}"
+    );
+    assert_eq!(
+        out["unrewritten"],
+        json!([]),
+        "the key did not change, so no mention is stale"
+    );
+    assert_eq!(validate_json(&project).code, 0);
+}
+
+/// `auto: moves` records the previous path, so a body link written later to the old file name is
+/// `refs.moved`, naming the new path, rather than a missing file.
+#[test]
+fn auto_moves_records_the_previous_path_and_refs_moved_finds_a_link_left_on_the_old_name() {
+    let project = slug_project(None);
+    project.file("story-2/tickets/WF-5-old.md", "---\ntitle: Five\n---\n");
+
+    let ran = mv(&project, "story-2:WF-5", "story-2/tickets/WF-5-new.md");
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(
+        ran.stdout_json()["document"]["fields"]["moved_from"],
+        json!(["story-2/tickets/WF-5-old.md"])
+    );
+
+    project.file(
+        "story-1/notes/late.md",
+        "---\nsee: []\n---\n\nSee [five](../../story-2/tickets/WF-5-old.md).\n",
+    );
+    let validated = validate_json(&project);
+    assert_eq!(validated.code, 2, "{}", validated.stdout);
+    let findings = validated.stdout_json()["findings"].clone();
+    assert_eq!(findings.as_array().map(Vec::len), Some(1), "{findings}");
+    assert_eq!(findings[0]["rule"], json!("refs.moved"));
+    assert_eq!(findings[0]["path"], json!("story-1/notes/late.md"));
+    assert_eq!(
+        findings[0]["message"],
+        json!(
+            "the ref `../../story-2/tickets/WF-5-old.md` no longer resolves: it was moved to \
+             `story-2/tickets/WF-5-new.md`"
+        )
+    );
+}
+
+#[test]
+fn another_key_in_the_same_folder_is_refused_and_nothing_changes() {
+    let project = slug_project(None);
+    project.file("story-2/tickets/WF-5-old.md", "---\ntitle: Five\n---\n");
+
+    for to in [
+        "story-2/tickets/WF-6-old.md",
+        "story-2/tickets/WF-55.md",
+        "story-2/other/WF-5-old.md",
+    ] {
+        let ran = mv(&project, "story-2:WF-5", to);
+
+        assert_eq!(ran.code, 1, "{to}: {}", ran.stderr);
+        assert!(
+            ran.stderr_json()["error"]
+                .as_str()
+                .unwrap()
+                .contains("fixed by its key `WF-5`"),
+            "{to}: {}",
+            ran.stderr
+        );
+        assert!(!project.path().join(to).exists(), "{to}");
+    }
+    assert_eq!(
+        project.read("story-2/tickets/WF-5-old.md"),
+        "---\ntitle: Five\n---\n"
+    );
+}
+
+#[test]
+fn the_same_key_in_another_namespace_is_still_refused_with_the_renumber_message() {
+    let project = slug_project(None);
+    project.file("story-2/tickets/WF-5-old.md", "---\ntitle: Five\n---\n");
+
+    let ran = mv(&project, "story-2:WF-5", "story-1/tickets/WF-5-old.md");
+
+    assert_eq!(ran.code, 1, "{}", ran.stderr);
+    assert!(
+        ran.stderr_json()["error"]
+            .as_str()
+            .unwrap()
+            .contains("mv --renumber"),
+        "{}",
+        ran.stderr
+    );
+    assert!(!project.path().join("story-1/tickets/WF-5-old.md").exists());
+}
+
+/// typdoc never writes an invalid slug, in any `slug` mode: under `none` a name with text after
+/// the key reads as the form the collection does not expect, and an excluded character there is
+/// refused all the same.
+#[test]
+fn a_destination_with_an_invalid_slug_is_refused_and_nothing_is_written() {
+    for (mode, to) in [
+        (None, "story-2/tickets/WF-5-a b.md"),
+        (None, "story-2/tickets/WF-5-.md"),
+        (None, "story-2/tickets/WF-5-a#b.md"),
+        (Some("required"), "./story-2/tickets/WF-5-a:b.md"),
+        (Some("none"), "story-2/tickets/WF-5-a#b.md"),
+        (Some("none"), "story-2/tickets/WF-5-.md"),
+    ] {
+        let project = slug_project(mode);
+        project.file("story-2/tickets/WF-5-old.md", "---\ntitle: Five\n---\n");
+        project.file("story-1/notes/a.md", "---\nsee:\n- story-2:WF-5-old\n---\n");
+
+        let ran = mv(&project, "story-2:WF-5", to);
+
+        assert_eq!(ran.code, 1, "{mode:?} {to}: {}", ran.stderr);
+        assert!(
+            ran.stderr_json()["error"]
+                .as_str()
+                .unwrap()
+                .contains("a slug is not empty and holds no whitespace, `/`, `#` or `:`"),
+            "{mode:?} {to}: {}",
+            ran.stderr
+        );
+        assert!(!project.path().join(to).exists(), "{mode:?} {to}");
+        assert_eq!(
+            project.read("story-2/tickets/WF-5-old.md"),
+            "---\ntitle: Five\n---\n"
+        );
+        assert_eq!(
+            project.read("story-1/notes/a.md"),
+            "---\nsee:\n- story-2:WF-5-old\n---\n"
+        );
+    }
+}
+
+#[test]
+fn a_move_to_the_form_the_collection_does_not_expect_is_carried_out_and_reported() {
+    for (mode, from, to, message) in [
+        (
+            "none",
+            "story-2/tickets/WF-5.md",
+            "story-2/tickets/WF-5-x.md",
+            "the file name has the slug `x` after the key `WF-5`, and the collection `tickets` \
+             has `slug` set to `none`: it takes no slug",
+        ),
+        (
+            "required",
+            "story-2/tickets/WF-5-x.md",
+            "story-2/tickets/WF-5.md",
+            "the file name has no slug after the key `WF-5`, and the collection `tickets` has \
+             `slug` set to `required`: it needs one",
+        ),
+    ] {
+        let project = slug_project(Some(mode));
+        project.file(from, "---\ntitle: Five\n---\n");
+
+        let ran = mv(&project, from, to);
+
+        assert_eq!(ran.code, 0, "{mode}: {}", ran.stderr);
+        let out = ran.stdout_json();
+        assert_eq!(out["document"]["path"], json!(to), "{mode}");
+        assert_eq!(out["document"]["key"], json!("WF-5"), "{mode}");
+        assert_eq!(
+            out["findings"],
+            json!([{
+                "path": to,
+                "namespace": "story-2",
+                "collection": "tickets",
+                "key": "WF-5",
+                "rule": "filename.pattern",
+                "level": "error",
+                "message": message,
+            }]),
+            "{mode}"
+        );
+        assert!(!project.path().join(from).exists(), "{mode}");
+        assert!(project.path().join(to).exists(), "{mode}");
+    }
+}
+
+/// As if an earlier run had rewritten the ref and stopped before renaming the document: the ref
+/// already names the new slug, resolves by its key, and is not rewritten again.
+#[test]
+fn a_slug_change_run_again_finishes_a_run_a_stop_left_half_done() {
+    let project = slug_project(None);
+    project.file("story-2/tickets/WF-5-old.md", "---\ntitle: Five\n---\n");
+    project.file("story-1/notes/a.md", "---\nsee:\n- story-2:WF-5-new\n---\n");
+    project.file("story-1/notes/b.md", "---\nsee:\n- story-2:WF-5-old\n---\n");
+
+    let ran = mv(&project, "story-2:WF-5", "story-2/tickets/WF-5-new.md");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let out = ran.stdout_json();
+    assert_eq!(
+        out["rewritten"],
+        json!([{
+            "document": "story-1/notes/b.md",
+            "field": "see",
+            "before": "story-2:WF-5-old",
+            "after": "story-2:WF-5-new",
+        }])
+    );
+    assert_eq!(
+        project.read("story-1/notes/a.md"),
+        "---\nsee:\n- story-2:WF-5-new\n---\n"
+    );
+    assert_eq!(
+        project.read("story-1/notes/b.md"),
+        "---\nsee:\n- story-2:WF-5-new\n---\n"
+    );
+    assert!(project.path().join("story-2/tickets/WF-5-new.md").exists());
+    assert_eq!(validate_json(&project).code, 0);
 }

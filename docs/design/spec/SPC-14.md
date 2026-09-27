@@ -2,6 +2,7 @@
 title: Refs explained
 status: active
 migrated_from: docs/archived-design/design.md#refs
+follows: [PRN-2, PRN-6]
 ---
 
 Refs come from two places, frontmatter fields and body links, and both resolve through the same
@@ -25,11 +26,20 @@ A `ref` or `ref[]` value is a plain string, read in this order:
 | Value | Read as | Condition |
 | --- | --- | --- |
 | `WF-3` | Key in the document's own namespace | Matches `^[A-Z][A-Z0-9]*-\d+$` and the code exists in this project |
+| `WF-3-lock-order` | Key `WF-3` in the document's own namespace, written with a slug | The part before the slug is a key as above, and the rest is a slug (`SPC-17`) |
 | `story-2:WF-5` | Key in the sibling namespace `story-2` | `story-2` is a namespace of this project |
 | `story-2:notes/x.md` | Path inside the sibling namespace `story-2`, from its folder | Same |
 | `memory::precedents/x.md` | Path inside the imported project `memory`, which has one namespace | `memory` is an alias in `imports` |
 | `chief::story-3:WF-5` | Key in namespace `story-3` of the imported project `chief` | `chief` is an alias in `imports` |
 | anything else | Relative path | Resolved from the document (`refBase: file`) or the namespace folder (`refBase: namespace`) |
+
+Wherever a key is read, the key followed by its slug is read too, in every form:
+`story-2:WF-5-json-output-shape` and `chief::story-3:WF-5-json-output-shape` are the keys
+`story-2:WF-5` and `chief::story-3:WF-5`. A ref of this form resolves by its key alone. The slug
+in it is not needed to find the document, so a ref whose slug is out of date still reaches it,
+and `validate` reports the difference under `refs.slug`. A value of this form was read as a
+relative path before slugs existed, and it named no document then, since a document is always
+a `.md` file.
 
 `name:` reaches a sibling namespace and `name::` an import, and the two never fall back to each
 other: a name that does not exist on the side the syntax names is an error, never a relative
@@ -44,7 +54,9 @@ for a namespace and as `schema.valid` for an import alias.
 
 A coded document is referenced by key in frontmatter. Referencing it by path works, but `validate`
 warns under `refs.codedByPath`, since a path changes when the file is moved and a key does not.
-Body links always use paths.
+The key alone and the key with its slug are both references by key; no rule prefers one of them.
+Body links always use paths, and a path names the file exactly, slug included: GitHub opens a
+link as it is written.
 
 ## Body links that are not refs
 
@@ -118,13 +130,13 @@ The `slug` of a heading follows GitHub's algorithm, so a link that passes `valid
 GitHub. Take the heading's plain text (text and code spans; image alt text, line breaks and inline
 HTML contribute nothing), lowercase it, delete punctuation other than `-` and `_`, symbols and other
 characters that are not letters or digits, and turn each space into `-`. Marks count as part of a
-letter, so Thai vowels and tone marks stay; non-ASCII text is kept as written, never
+letter, so a combining vowel or tone mark stays; non-ASCII text is kept as written, never
 transliterated. A slug that repeats an earlier one in the same document gets `-1`, `-2` and so on,
 skipping any result already taken (`Dup`, `Dup`, `Dup 1` give `dup`, `dup-1`, `dup-1-1`). Every
-heading counts, including those inside block quotes and list items but not those inside fenced
-code, so the numbering matches GitHub's. A heading whose slug is empty (`## !!!`, `## 😀`) is not
-special: the first gets `""` and cannot be linked to, the next `-1`, then `-2`. In a link, the
-fragment is percent-decoded (a `%` not followed by two hex digits is kept as written) and then
-compared with the slug without regard to case. Slugs are used only for anchors, never for file
-names. A fixture of headings rendered by GitHub holds the expected slugs, so the character classes
-are checked against GitHub's own output.
+heading counts, including those inside block quotes and list items but not those inside fenced code,
+so the numbering matches GitHub's. A heading whose slug is empty (`## !!!`, `## 😀`) is not special:
+the first gets `""` and cannot be linked to, the next `-1`, then `-2`. In a link, the fragment is
+percent-decoded (a `%` not followed by two hex digits is kept as written) and then compared with the
+slug without regard to case. A heading's slug is used only for anchors; it is not the slug in a
+coded document's file name (`SPC-17`), which the caller chooses. A fixture of headings rendered by
+GitHub holds the expected slugs, so the character classes are checked against GitHub's own output.

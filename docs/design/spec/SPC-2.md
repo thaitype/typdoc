@@ -2,6 +2,7 @@
 title: Commands explained
 status: active
 migrated_from: docs/archived-design/design.md#commands
+follows: [PRN-1, PRN-2, PRN-3, PRN-4, PRN-8]
 ---
 
 `typdoc` has nine commands: `new`, `get`, `list`, `set`, `toc`, `refs`, `mv`, `pull`, and
@@ -27,11 +28,12 @@ caught rather than drifting apart silently.
 Before writing, `new` and `set` check every ref the document's frontmatter will hold (body links are
 left to `validate`): its target must exist, and its schema must be one the field's `target` allows.
 A ref into an import that is absent on this machine is reported at its `imports.absent` level
-instead, and a ref to a document recorded as moved at its `refs.moved` level; either refuses the
-write only at `error`. A cycle on an `acyclic` field refuses the write only when the write forms it:
-the cycle passes through the document being written, on a field whose value the write changes. A
-document that already sits on a cycle can still be written, and `validate` goes on reporting the
-cycle.
+instead, a ref to a document recorded as moved at its `refs.moved` level, and a ref written with a
+slug that is not the file's at its `refs.slug` level; each refuses the write only at `error`, so at
+the default `warn` a stale slug never refuses one. A cycle on an `acyclic` field refuses the write
+only when the write forms it: the cycle passes through the document being written, on a field whose
+value the write changes. A document that already sits on a cycle can still be written, and
+`validate` goes on reporting the cycle.
 
 ## `mv` explained
 
@@ -82,6 +84,17 @@ already rewritten name a path that is not there yet. A `mv` that stops says plai
 command can be run again to finish, rather than only that it failed, so that recovering does not
 depend on the user working it out.
 
+**Changing a slug.** A coded document's slug is part of its path, so a new slug is a `mv` to the
+path with the new slug, under the same key: `typdoc mv story-2:WF-5
+story-2/_tickets/WF-5-json-shapes.md`. Adding a slug and removing one are the same kind of move. A
+move to the form the collection's `slug` does not expect (`SPC-17`) is carried out, and
+`filename.pattern` is reported in its output, as a schema the document does not satisfy is. The refs
+are rewritten as for any `mv`, each in the form it was written: a ref by the key alone does not
+change, a ref written with the old slug is rewritten with the new one, and a body link names the new
+file. A schema's `auto: moves` field records the previous path, not the key, which has not changed:
+a body link left pointing at the old file name is then reported by `refs.moved` with the new path,
+rather than as a missing file.
+
 **`--renumber`.** Moves a coded document to another namespace under a new key. The destination
 is the value of the flag, not a second positional argument: `typdoc mv WF-2 --renumber story-3`.
 An argument that names a document is read by the rule that something ending in `.md` is a path,
@@ -103,7 +116,9 @@ key reads it from `--json`. It holds the locks of both
 namespaces (in the same fixed order), issues the next number from the destination's `last`,
 moves the file and rewrites every visible ref in frontmatter and body links, bare and prefixed,
 in the form that is correct
-from each referencing document's own namespace, and reports what it cannot rewrite. The old key
+from each referencing document's own namespace, and reports what it cannot rewrite. The file
+keeps its slug under the new key: `story-2:WF-5-json-output-shape` becomes
+`story-3/_tickets/WF-8-json-output-shape.md`, and a ref written with the slug keeps it. The old key
 is never issued again, because the source namespace's `last` never goes down. It writes under the
 same promise as `mv` above, with one ordering rule of its own: the destination namespace's `last`
 is written before the document appears under its new key. A number that is recorded and then not
@@ -111,20 +126,26 @@ used is skipped, and a skipped number is ordinary: a collection that runs `WF-3`
 is not missing a document. The alternative — letting a document exist under a number the state
 file has not recorded — is what issues that number a second time.
 
+If the destination collection's `slug` expects the other form, a slug into `none` or no slug
+into `required`, the move is carried out all the same, the slug kept as it was, and
+`filename.pattern` is reported in its output with exit 0, as for a schema the document does not
+satisfy (below). A slug is never dropped or made up to fit.
+
 **The collection a document lands in.** `mv` changes a path, and a path decides which collection
 a document belongs to, so a move can change a document's schema or take it out of every
 collection.
 
 - **Refused.** A coded document cannot move out of its own collection's folder, and a document
-  without a code cannot move into a coded collection. A coded collection's `match` takes `{key}`
-  exactly once and allows no globs, and moving a coded document out would leave the key every ref
-  uses pointing at nothing. `mv --renumber` is the way a coded document moves.
-- **Moved, and reported.** A document that moves into another collection and then does not
-  satisfy that collection's schema is moved anyway, and what the schema rejects is reported.
-  Refusing would leave no order of steps that works, since `set` validates before it writes too.
-- **Allowed, and said out loud.** A document may move out of every collection. The command says
-  so in its own words: the document will not appear in `list`, and its refs are no longer
-  checked.
+  without a code cannot move into a coded collection. Within its folder a coded document can change
+  only its slug (Changing a slug, above); a destination that names another key is refused. A coded
+  collection's `match` takes `{key}` exactly once and allows no globs, and moving a coded document
+  out would leave the key every ref uses pointing at nothing. `mv --renumber` is the way a coded
+  document moves. - **Moved, and reported.** A document that moves into another collection and then
+  does not satisfy that collection's schema is moved anyway, and what the schema rejects is
+  reported. Refusing would leave no order of steps that works, since `set` validates before it
+  writes too. - **Allowed, and said out loud.** A document may move out of every collection. The
+  command says so in its own words: the document will not appear in `list`, and its refs are no
+  longer checked.
 
 **A move that lands on a schema the document does not satisfy exits 0, not 2.** Exit 2 means
 validation failed, and everywhere else it comes with nothing having been written. Deciding
@@ -157,19 +178,22 @@ new document, which is the ref meaning what it says.
 ## Arguments that name a document
 
 An argument that names a document is a path or a key, told apart by its form and never guessed.
-After any `project::` prefix, an argument that ends in `.md` is a path, and one that has the form
-of a key is a key. A key never ends in `.md` and a document is always a `.md` file, so the two
-cannot be confused. Anything else is bad arguments (exit 1). A path that begins with `/`, `./` or
-`../` is a path on disk, absolute or relative to the current directory. Any other path is
+After any `project::` prefix, an argument that ends in `.md` is a path, and one that has the form of
+a key is a key. A key followed by its slug (`WF-5-json-output-shape`, `SPC-17`) has the form of a
+key and names the document `WF-5`, as it does in a ref (`SPC-14`), whatever its slug: `typdoc get
+WF-5-old-name` prints `WF-5` and nothing about the slug, since a command has no findings of its own
+to put the difference in. A key never ends in `.md` and a document is always a `.md` file, so the
+two cannot be confused. Anything else is bad arguments (exit 1). A path that begins with `/`, `./`
+or `../` is a path on disk, absolute or relative to the current directory. Any other path is
 relative to the project folder, the folder that holds `.typdoc`, which is what `path` is in
-`--json`. The path of a document of an imported project is written `project::path`, relative to
-that project's folder. `mv` reads both its arguments in this way, except that neither may carry a
-`project::` prefix: `mv` writes only in the project it is run in, so an argument naming a
-document of another project is bad arguments (exit 1). Its second names a file that does not
-exist yet: a `mv` whose destination is already there writes nothing and exits 7, and so does a
-`--renumber` whose destination name is taken. When a path relative to the project names nothing
-in it but a file of that name exists relative to the current directory, the error is exit 5 and
-says that `./name` exists. That is a suggestion; nothing is done in its place.
+`--json`. The path of a document of an imported project is written `project::path`, relative to that
+project's folder. `mv` reads both its arguments in this way, except that neither may carry a
+`project::` prefix: `mv` writes only in the project it is run in, so an argument naming a document
+of another project is bad arguments (exit 1). Its second names a file that does not exist yet: a
+`mv` whose destination is already there writes nothing and exits 7, and so does a `--renumber` whose
+destination name is taken. When a path relative to the project names nothing in it but a file of
+that name exists relative to the current directory, the error is exit 5 and says that `./name`
+exists. That is a suggestion; nothing is done in its place.
 
 The string that names a document in an argument follows from the name it is printed with
 (`SPC-12`):
@@ -188,7 +212,7 @@ document of every project in the fixtures to check it.
 ## `new`
 
 ```bash
-typdoc new <CODE> "<title>" [--set k=v ...]      # coded schema: allocates the next key
+typdoc new <CODE> "<title>" [--slug <slug>] [--set k=v ...]   # coded schema: allocates the next key
 typdoc new <path> [--set k=v ...]                  # path-identified schema
 typdoc new WF "Cosmos or SQL?" --set kind=grilling --set blocked_by=WF-1
 ```
@@ -203,7 +227,11 @@ never reused after its document is deleted, as long as the state file records th
 but is not a number that can be held stops it the same way as `state.malformed`. A file created
 by hand with a higher number is respected: the highest existing number is then larger than
 `last`, and the numbers in between stay unissued, which is harmless. The file is named from the
-collection's `match` template.
+collection's `match` template, with the slug `--slug` gives after the key
+(`typdoc new WF "Decide lock order" --slug lock-order` creates `tickets/WF-8-lock-order.md`).
+Whether `--slug` may or must be given follows the collection's `slug` (`SPC-17`); a refused
+`--slug` exits 1 before a number is spent. `--slug` with a path is bad arguments (exit 1): the
+path already names the file.
 
 For a path, the path must match a collection, so `new` cannot create a file outside every
 collection. The path already names its namespace folder, so `--namespace` and

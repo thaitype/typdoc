@@ -37,6 +37,10 @@ enum Command {
         target: OsString,
         /// The title to give the document; required for a coded schema, and not taken for a path
         title: Option<String>,
+        /// The slug to put after the key in the file name (`WF-8-<SLUG>.md`); for a coded schema
+        /// only, as the collection's `slug` allows or requires
+        #[arg(long, value_name = "SLUG")]
+        slug: Option<String>,
         /// `field=value` to set; may repeat
         #[arg(long = "set", value_name = "K=V")]
         set: Vec<String>,
@@ -179,6 +183,7 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
         Command::New {
             target,
             title,
+            slug,
             set,
             lock_timeout,
             json,
@@ -193,7 +198,7 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                     );
                 }
             };
-            let parsed = match parse_new_target(target_text, title.as_deref()) {
+            let parsed = match parse_new_target(target_text, title.as_deref(), slug) {
                 Ok(parsed) => parsed,
                 Err(e) => return failure(json, exit_code(e.kind()), &e),
             };
@@ -475,12 +480,22 @@ fn get(
     project.get(&arg, &scope, deps.env)
 }
 
-fn parse_new_target(target: &str, title: Option<&str>) -> Result<NewTarget, Error> {
+fn parse_new_target(
+    target: &str,
+    title: Option<&str>,
+    slug: Option<String>,
+) -> Result<NewTarget, Error> {
     if target.ends_with(".md") {
         if title.is_some() {
             return Err(Error::BadArgument(format!(
                 "`{target}` is a path, and `new` takes no title after one: `typdoc new <path> \
                  [--set k=v ...]`"
+            )));
+        }
+        if slug.is_some() {
+            return Err(Error::BadArgument(format!(
+                "`{target}` is a path, which already names the file: `--slug` is only for a \
+                 schema's code, `typdoc new <CODE> \"<title>\" --slug <slug>`"
             )));
         }
         return Ok(NewTarget::Path {
@@ -497,6 +512,7 @@ fn parse_new_target(target: &str, title: Option<&str>) -> Result<NewTarget, Erro
         return Ok(NewTarget::Coded {
             code: target.to_owned(),
             title: title.to_owned(),
+            slug,
         });
     }
     Err(Error::BadArgument(format!(

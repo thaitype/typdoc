@@ -53,6 +53,9 @@ A collection says which files a schema applies to:
 - `match` is relative to the namespace folder. `*` matches within one name, `**` whole folders,
   `{key}` the document's key. Globs do not enter folders whose name begins with `.`.
 - `schema` is a path from the project folder.
+- `slug` (coded schemas only): whether a file name carries a slug after its key, `optional`
+  (default), `required` or `none`. Any other value, or `slug` on a schema without a code, is
+  `config.collection-slug`. A `match` with a digit or `-` right after `{key}` needs `none`.
 - A collection file may carry its own `validation`, merged over the project's.
 
 A schema says which fields a document has:
@@ -91,8 +94,13 @@ A schema says which fields a document has:
 | with `code` | `tickets/{key}.md` | `tickets/WF-3.md` | key `WF-3` (or its path) |
 | without `code` | `notes/*.md` | `notes/setup.md` | path `notes/setup.md` |
 
-- A coded document's file name **is** its key; the key is not stored in the frontmatter. `new`
+- A coded document's file name is its key, optionally followed by `-<slug>`:
+  `tickets/WF-8-lock-order.md` is `WF-8`. The key is not stored in the frontmatter. `new`
   allocates it; a title never becomes a file name.
+- The number is every digit after the code: `WF-12-x.md` is `WF-12` with the slug `x`. A slug is
+  not empty and holds no whitespace, `/`, `#` or `:`. A name in the form the collection's `slug`
+  does not expect, or with a slug that breaks that rule, is still the document its key names;
+  `filename.pattern` reports the name.
 - A key is `CODE-number` (`[A-Z][A-Z0-9]*-\d+`). It never ends in `.md`, so a key and a path are
   never confused.
 - A path argument that does not start with `/`, `./` or `../` is relative to the project folder —

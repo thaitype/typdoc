@@ -4,6 +4,86 @@ All notable, user-visible changes to typdoc are documented here. Internal reorga
 example, how the project's own design documents are structured and read in its own test suite)
 are left out unless they change something a user of the `typdoc` binary sees.
 
+## [Unreleased]
+
+### Added
+
+- A coded document's file name can carry a slug after its key: `tickets/WF-8-lock-order.md` is
+  the document `WF-8`, with the slug `lock-order`. The key identifies the document everywhere (in
+  refs, arguments, output and numbering); the slug is only there for a person reading a folder
+  listing or a link, and `--json` shows it only in `path`, never in `key`. The number is every
+  digit after the code, so `WF-12-x.md` is `WF-12` with the slug `x`. A slug holds any characters
+  a file name can, in any language, except whitespace, `/`, `#` and `:`, and it is not empty. In
+  `{key}/README.md` the slug goes on the folder (`WF-1-x/README.md`). File names of documents
+  without a code are unchanged.
+- A collection file takes a new key, `slug`, for coded schemas: `optional` (the default: a file
+  name with or without a slug), `required` (a slug after every key) or `none` (no slug). Any other
+  value, a value that is not a string, or `slug` on a collection whose schema has no code is the
+  new config error `config.collection-slug` (exit 2).
+- `typdoc new WF "Decide lock order" --slug lock-order` creates `tickets/WF-8-lock-order.md`.
+  typdoc never makes a slug up or rewrites the one given. A slug that breaks the character rule,
+  `--slug` under `slug: none`, no `--slug` under `slug: required`, and `--slug` with a path target
+  are each exit 1, checked before the namespace lock, so no number is used.
+- A key can be written with its slug wherever a key works, as an argument and as a frontmatter
+  ref: `WF-8-lock-order`, `story-2:WF-8-lock-order` and `chief::story-3:WF-8-lock-order` all name
+  `WF-8` and resolve by the key alone, and `refs.codedByPath` does not fire for them. Text after
+  the digits that is not a valid slug makes no key, and text ending in `.md` is never a key, so
+  `WF-8-a#b` is exit 1 as an argument and `WF-1-x.md` in a ref stays a path. A key written with
+  its slug in plain body text is not a mention and stays unchecked.
+- A new configurable rule, `refs.slug` (default `warn`), reports a frontmatter ref written with a
+  slug that is not the one its target's file carries now, or whose target now has none; the
+  message names the file's current name. A ref by the key alone is never reported. `new` and `set`
+  check it before they write, as they check `refs.moved`, and refuse the write only when it is set
+  to `error`.
+- `mv` can change a coded document's slug: a move to the name its collection gives the same key
+  with another slug, or with none (`typdoc mv story-2:WF-5 story-2/_tickets/WF-5-json-shapes.md`).
+  A ref by the key alone is left as it is, a ref written with the old slug gets the new one (or
+  the key alone when the slug is removed), body links name the new file, and a field with
+  `auto: moves` records the previous path. A destination with another key or in another folder is
+  still exit 1, and so is a destination whose slug breaks the character rule, with nothing
+  written. A destination in the form the collection's `slug` does not expect is moved, with
+  `filename.pattern` in `findings`, exit 0.
+- `mv --renumber` keeps the file's slug under the new key:
+  `story-2/_tickets/WF-5-json-output-shape.md` renumbered into `story-3` becomes
+  `story-3/_tickets/WF-8-json-output-shape.md`, and a ref written with the slug gets the new key
+  and the same slug. A slug already on disk is never dropped: a name in a form the collection does
+  not expect, or with a slug that breaks the character rule, is renumbered as it is, with
+  `filename.pattern` in `findings`, exit 0.
+
+### Changed
+
+- `filename.pattern` also reports a coded document whose name is not in the form its collection's
+  `slug` expects (`WF-1.md` under `required`, `WF-1-x.md` under `none`), or whose text after the
+  key is empty or holds whitespace, `/`, `#` or `:` (`WF-1-a b.md`). Such a file stays the
+  document its key names: it is listed, checked against the schema, and refs to it resolve. The
+  finding carries its `collection` and `key`; a file that fits no template is reported as before,
+  with neither.
+- `config.match-template` also covers a coded `match` whose text right after `{key}` starts with
+  a digit or `-` (`{key}1.md`, `{key}-notes.md`) while the collection's `slug` is not `none`: such
+  a template cannot tell a slug from its own text. The message says to set `slug` to `none`, which
+  reads names exactly as before.
+
+### Fixed
+
+- A body link written from another folder to a document's old path, after a move recorded in an
+  `auto: moves` field, is now reported as `refs.moved`, naming the new path, instead of
+  `body.links`.
+
+### Upgrade note
+
+A project reads more files after this release, never fewer: a `WF-1-x.md` that
+`filename.pattern` reported before is now the document `WF-1`. With `filename.pattern` at its
+default level (`error`) such a project was already failing on that file. A project that loaded
+and passed `validate` before can fail after the upgrade in three cases:
+
+1. `filename.pattern` is set to `off` or `warn`, and a file like `WF-1-x.md` does not satisfy the
+   schema, or shares its key with a `WF-1.md` beside it (`keys.unique`).
+2. A collection with a glob in the same folder also matches a file like `WF-1-x.md` (for example
+   `tickets/*-notes.md` and `WF-1-notes.md`): that file now belongs to both collections, which is
+   `collections.overlap`.
+3. A coded `match` has a digit or `-` right after `{key}` (`{key}-notes.md`): the project stops
+   loading with `config.match-template` (exit 2) until the collection sets `"slug": "none"`.
+
 ## [0.3.1] - 2026-09-25
 
 ### Added

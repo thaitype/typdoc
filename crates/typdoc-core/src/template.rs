@@ -1,12 +1,63 @@
 //! Match templates: what `match` in a collection file and an entry of `namespaces` are read as.
 
+/// A collection's `slug`: which form of a coded file name it expects (SPC-17).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SlugMode {
+    #[default]
+    Optional,
+    Required,
+    None,
+}
+
+/// How a coded file name stands against its collection's `slug`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NameState {
+    Expected,
+    /// No slug under `required`, or a slug under `none`.
+    UnexpectedForm,
+    /// The text after the key's `-` is empty or holds a character a slug excludes.
+    InvalidSlug,
+}
+
+/// What a coded template reads from the name of one of its documents.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileName {
+    pub key: String,
+    pub slug: Option<String>,
+    pub state: NameState,
+}
+
+/// Whether `slug` may follow a key in a file name: not empty, and no whitespace, `/`, `#` or `:`
+/// (SPC-17).
+pub fn valid_slug(slug: &str) -> bool {
+    !slug.is_empty()
+        && !slug
+            .chars()
+            .any(|c| c.is_whitespace() || matches!(c, '/' | '#' | ':'))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Bound {
+    code: String,
+    /// `false` only for a template whose own text after `{key}` starts with a digit or `-`,
+    /// bound under `none`: such a template never looks for a slug (SPC-17).
+    reads_slug: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Part {
     Literal(String),
     /// Any run of characters within the segment, none included.
     Star,
     /// Matches only once bound to the code of a schema.
-    Key(Option<String>),
+    Key(Option<Bound>),
+}
+
+/// What `{key}` captured from a name that fits a segment.
+#[derive(Debug, Default)]
+struct Capture {
+    key: Option<String>,
+    slug: Option<String>,
 }
 
 /// One segment of a path, made of literal text, `*` and `{key}`.
@@ -81,11 +132,18 @@ impl Segment {
 
     /// The substring `{key}` captures from `name`, if this segment has that placeholder and
     /// `name` fits the segment as a whole.
-    fn capture_key(&self, name: &str) -> Option<String> {
+    fn capture_key(&self, name: &str) -> Option<Capture> {
         if name.is_empty() {
             return None;
         }
-        fits_capture(&self.parts, name).flatten()
+        fits_capture(&self.parts, name).filter(|capture| capture.key.is_some())
+    }
+
+    /// Whether this segment's `{key}` reads a slug after it; `false` too when it has none.
+    fn reads_slug(&self) -> bool {
+        self.parts
+            .iter()
+            .any(|part| matches!(part, Part::Key(Some(bound)) if bound.reads_slug))
     }
 
     /// The whole segment as plain text, when it holds no `*` and no `{key}`.
@@ -99,16 +157,34 @@ impl Segment {
 
     /// The inverse of `capture_key`, for `typdoc new` to name the file of a key it issued.
     /// `None` for `*` or an unbound `{key}`, which a bound coded template never holds.
-    fn render(&self, key: &str) -> Option<String> {
+    fn render(&self, key: &str, slug: Option<&str>) -> Option<String> {
         let mut out = String::new();
         for part in &self.parts {
             match part {
                 Part::Literal(text) => out.push_str(text),
                 Part::Star | Part::Key(None) => return None,
-                Part::Key(Some(_)) => out.push_str(key),
+                Part::Key(Some(_)) => {
+                    out.push_str(key);
+                    if let Some(slug) = slug {
+                        out.push('-');
+                        out.push_str(slug);
+                    }
+                }
             }
         }
         Some(out)
+    }
+
+    /// The text right after `{key}`, when this segment holds `{key}` and text follows it.
+    fn text_after_key(&self) -> Option<&str> {
+        let at = self
+            .parts
+            .iter()
+            .position(|part| matches!(part, Part::Key(_)))?;
+        match self.parts.get(at + 1)? {
+            Part::Literal(text) => Some(text),
+            Part::Star | Part::Key(_) => None,
+        }
     }
 }
 
@@ -122,11 +198,11 @@ fn fits(parts: &[Part], name: &str) -> bool {
     fits_capture(parts, name).is_some()
 }
 
-/// `None` when `name` does not fit; otherwise the substring `{key}` captured, if `parts` has one.
+/// `None` when `name` does not fit; otherwise what `{key}` captured, if `parts` has one.
 /// `fits` is built on this, so the two cannot drift apart.
-fn fits_capture(parts: &[Part], name: &str) -> Option<Option<String>> {
+fn fits_capture(parts: &[Part], name: &str) -> Option<Capture> {
     let Some((first, rest)) = parts.split_first() else {
-        return name.is_empty().then_some(None);
+        return name.is_empty().then(Capture::default);
     };
     match first {
         Part::Literal(text) => {
@@ -139,15 +215,46 @@ fn fits_capture(parts: &[Part], name: &str) -> Option<Option<String>> {
             .chain(std::iter::once(name.len()))
             .find_map(|at| fits_capture(rest, &name[at..])),
         Part::Key(None) => None,
-        Part::Key(Some(code)) => {
+        Part::Key(Some(bound)) => {
+            let code = &bound.code;
             let numbers = name
                 .strip_prefix(code.as_str())
                 .and_then(|after| after.strip_prefix('-'))?;
             let digits = numbers.bytes().take_while(u8::is_ascii_digit).count();
-            (1..=digits).rev().find_map(|used| {
-                fits_capture(rest, &numbers[used..])
-                    .map(|inner| inner.or_else(|| Some(format!("{code}-{}", &numbers[..used]))))
-            })
+            if !bound.reads_slug {
+                return (1..=digits).rev().find_map(|used| {
+                    fits_capture(rest, &numbers[used..]).map(|inner| Capture {
+                        key: inner
+                            .key
+                            .or_else(|| Some(format!("{code}-{}", &numbers[..used]))),
+                        slug: inner.slug,
+                    })
+                });
+            }
+            // The number is every digit (SPC-17), so `WF-10` is never `WF-1` and a slug.
+            if digits == 0 {
+                return None;
+            }
+            let key = format!("{code}-{}", &numbers[..digits]);
+            let after = &numbers[digits..];
+            if fits_capture(rest, after).is_some() {
+                return Some(Capture {
+                    key: Some(key),
+                    slug: None,
+                });
+            }
+            let slugged = after.strip_prefix('-')?;
+            slugged
+                .char_indices()
+                .map(|(at, _)| at)
+                .chain(std::iter::once(slugged.len()))
+                .rev()
+                .find_map(|end| {
+                    fits_capture(rest, &slugged[end..]).map(|_| Capture {
+                        key: Some(key.clone()),
+                        slug: Some(slugged[..end].to_owned()),
+                    })
+                })
         }
     }
 }
@@ -163,6 +270,7 @@ pub enum Step {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Template {
     steps: Vec<Step>,
+    slug: SlugMode,
 }
 
 impl Template {
@@ -175,11 +283,32 @@ impl Template {
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("the match `{text}` cannot be read: {e}"))?;
-        Ok(Template { steps })
+        Ok(Template {
+            steps,
+            slug: SlugMode::default(),
+        })
     }
 
-    /// Binds `{key}` to the code of the schema and refuses a template that does not fit it.
-    pub fn bind(mut self, text: &str, code: Option<&str>) -> Result<Template, String> {
+    /// The collection's `slug` this template was bound under.
+    pub fn slug_mode(&self) -> SlugMode {
+        self.slug
+    }
+
+    /// Binds `{key}` to the code of the schema and refuses a template that does not fit it, or
+    /// that cannot tell a slug from its own text under `slug` (SPC-17).
+    pub fn bind(
+        mut self,
+        text: &str,
+        code: Option<&str>,
+        slug: SlugMode,
+    ) -> Result<Template, String> {
+        let after_key = self.steps.iter().find_map(|step| match step {
+            Step::Name(segment) => segment
+                .text_after_key()
+                .and_then(|text| text.chars().next()),
+            Step::Folders => None,
+        });
+        let ambiguous = after_key.filter(|c| c.is_ascii_digit() || *c == '-');
         let mut keys = 0;
         let mut wildcards = 0;
         for step in &mut self.steps {
@@ -190,7 +319,10 @@ impl Template {
                         match part {
                             Part::Key(bound) => {
                                 keys += 1;
-                                *bound = code.map(str::to_owned);
+                                *bound = code.map(|code| Bound {
+                                    code: code.to_owned(),
+                                    reads_slug: ambiguous.is_none(),
+                                });
                             }
                             Part::Star => wildcards += 1,
                             Part::Literal(_) => {}
@@ -209,7 +341,18 @@ impl Template {
             None if keys > 0 => Err(format!(
                 "the match `{text}` has `{{key}}`, and the schema has no code"
             )),
-            _ => Ok(self),
+            Some(_) => match ambiguous {
+                Some(c) if slug != SlugMode::None => Err(format!(
+                    "the match `{text}` has `{c}` right after `{{key}}`, so a slug after the key \
+                     cannot be told apart from the template's own text: set `slug` to `none` in \
+                     this collection file to read these names without a slug"
+                )),
+                _ => {
+                    self.slug = slug;
+                    Ok(self)
+                }
+            },
+            None => Ok(self),
         }
     }
 
@@ -269,17 +412,30 @@ impl Template {
         }
     }
 
-    /// The key `below` carries, counted from the namespace folder, if this template names one.
-    /// A coded template has exactly one `{key}`, in exactly one step, so the component at that
-    /// step is the only place it can come from; a template without a code never matches here.
-    pub fn key(&self, below: &str) -> Option<String> {
-        below
-            .split('/')
-            .zip(&self.steps)
-            .find_map(|(name, step)| match step {
-                Step::Name(segment) => segment.capture_key(name),
-                Step::Folders => None,
-            })
+    /// The key `below` carries, counted from the namespace folder, with its slug and how its
+    /// name stands against the collection's `slug`, if this template names one. A coded template
+    /// has exactly one `{key}`, in exactly one step, so the component at that step is the only
+    /// place it can come from; a template without a code never matches here.
+    pub fn read(&self, below: &str) -> Option<FileName> {
+        let (capture, reads_slug) =
+            below
+                .split('/')
+                .zip(&self.steps)
+                .find_map(|(name, step)| match step {
+                    Step::Name(segment) => segment
+                        .capture_key(name)
+                        .map(|capture| (capture, segment.reads_slug())),
+                    Step::Folders => None,
+                })?;
+        let key = capture.key?;
+        let slug = capture.slug;
+        let state = match (&slug, self.slug) {
+            _ if !reads_slug => NameState::Expected,
+            (Some(_), SlugMode::None) | (None, SlugMode::Required) => NameState::UnexpectedForm,
+            (Some(slug), _) if !valid_slug(slug) => NameState::InvalidSlug,
+            _ => NameState::Expected,
+        };
+        Some(FileName { key, slug, state })
     }
 
     /// Whether `below`, counted from the namespace folder, fits the whole template. Read as
@@ -294,14 +450,14 @@ impl Template {
         fits_steps(&self.steps, &components)
     }
 
-    /// The inverse of [`Template::key`], for `typdoc new` to name the file of a key it issued.
+    /// The inverse of [`Template::read`], for `typdoc new` to name the file of a key it issued.
     /// `None` for `**`, `*` or an unbound `{key}`, none of which a bound coded template holds.
-    pub fn render(&self, key: &str) -> Option<String> {
+    pub fn render(&self, key: &str, slug: Option<&str>) -> Option<String> {
         let mut parts = Vec::with_capacity(self.steps.len());
         for step in &self.steps {
             match step {
                 Step::Folders => return None,
-                Step::Name(segment) => parts.push(segment.render(key)?),
+                Step::Name(segment) => parts.push(segment.render(key, slug)?),
             }
         }
         Some(parts.join("/"))
@@ -340,14 +496,20 @@ mod tests {
     }
 
     fn coded(text: &str) -> Template {
+        bound(text, SlugMode::Optional)
+    }
+
+    fn bound(text: &str, slug: SlugMode) -> Template {
         Template::parse(text)
             .unwrap()
-            .bind(text, Some("WF"))
+            .bind(text, Some("WF"), slug)
             .unwrap()
     }
 
+    /// Bound under `none`, the one mode a template of every shape binds in, so that the tests of
+    /// a bare segment can name any template.
     fn key_segment(text: &str) -> Segment {
-        match coded(text).steps().last().unwrap() {
+        match bound(text, SlugMode::None).steps().last().unwrap() {
             Step::Name(segment) => segment.clone(),
             Step::Folders => panic!("a segment was expected"),
         }
@@ -493,7 +655,7 @@ mod tests {
             assert!(
                 Template::parse(text)
                     .unwrap()
-                    .bind(text, Some("WF"))
+                    .bind(text, Some("WF"), SlugMode::Optional)
                     .is_ok(),
                 "{text}"
             );
@@ -507,7 +669,7 @@ mod tests {
             assert!(
                 Template::parse(text)
                     .unwrap()
-                    .bind(text, Some("WF"))
+                    .bind(text, Some("WF"), SlugMode::Optional)
                     .is_err(),
                 "{text}"
             );
@@ -518,14 +680,17 @@ mod tests {
     fn a_schema_without_a_code_takes_wildcards_and_no_key() {
         for text in ["*.md", "notes/**/*.md", "notes/a.md"] {
             assert!(
-                Template::parse(text).unwrap().bind(text, None).is_ok(),
+                Template::parse(text)
+                    .unwrap()
+                    .bind(text, None, SlugMode::Optional)
+                    .is_ok(),
                 "{text}"
             );
         }
         assert!(
             Template::parse("{key}.md")
                 .unwrap()
-                .bind("{key}.md", None)
+                .bind("{key}.md", None, SlugMode::Optional)
                 .is_err()
         );
     }
@@ -533,16 +698,38 @@ mod tests {
     #[test]
     fn a_coded_template_reads_back_the_key_a_matched_path_carries() {
         assert_eq!(
-            coded("tickets/{key}.md").key("tickets/WF-3.md").as_deref(),
+            coded("tickets/{key}.md")
+                .read("tickets/WF-3.md")
+                .map(|name| name.key)
+                .as_deref(),
             Some("WF-3")
         );
-        assert_eq!(coded("{key}.md").key("WF-30.md").as_deref(), Some("WF-30"));
         assert_eq!(
-            coded("{key}/index.md").key("WF-3/index.md").as_deref(),
+            coded("{key}.md")
+                .read("WF-30.md")
+                .map(|name| name.key)
+                .as_deref(),
+            Some("WF-30")
+        );
+        assert_eq!(
+            coded("{key}/index.md")
+                .read("WF-3/index.md")
+                .map(|name| name.key)
+                .as_deref(),
             Some("WF-3")
         );
-        assert_eq!(coded("tickets/{key}.md").key("tickets/wf-3.md"), None);
-        assert_eq!(coded("tickets/{key}.md").key("notes/a.md"), None);
+        assert_eq!(
+            coded("tickets/{key}.md")
+                .read("tickets/wf-3.md")
+                .map(|name| name.key),
+            None
+        );
+        assert_eq!(
+            coded("tickets/{key}.md")
+                .read("notes/a.md")
+                .map(|name| name.key),
+            None
+        );
     }
 
     #[test]
@@ -553,13 +740,17 @@ mod tests {
             ("{key}/index.md", "WF-3"),
         ] {
             let template = coded(text);
-            let rendered = template.render(key).unwrap();
+            let rendered = template.render(key, None).unwrap();
 
-            assert_eq!(template.key(&rendered).as_deref(), Some(key), "{text}");
+            assert_eq!(
+                template.read(&rendered).map(|name| name.key).as_deref(),
+                Some(key),
+                "{text}"
+            );
         }
 
         assert_eq!(
-            coded("tickets/{key}.md").render("WF-3"),
+            coded("tickets/{key}.md").render("WF-3", None),
             Some("tickets/WF-3.md".to_owned())
         );
     }
@@ -568,12 +759,12 @@ mod tests {
     fn render_is_none_for_a_wildcard_or_a_folders_step() {
         let uncoded = Template::parse("notes/*.md")
             .unwrap()
-            .bind("notes/*.md", None)
+            .bind("notes/*.md", None, SlugMode::Optional)
             .unwrap();
-        assert_eq!(uncoded.render("anything"), None);
+        assert_eq!(uncoded.render("anything", None), None);
 
         let with_folders = Template::parse("**/{key}.md").unwrap();
-        assert_eq!(with_folders.render("WF-3"), None);
+        assert_eq!(with_folders.render("WF-3", None), None);
     }
 
     #[test]
@@ -615,14 +806,17 @@ mod tests {
     fn a_template_with_no_code_names_no_key() {
         let uncoded = Template::parse("notes/*.md")
             .unwrap()
-            .bind("notes/*.md", None)
+            .bind("notes/*.md", None, SlugMode::Optional)
             .unwrap();
 
-        assert_eq!(uncoded.key("notes/a.md"), None);
+        assert_eq!(uncoded.read("notes/a.md").map(|name| name.key), None);
     }
 
     fn uncoded(text: &str) -> Template {
-        Template::parse(text).unwrap().bind(text, None).unwrap()
+        Template::parse(text)
+            .unwrap()
+            .bind(text, None, SlugMode::Optional)
+            .unwrap()
     }
 
     #[test]
@@ -652,5 +846,206 @@ mod tests {
         assert!(t.matches_path("tickets/WF-3.md"));
         assert!(!t.matches_path("tickets/WF-3.txt"));
         assert!(!t.matches_path("tickets/other/WF-3.md"));
+    }
+
+    fn read(template: &Template, below: &str) -> Option<(String, Option<String>, NameState)> {
+        template
+            .read(below)
+            .map(|name| (name.key, name.slug, name.state))
+    }
+
+    fn slugged(
+        key: &str,
+        slug: &str,
+        state: NameState,
+    ) -> Option<(String, Option<String>, NameState)> {
+        Some((key.to_owned(), Some(slug.to_owned()), state))
+    }
+
+    fn plain(key: &str, state: NameState) -> Option<(String, Option<String>, NameState)> {
+        Some((key.to_owned(), None, state))
+    }
+
+    #[test]
+    fn the_number_is_every_digit_after_the_code_and_a_slug_begins_at_the_dash_after_the_last() {
+        let t = coded("tickets/{key}.md");
+
+        assert_eq!(
+            read(&t, "tickets/WF-10.md"),
+            plain("WF-10", NameState::Expected)
+        );
+        assert_eq!(
+            read(&t, "tickets/WF-12-x.md"),
+            slugged("WF-12", "x", NameState::Expected)
+        );
+        assert_eq!(
+            read(&t, "tickets/WF-1-2x.md"),
+            slugged("WF-1", "2x", NameState::Expected)
+        );
+    }
+
+    #[test]
+    fn the_slug_is_what_is_left_once_the_templates_own_text_is_taken_off_the_end() {
+        let t = coded("tickets/{key}.md");
+
+        assert_eq!(
+            read(&t, "tickets/WF-1-v1.2.md"),
+            slugged("WF-1", "v1.2", NameState::Expected)
+        );
+        assert_eq!(
+            read(&t, "tickets/WF-1-a.md.md"),
+            slugged("WF-1", "a.md", NameState::Expected)
+        );
+    }
+
+    #[test]
+    fn a_slug_in_any_language_is_valid() {
+        assert_eq!(
+            read(&coded("{key}.md"), "WF-3-\u{e23}\u{e48}\u{e32}\u{e07}.md"),
+            slugged("WF-3", "\u{e23}\u{e48}\u{e32}\u{e07}", NameState::Expected)
+        );
+    }
+
+    #[test]
+    fn a_slug_that_is_empty_or_holds_an_excluded_character_is_a_member_with_an_invalid_slug() {
+        let t = coded("{key}.md");
+
+        for (name, slug) in [
+            ("WF-1-.md", ""),
+            ("WF-1-a b.md", "a b"),
+            ("WF-1-a\tb.md", "a\tb"),
+            ("WF-1-a#b.md", "a#b"),
+            ("WF-1-a:b.md", "a:b"),
+        ] {
+            assert_eq!(
+                read(&t, name),
+                slugged("WF-1", slug, NameState::InvalidSlug),
+                "{name:?}"
+            );
+            assert!(t.matches_path(name), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn text_after_the_digits_that_is_not_a_dash_makes_no_member() {
+        let t = coded("{key}.md");
+
+        for name in ["WF-1x.md", "WF-1.txt", "WF-1-x.txt", "WF-.md", "WF--x.md"] {
+            assert_eq!(read(&t, name), None, "{name:?}");
+            assert!(!t.matches_path(name), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn a_key_in_a_folder_takes_its_slug_on_the_folder() {
+        let t = coded("{key}/README.md");
+
+        assert_eq!(
+            read(&t, "WF-1-x/README.md"),
+            slugged("WF-1", "x", NameState::Expected)
+        );
+        assert_eq!(
+            read(&t, "WF-1/README.md"),
+            plain("WF-1", NameState::Expected)
+        );
+        assert!(t.matches_path("WF-1-x/README.md"));
+        let Step::Name(folder) = &t.steps()[0] else {
+            panic!("a segment was expected");
+        };
+        assert!(folder.matches_folder("WF-1-x"));
+    }
+
+    #[test]
+    fn the_collections_slug_decides_which_form_is_expected() {
+        let optional = bound("{key}.md", SlugMode::Optional);
+        let required = bound("{key}.md", SlugMode::Required);
+        let none = bound("{key}.md", SlugMode::None);
+
+        assert_eq!(
+            read(&optional, "WF-1.md"),
+            plain("WF-1", NameState::Expected)
+        );
+        assert_eq!(
+            read(&optional, "WF-1-x.md"),
+            slugged("WF-1", "x", NameState::Expected)
+        );
+        assert_eq!(
+            read(&required, "WF-1.md"),
+            plain("WF-1", NameState::UnexpectedForm)
+        );
+        assert_eq!(
+            read(&required, "WF-1-x.md"),
+            slugged("WF-1", "x", NameState::Expected)
+        );
+        assert_eq!(
+            read(&required, "WF-1-a b.md"),
+            slugged("WF-1", "a b", NameState::InvalidSlug)
+        );
+        assert_eq!(read(&none, "WF-1.md"), plain("WF-1", NameState::Expected));
+        assert_eq!(
+            read(&none, "WF-1-x.md"),
+            slugged("WF-1", "x", NameState::UnexpectedForm)
+        );
+        assert_eq!(
+            read(&none, "WF-1-a b.md"),
+            slugged("WF-1", "a b", NameState::UnexpectedForm)
+        );
+    }
+
+    #[test]
+    fn render_is_the_inverse_of_read_with_a_slug_and_without_one() {
+        for (text, key, slug) in [
+            ("tickets/{key}.md", "WF-3", Some("lock-order")),
+            ("tickets/{key}.md", "WF-3", None),
+            ("{key}.md", "WF-30", Some("2x")),
+            ("{key}/index.md", "WF-3", Some("v1.2")),
+            ("{key}/index.md", "WF-3", None),
+        ] {
+            let template = coded(text);
+            let rendered = template.render(key, slug).unwrap();
+            let name = template.read(&rendered).unwrap();
+
+            assert_eq!(name.key, key, "{text}");
+            assert_eq!(name.slug.as_deref(), slug, "{text}");
+        }
+        assert_eq!(
+            coded("tickets/{key}.md").render("WF-8", Some("lock-order")),
+            Some("tickets/WF-8-lock-order.md".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_template_with_a_digit_or_a_dash_right_after_the_key_binds_only_under_none() {
+        for text in ["{key}1.md", "{key}-notes.md", "t/{key}9/a.md"] {
+            for slug in [SlugMode::Optional, SlugMode::Required] {
+                let refused = Template::parse(text)
+                    .unwrap()
+                    .bind(text, Some("WF"), slug)
+                    .unwrap_err();
+                assert!(refused.contains("`slug` to `none`"), "{text}: {refused}");
+            }
+            assert!(
+                Template::parse(text)
+                    .unwrap()
+                    .bind(text, Some("WF"), SlugMode::None)
+                    .is_ok(),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_template_with_a_digit_after_the_key_under_none_reads_no_slug() {
+        let t = bound("{key}1.md", SlugMode::None);
+
+        assert_eq!(read(&t, "WF-31.md"), plain("WF-3", NameState::Expected));
+        assert_eq!(read(&t, "WF-3111.md"), plain("WF-311", NameState::Expected));
+        assert_eq!(read(&t, "WF-3-x1.md"), None);
+        let dash = bound("{key}-notes.md", SlugMode::None);
+        assert_eq!(
+            read(&dash, "WF-3-notes.md"),
+            plain("WF-3", NameState::Expected)
+        );
+        assert_eq!(read(&dash, "WF-3-x-notes.md"), None);
     }
 }

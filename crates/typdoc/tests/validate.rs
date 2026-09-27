@@ -5,7 +5,7 @@
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
 
-use common::{Ran, Scratch, Spawn, fixture};
+use common::{Ran, Scratch, Spawn, fixture, slugged_projects};
 use serde_json::{Value, json};
 use typdoc_core::{TEMP_PREFIX, is_temp_name};
 
@@ -2233,4 +2233,581 @@ fn a_zero_collection_project_still_lets_list_and_get_run() {
         .cwd(project.path())
         .run();
     assert_eq!(got.code, 5, "{}", got.stderr);
+}
+
+// Slugs in file names
+
+/// A coded collection `tickets` at `tickets/{key}.md`, its `slug` as given (absent for `None`),
+/// and the files given. The schema's `context` is a ref, so a file can name another by key.
+fn slugged(slug: Option<&str>, files: &[(&str, &str)]) -> Scratch {
+    let mut collection = json!({ "match": "tickets/{key}.md", "schema": "ticket.json" });
+    if let Some(slug) = slug {
+        collection["slug"] = json!(slug);
+    }
+    let project = Scratch::project(&[]);
+    project.file(".typdoc/collections/tickets.json", &collection.to_string());
+    project.file(
+        "ticket.json",
+        r#"{ "name": "ticket", "code": "WF", "fields": { "context": { "type": "ref", "target": "*" } } }"#,
+    );
+    project.file(
+        ".typdoc/state/default.json",
+        r#"{ "tickets": { "last": 9 } }"#,
+    );
+    for (path, text) in files {
+        project.file(path, text);
+    }
+    project
+}
+
+fn listed(project: &Scratch) -> Vec<(String, String)> {
+    let ran = Spawn::args(["list", "--json"]).cwd(project.path()).run();
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    ran.stdout_json()["documents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| {
+            (
+                d["key"].as_str().unwrap().to_owned(),
+                d["path"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+fn rules_of(object: &Value) -> Vec<(String, String)> {
+    object["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            (
+                f["rule"].as_str().unwrap().to_owned(),
+                f["path"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
+
+fn rule_at(rule: &str, path: &str) -> (String, String) {
+    (rule.to_owned(), path.to_owned())
+}
+
+/// The one `filename.pattern` finding at `path`, which is a document: it carries its collection
+/// and its key.
+fn name_finding(object: &Value, path: &str, key: &str) -> Value {
+    let found: Vec<&Value> = object["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["rule"] == json!("filename.pattern") && f["path"] == json!(path))
+        .collect();
+    assert_eq!(found.len(), 1, "{object}");
+    let finding = found[0].clone();
+    assert_eq!(finding["namespace"], json!("default"), "{finding}");
+    assert_eq!(finding["collection"], json!("tickets"), "{finding}");
+    assert_eq!(finding["key"], json!(key), "{finding}");
+    finding
+}
+
+#[test]
+fn a_file_with_a_slug_is_the_document_its_key_names_in_list_get_and_validate() {
+    let project = slugged(
+        None,
+        &[
+            ("tickets/WF-1.md", "---\ncontext: WF-2\n---\n"),
+            ("tickets/WF-2-x.md", "---\ncontext: WF-3\n---\n"),
+            ("tickets/WF-3-\u{e23}\u{e48}\u{e32}\u{e07}.md", "---\n---\n"),
+        ],
+    );
+
+    assert_eq!(
+        listed(&project),
+        [
+            ("WF-1".to_owned(), "tickets/WF-1.md".to_owned()),
+            ("WF-2".to_owned(), "tickets/WF-2-x.md".to_owned()),
+            (
+                "WF-3".to_owned(),
+                "tickets/WF-3-\u{e23}\u{e48}\u{e32}\u{e07}.md".to_owned()
+            ),
+        ]
+    );
+    let by_path = Spawn::args(["get", "tickets/WF-2-x.md", "--json"])
+        .cwd(project.path())
+        .run();
+    assert_eq!(by_path.code, 0, "{}", by_path.stderr);
+    assert_eq!(by_path.stdout_json()["document"]["key"], json!("WF-2"));
+    let ran = validate(&[], project.path());
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    assert_eq!(object["findings"], json!([]), "{object}");
+    assert_eq!(
+        object["summary"]["checked"]["documents"],
+        json!(3),
+        "{object}"
+    );
+}
+
+/// `WF-1.md` under `required` stays `WF-1`: listed, and the ref to it resolves.
+#[test]
+fn under_required_a_file_without_a_slug_stays_a_document_and_filename_pattern_names_it() {
+    let project = slugged(
+        Some("required"),
+        &[
+            ("tickets/WF-1.md", "---\n---\n"),
+            ("tickets/WF-2-x.md", "---\ncontext: WF-1\n---\n"),
+        ],
+    );
+
+    assert_eq!(
+        listed(&project),
+        [
+            ("WF-1".to_owned(), "tickets/WF-1.md".to_owned()),
+            ("WF-2".to_owned(), "tickets/WF-2-x.md".to_owned()),
+        ]
+    );
+    let ran = validate(&[], project.path());
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    assert_eq!(
+        rules_of(&object),
+        [rule_at("filename.pattern", "tickets/WF-1.md")],
+        "{object}"
+    );
+    let finding = name_finding(&object, "tickets/WF-1.md", "WF-1");
+    assert_eq!(finding["level"], json!("error"), "{finding}");
+    assert!(
+        finding["message"].as_str().unwrap().contains("required"),
+        "{finding}"
+    );
+
+    let named = validate(&["tickets/WF-1.md"], project.path());
+    assert_eq!(named.code, 2, "{}", named.stderr);
+    name_finding(&named.stdout_json(), "tickets/WF-1.md", "WF-1");
+}
+
+#[test]
+fn under_none_a_file_with_a_slug_stays_a_document_and_filename_pattern_names_it() {
+    let project = slugged(
+        Some("none"),
+        &[
+            ("tickets/WF-1-x.md", "---\n---\n"),
+            ("tickets/WF-2.md", "---\ncontext: WF-1\n---\n"),
+            ("tickets/WF-3-.md", "---\n---\n"),
+        ],
+    );
+
+    assert_eq!(
+        listed(&project),
+        [
+            ("WF-1".to_owned(), "tickets/WF-1-x.md".to_owned()),
+            ("WF-2".to_owned(), "tickets/WF-2.md".to_owned()),
+            ("WF-3".to_owned(), "tickets/WF-3-.md".to_owned()),
+        ]
+    );
+    let ran = validate(&[], project.path());
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    assert_eq!(
+        rules_of(&object),
+        [
+            rule_at("filename.pattern", "tickets/WF-1-x.md"),
+            rule_at("filename.pattern", "tickets/WF-3-.md"),
+        ],
+        "{object}"
+    );
+    let finding = name_finding(&object, "tickets/WF-1-x.md", "WF-1");
+    assert!(
+        finding["message"]
+            .as_str()
+            .unwrap()
+            .contains("takes no slug"),
+        "{finding}"
+    );
+    let empty = name_finding(&object, "tickets/WF-3-.md", "WF-3");
+    let message = empty["message"].as_str().unwrap();
+    assert!(message.contains("takes no slug"), "{empty}");
+    assert!(!message.contains("``"), "{empty}");
+}
+
+/// A name with an invalid slug is a document with a finding; a name that is no member at all
+/// (`WF-4x.md`) is still the stray-file finding, with no collection and no key.
+#[test]
+fn a_slug_with_an_excluded_character_or_none_after_the_dash_stays_a_document_and_is_named() {
+    let project = slugged(
+        None,
+        &[
+            ("tickets/WF-1-a b.md", "---\n---\n"),
+            ("tickets/WF-2-.md", "---\n---\n"),
+            ("tickets/WF-3.md", "---\ncontext: WF-1\n---\n"),
+            ("tickets/WF-4x.md", "---\n---\n"),
+        ],
+    );
+
+    assert_eq!(
+        listed(&project),
+        [
+            ("WF-1".to_owned(), "tickets/WF-1-a b.md".to_owned()),
+            ("WF-2".to_owned(), "tickets/WF-2-.md".to_owned()),
+            ("WF-3".to_owned(), "tickets/WF-3.md".to_owned()),
+        ]
+    );
+    let ran = validate(&[], project.path());
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    let mut rules = rules_of(&object);
+    rules.sort();
+    assert_eq!(
+        rules,
+        [
+            rule_at("filename.pattern", "tickets/WF-1-a b.md"),
+            rule_at("filename.pattern", "tickets/WF-2-.md"),
+            rule_at("filename.pattern", "tickets/WF-4x.md"),
+        ],
+        "{object}"
+    );
+    let spaced = name_finding(&object, "tickets/WF-1-a b.md", "WF-1");
+    assert!(
+        spaced["message"].as_str().unwrap().contains("whitespace"),
+        "{spaced}"
+    );
+    let empty = name_finding(&object, "tickets/WF-2-.md", "WF-2");
+    assert!(
+        empty["message"].as_str().unwrap().contains("empty"),
+        "{empty}"
+    );
+    let stray = object["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["path"] == json!("tickets/WF-4x.md"))
+        .unwrap();
+    assert!(stray.get("collection").is_none(), "{stray}");
+    assert!(stray.get("key").is_none(), "{stray}");
+}
+
+#[test]
+fn a_name_finding_takes_the_level_the_collection_sets() {
+    let project = Scratch::project(&[]);
+    project.file(
+        ".typdoc/collections/tickets.json",
+        r#"{ "match": "tickets/{key}.md", "schema": "ticket.json", "slug": "none",
+             "validation": { "filename.pattern": { "level": "warn" } } }"#,
+    );
+    project.file(
+        "ticket.json",
+        r#"{ "name": "ticket", "code": "WF", "fields": {} }"#,
+    );
+    project.file(
+        ".typdoc/state/default.json",
+        r#"{ "tickets": { "last": 1 } }"#,
+    );
+    project.file("tickets/WF-1-x.md", "---\n---\n");
+
+    let ran = validate(&[], project.path());
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    let finding = name_finding(&object, "tickets/WF-1-x.md", "WF-1");
+    assert_eq!(finding["level"], json!("warn"), "{finding}");
+}
+
+#[test]
+fn a_file_with_a_slug_and_one_without_share_a_key_and_keys_unique_reports_both() {
+    let project = slugged(
+        None,
+        &[
+            ("tickets/WF-5.md", "---\n---\n"),
+            ("tickets/WF-5-x.md", "---\n---\n"),
+        ],
+    );
+
+    let ran = validate(&[], project.path());
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let object = ran.stdout_json();
+    let mut rules = rules_of(&object);
+    rules.sort();
+    assert_eq!(
+        rules,
+        [
+            rule_at("keys.unique", "tickets/WF-5-x.md"),
+            rule_at("keys.unique", "tickets/WF-5.md"),
+        ],
+        "{object}"
+    );
+}
+
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "`WF-5-a.md` and `WF-5-A.md` are one file on the default file system of macOS, so \
+              the two names cannot be made side by side there"
+)]
+fn two_slugs_that_differ_only_in_case_share_a_key_and_keys_unique_reports_both() {
+    let project = slugged(
+        None,
+        &[
+            ("tickets/WF-5-a.md", "---\n---\n"),
+            ("tickets/WF-5-A.md", "---\n---\n"),
+        ],
+    );
+
+    let ran = validate(&[], project.path());
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let mut rules = rules_of(&ran.stdout_json());
+    rules.sort();
+    assert_eq!(
+        rules,
+        [
+            rule_at("keys.unique", "tickets/WF-5-A.md"),
+            rule_at("keys.unique", "tickets/WF-5-a.md"),
+        ]
+    );
+}
+
+/// `main`'s config from [`slugged_projects`], with `refs.slug` set to `level` when one is given.
+fn slug_config(projects: &Scratch, level: Option<&str>) {
+    let validation = level.map_or(String::new(), |level| {
+        format!(r#", "validation": {{ "global": {{ "refs.slug": {{ "level": "{level}" }} }} }}"#)
+    });
+    projects.file(
+        "main/.typdoc/config.json",
+        &format!(
+            r#"{{ "version": 1, "namespaces": ["story-1", "story-2"], "imports": {{ "chief": "../chief" }}{validation} }}"#
+        ),
+    );
+}
+
+fn slug_note(projects: &Scratch, see: &str) {
+    projects.file(
+        "main/story-1/notes/a.md",
+        &format!("---\nsee: [{see}]\n---\n"),
+    );
+}
+
+fn rules_and_messages(ran: &Ran) -> Vec<(String, String, String)> {
+    let mut found: Vec<(String, String, String)> = ran.stdout_json()["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            (
+                f["rule"].as_str().unwrap().to_owned(),
+                f["level"].as_str().unwrap().to_owned(),
+                f["message"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+#[test]
+fn a_ref_written_with_the_files_own_slug_is_clean_in_every_form() {
+    let projects = slugged_projects();
+    slug_note(
+        &projects,
+        "story-2:WF-5-json-shapes, chief::story-3:WF-5-json-shapes",
+    );
+
+    let ran = validate(&[], &projects.path().join("main"));
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout_json()["findings"], json!([]));
+}
+
+/// No `refs.codedByPath` beside any of them: a key written with a slug is a ref by key.
+#[test]
+fn refs_slug_warns_at_the_ref_when_the_written_slug_is_not_the_files_or_the_file_has_none() {
+    let projects = slugged_projects();
+    slug_note(
+        &projects,
+        "story-2:WF-5-json-output-shape, chief::story-3:WF-5-old, WF-1-x",
+    );
+
+    let ran = validate(&[], &projects.path().join("main"));
+
+    assert_eq!(ran.code, 0, "warn does not fail the run: {}", ran.stderr);
+    let warn = |message: &str| {
+        (
+            "refs.slug".to_owned(),
+            "warn".to_owned(),
+            message.to_owned(),
+        )
+    };
+    assert_eq!(
+        rules_and_messages(&ran),
+        [
+            warn("`WF-1-x` refers to `WF-1`, whose file is now `WF-1.md`"),
+            warn(
+                "`chief::story-3:WF-5-old` refers to `WF-5`, whose file is now `WF-5-json-shapes.md`"
+            ),
+            warn(
+                "`story-2:WF-5-json-output-shape` refers to `WF-5`, whose file is now `WF-5-json-shapes.md`"
+            ),
+        ]
+    );
+    for finding in ran.stdout_json()["findings"].as_array().unwrap() {
+        assert_eq!(finding["path"], json!("story-1/notes/a.md"), "{finding}");
+        assert_eq!(finding["field"], json!("see"), "{finding}");
+    }
+}
+
+#[test]
+fn refs_slug_never_reports_a_ref_by_the_key_alone() {
+    let projects = slugged_projects();
+    slug_note(&projects, "story-2:WF-5, chief::story-3:WF-5, WF-1");
+
+    let ran = validate(&[], &projects.path().join("main"));
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout_json()["findings"], json!([]));
+}
+
+#[test]
+fn refs_slug_can_be_raised_to_error_kept_at_warn_and_turned_off() {
+    let projects = slugged_projects();
+    slug_note(&projects, "story-2:WF-5-old");
+    let main = projects.path().join("main");
+
+    for (level, code, expected) in [
+        (Some("error"), 2, Some("error")),
+        (Some("warn"), 0, Some("warn")),
+        (None, 0, Some("warn")),
+        (Some("off"), 0, None),
+    ] {
+        slug_config(&projects, level);
+
+        let ran = validate(&[], &main);
+
+        assert_eq!(ran.code, code, "{level:?}: {}", ran.stderr);
+        let found = rules_and_messages(&ran);
+        match expected {
+            Some(expected) => {
+                assert_eq!(found.len(), 1, "{level:?}: {found:?}");
+                assert_eq!(found[0].0, "refs.slug", "{level:?}");
+                assert_eq!(found[0].1, expected, "{level:?}");
+            }
+            None => assert_eq!(found, [], "{level:?}"),
+        }
+    }
+}
+
+/// A path names the file exactly, slug included, and is still a path to a coded document.
+#[test]
+fn a_path_ref_to_a_slugged_file_is_refs_coded_by_path_and_not_refs_slug() {
+    let projects = slugged_projects();
+    slug_note(&projects, "story-2:tickets/WF-5-json-shapes.md");
+
+    let ran = validate(&[], &projects.path().join("main"));
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let found = rules_and_messages(&ran);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].0, "refs.codedByPath");
+}
+
+/// A move recorded under the key is found for a ref written with that key and a slug.
+#[test]
+fn a_ref_written_with_a_slug_to_a_key_recorded_as_moved_is_refs_moved() {
+    let projects = slugged_projects();
+    projects.file(
+        "main/schemas/ticket.json",
+        r#"{ "name": "ticket", "code": "WF", "fields": {
+            "moved_from": { "type": "list", "auto": "moves" }
+        } }"#,
+    );
+    projects.file(
+        "main/story-2/tickets/WF-5-json-shapes.md",
+        "---\nmoved_from: [story-2:WF-4]\n---\n",
+    );
+    slug_note(&projects, "story-2:WF-4-old-name");
+
+    let ran = validate(&[], &projects.path().join("main"));
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let found = rules_and_messages(&ran);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].0, "refs.moved");
+    assert!(found[0].2.contains("`WF-5`"), "{found:?}");
+}
+
+/// `new` and `set` check `refs.slug` at its level before they write, refusing only at `error`.
+#[test]
+fn set_and_new_write_past_a_stale_slug_at_warn_and_refuse_only_at_error() {
+    let projects = slugged_projects();
+    let main = projects.path().join("main");
+    slug_note(&projects, "WF-1");
+    let before = projects.read("main/story-1/notes/a.md");
+
+    for (level, code) in [(None, 0), (Some("warn"), 0), (Some("error"), 2)] {
+        slug_config(&projects, level);
+        projects.file("main/story-1/notes/a.md", &before);
+
+        let set = Spawn::args([
+            "set",
+            "story-1/notes/a.md",
+            "see=story-2:WF-5-old",
+            "--json",
+        ])
+        .cwd(&main)
+        .run();
+        let new = Spawn::args([
+            "new",
+            "story-1/notes/b.md",
+            "--set",
+            "see=story-2:WF-5-old",
+            "--json",
+        ])
+        .cwd(&main)
+        .run();
+
+        assert_eq!(set.code, code, "set at {level:?}: {}", set.stderr);
+        assert_eq!(new.code, code, "new at {level:?}: {}", new.stderr);
+        let written = projects.read("main/story-1/notes/a.md");
+        let created = main.join("story-1/notes/b.md");
+        if code == 0 {
+            assert!(written.contains("WF-5-old"), "{level:?}: {written}");
+            assert!(created.is_file(), "{level:?}");
+            std::fs::remove_file(&created).unwrap();
+        } else {
+            assert_eq!(written, before, "{level:?}");
+            assert!(!created.exists(), "{level:?}");
+            for ran in [&set, &new] {
+                let error = ran.stderr_json();
+                let rules: Vec<&str> = error["details"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|f| f["rule"].as_str().unwrap())
+                    .collect();
+                assert_eq!(rules, ["refs.slug"], "{level:?}: {}", ran.stderr);
+            }
+        }
+    }
+}
+
+/// A key never ends in `.md`, so a relative path whose name starts like a key with a slug is
+/// still a path: here it names an uncoded note, not the ticket `WF-1`.
+#[test]
+fn a_relative_path_that_starts_like_a_key_with_a_slug_is_still_a_path() {
+    let projects = slugged_projects();
+    projects.file("main/story-1/notes/WF-1-x.md", "");
+    slug_note(&projects, "WF-1-x.md");
+
+    let ran = validate(&[], &projects.path().join("main"));
+    let refs = Spawn::args(["refs", "story-1/notes/a.md", "--json"])
+        .cwd(projects.path().join("main"))
+        .run();
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(ran.stdout_json()["findings"], json!([]));
+    assert_eq!(refs.code, 0, "{}", refs.stderr);
+    assert_eq!(
+        refs.stdout_json()["refs"][0]["path"],
+        json!("story-1/notes/WF-1-x.md")
+    );
 }

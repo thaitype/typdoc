@@ -7,6 +7,7 @@ use serde_json::{Map, Value};
 use crate::error::{ConfigError, Error};
 use crate::namespaces;
 use crate::rules::{ALWAYS_ON, CONFIGURABLE};
+use crate::template::SlugMode;
 
 pub const TYPDOC_DIR: &str = ".typdoc";
 pub(crate) const CONFIG_FILE: &str = ".typdoc/config.json";
@@ -88,6 +89,9 @@ pub struct Collection {
     /// Relative to the project folder.
     pub schema: String,
     pub ref_base: RefBase,
+    /// `slug` as written; `None` when the file does not name it, so that a collection whose
+    /// schema has no code is refused only for a `slug` it states.
+    pub slug: Option<SlugMode>,
     pub validation: Rules,
     /// The collection file, for messages.
     pub file: PathBuf,
@@ -456,6 +460,7 @@ fn read_collection(
     let mut pattern = None;
     let mut schema = None;
     let mut ref_base = RefBase::File;
+    let mut slug = None;
     let mut validation = Rules::new();
     let mut valid = true;
     for (key, value) in &top {
@@ -466,6 +471,16 @@ fn read_collection(
             ("refBase", Value::String(text)) if text == "namespace" => {
                 ref_base = RefBase::Namespace;
             }
+            ("slug", value) => match value.as_str() {
+                Some("optional") => slug = Some(SlugMode::Optional),
+                Some("required") => slug = Some(SlugMode::Required),
+                Some("none") => slug = Some(SlugMode::None),
+                _ => report.add(
+                    "config.collection-slug",
+                    path,
+                    format!("`slug` is {value}: it is `optional`, `required` or `none`"),
+                ),
+            },
             ("validation", value) => match rules(value, path, report) {
                 Ok(found) => validation = found,
                 Err(message) => {
@@ -503,6 +518,7 @@ fn read_collection(
         pattern,
         schema,
         ref_base,
+        slug,
         validation,
         file,
         path: path.to_owned(),

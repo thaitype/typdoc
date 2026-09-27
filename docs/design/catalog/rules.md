@@ -26,6 +26,7 @@ explained_by: [SPC-1]
     { "id": "body.mentions", "configurable": true },
     { "id": "refs.codedByPath", "configurable": true },
     { "id": "refs.moved", "configurable": true },
+    { "id": "refs.slug", "configurable": true },
     { "id": "names.shadowed", "configurable": true },
     { "id": "frontmatter.unknown", "configurable": true },
     { "id": "filename.pattern", "configurable": true },

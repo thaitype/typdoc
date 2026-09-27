@@ -676,3 +676,87 @@ fn a_config_error_in_a_fixture_names_the_file_it_is_about() {
         assert_eq!(details(&config_error(ran)), [pair(id, path)], "{id}");
     }
 }
+
+fn coded_with_slug(slug: &str) -> Scratch {
+    let project = Scratch::project(&[]);
+    project.file(
+        ".typdoc/collections/tickets.json",
+        &format!(r#"{{ "match": "tickets/{{key}}.md", "schema": "ticket.json", "slug": {slug} }}"#),
+    );
+    project.file(
+        "ticket.json",
+        r#"{ "name": "ticket", "code": "WF", "fields": {} }"#,
+    );
+    project.file(
+        ".typdoc/state/default.json",
+        r#"{ "tickets": { "last": 1 } }"#,
+    );
+    project.file("tickets/WF-1.md", "");
+    project
+}
+
+fn list(project: &Scratch) -> Ran {
+    Spawn::args(["list", "--json"]).cwd(project.path()).run()
+}
+
+#[test]
+fn each_value_of_slug_is_read() {
+    for slug in [r#""optional""#, r#""required""#, r#""none""#] {
+        let ran = list(&coded_with_slug(slug));
+
+        assert_eq!(ran.code, 0, "{slug}: {}", ran.stderr);
+    }
+}
+
+#[test]
+fn a_slug_that_is_not_one_of_its_three_values_is_config_collection_slug() {
+    for slug in [
+        r#""always""#,
+        r#""Optional""#,
+        r#""""#,
+        "true",
+        "1",
+        "null",
+        r#"["none"]"#,
+    ] {
+        let object = config_error(&list(&coded_with_slug(slug)));
+
+        assert_eq!(
+            details(&object),
+            [pair(
+                "config.collection-slug",
+                ".typdoc/collections/tickets.json"
+            )],
+            "{slug}"
+        );
+        assert!(
+            message_of(&object, 0).contains("`optional`, `required` or `none`"),
+            "{slug}: {object}"
+        );
+    }
+}
+
+#[test]
+fn a_slug_in_a_collection_whose_schema_has_no_code_is_config_collection_slug() {
+    for slug in ["optional", "required", "none"] {
+        let project = with_collection(
+            ".typdoc/collections/notes.json",
+            &json!({ "match": "*.md", "schema": "note.json", "slug": slug }).to_string(),
+        );
+
+        let object = config_error(&get_a(&project));
+
+        assert_eq!(
+            details(&object),
+            [pair(
+                "config.collection-slug",
+                ".typdoc/collections/notes.json"
+            )],
+            "{slug}"
+        );
+        assert!(
+            message_of(&object, 0).contains("no code"),
+            "{slug}: {object}"
+        );
+    }
+}

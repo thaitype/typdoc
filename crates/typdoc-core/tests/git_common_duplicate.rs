@@ -51,6 +51,7 @@ fn allocate(root: &Path, title: &str) -> String {
     let target = NewTarget::Coded {
         code: "WF".to_owned(),
         title: title.to_owned(),
+        slug: None,
     };
     let document = project
         .new_document(&target, &deps, &[], std::time::Duration::from_secs(5), None)

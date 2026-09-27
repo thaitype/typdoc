@@ -28,6 +28,12 @@ is relative to the current directory instead.
 | `memory::notes/x.md` | path in the imported project `memory` |
 | `chief::story-3:WF-5` | key in namespace `story-3` of the imported project `chief` |
 
+A key can also be written with the slug its file name carries: `WF-5-json-output-shape`,
+`story-2:WF-5-json-output-shape` and `chief::story-3:WF-5-json-output-shape` all name `WF-5`.
+Only the key is used to find the document, so a slug that is out of date still works and prints
+nothing about the difference. What follows the digits has to be a valid slug (not empty, no
+whitespace, `/`, `#` or `:`); otherwise the argument is neither a key nor a path, and it is exit 1.
+
 ## Output
 
 Without `--json`, a single document prints as one `name: value` line per field, and a list prints
@@ -192,7 +198,7 @@ Every rule is listed in [validation rules](validation.md).
 ## new
 
 ```
-typdoc new <CODE> "<title>" [--set field=value]...
+typdoc new <CODE> "<title>" [--slug <slug>] [--set field=value]...
 typdoc new <path.md> [--set field=value]...
 ```
 
@@ -201,6 +207,14 @@ Creates a document.
 With a code, typdoc takes the namespace lock, picks the next number, creates the file, and records
 the number in the state file. The title is required. With a path, the path has to fit one of the
 collections' `match` templates, and there's no title argument; set `title` with `--set`.
+
+`--slug` puts a slug after the key in the file name: `typdoc new TK "Choose a static site
+generator" --slug site-generator` creates `tickets/TK-1-site-generator.md`, and the document is
+still `TK-1`. typdoc never makes a slug up or changes the one you give. A slug is not empty and
+holds no whitespace, `/`, `#` or `:`; its case is kept. The collection's `slug` decides whether
+`--slug` may be given (`optional`, the default), must be given (`required`), or is refused
+(`none`); see [slugs](project-files.md#slugs). `--slug` with a path is exit 1, since the path
+already names the file.
 
 Defaults and `auto` fields are filled in. The output is the new document, the same as `get`.
 
@@ -217,8 +231,9 @@ title: Choose a static site generator
 ```
 
 Refused with nothing written if a value breaks the schema (exit 2), or if the file already exists
-(exit 7). In a project with several namespaces, choose one with `--namespace` or by running from
-inside its folder.
+(exit 7). A slug that breaks the rule above, `--slug` under `none`, and no `--slug` under
+`required` are exit 1, checked before the lock, so no number is used. In a project with several
+namespaces, choose one with `--namespace` or by running from inside its folder.
 
 ## set
 
@@ -280,8 +295,24 @@ Each ref keeps the form it was written in.
 | --- | --- |
 | `--renumber <namespace>` | Move a numbered document into another namespace under the next key there |
 
-A numbered document can't change its path inside its namespace; use `--renumber` to move it to
-another one.
+A numbered document keeps its key inside its namespace, so the one move it takes there is a
+change of slug: to the name its collection gives the same key with another slug, or with none
+(`typdoc mv story-2:WF-5 story-2/_tickets/WF-5-json-shapes.md`). A ref by the key alone stays as
+it is, a ref written with the old slug gets the new one (or the key alone when the slug is
+removed), and body links name the new file. A field with `auto: moves` records the previous path.
+A destination with another key, or outside the collection's folder, is exit 1; so is a slug with
+whitespace, `/`, `#` or `:`, or an empty one, with nothing written. A name in the form the
+collection's `slug` does not expect is moved, with `filename.pattern` in `findings`. Use
+`--renumber` to move a numbered document to another namespace.
+
+`--renumber` takes the next key in the destination namespace and keeps the slug:
+`typdoc mv story-2:WF-5 --renumber story-3` moves `story-2/_tickets/WF-5-json-output-shape.md` to
+`story-3/_tickets/WF-8-json-output-shape.md`. A ref by the key alone gets the new key
+(`story-3:WF-8`), and a ref written with the slug gets the new key and the same slug
+(`story-3:WF-8-json-output-shape`). A field with `auto: moves` records the old key with its
+namespace (`story-2:WF-5`). The slug is never dropped or made up: a name in the form the
+collection's `slug` does not expect, or with a slug holding an excluded character, is renumbered as
+it is, with `filename.pattern` in `findings`.
 
 ```console
 $ typdoc mv notes/site-ideas.md notes/website.md

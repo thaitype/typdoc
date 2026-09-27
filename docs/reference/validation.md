@@ -48,9 +48,10 @@ layer only needs the keys it changes:
 | `body.mentions` | off | `inlineCode` (true), `fencedCode` (false) | A key mentioned in plain text, like "see WF-3", that doesn't exist |
 | `refs.codedByPath` | warn | | A numbered document referred to by path instead of by key |
 | `refs.moved` | error | | A ref to a document's old name, when its schema records moves with an `auto: moves` field. The message gives the new name |
+| `refs.slug` | warn | | A ref written with a slug (`story-2:WF-5-json-output-shape`) that isn't the slug the file carries now, or to a file that now carries none. The ref still resolves by its key; the message names the file's current name. A ref by the key alone is never reported. `new` and `set` check it too and refuse the write only when it's set to `error` |
 | `names.shadowed` | warn | | A name that is both a namespace and an import alias |
 | `frontmatter.unknown` | warn | | A frontmatter field the schema doesn't declare |
-| `filename.pattern` | error | | A file in a numbered collection's folder that fits no template, such as `tickets/README.md` |
+| `filename.pattern` | error | | A file in a numbered collection's folder that fits no template, such as `tickets/README.md`. Also a numbered document whose name isn't in the form its collection's `slug` expects (`WF-1.md` under `required`, `WF-1-x.md` under `none`), or whose slug is empty or holds whitespace, `/`, `#` or `:` (`WF-1-a b.md`). Such a file is still the document `WF-1`, and the finding names its collection and key |
 | `imports.absent` | warn | | A ref into an imported project that isn't on this machine |
 
 ## Config errors
@@ -68,7 +69,8 @@ exit 2 and lists every config error it found. Otherwise it's reported as a findi
 | `config.collection-schema` | A collection naming a schema that doesn't exist |
 | `config.rule-unknown` | An unknown rule or rule option |
 | `config.rule-always-on` | A level set on an always-on rule |
-| `config.match-template` | A `match` that breaks the template rules (`{key}` once and no wildcards for numbered schemas; no `{key}` otherwise) |
+| `config.collection-slug` | A collection's `slug` that isn't `optional`, `required` or `none`, or a `slug` on a collection whose schema has no code |
+| `config.match-template` | A `match` that breaks the template rules (`{key}` once and no wildcards for numbered schemas; no `{key}` otherwise), or has a digit or `-` right after `{key}` while `slug` isn't `none` |
 | `config.coded-schema-shared` | Two collections using the same numbered schema |
 | `config.state-uncoded` | A state entry for a collection whose schema has no code |
 | `config.state-orphan` | A state file for a namespace that no longer exists; delete or rename it |
