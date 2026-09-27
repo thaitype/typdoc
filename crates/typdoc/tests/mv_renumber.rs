@@ -1,4 +1,4 @@
-//! Covers SPC-2, SPC-5, SPC-8.
+//! Covers SPC-2, SPC-5, SPC-8, SPC-17.
 //!
 //! `--renumber` shares plain `mv`'s prepare-then-rename commit and its refusals, which `mv.rs` and
 //! `crates/typdoc-core/tests/mv_seam.rs` cover; this file covers what is its own.
@@ -773,5 +773,222 @@ fn renumber_without_json_prints_a_plain_text_error() {
     assert_eq!(
         project.read("story-1/tickets/WF-5.md"),
         "---\ntitle: One\n---\n"
+    );
+}
+
+// --- A file name with a slug ---
+
+/// `story-3`'s `last` is 7, so the new key is `WF-8`. `notes` holds refs in every written form,
+/// from the source namespace and from the destination.
+fn slugged_project(slug_mode: Option<&str>) -> Scratch {
+    let project = Scratch::project(&[]);
+    project.file(
+        ".typdoc/config.json",
+        r#"{ "version": 1, "namespaces": ["story-2", "story-3"] }"#,
+    );
+    let slug_key = slug_mode
+        .map(|mode| format!(r#", "slug": "{mode}""#))
+        .unwrap_or_default();
+    project.file(
+        ".typdoc/collections/tickets.json",
+        &format!(r#"{{ "match": "_tickets/{{key}}.md", "schema": "ticket.json"{slug_key} }}"#),
+    );
+    project.file(
+        "ticket.json",
+        r#"{ "name": "ticket", "code": "WF", "fields": {
+            "title": { "type": "string" },
+            "moved_from": { "type": "list", "auto": "moves" }
+        } }"#,
+    );
+    project.file(
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "notes/*.md", "schema": "note.json" }"#,
+    );
+    project.file(
+        "note.json",
+        r#"{ "name": "note", "fields": { "see": { "type": "ref", "target": "*" } } }"#,
+    );
+    project.file(
+        ".typdoc/state/story-3.json",
+        "{\n  \"tickets\": {\n    \"last\": 7\n  }\n}\n",
+    );
+    project.file("story-2/.keep", "");
+    project.file("story-3/.keep", "");
+    project
+}
+
+/// The name has a slug, so a renumber that renders the new key alone lands at `WF-8.md`.
+#[test]
+fn renumber_keeps_the_files_slug_under_the_new_key() {
+    let project = slugged_project(None);
+    project.file(
+        "story-2/_tickets/WF-5-json-output-shape.md",
+        "---\ntitle: Five\n---\n",
+    );
+
+    let ran = renumber(&project, "story-2:WF-5", "story-3");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let out = ran.stdout_json();
+    assert_eq!(
+        out["document"]["path"],
+        json!("story-3/_tickets/WF-8-json-output-shape.md")
+    );
+    assert_eq!(out["document"]["key"], json!("WF-8"), "the key alone");
+    assert_eq!(out["findings"], json!([]));
+    assert!(
+        !project
+            .path()
+            .join("story-2/_tickets/WF-5-json-output-shape.md")
+            .exists()
+    );
+    assert!(!project.path().join("story-3/_tickets/WF-8.md").exists());
+    assert_eq!(
+        project.read("story-3/_tickets/WF-8-json-output-shape.md"),
+        "---\ntitle: Five\nmoved_from:\n- story-2:WF-5\n---\n",
+        "`auto: moves` records the prefixed old key, without the slug"
+    );
+}
+
+/// Each holder's written form against its rewrite: a ref written with the slug keeps that slug
+/// under the new key, one written as the key alone gets the new key alone. Every key form gains
+/// the destination's prefix, from either namespace, as a key-only ref does; the body link names
+/// the new file.
+#[test]
+fn renumber_rewrites_a_ref_written_with_the_slug_to_the_new_key_and_the_same_slug() {
+    let project = slugged_project(None);
+    project.file(
+        "story-2/_tickets/WF-5-json-output-shape.md",
+        "---\ntitle: Five\n---\n",
+    );
+    let holders = [
+        (
+            "story-2/notes/bare.md",
+            "WF-5-json-output-shape",
+            "story-3:WF-8-json-output-shape",
+        ),
+        (
+            "story-2/notes/prefixed.md",
+            "story-2:WF-5-json-output-shape",
+            "story-3:WF-8-json-output-shape",
+        ),
+        (
+            "story-3/notes/other.md",
+            "story-2:WF-5-json-output-shape",
+            "story-3:WF-8-json-output-shape",
+        ),
+        ("story-2/notes/key-only.md", "WF-5", "story-3:WF-8"),
+        ("story-3/notes/key-only.md", "story-2:WF-5", "story-3:WF-8"),
+    ];
+    for (path, before, _) in holders {
+        project.file(path, &format!("---\nsee: {before}\n---\n"));
+    }
+    project.file(
+        "story-2/notes/link.md",
+        "---\n---\n\nSee [it](story-2:_tickets/WF-5-json-output-shape.md).\n",
+    );
+
+    let ran = renumber(&project, "story-2:WF-5", "story-3");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    for (path, before, after) in holders {
+        assert_eq!(
+            project.read(path),
+            format!("---\nsee: {after}\n---\n"),
+            "{path}: `{before}`"
+        );
+    }
+    assert_eq!(
+        project.read("story-2/notes/link.md"),
+        "---\n---\n\nSee [it](story-3:_tickets/WF-8-json-output-shape.md).\n",
+        "a body link names the new file"
+    );
+    let out = ran.stdout_json();
+    assert_eq!(out["rewritten"].as_array().map(Vec::len), Some(6));
+    assert_eq!(out["findings"], json!([]));
+
+    let validated = common::Spawn::args(["validate", "--json"])
+        .cwd(project.path())
+        .run();
+    assert_eq!(validated.code, 0, "{}", validated.stdout);
+    assert_eq!(
+        validated.stdout_json()["findings"],
+        json!([]),
+        "no `refs.slug`: every written slug is the file's"
+    );
+}
+
+/// A collection is one for every namespace, so the destination's `slug` is the source's: the
+/// other form can arrive only in a name the source already had. The name is kept as it was.
+#[test]
+fn a_name_in_the_form_the_collection_does_not_expect_is_renumbered_as_it_is_and_reported() {
+    for (mode, from, to, message) in [
+        (
+            "none",
+            "story-2/_tickets/WF-5-x.md",
+            "story-3/_tickets/WF-8-x.md",
+            "the file name has the slug `x` after the key `WF-8`, and the collection `tickets` \
+             has `slug` set to `none`: it takes no slug",
+        ),
+        (
+            "required",
+            "story-2/_tickets/WF-5.md",
+            "story-3/_tickets/WF-8.md",
+            "the file name has no slug after the key `WF-8`, and the collection `tickets` has \
+             `slug` set to `required`: it needs one",
+        ),
+    ] {
+        let project = slugged_project(Some(mode));
+        project.file(from, "---\ntitle: Five\n---\n");
+
+        let ran = renumber(&project, "story-2:WF-5", "story-3");
+
+        assert_eq!(ran.code, 0, "{mode}: {}", ran.stderr);
+        let out = ran.stdout_json();
+        assert_eq!(out["document"]["path"], json!(to), "{mode}");
+        assert_eq!(
+            out["findings"],
+            json!([{
+                "path": to,
+                "namespace": "story-3",
+                "collection": "tickets",
+                "key": "WF-8",
+                "rule": "filename.pattern",
+                "level": "error",
+                "message": message,
+            }]),
+            "{mode}"
+        );
+        assert!(!project.path().join(from).exists(), "{mode}");
+    }
+}
+
+/// A slug is never dropped or made up to fit, so an invalid one already on disk is carried to the
+/// new key as well, and reported.
+#[test]
+fn an_invalid_slug_already_on_disk_is_renumbered_as_it_is_and_reported() {
+    let project = slugged_project(None);
+    project.file("story-2/_tickets/WF-5-a#b.md", "---\ntitle: Five\n---\n");
+
+    let ran = renumber(&project, "story-2:WF-5", "story-3");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let out = ran.stdout_json();
+    assert_eq!(
+        out["document"]["path"],
+        json!("story-3/_tickets/WF-8-a#b.md")
+    );
+    assert_eq!(
+        out["findings"],
+        json!([{
+            "path": "story-3/_tickets/WF-8-a#b.md",
+            "namespace": "story-3",
+            "collection": "tickets",
+            "key": "WF-8",
+            "rule": "filename.pattern",
+            "level": "error",
+            "message": "the slug `a#b` after the key `WF-8` holds whitespace, `/`, `#` or `:`, \
+                        which a slug cannot hold",
+        }])
     );
 }

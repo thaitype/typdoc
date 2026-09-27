@@ -1287,7 +1287,7 @@ impl Project {
                       already has a code: `new_coded` finds `collection_idx` by position among \
                       collections whose `schema.code` is `Some`, and `mv_renumber` finds it from \
                       an index entry whose own `key` is `Some`, which `Index::build` only sets \
-                      through a coded template (`Template::key`), itself only ever bound to a \
+                      through a coded template (`Template::read`), itself only ever bound to a \
                       collection whose schema carries a code (`Template::bind`)"
         )]
         let code = collection
@@ -3808,6 +3808,7 @@ impl Project {
         let from_namespace = from_entry.namespace;
         let from_file = from_entry.file.clone();
         let from_collection = from_entry.collection;
+        let from_slug = from_entry.slug.clone();
         let Some(from_key) = from_entry.key.clone() else {
             return Err(Error::BadArgument(format!(
                 "`{from_path}` has no code: --renumber moves a coded document to another \
@@ -3852,7 +3853,8 @@ impl Project {
             .expect("mv --renumber always locks at least the source namespace");
 
         let to_namespace_name = self.config.namespaces[to_namespace].name.clone();
-        let (new_key, to_path, next) = self.allocate_key(to_namespace, from_collection, None)?;
+        let (new_key, to_path, next) =
+            self.allocate_key(to_namespace, from_collection, from_slug.as_deref())?;
         let to_full = self.root.join(&to_path);
 
         // Should not be reachable, but checked under the lock before anything is written

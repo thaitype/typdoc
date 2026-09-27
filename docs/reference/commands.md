@@ -305,6 +305,15 @@ whitespace, `/`, `#` or `:`, or an empty one, with nothing written. A name in th
 collection's `slug` does not expect is moved, with `filename.pattern` in `findings`. Use
 `--renumber` to move a numbered document to another namespace.
 
+`--renumber` takes the next key in the destination namespace and keeps the slug:
+`typdoc mv story-2:WF-5 --renumber story-3` moves `story-2/_tickets/WF-5-json-output-shape.md` to
+`story-3/_tickets/WF-8-json-output-shape.md`. A ref by the key alone gets the new key
+(`story-3:WF-8`), and a ref written with the slug gets the new key and the same slug
+(`story-3:WF-8-json-output-shape`). A field with `auto: moves` records the old key with its
+namespace (`story-2:WF-5`). The slug is never dropped or made up: a name in the form the
+collection's `slug` does not expect, or with a slug holding an excluded character, is renumbered as
+it is, with `filename.pattern` in `findings`.
+
 ```console
 $ typdoc mv notes/site-ideas.md notes/website.md
 path: notes/website.md

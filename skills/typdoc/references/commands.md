@@ -261,7 +261,12 @@ $ typdoc mv notes/install.md notes/setup.md --json
   expect is moved, with `filename.pattern` in `findings`, exit 0.
 - `--renumber <namespace>` moves a coded document to another namespace under the next key
   there, and refs to it are rewritten to the new name — `blocked_by: [WF-1]` in `story-2`
-  becomes `[story-1:WF-2]` after `typdoc mv story-2:WF-1 --renumber story-1`.
+  becomes `[story-1:WF-2]` after `typdoc mv story-2:WF-1 --renumber story-1`. The file keeps its
+  slug under the new key: `story-2/_tickets/WF-5-json-output-shape.md` renumbered into `story-3`
+  becomes `story-3/_tickets/WF-8-json-output-shape.md`, and a ref written with the slug keeps it
+  (`story-3:WF-8-json-output-shape`). A slug is never dropped or made up: a name the
+  collection's `slug` does not expect keeps its form and gets `filename.pattern` in `findings`,
+  exit 0. `auto: moves` records the old key with its namespace (`story-2:WF-5`).
 - The destination existing, or naming the same file as the source, is exit 7 with nothing written.
 - A `mv` in a large repository holds the lock longer; raise `--lock-timeout` if it hits exit 4.
 - A `mv` that stops partway can be finished by running the exact same command again.
