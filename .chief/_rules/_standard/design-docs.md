@@ -56,3 +56,18 @@ planning files.
 
 Move only the sections a comment cites. If the text being moved disagrees with the code, do not
 pick a side: leave both as they are and list the mismatch in the PR.
+
+## Principles come before the spec
+
+`docs/design/` has three layers, each answering to the one above it:
+
+- `principles/` — collection `principles`, `PRN-n`: why typdoc behaves as it does. A principle
+  names the reason, what follows from it, and where it stops.
+- `spec/` — what typdoc does. An SPC names the principles it follows in `follows`.
+- `catalog/` — the lists code and tests read.
+
+A new design decision is argued from the principles. When a case fits a principle, the principle
+decides it and the SPC cites it. When no principle covers a case, or two principles pull in
+opposite directions, a principle is proposed or amended first and agreed before the spec is
+written. A principle that stops holding is superseded (`status: superseded`, `superseded_by`),
+never edited into a different rule.
