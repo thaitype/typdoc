@@ -875,7 +875,7 @@ fn slug_in_the_text_output_is_in_the_path_and_not_in_the_key() {
 
 /// Any language, and the case as written: a slug is never rewritten.
 #[test]
-fn a_slug_in_thai_with_capitals_is_written_as_given() {
+fn a_non_english_slug_with_capitals_is_written_as_given() {
     let project = slugged_project(None);
 
     let ran = run(
