@@ -38,7 +38,7 @@ code and tests read.
 | `refs.slug` | `warn` | — | A ref written with a slug that is not the file's slug now (below) |
 | `names.shadowed` | `warn` | — | A name that is both a sibling namespace and an import alias, so `name:` and `name::` reach different documents |
 | `frontmatter.unknown` | `warn` | — | Frontmatter fields not in the schema |
-| `filename.pattern` | `error` | — | A file in a coded collection's folder that fits no `match` template, e.g. `tickets/README.md` |
+| `filename.pattern` | `error` | — | A file in a coded collection's folder that fits no `match` template, e.g. `tickets/README.md`; also a coded document whose name is not in the form its collection's `slug` expects, or whose slug is empty or holds an excluded character, which stays a document (`SPC-17`) |
 | `imports.absent` | `warn` | — | Refs into an imported project that is absent on this machine, including one whose path uses an environment variable that is unset or empty. A project that needs its imports to be there should set this to `error` in CI, because a mistyped variable name is otherwise only a warning. An import that is absent and that no ref names is not reported, even at `error`; a misspelt alias is caught where a ref names it (`bad-prefix`, `SPC-12`) |
 
 ## Merge order

@@ -1,7 +1,7 @@
 # 06: Changelog, upgrade note, and a docs pass
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 01, 02, 03, 04, 05
 
 ## What this delivers
