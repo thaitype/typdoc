@@ -31,7 +31,7 @@ use crate::refs;
 use crate::schema::{self, Auto, Field, FieldType, Resolved};
 use crate::scope::{self, Scope, Source};
 use crate::state;
-use crate::template::{NameState, Step, Template};
+use crate::template::{self, NameState, SlugMode, Step, Template};
 use crate::validate::{self, DocName, Finding, Severity, ValidateScope};
 
 /// The folder that holds `.typdoc/config.json`: `TYPDOC_DIR` when it is set, and otherwise
@@ -893,9 +893,15 @@ impl Project {
         namespace_flag: Option<&str>,
     ) -> Result<Document, Error> {
         match target {
-            NewTarget::Coded { code, title } => {
-                self.new_coded(code, title, deps, sets, lock_timeout, namespace_flag)
-            }
+            NewTarget::Coded { code, title, slug } => self.new_coded(
+                code,
+                title,
+                slug.as_deref(),
+                deps,
+                sets,
+                lock_timeout,
+                namespace_flag,
+            ),
             NewTarget::Path { path } => self.new_uncoded(path, deps, sets, lock_timeout),
         }
     }
@@ -907,13 +913,20 @@ impl Project {
     /// number is as old as the load, which is safe: a process that won the lock first raised
     /// `last` before releasing it.
     ///
-    /// Validation runs before the state write, so a refused `--set` spends no number. The state
-    /// write runs before the document is created, so an interruption between them leaves a
-    /// skipped number, never one a later `new` could issue again (SPC-8).
+    /// `--slug` is checked first, before the lock, so a refused slug spends no number (SPC-2) and
+    /// never waits for the lock. Validation runs before the state write, so a refused `--set`
+    /// spends no number. The state write runs before the document is created, so an interruption
+    /// between them leaves a skipped number, never one a later `new` could issue again (SPC-8).
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "`new_document` is the only caller and passes each value on as it came from \
+                  the command line; a struct for them would be built in that one place only"
+    )]
     fn new_coded(
         &self,
         code: &str,
         title: &str,
+        slug: Option<&str>,
         deps: &Deps,
         sets: &[SetOp],
         lock_timeout: Duration,
@@ -930,6 +943,12 @@ impl Project {
             })?;
         let collection = &self.collections[collection_idx];
         let schema = &collection.schema;
+        check_new_slug(
+            code,
+            slug,
+            self.members[collection_idx].template.slug_mode(),
+            &collection.name,
+        )?;
 
         let scope = self.scope(None, namespace_flag, deps.env)?;
         let namespace_name = match scope.namespaces.as_slice() {
@@ -958,7 +977,7 @@ impl Project {
 
         let lock = self.acquire_lock_for(&namespace_name, deps, lock_timeout)?;
 
-        let (key, relative, next) = self.allocate_key(namespace_idx, collection_idx)?;
+        let (key, relative, next) = self.allocate_key(namespace_idx, collection_idx, slug)?;
         let file = self.root.join(&relative);
 
         let name = DocName {
@@ -1248,9 +1267,9 @@ impl Project {
             .max()
     }
 
-    /// The next key in `(namespace_idx, collection_idx)`, its project-relative path, and its
-    /// number. The caller must hold that namespace's lock, and then write the number to
-    /// the state file before creating the document: this only decides the number.
+    /// The next key in `(namespace_idx, collection_idx)`, its project-relative path with `slug`
+    /// after the key, and its number. The caller must hold that namespace's lock, and then write
+    /// the number to the state file before creating the document: this only decides the number.
     ///
     /// Refuses on `state.malformed` and `state.missing`: a guessed number is a key that already
     /// belongs to a document (SPC-8).
@@ -1258,6 +1277,7 @@ impl Project {
         &self,
         namespace_idx: usize,
         collection_idx: usize,
+        slug: Option<&str>,
     ) -> Result<(String, String, u64), Error> {
         let namespace_name = &self.config.namespaces[namespace_idx].name;
         let collection = &self.collections[collection_idx];
@@ -1331,7 +1351,7 @@ impl Project {
                       `None` for a shape a bound coded template cannot have"
         )]
         let below = template
-            .render(&key, None)
+            .render(&key, slug)
             .expect("a bound coded template always renders its own key");
         let namespace_folder = &self.config.namespaces[namespace_idx].folder;
         let relative = if namespace_folder.is_empty() {
@@ -3777,7 +3797,7 @@ impl Project {
             .expect("mv --renumber always locks at least the source namespace");
 
         let to_namespace_name = self.config.namespaces[to_namespace].name.clone();
-        let (new_key, to_path, next) = self.allocate_key(to_namespace, from_collection)?;
+        let (new_key, to_path, next) = self.allocate_key(to_namespace, from_collection, None)?;
         let to_full = self.root.join(&to_path);
 
         // Should not be reachable, but checked under the lock before anything is written
@@ -4327,8 +4347,15 @@ impl SetOp {
 /// `typdoc new`'s argument: a code with a title, or the path of an uncoded document.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NewTarget {
-    Coded { code: String, title: String },
-    Path { path: String },
+    /// `slug` is `--slug`'s value, which follows the key in the file name (SPC-17).
+    Coded {
+        code: String,
+        title: String,
+        slug: Option<String>,
+    },
+    Path {
+        path: String,
+    },
 }
 
 enum DefaultValue {
@@ -5135,6 +5162,39 @@ fn reserved_alias_finding(file: &str, alias: &str) -> Finding {
             "the import name `{alias}` is a URL scheme (`http`, `https`, `mailto` and `file` are reserved), and the two would be told apart wrongly"
         ),
     )
+}
+
+/// Refuses a `--slug` that `new` must not write: one that breaks the character rule, one under
+/// `none`, or none under `required` (SPC-17). `code` is only for the message.
+fn check_new_slug(
+    code: &str,
+    slug: Option<&str>,
+    mode: SlugMode,
+    collection: &str,
+) -> Result<(), Error> {
+    let refusal = match (slug, mode) {
+        (Some(""), _) => Some(
+            "`--slug` is empty, and a slug is not empty: give one, or leave `--slug` out"
+                .to_owned(),
+        ),
+        (Some(slug), _) if !template::valid_slug(slug) => Some(format!(
+            "the slug `{slug}` holds whitespace, `/`, `#` or `:`, which a slug cannot hold; \
+             typdoc does not rewrite a slug, so give one without them"
+        )),
+        (Some(_), SlugMode::None) => Some(format!(
+            "the collection `{collection}` has `slug` set to `none`, so its file names take no \
+             slug: leave `--slug` out"
+        )),
+        (None, SlugMode::Required) => Some(format!(
+            "the collection `{collection}` has `slug` set to `required`, so its file names need \
+             a slug: `typdoc new {code} \"<title>\" --slug <slug>`"
+        )),
+        _ => None,
+    };
+    match refusal {
+        Some(message) => Err(Error::BadArgument(message)),
+        None => Ok(()),
+    }
 }
 
 /// Why a coded document's file name is not in the form its collection's `slug` expects, if it

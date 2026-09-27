@@ -115,7 +115,7 @@ section.
 
 | Task | With typdoc | By hand |
 | --- | --- | --- |
-| Create a coded document | `typdoc new WF "Title"` takes the namespace lock, issues the next number, records it in `.typdoc/state/`, fills defaults | Writing `WF-3.md` yourself records nothing: `validate` warns `state.behind` until the next `typdoc new`, two people doing it at once can pick the same number, and if the file is deleted before any `new` its number can be issued again |
+| Create a coded document | `typdoc new WF "Title"` takes the namespace lock, issues the next number, records it in `.typdoc/state/`, fills defaults; `--slug lock-order` names the file `WF-8-lock-order.md`, as the collection's `slug` allows | Writing `WF-3.md` yourself records nothing: `validate` warns `state.behind` until the next `typdoc new`, two people doing it at once can pick the same number, and if the file is deleted before any `new` its number can be issued again |
 | Create a document without a code | `typdoc new notes/x.md --set title=…` refuses a path no collection's `match` fits (exit 1) and fills defaults | Same result if the path and frontmatter are right; `validate` tells you if they are not |
 | Change fields | `typdoc set WF-2 status=done` checks the schema before writing; `--if` makes it compare-and-set | Keeps comments and formatting that `set` does not (see below); nothing is checked until `validate` |
 | Move or rename a document without a code | `typdoc mv notes/dox.md notes/doc.md` renames it or moves it to another folder the collections allow, and rewrites every ref in this project that points at it, in frontmatter and body links, keeping each ref's written form | `git mv` or a file move leaves every ref pointing at the old name |

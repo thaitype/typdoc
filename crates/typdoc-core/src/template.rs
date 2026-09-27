@@ -289,6 +289,11 @@ impl Template {
         })
     }
 
+    /// The collection's `slug` this template was bound under.
+    pub fn slug_mode(&self) -> SlugMode {
+        self.slug
+    }
+
     /// Binds `{key}` to the code of the schema and refuses a template that does not fit it, or
     /// that cannot tell a slug from its own text under `slug` (SPC-17).
     pub fn bind(

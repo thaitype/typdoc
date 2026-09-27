@@ -135,8 +135,8 @@ To read one section: take `line` and `end` from `toc`, then read those lines of 
 ## new
 
 ```
-typdoc new <CODE> "<title>" [--set k=v]...     # coded: the key is allocated
-typdoc new <path.md> [--set k=v]...            # uncoded: you name the file
+typdoc new <CODE> "<title>" [--slug <slug>] [--set k=v]...  # coded: the key is allocated
+typdoc new <path.md> [--set k=v]...                         # uncoded: you name the file
 ```
 
 ```console
@@ -157,6 +157,11 @@ $ typdoc new notes/setup.md --set title="Setup notes" --json
 - Coded: takes the namespace lock, issues the larger of (highest existing number, recorded
   `last`) + 1, writes the file and records the number. A deleted document's number is never
   reissued. The title is required; `WF` alone is exit 1.
+- `--slug lock-order` names the file `tickets/WF-8-lock-order.md`; the key is still `WF-8`, and
+  `--json` gives `key` without the slug and `path` with it. The slug is used as given: not empty,
+  no whitespace, `/`, `#` or `:`. The collection's `slug` says whether it is allowed
+  (`optional`, the default), needed (`required`) or refused (`none`). Each refusal, and `--slug`
+  with a path, is exit 1 before the lock, with no number used.
 - Uncoded: the path must fit an uncoded collection's `match` (else exit 1); no title argument —
   set `title` with `--set`.
 - Defaults and `auto` fields are filled in; the output (text or `--json`) is the whole new

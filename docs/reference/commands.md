@@ -198,7 +198,7 @@ Every rule is listed in [validation rules](validation.md).
 ## new
 
 ```
-typdoc new <CODE> "<title>" [--set field=value]...
+typdoc new <CODE> "<title>" [--slug <slug>] [--set field=value]...
 typdoc new <path.md> [--set field=value]...
 ```
 
@@ -207,6 +207,14 @@ Creates a document.
 With a code, typdoc takes the namespace lock, picks the next number, creates the file, and records
 the number in the state file. The title is required. With a path, the path has to fit one of the
 collections' `match` templates, and there's no title argument; set `title` with `--set`.
+
+`--slug` puts a slug after the key in the file name: `typdoc new TK "Choose a static site
+generator" --slug site-generator` creates `tickets/TK-1-site-generator.md`, and the document is
+still `TK-1`. typdoc never makes a slug up or changes the one you give. A slug is not empty and
+holds no whitespace, `/`, `#` or `:`; its case is kept. The collection's `slug` decides whether
+`--slug` may be given (`optional`, the default), must be given (`required`), or is refused
+(`none`); see [slugs](project-files.md#slugs). `--slug` with a path is exit 1, since the path
+already names the file.
 
 Defaults and `auto` fields are filled in. The output is the new document, the same as `get`.
 
@@ -223,8 +231,9 @@ title: Choose a static site generator
 ```
 
 Refused with nothing written if a value breaks the schema (exit 2), or if the file already exists
-(exit 7). In a project with several namespaces, choose one with `--namespace` or by running from
-inside its folder.
+(exit 7). A slug that breaks the rule above, `--slug` under `none`, and no `--slug` under
+`required` are exit 1, checked before the lock, so no number is used. In a project with several
+namespaces, choose one with `--namespace` or by running from inside its folder.
 
 ## set
 

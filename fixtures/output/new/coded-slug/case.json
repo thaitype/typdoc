@@ -1,0 +1,4 @@
+{
+  "project": "valid/new-coded",
+  "command": ["new", "WF", "Decide lock order", "--slug", "lock-order", "--set", "kind=task", "--json"]
+}

@@ -1,4 +1,4 @@
-//! Covers SPC-2, SPC-5, SPC-8, SPC-13.
+//! Covers SPC-2, SPC-5, SPC-8, SPC-13, SPC-17.
 //!
 //! Every case that writes runs on a `Scratch` project, never on a fixture in the repository's
 //! own tree.
@@ -744,4 +744,337 @@ fn new_is_not_refused_by_an_unrelated_pre_existing_cycle_elsewhere() {
 
     let out = ok_json(&ran);
     assert_eq!(out["document"]["fields"]["title"], json!("Unrelated"));
+}
+
+// --- `--slug` ---
+
+/// `WF-1` exists, in the form `mode` expects, and `last` is 1, so the next key is `WF-2`. `mode`
+/// is the collection's `slug`; `None` leaves the key out, which reads as `optional`.
+fn slugged_project(mode: Option<&str>) -> Scratch {
+    let collection = match mode {
+        Some(mode) => {
+            format!(r#"{{ "match": "tickets/{{key}}.md", "schema": "wf.json", "slug": "{mode}" }}"#)
+        }
+        None => r#"{ "match": "tickets/{key}.md", "schema": "wf.json" }"#.to_owned(),
+    };
+    let project = Scratch::project(&[
+        (".typdoc/collections/tickets.json", &collection),
+        ("wf.json", WF_SCHEMA),
+        (
+            ".typdoc/state/default.json",
+            r#"{ "tickets": { "last": 1 } }"#,
+        ),
+    ]);
+    let existing = if mode == Some("none") {
+        "tickets/WF-1.md"
+    } else {
+        "tickets/WF-1-first.md"
+    };
+    project.file(
+        existing,
+        "---\ntitle: Existing\nstatus: open\nkind: research\n---\n",
+    );
+    project
+}
+
+fn state_bytes(project: &Scratch) -> Vec<u8> {
+    std::fs::read(project.path().join(".typdoc/state/default.json")).expect("a state file")
+}
+
+fn tickets_on_disk(project: &Scratch) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(project.path().join("tickets"))
+        .expect("the tickets folder")
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+/// Runs a `new` that must be refused before a number is spent: exit 1, the message `says`, no
+/// file created, and the state file's bytes as they were.
+fn assert_refused_before_a_number_is_spent(project: &Scratch, args: &[&str], says: &str) {
+    let before_state = state_bytes(project);
+    let before_files = tickets_on_disk(project);
+
+    let ran = run(project.path(), args);
+
+    assert_eq!(ran.code, 1, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
+    assert_eq!(ran.stdout, "");
+    let error = ran.stderr_json();
+    assert_eq!(error["code"], json!(1), "{error}");
+    assert_eq!(error["error"], json!(says));
+    assert_eq!(
+        tickets_on_disk(project),
+        before_files,
+        "a refused `new` writes no document"
+    );
+    assert_eq!(
+        state_bytes(project),
+        before_state,
+        "a refused `--slug` must leave `last` where it was"
+    );
+}
+
+#[test]
+fn slug_names_the_file_after_the_key_and_the_key_stays_without_it() {
+    let project = slugged_project(None);
+
+    let ran = run(
+        project.path(),
+        &[
+            "new",
+            "WF",
+            "Decide lock order",
+            "--slug",
+            "lock-order",
+            "--set",
+            "kind=task",
+            "--json",
+        ],
+    );
+
+    let out = ok_json(&ran);
+    assert_eq!(out["document"]["key"], json!("WF-2"));
+    assert_eq!(out["document"]["path"], json!("tickets/WF-2-lock-order.md"));
+    assert!(project.path().join("tickets/WF-2-lock-order.md").is_file());
+    assert!(!project.path().join("tickets/WF-2.md").exists());
+    let state = String::from_utf8(state_bytes(&project)).unwrap();
+    assert!(state.contains("\"last\": 2"), "{state}");
+}
+
+#[test]
+fn slug_in_the_text_output_is_in_the_path_and_not_in_the_key() {
+    let project = slugged_project(Some("required"));
+
+    let ran = run(
+        project.path(),
+        &[
+            "new",
+            "WF",
+            "Decide lock order",
+            "--slug",
+            "lock-order",
+            "--set",
+            "kind=task",
+        ],
+    );
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    assert_eq!(
+        ran.stdout,
+        "path: tickets/WF-2-lock-order.md\n\
+         collection: tickets\n\
+         schema: ticket\n\
+         namespace: default\n\
+         key: WF-2\n\
+         status: open\n\
+         title: Decide lock order\n\
+         kind: task\n"
+    );
+}
+
+/// Any language, and the case as written: a slug is never rewritten.
+#[test]
+fn a_slug_in_thai_with_capitals_is_written_as_given() {
+    let project = slugged_project(None);
+
+    let ran = run(
+        project.path(),
+        &[
+            "new",
+            "WF",
+            "Lock order",
+            "--slug",
+            "ลำดับ-Lock",
+            "--set",
+            "kind=task",
+            "--json",
+        ],
+    );
+
+    let out = ok_json(&ran);
+    assert_eq!(out["document"]["key"], json!("WF-2"));
+    assert_eq!(out["document"]["path"], json!("tickets/WF-2-ลำดับ-Lock.md"));
+    assert!(project.path().join("tickets/WF-2-ลำดับ-Lock.md").is_file());
+}
+
+#[test]
+fn without_slug_under_optional_the_file_is_the_key_alone() {
+    let project = slugged_project(Some("optional"));
+
+    let ran = run(
+        project.path(),
+        &["new", "WF", "No slug", "--set", "kind=task", "--json"],
+    );
+
+    let out = ok_json(&ran);
+    assert_eq!(out["document"]["path"], json!("tickets/WF-2.md"));
+}
+
+#[test]
+fn without_slug_under_none_the_file_is_the_key_alone() {
+    let project = slugged_project(Some("none"));
+
+    let ran = run(
+        project.path(),
+        &["new", "WF", "No slug", "--set", "kind=task", "--json"],
+    );
+
+    let out = ok_json(&ran);
+    assert_eq!(out["document"]["path"], json!("tickets/WF-2.md"));
+}
+
+#[test]
+fn a_slug_that_breaks_the_character_rule_is_refused_with_no_number_spent() {
+    for slug in [
+        "lock order",
+        "lock#order",
+        "lock:order",
+        "lock/order",
+        "lock\torder",
+    ] {
+        let project = slugged_project(None);
+        assert_refused_before_a_number_is_spent(
+            &project,
+            &[
+                "new",
+                "WF",
+                "Refused",
+                "--slug",
+                slug,
+                "--set",
+                "kind=task",
+                "--json",
+            ],
+            &format!(
+                "the slug `{slug}` holds whitespace, `/`, `#` or `:`, which a slug cannot hold; \
+                 typdoc does not rewrite a slug, so give one without them"
+            ),
+        );
+    }
+}
+
+#[test]
+fn an_empty_slug_is_refused_with_no_number_spent() {
+    let project = slugged_project(None);
+    assert_refused_before_a_number_is_spent(
+        &project,
+        &[
+            "new",
+            "WF",
+            "Refused",
+            "--slug",
+            "",
+            "--set",
+            "kind=task",
+            "--json",
+        ],
+        "`--slug` is empty, and a slug is not empty: give one, or leave `--slug` out",
+    );
+}
+
+#[test]
+fn slug_under_none_is_refused_with_no_number_spent() {
+    let project = slugged_project(Some("none"));
+    assert_refused_before_a_number_is_spent(
+        &project,
+        &[
+            "new",
+            "WF",
+            "Refused",
+            "--slug",
+            "lock-order",
+            "--set",
+            "kind=task",
+            "--json",
+        ],
+        "the collection `tickets` has `slug` set to `none`, so its file names take no slug: \
+         leave `--slug` out",
+    );
+}
+
+#[test]
+fn no_slug_under_required_is_refused_with_no_number_spent() {
+    let project = slugged_project(Some("required"));
+    assert_refused_before_a_number_is_spent(
+        &project,
+        &["new", "WF", "Refused", "--set", "kind=task", "--json"],
+        "the collection `tickets` has `slug` set to `required`, so its file names need a slug: \
+         `typdoc new WF \"<title>\" --slug <slug>`",
+    );
+}
+
+#[test]
+fn slug_with_a_path_is_bad_arguments() {
+    let project = Scratch::project(&NOTES);
+    project.file(
+        ".typdoc/state/default.json",
+        r#"{ "tickets": { "last": 1 } }"#,
+    );
+    let before = state_bytes(&project);
+
+    let ran = run(
+        project.path(),
+        &[
+            "new",
+            "a-new-note.md",
+            "--slug",
+            "lock-order",
+            "--set",
+            "title=A new note",
+            "--json",
+        ],
+    );
+
+    assert_eq!(ran.code, 1, "stdout: {} stderr: {}", ran.stdout, ran.stderr);
+    let error = ran.stderr_json();
+    assert!(
+        error["error"].as_str().unwrap().contains("`--slug`"),
+        "{error}"
+    );
+    assert!(!project.path().join("a-new-note.md").exists());
+    assert_eq!(state_bytes(&project), before);
+}
+
+/// Each refusal is made before the namespace's lock is asked for: with the lock held elsewhere
+/// and no time to wait, a refused `--slug` still exits 1 with its own message, not the lock's
+/// exit 4.
+#[test]
+fn a_refused_slug_is_reported_without_waiting_for_the_lock() {
+    for (mode, args) in [
+        (None, &["--slug", "lock order"][..]),
+        (Some("none"), &["--slug", "lock-order"][..]),
+        (Some("required"), &[][..]),
+    ] {
+        let project = slugged_project(mode);
+        let fs = typdoc_fs::SystemFs;
+        let lock = typdoc_core::acquire(
+            &fs,
+            &typdoc_testkit::fake::FixedClock::new(),
+            project.path().join(".typdoc/locks/default.lock"),
+            "slug-test-host",
+            std::time::Duration::from_secs(5),
+        )
+        .expect("the lock is acquired");
+
+        let mut command = vec!["new", "WF", "Refused", "--lock-timeout", "0"];
+        command.extend_from_slice(args);
+        command.extend_from_slice(&["--set", "kind=task", "--json"]);
+        let ran = run(project.path(), &command);
+
+        typdoc_core::release(lock).expect("the lock releases");
+        assert_eq!(
+            ran.code, 1,
+            "{mode:?} {args:?}: stdout: {} stderr: {}",
+            ran.stdout, ran.stderr
+        );
+        assert!(
+            ran.stderr_json()["error"]
+                .as_str()
+                .unwrap()
+                .contains("slug"),
+            "{}",
+            ran.stderr
+        );
+    }
 }
