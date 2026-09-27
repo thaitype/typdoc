@@ -104,28 +104,18 @@ A template whose text right after `{key}` starts with a digit or a `-` (`{key}1.
 `{key}-notes.md`) cannot tell a slug from its own text. With `slug` `optional` or `required` such
 a template is `config.match-template`, and the message says to set `slug` to `none`. It is the
 one case where a project that loaded before slugs existed stops loading under the default, and
-it stops loudly, with exit 2, rather than reading the same files differently.
-
-> **Open question (technical).** The fix above, `slug: none`, works only if `none` does not look
-> for a slug at all, but the paragraph on the form a collection does not expect makes `none` read
-> `WF-1-x.md` as `WF-1`. With `{key}1.md` that brings the ambiguity back (`WF-31.md`). Proposed:
-> a template of this kind under `none` reads names exactly as before slugs existed and never
-> looks for a slug; every other template under `none` reads a slug as that paragraph says.
+it stops loudly, with exit 2, rather than reading the same files differently. Under `none`, such
+a template reads names exactly as it did before slugs existed and never looks for a slug; every
+other template under `none` reads a slug as the form the collection does not expect, above.
 
 **What a slug may contain.** Any characters a file name can hold, in any language, except
 whitespace, `/` (a slug is part of one path segment), `#` (a Markdown link reads what follows it
 as an anchor) and `:` (a ref reads what comes before it as a namespace, `SPC-14`). It is not
 empty, and its case is kept as written. `new --slug` given anything else exits 1 with nothing
 written, and the message states the rule; typdoc does not rewrite the value into a valid one,
-since that would be making a slug up.
-
-> **Open question (technical).** Two points on the rule above. `:` is not in the answer given; it
-> is proposed because `story-2:WF-5-a:b` cannot be read as a ref, and namespace names may hold
-> `-` and letters, so `WF-5-a:b` alone reads as a ref into a namespace `WF-5-a`, an error when
-> there is none. And a file whose
-> text after the key is not a valid slug (`WF-1-lock order.md`): proposed, a document of the
-> collection that `filename.pattern` reports, as for the form the collection does not expect,
-> so that the key alone decides what a file is.
+since that would be making a slug up. A file whose text after the key holds an excluded
+character (`WF-1-lock order.md`) is still the document `WF-1`: the key decides, and
+`filename.pattern` reports the name, as it does for the form the collection does not expect.
 
 **One key, one file.** `WF-5.md` and `WF-5-x.md` in one namespace are two files with the key
 `WF-5`, which `keys.unique` reports, as it reports any two files that share a key. So are
