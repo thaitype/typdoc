@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render templates/skills/ into skills/, filling in the typdoc version.
 
-`skills/` is what `npx skills add thaitype/typdoc` installs, so it is committed. It is written
+`skills/` is what `npx skills@latest add thaitype/typdoc` installs, so it is committed. It is written
 from `templates/skills/`, never edited by hand: the version it names comes from
 `crates/typdoc/Cargo.toml`, the one place a release sets it.
 
