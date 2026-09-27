@@ -77,10 +77,28 @@ still running: there is no age threshold.
 ## When a lock is not acquired
 
 The exit-4 message gives the lock's path, the process id, host and age recorded in it, and what
-typdoc can tell about the owner. An owner still running on this machine: wait, or run again with
-a longer timeout; no way to remove the lock is suggested. An owner no longer running on this
-machine: the lock is stale, and the path to delete is shown. An owner on another host cannot be
-checked, so the message says to delete the lock only once that process is known to have stopped.
+typdoc can tell about the owner. It tells one of five things, the first that applies:
+
+1. **The host is not known**: this machine's hostname could not be read, or the lock records
+   that its owner's could not. Which machine holds the lock cannot be told, so it cannot be
+   checked from here, and the message says to delete it only once that process is known to have
+   stopped. It never says "another host", since that is not known either.
+2. **Another host**: the recorded host is not this machine's. It cannot be checked from here,
+   and the message says the same as above.
+3. **This machine cannot tell whether a process is running**: the recorded host is this machine,
+   but the system has no `/proc` to look the process id up in (macOS, for one). The message
+   says it cannot be checked on this system and, as above, to delete the lock only once that
+   process is known to have stopped.
+4. **Running on this machine**: wait, or run again with a longer timeout; no way to remove the
+   lock is suggested.
+5. **Not running on this machine**: the lock is stale, and the path to delete is shown.
+
+Only the last one tells anyone to delete the lock without knowing more, and it is said only when
+the process id was looked up and not found. Where typdoc cannot look, it never guesses "stale":
+a lock held by a running typdoc reported as stale would invite a second writer into the
+namespace. The hostname is read from `/proc` too, so on a system without it every lock records
+the host as `unknown-host`, and every timeout there takes the first case.
+
 Checking the process id only chooses the wording; it never decides whether a lock is valid. A
 hostname is taken to mean one set of processes, so a container that shares the folder and reuses
 the host's hostname makes the status unreliable.
@@ -94,8 +112,9 @@ process records that it holds it when the call returns. An interrupt in between 
 that no list in the process names, and typdoc does not remove it, because in that instant it has
 no evidence the file is its own, and removing a lock on no evidence is the takeover typdoc never
 does. The result is a lock with no owner in one namespace. The next run that wants it waits,
-times out and exits 4, and the message says the owner is no longer running and which file to
-delete. No document is written and none is damaged; the window is left open knowingly.
+times out and exits 4; where the process id can be looked up, the message says the owner is no
+longer running and which file to delete. No document is written and none is damaged; the window
+is left open knowingly.
 
 ## Lock order
 
