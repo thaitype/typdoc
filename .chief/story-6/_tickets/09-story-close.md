@@ -1,5 +1,5 @@
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: 08, and every PR merged
 
 # Ticket 09 — story close check
