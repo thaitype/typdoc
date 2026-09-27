@@ -48,4 +48,7 @@ SPC-2 no longer says `mv --renumber` prints only the new key.
 From the ticket 07 PR. Fixed in that PR: a test in `crates/typdoc/tests/state.rs` named after a
 decision number is renamed to `deriving_last_reissues_a_retired_key_silently`.
 
+From the ticket 08 PR. Fixed in that PR: four test names that said how the behavior changed are
+renamed for what they check. Nothing listed for a decision.
+
 Done when: that record is reported. The story is accepted outside the loop.

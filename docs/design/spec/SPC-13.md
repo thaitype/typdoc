@@ -109,3 +109,22 @@ the digits themselves, though it is printed with its digits (`SPC-12`). Two numb
 only past what that value holds compare equal: `num>99999999999999999998` does not find a document
 holding `99999999999999999999`, and `num=1e+20` finds both. In the ordinary case the same rule is
 what makes `num=1000.0` find a document written `1e3`.
+
+## Quoting in the shell
+
+Give `--where`, `--if`, `--set` and `--namespace` values to typdoc exactly as written, in single
+quotes: `--where 'title=Cosmos\, or SQL'`, `--namespace '*'`, `--namespace 'chief::*'`,
+`TYPDOC_NAMESPACE='*'`. The shells covered are sh and bash, where single quotes pass every
+character, `\`, `*`, `<`, `>` and `!` included, to typdoc untouched. zsh, fish, PowerShell and cmd
+are not covered. zsh is the default shell on macOS, so the most common way to run typdoc on macOS
+is not a covered shell. On a shell outside the list, avoid values that contain a backslash, or run
+a query whose answer is already known before relying on it: the danger is not an error but an
+expression the shell has changed that still parses and gives a plausible wrong answer.
+
+A shell is on this list only while a test runs the documented examples through that shell itself.
+A listed shell that the machine running the tests lacks turns the suite red rather than being
+skipped: a skip that is normal on one machine is seen every day until it reads as normal, and then
+passes unnoticed on the day a CI image loses the shell. No setting turns the check into a skip for
+one machine, since it would hold only while whoever sets it is careful. The way out is to install
+the shell or to remove it from this list, and the failure says both. Supporting another shell means
+adding it here with its own test.

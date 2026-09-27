@@ -1,8 +1,7 @@
-//! `body.links`, `body.anchors` and `body.mentions` through the built binary: message wording,
-//! positions, the `ignore` option, and the cases ticket 10 of the decisions names by name that
-//! the coarse `trips` set of `fixtures/broken/` cannot show on their own (`version 1.2` not
-//! reported, an undefined `[t][ref]` not reported, a definition inside code not a definition).
-//! The exact set each `broken/` fixture trips is checked by `coverage.rs`.
+//! Covers SPC-1.
+//!
+//! What the `trips` set of a `fixtures/broken/` folder cannot show: wording, positions, the
+//! `ignore` option, and the cases that must not be reported.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -16,9 +15,8 @@ fn validate(cwd: &std::path::Path) -> common::Ran {
 
 #[test]
 fn the_clean_body_links_fixture_validates_with_no_findings() {
-    // Holds, in one real project, every case ticket 10 of the decisions names by name that must
-    // not be reported: `version 1.2`, an undefined `[t][ref]`, and a definition inside a fenced
-    // code block: see fixtures/valid/body-links/clean.md.
+    // `clean.md` holds the cases that must not be reported: `version 1.2`, an undefined
+    // `[t][ref]`, and a definition inside a fenced code block.
     let project = fixture("valid/body-links");
 
     let ran = validate(&project);
@@ -135,13 +133,6 @@ fn the_ignore_option_skips_a_matching_destination_entirely() {
     assert_eq!(ran.stdout_json()["findings"], json!([]));
 }
 
-/// A collection that states only a rule's `level` still keeps the global `ignore` for that same
-/// rule (design line 618: "A collection file merges key by key, so it states only what
-/// differs" — read as holding for the options inside one rule's setting, not only for which rule
-/// names a collection's `validation` states at all). The control beside it, a collection that
-/// states no `validation` at all, already passed before this fix and stays green, so a later
-/// change cannot quietly reintroduce the wholesale-replace behaviour without this pair catching
-/// it either way.
 #[test]
 fn a_collections_own_level_for_a_rule_does_not_discard_the_globals_options_for_it() {
     let files = [
@@ -316,9 +307,6 @@ fn a_broken_body_link_that_matches_a_recorded_move_is_refs_moved_not_body_links(
 
 #[test]
 fn a_broken_body_link_with_an_anchor_still_matches_a_recorded_move() {
-    // `auto: moves` records a plain path, never a fragment; the lookup must strip `#section`
-    // from the written destination before matching, or a moved target written with an anchor
-    // would silently fall through to `body.links` instead of `refs.moved`.
     let files = [
         (
             ".typdoc/collections/notes.json",

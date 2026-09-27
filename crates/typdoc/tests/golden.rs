@@ -1,5 +1,4 @@
-//! The `--json` output of each command against its golden and its assertions, and the
-//! generator that writes a golden.
+//! Covers SPC-12.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -9,9 +8,7 @@ use serde_json::{Value, json};
 use typdoc_testkit::fixtures;
 use typdoc_testkit::golden::{self, Case, REGENERATE_VAR};
 
-/// Stages the case's project the same way a write fixture is staged elsewhere
-/// (`typdoc_testkit::staging`): unchanged for a read, copied to a fresh temporary folder for a
-/// write, so a golden of `new`, `set` or `mv` never runs against the repository's own committed
+/// A write runs on a copy, so a golden of `new`, `set` or `mv` never changes the committed
 /// fixture tree.
 fn run(case: &Case) -> Ran {
     let staged = typdoc_testkit::staging::stage_command(&fixture(&case.project), &case.command)
@@ -23,8 +20,6 @@ fn run(case: &Case) -> Ran {
     spawn.run()
 }
 
-/// The output of the case's run as JSON, when the run ended with 0 and printed nothing on
-/// standard error.
 fn output_of(case: &Case) -> Result<Value, String> {
     let ran = run(case);
     if ran.code != 0 || !ran.stderr.is_empty() {
@@ -44,7 +39,6 @@ fn case_named(id: &str) -> Case {
         .unwrap_or_else(|| panic!("the golden case {id} is missing"))
 }
 
-/// The output of the case's run, and its golden as JSON that a test may change.
 fn output_and_golden(id: &str) -> (Value, Value) {
     let case = case_named(id);
     let golden = std::fs::read_to_string(case.golden_path()).unwrap();
@@ -105,8 +99,6 @@ fn a_read_command_prints_the_same_bytes_on_every_run() {
     }
 }
 
-/// Regenerates the one golden that `TYPDOC_REGENERATE_GOLDEN` names, `<command>/<case>`.
-/// It is not part of a plain run of the suite, so it shows as ignored, not as passed.
 #[test]
 #[ignore = "regenerates one golden: TYPDOC_REGENERATE_GOLDEN=<command>/<case> scripts/test.sh -p typdoc --test golden regenerate -- --ignored"]
 fn regenerate() {

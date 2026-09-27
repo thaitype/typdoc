@@ -40,6 +40,18 @@ the `names.shadowed` rule warns. Sibling names and import aliases may not collid
 schemes (`http`, `https`, `mailto`, `file`); `validate` enforces this, as `config.namespace-name`
 for a namespace and as `schema.valid` for an import alias.
 
+## Canonical form
+
+A coded document is referenced by key in frontmatter. Referencing it by path works, but `validate`
+warns under `refs.codedByPath`, since a path changes when the file is moved and a key does not.
+Body links always use paths.
+
+## Body links that are not refs
+
+A body link that names no path, such as `[t]()` or `[t](#a)`, is not a ref, and neither is a link
+with a URL scheme: neither has a document at the other end. `refs` lists neither, in either
+direction.
+
 ## Ownership rules
 
 So that two namespaces never conflict:

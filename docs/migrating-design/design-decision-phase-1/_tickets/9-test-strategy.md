@@ -174,16 +174,6 @@ Probe of 2026-09-20 (cargo and clippy 1.96.0, a throwaway workspace with a libra
 
 Locale: a program that uses only Rust's standard library, started under `env -i`, `LC_ALL=C` and `LC_ALL=C.UTF-8`, gave the same result each time for a Thai argument (18 bytes, 6 scalar values), for writing and reading a Thai file, and for a Thai file name being valid UTF-8. So an empty environment needs no locale variable for code that uses the standard library only. `th_TH.UTF-8` is not installed on the machine where this was run, so a run under it says nothing more than an unset locale and is not counted. Not verified: the shell harness (a shell may use the locale for multi-byte text), typdoc's own dependencies (nothing is built yet), macOS.
 
-### Shells: a listed shell that is missing
-
-Decided: a shell that the document lists and the machine lacks makes the suite red. It is not skipped. What is red is not "this machine has no such shell" but "the document claims a shell and nobody has shown it", and there are two ways to clear it: install the shell, or remove its row from the document, which is what the rule in ticket 7 already says. The message the suite prints names both ways, so that someone who cannot install a shell does not read it as being stuck when a correct way out exists.
-
-The reason beyond the visible one: a skip that is normal on developer machines is seen every day until it reads as normal, and on the day a CI runner changes its image and skips by itself, the signal looks like the one seen every day. A warning people have got used to is not a warning.
-
-Rejected: a variable that turns the skip on for a machine. It is a switch that works only while whoever sets it is careful.
-
-Current state: zsh is not installed on the machine where this was decided, and installing it was not attempted, so the zsh row is removed everywhere the shell list appears (the design, tickets 5, 7 and 9, and the map). The v1 list is sh and bash, both present on that machine. The consequence is written into the design in one sentence: zsh is the default shell on macOS, so the most common way to run typdoc on macOS is not a covered shell. This is not a reduction of scope. The document already claimed zsh with no run behind it, and it now says what has been run. It is a known gap on the map, and the row returns together with a test that runs zsh, not on its own.
-
 ### Shells: which examples run, and what they must give typdoc
 
 Decided: the examples are taken from the design document itself, as one list, with no marker in the document. An example that contains a character a shell can change carries a value declared by hand in test code: the argument list typdoc must receive. The test runs each example through every listed shell, with a stand-in `typdoc` that writes the arguments it received to a file, and compares them with the declared value.
