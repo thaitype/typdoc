@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from render_skills import TemplateError, add_notice, fill, main  # noqa: E402
+from render_skills import TemplateError, fill, main  # noqa: E402
 
 CARGO = '[package]\nname = "typdoc"\nversion = "9.8.7"\n'
 SKILL = "---\nname: demo\n---\n\nWritten for demo {{version}}; pin v{{ version }}.\n"
@@ -55,14 +55,6 @@ class Fill(unittest.TestCase):
         self.assertEqual(fill(text, {"version": "1"}, "t"), text)
 
 
-class Notice(unittest.TestCase):
-    def test_the_notice_goes_after_the_frontmatter(self):
-        out = add_notice("---\nname: x\n---\nbody\n", "t.md")
-        self.assertTrue(out.startswith("---\nname: x\n---\n<!-- Generated from t.md"))
-
-    def test_a_file_without_frontmatter_gets_the_notice_first(self):
-        self.assertTrue(add_notice("body\n", "t.md").startswith("<!-- Generated from t.md"))
-
 
 class Render(unittest.TestCase):
     def setUp(self):
@@ -78,6 +70,7 @@ class Render(unittest.TestCase):
         skill = (self.root / "skills/demo/SKILL.md").read_text()
         self.assertIn("Written for demo 9.8.7; pin v9.8.7.", skill)
         self.assertNotIn("{{", skill)
+        self.assertEqual(skill, SKILL.replace("{{version}}", "9.8.7").replace("{{ version }}", "9.8.7"))
         self.assertTrue((self.root / "skills/demo/references/a.md").exists())
 
     def test_check_passes_right_after_a_render(self):

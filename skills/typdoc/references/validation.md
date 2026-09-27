@@ -1,4 +1,3 @@
-<!-- Generated from templates/skills/typdoc/references/validation.md by scripts/render_skills.py. Edit the template, not this file. -->
 # Validation
 
 typdoc 0.3.0. `typdoc validate` checks the project, or the documents named, against its schemas

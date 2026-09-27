@@ -1,4 +1,3 @@
-<!-- Generated from templates/skills/typdoc/references/query.md by scripts/render_skills.py. Edit the template, not this file. -->
 # Queries: `--where`, `--if`, `--set`
 
 typdoc 0.3.0. `list --where` and `set --if` share one expression language. `set`'s

@@ -1,4 +1,3 @@
-<!-- Generated from templates/skills/typdoc/references/exit-codes.md by scripts/render_skills.py. Edit the template, not this file. -->
 # Exit codes
 
 typdoc 0.3.0. Every command ends with one of these. A new code exists only where the caller has to

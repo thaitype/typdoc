@@ -5,6 +5,10 @@
 from `templates/skills/`, never edited by hand: the version it names comes from
 `crates/typdoc/Cargo.toml`, the one place a release sets it.
 
+Nothing in the rendered files says they are generated: an agent reads every line of a skill,
+and a note meant for maintainers would be an instruction it cannot follow. The CI job that runs
+`--check` is what stops a hand edit, and `.gitattributes` marks `skills/` as generated on GitHub.
+
 A template names a value as `{{name}}`. The only value is `version`. Any other `{{...}}` is an
 error rather than text copied through, so a misspelled name cannot reach a published skill.
 
@@ -27,10 +31,6 @@ OUTPUT = Path("skills")
 VERSION_SOURCE = Path("crates/typdoc/Cargo.toml")
 
 PLACEHOLDER = re.compile(r"\{\{\s*([^{}]*?)\s*\}\}")
-NOTICE = (
-    "<!-- Generated from {template} by scripts/render_skills.py. "
-    "Edit the template, not this file. -->\n"
-)
 
 
 class TemplateError(Exception):
@@ -52,16 +52,6 @@ def fill(text: str, values: dict[str, str], template: str) -> str:
     return PLACEHOLDER.sub(replace, text)
 
 
-def add_notice(text: str, template: str) -> str:
-    """The notice goes after the frontmatter, which a skill loader expects on the first line."""
-    notice = NOTICE.format(template=template)
-    if text.startswith("---\n"):
-        end = text.find("\n---\n", 4)
-        if end != -1:
-            cut = end + len("\n---\n")
-            return text[:cut] + notice + text[cut:]
-    return notice + text
-
 
 def render(root: Path) -> dict[Path, bytes]:
     """Every file skills/ should hold, by its path relative to skills/."""
@@ -74,7 +64,7 @@ def render(root: Path) -> dict[Path, bytes]:
         template = (TEMPLATES / relative).as_posix()
         if source.suffix == ".md":
             text = fill(source.read_text(encoding="utf-8"), values, template)
-            rendered[relative] = add_notice(text, template).encode("utf-8")
+            rendered[relative] = text.encode("utf-8")
         else:
             rendered[relative] = source.read_bytes()
     return rendered
