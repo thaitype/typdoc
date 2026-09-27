@@ -107,6 +107,7 @@ file, keep the higher `last`.
 | `body.mentions` | `off` | `inlineCode` (true), `fencedCode` (false) | A key mentioned in plain body text (`see WF-3`) does not exist | Correct the key |
 | `refs.codedByPath` | `warn` | — | A coded document is referenced by path (`WF-2.md`) instead of its key | Write the key (`WF-2`); a key survives moves |
 | `refs.moved` | `error` | — | A ref points at an old name recorded in some document's `auto: moves` field; the message names the new key | Update the ref to the new name |
+| `refs.slug` | `warn` | — | A ref written with a slug (`story-2:WF-5-json-output-shape`) whose slug is not the one the file carries now, or the file now has none; the ref still resolves by its key, and the message names the file's current name. A ref by the key alone is never reported. `new` and `set` refuse a write over it only at `error` | Write the current slug, or the key alone |
 | `names.shadowed` | `warn` | — | One name is both a sibling namespace and an import alias | Rename one |
 | `frontmatter.unknown` | `warn` | — | A frontmatter field the schema does not declare. `set` writes such a field anyway and this reports it | Remove it (`typdoc set <doc> field=`), fix its name, or add it to the schema |
 | `filename.pattern` | `error` | — | A file in a coded collection's folder fits no `match` template (`tickets/README.md`) | Rename or move it out, or add a collection for it |

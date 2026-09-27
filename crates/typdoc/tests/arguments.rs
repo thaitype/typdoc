@@ -1,4 +1,4 @@
-//! Covers SPC-2, SPC-7.
+//! Covers SPC-2, SPC-7, SPC-17.
 //!
 //! Every argument is written by hand from SPC-2's table, never taken from typdoc's own output.
 
@@ -7,7 +7,7 @@ mod common;
 
 use std::path::Path;
 
-use common::{Ran, Spawn, fixture};
+use common::{Ran, Spawn, fixture, slugged_projects};
 use serde_json::json;
 
 fn get(project: &Path, argument: &str) -> Ran {
@@ -130,4 +130,65 @@ fn with_an_import_the_path_form_takes_no_namespace_and_the_key_form_needs_one_pa
 
     // `named_import` has one namespace, and it is not called `default`: it is `only`.
     round_trips(&project, "named_import::only/notes/a.md", "only/notes/a.md");
+}
+
+/// `WF-5`'s file is `WF-5-json-shapes.md` in both projects, so every slug written below is out of
+/// date, and the output has to be exactly the key's.
+#[test]
+fn a_key_written_with_a_slug_names_the_key_in_every_form_and_a_stale_slug_prints_nothing_more() {
+    let projects = slugged_projects();
+    let main = projects.path().join("main");
+
+    for (with_slug, key, path) in [
+        (
+            "WF-5-old-name",
+            "story-2:WF-5",
+            "story-2/tickets/WF-5-json-shapes.md",
+        ),
+        (
+            "story-2:WF-5-old-name",
+            "story-2:WF-5",
+            "story-2/tickets/WF-5-json-shapes.md",
+        ),
+        (
+            "chief::story-3:WF-5-old-name",
+            "chief::story-3:WF-5",
+            "story-3/tickets/WF-5-json-shapes.md",
+        ),
+    ] {
+        let by_slug = get(&main, with_slug);
+        let by_key = get(&main, key);
+
+        assert_eq!(by_slug.code, 0, "{with_slug}: {}", by_slug.stderr);
+        assert_eq!(by_slug.stderr, "", "{with_slug}");
+        assert_eq!(by_slug.stdout, by_key.stdout, "{with_slug}");
+        let document = &by_slug.stdout_json()["document"];
+        assert_eq!(document["key"], json!("WF-5"), "{with_slug}");
+        assert_eq!(document["path"], json!(path), "{with_slug}");
+
+        let text = Spawn::args(["get", with_slug]).cwd(&main).run();
+        let key_text = Spawn::args(["get", key]).cwd(&main).run();
+        assert_eq!(text.code, 0, "{with_slug}: {}", text.stderr);
+        assert_eq!(text.stderr, "", "{with_slug}");
+        assert_eq!(text.stdout, key_text.stdout, "{with_slug}");
+    }
+}
+
+/// What follows the digits has to be a slug for the argument to have the form of a key;
+/// otherwise it is neither a key nor, since it does not end in `.md`, a path.
+#[test]
+fn a_key_followed_by_text_that_is_not_a_slug_is_bad_arguments() {
+    let projects = slugged_projects();
+    let main = projects.path().join("main");
+
+    for argument in [
+        "story-2:WF-5-",
+        "story-2:WF-5-a#b",
+        "story-2:WF-5-a b",
+        "story-2:WF-5x",
+    ] {
+        let ran = get(&main, argument);
+
+        assert_eq!(ran.code, 1, "{argument}: {}", ran.stderr);
+    }
 }

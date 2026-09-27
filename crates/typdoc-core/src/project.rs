@@ -2565,6 +2565,28 @@ impl Project {
                                 ),
                             ));
                         }
+                        if let Some(slug) = resolved.slug.as_ref().filter(|slug| slug.is_stale())
+                            && let Some(level) = validate::effective_level(
+                                Level::Warn,
+                                "refs.slug",
+                                &self.config.validation,
+                                &collection.validation,
+                                strict,
+                                audit,
+                            )
+                        {
+                            findings.push(validate::finding(
+                                name,
+                                level,
+                                "refs.slug",
+                                Some(field_name),
+                                format!(
+                                    "`{written}` refers to `{}`, whose file is now `{}`",
+                                    slug.key,
+                                    refs::name_with_key(&resolved.path, &slug.key)
+                                ),
+                            ));
+                        }
                     }
                 }
             }
@@ -3012,7 +3034,10 @@ impl Project {
         strict: bool,
         audit: bool,
     ) -> Option<Finding> {
-        if let Some(new_id) = moved.get(written) {
+        let recorded = moved.get(written).or_else(|| {
+            refs::without_slug(written).and_then(|without| moved.get(without.as_str()))
+        });
+        if let Some(new_id) = recorded {
             let level = validate::effective_level(
                 Level::Error,
                 "refs.moved",

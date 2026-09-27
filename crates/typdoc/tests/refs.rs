@@ -3,7 +3,7 @@
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
 
-use common::{NOTES, Ran, Scratch, Spawn, fixture};
+use common::{NOTES, Ran, Scratch, Spawn, fixture, slugged_projects};
 use serde_json::{Value, json};
 
 fn refs(project: &std::path::Path, args: &[&str]) -> Ran {
@@ -323,4 +323,56 @@ fn a_document_with_no_outgoing_ref_has_an_empty_list() {
 
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
     assert_eq!(ran.stdout_json()["refs"], json!([]));
+}
+
+/// A slug that is out of date still reaches the document: the key alone decides.
+#[test]
+fn a_ref_written_with_a_slug_resolves_by_its_key_whatever_the_slug() {
+    let projects = slugged_projects();
+    projects.file(
+        "main/story-1/notes/a.md",
+        "---\nsee: [story-2:WF-5-json-shapes, story-2:WF-5-old, chief::story-3:WF-5-old, WF-1-x]\n---\n",
+    );
+
+    let ran = refs(
+        &projects.path().join("main"),
+        &["story-1/notes/a.md", "--json"],
+    );
+
+    assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
+    let out = ran.stdout_json();
+    let found: Vec<(&str, &str, &str)> = out["refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["written"].as_str().unwrap(),
+                r["key"].as_str().unwrap_or("<none>"),
+                r["path"].as_str().unwrap_or("<none>"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (
+                "story-2:WF-5-json-shapes",
+                "WF-5",
+                "story-2/tickets/WF-5-json-shapes.md"
+            ),
+            (
+                "story-2:WF-5-old",
+                "WF-5",
+                "story-2/tickets/WF-5-json-shapes.md"
+            ),
+            (
+                "chief::story-3:WF-5-old",
+                "WF-5",
+                "story-3/tickets/WF-5-json-shapes.md"
+            ),
+            ("WF-1-x", "WF-1", "story-1/tickets/WF-1.md"),
+        ]
+    );
+    assert_eq!(out["refs"][2]["project"], json!("chief"));
 }

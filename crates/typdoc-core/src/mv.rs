@@ -5,6 +5,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::argument::read_key;
 use crate::config::{Namespace, RefBase};
 use crate::document::Document;
 use crate::fs::{Fs, prepare_replacement};
@@ -129,10 +130,11 @@ fn sibling_prefix<'a>(written: &'a str, namespaces: &[Namespace]) -> Option<(&'a
 /// has left every namespace falls back to a relative path: there is no namespace left to name.
 ///
 /// `key_rewrite` comes only from `mv --renumber`, the one caller that meets a key form: a plain
-/// `mv` never moves a coded document, and a key never ends in `.md`, so a path form cannot equal
-/// `old_key` by chance. `written` already resolves to the moved document, so a form equal to
-/// `old_key` is that document's own key. A bare key is always given the target's prefix: it
-/// means the holder's own namespace, and `--renumber` always moves to another one (SPC-2).
+/// `mv` never moves a coded document, and a key, with or without a slug, never ends in `.md`, so
+/// a path form cannot be read as `old_key` by chance. `written` already resolves to the moved
+/// document, so a form that reads as `old_key` is that document's own key. A bare key is always
+/// given the target's prefix: it means the holder's own namespace, and `--renumber` always moves
+/// to another one (SPC-2).
 pub(crate) fn rewritten_path_ref(
     written: &str,
     ref_base: RefBase,
@@ -145,12 +147,17 @@ pub(crate) fn rewritten_path_ref(
     if let Some((old_key, new_key)) = key_rewrite
         && let Some(target_ns) = namespace_of(namespaces, new_target)
     {
-        let is_key_form = written == old_key
-            || written.split_once(':').is_some_and(|(prefix, rest)| {
-                rest == old_key && namespaces.iter().any(|ns| ns.name == prefix)
-            });
-        if is_key_form {
-            return format!("{}:{new_key}", namespaces[target_ns].name);
+        let key_form = match written.split_once(':') {
+            Some((prefix, rest)) if namespaces.iter().any(|ns| ns.name == prefix) => read_key(rest),
+            Some(_) => None,
+            None => read_key(written),
+        };
+        // A slug written with the key is kept under the new key (SPC-2).
+        if let Some((key, slug)) = key_form
+            && key == old_key
+        {
+            let slug = slug.map(|slug| format!("-{slug}")).unwrap_or_default();
+            return format!("{}:{new_key}{slug}", namespaces[target_ns].name);
         }
     }
     if let Some((_, _)) = sibling_prefix(written, namespaces)
@@ -415,6 +422,24 @@ mod tests {
             Some(("WF-5", "WF-1")),
         );
         assert_eq!(new, "story-1:WF-1");
+    }
+
+    #[test]
+    fn a_key_ref_written_with_a_slug_keeps_the_slug_under_the_new_key_after_renumbering() {
+        let namespaces = ns(&[("story-1", "story-1"), ("story-3", "story-3")]);
+        for written in ["WF-5-lock-order", "story-1:WF-5-lock-order"] {
+            let new = rewritten_path_ref(
+                written,
+                RefBase::File,
+                0,
+                "story-1/notes/a.md",
+                &namespaces,
+                "story-3/tickets/WF-8-lock-order.md",
+                Some(("WF-5", "WF-8")),
+            );
+
+            assert_eq!(new, "story-3:WF-8-lock-order", "{written}");
+        }
     }
 
     #[test]

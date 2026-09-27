@@ -20,6 +20,11 @@ a list prints as a table with a header row, and an empty result prints nothing.
 - A `number` is printed with the digits the document holds (`1e3` stays `1e3`).
 - Output may gain fields in later versions: ignore any field you do not know.
 
+A `<key>` argument may carry the slug its file name has: `WF-5-json-output-shape`,
+`story-2:WF-5-json-output-shape` and `chief::story-3:WF-5-json-output-shape` name `WF-5`, and a
+slug that is out of date is not checked or reported. The text after the digits must be a valid
+slug (not empty; no whitespace, `/`, `#` or `:`), or the argument is exit 1.
+
 ---
 
 ## get

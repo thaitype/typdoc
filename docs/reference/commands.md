@@ -28,6 +28,12 @@ is relative to the current directory instead.
 | `memory::notes/x.md` | path in the imported project `memory` |
 | `chief::story-3:WF-5` | key in namespace `story-3` of the imported project `chief` |
 
+A key can also be written with the slug its file name carries: `WF-5-json-output-shape`,
+`story-2:WF-5-json-output-shape` and `chief::story-3:WF-5-json-output-shape` all name `WF-5`.
+Only the key is used to find the document, so a slug that is out of date still works and prints
+nothing about the difference. What follows the digits has to be a valid slug (not empty, no
+whitespace, `/`, `#` or `:`); otherwise the argument is neither a key nor a path, and it is exit 1.
+
 ## Output
 
 Without `--json`, a single document prints as one `name: value` line per field, and a list prints

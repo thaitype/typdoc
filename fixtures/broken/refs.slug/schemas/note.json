@@ -1,0 +1,1 @@
+{ "name": "note", "fields": { "see": { "type": "ref", "target": "*" } } }

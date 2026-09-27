@@ -510,7 +510,8 @@ fn mention_shape(token: &str) -> Option<&str> {
     looks_like_key_shape(key_part).then_some(token)
 }
 
-/// `^[A-Z][A-Z0-9]*-\d+$`, the same shape `argument::looks_like_key` checks.
+/// `^[A-Z][A-Z0-9]*-\d+$`: a key alone. Unlike `argument::read_key` it reads no slug, since a
+/// key written with its slug is not a mention (SPC-1).
 fn looks_like_key_shape(text: &str) -> bool {
     let Some((code, digits)) = text.split_once('-') else {
         return false;

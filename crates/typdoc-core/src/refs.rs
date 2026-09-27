@@ -1,8 +1,9 @@
 //! Ref forms in frontmatter, resolved through the index of names as they are on disk, and the
-//! rules that check them: `refs.resolve`, `refs.target`, `refs.codedByPath` and `refs.moved` (one
-//! ref at a time, from `resolve_one`) and `refs.acyclic` (a whole-project graph, built from the
-//! same `resolve_one`, and turned into findings by `cyclic_findings`). `names.shadowed` lives in
-//! `project.rs`, since it is a fact about the config and never reads a document.
+//! rules that check them: `refs.resolve`, `refs.target`, `refs.codedByPath`, `refs.moved` and
+//! `refs.slug` (one ref at a time, from `resolve_one`) and `refs.acyclic` (a whole-project graph,
+//! built from the same `resolve_one`, and turned into findings by `cyclic_findings`).
+//! `names.shadowed` lives in `project.rs`, since it is a fact about the config and never reads a
+//! document.
 //!
 //! A ref is not an argument: a bare form always means the document's own namespace, whatever the
 //! working directory, and a prefix that names neither a sibling namespace nor an import is
@@ -16,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use crate::argument::looks_like_key;
+use crate::argument::read_key;
 use crate::config::{Namespace, RefBase};
 use crate::imports::Absence;
 use crate::index::Index;
@@ -42,13 +43,31 @@ pub(crate) enum Via {
 
 /// `collection` is `None` for a file outside every collection. When `project` names an import,
 /// `collection` indexes that project's collections, not this one's, so a caller that looks up a
-/// schema checks `project` first.
+/// schema checks `project` first. `slug` is set for a ref written as a key with a slug and looked
+/// up in an index; the cycle scan's shortcut to a write's own candidate leaves it `None`, since
+/// only `refs.slug` reads it and that check never takes the shortcut.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Resolved {
     pub path: String,
     pub collection: Option<usize>,
     pub via: Via,
     pub project: Option<String>,
+    pub slug: Option<WrittenSlug>,
+}
+
+/// A ref written as a key with a slug: the key, that slug, and the slug the target's file name
+/// carries now (`None` when it has none), which `refs.slug` compares.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WrittenSlug {
+    pub key: String,
+    pub written: String,
+    pub current: Option<String>,
+}
+
+impl WrittenSlug {
+    pub fn is_stale(&self) -> bool {
+        self.current.as_deref() != Some(self.written.as_str())
+    }
 }
 
 pub(crate) type Outcome = Result<Resolved, Reason>;
@@ -76,6 +95,7 @@ enum Form {
     Key {
         namespace: usize,
         key: String,
+        slug: Option<String>,
     },
     Path {
         base: String,
@@ -110,7 +130,11 @@ pub(crate) fn resolve_one(written: &str, ctx: &Ctx) -> Outcome {
         ctx.namespaces,
         ctx.codes,
     ) {
-        Form::Key { namespace, key } => resolve_key(namespace, &key, ctx.index),
+        Form::Key {
+            namespace,
+            key,
+            slug,
+        } => resolve_key(namespace, &key, slug.as_deref(), ctx.index),
         Form::Path { base, rest } => resolve_path(&join(&base, &rest), ctx.index, ctx.root),
         Form::Import { alias, rest } => resolve_into_import(&alias, &rest, ctx.imports),
         Form::BadPrefix => Err(Reason::BadPrefix),
@@ -142,16 +166,21 @@ pub(crate) fn resolve_one_for_candidate(
         ctx.namespaces,
         ctx.codes,
     ) {
-        Form::Key { namespace, key } => {
+        Form::Key {
+            namespace,
+            key,
+            slug,
+        } => {
             if namespace == candidate.namespace && candidate.key == Some(key.as_str()) {
                 return Ok(Resolved {
                     path: candidate.path.to_owned(),
                     collection: None,
                     via: Via::Key,
                     project: None,
+                    slug: None,
                 });
             }
-            resolve_key(namespace, &key, ctx.index)
+            resolve_key(namespace, &key, slug.as_deref(), ctx.index)
         }
         Form::Path { base, rest } => {
             let joined = join(&base, &rest);
@@ -161,6 +190,7 @@ pub(crate) fn resolve_one_for_candidate(
                     collection: None,
                     via: Via::Path,
                     project: None,
+                    slug: None,
                 });
             }
             resolve_path(&joined, ctx.index, ctx.root)
@@ -208,17 +238,18 @@ fn resolve_into_project(
     }
     if let Some((prefix, sub)) = rest.split_once(':') {
         let namespace = namespace_named(namespaces, prefix).ok_or(Reason::BadPrefix)?;
-        return if looks_like_key(sub) {
-            resolve_key(namespace, sub, index)
-        } else {
-            resolve_path(&join(&namespaces[namespace].folder, sub), index, root)
+        return match read_key(sub) {
+            Some((key, slug)) => resolve_key(namespace, key, slug, index),
+            None => resolve_path(&join(&namespaces[namespace].folder, sub), index, root),
         };
     }
-    if looks_like_key(rest) && codes.contains(code_of(rest)) {
+    if let Some((key, slug)) = read_key(rest)
+        && codes.contains(code_of(key))
+    {
         if namespaces.len() != 1 {
             return Err(Reason::BadPrefix);
         }
-        return resolve_key(0, rest, index);
+        return resolve_key(0, key, slug, index);
     }
     resolve_path(rest, index, root)
 }
@@ -299,21 +330,27 @@ fn classify(
     }
     if let Some((prefix, rest)) = written.split_once(':') {
         return match namespace_named(namespaces, prefix) {
-            Some(namespace) if looks_like_key(rest) => Form::Key {
-                namespace,
-                key: rest.to_owned(),
-            },
-            Some(namespace) => Form::Path {
-                base: namespaces[namespace].folder.clone(),
-                rest: rest.to_owned(),
+            Some(namespace) => match read_key(rest) {
+                Some((key, slug)) => Form::Key {
+                    namespace,
+                    key: key.to_owned(),
+                    slug: slug.map(str::to_owned),
+                },
+                None => Form::Path {
+                    base: namespaces[namespace].folder.clone(),
+                    rest: rest.to_owned(),
+                },
             },
             None => Form::BadPrefix,
         };
     }
-    if looks_like_key(written) && codes.contains(code_of(written)) {
+    if let Some((key, slug)) = read_key(written)
+        && codes.contains(code_of(key))
+    {
         return Form::Key {
             namespace: doc_namespace,
-            key: written.to_owned(),
+            key: key.to_owned(),
+            slug: slug.map(str::to_owned),
         };
     }
     Form::Path {
@@ -342,19 +379,46 @@ fn namespace_named(namespaces: &[Namespace], name: &str) -> Option<usize> {
 
 #[expect(
     clippy::expect_used,
-    reason = "each of the three calls first checks that the text has the key shape, which needs a \
-              dash: `resolve_into_project` and `classify` in this file test `looks_like_key(..)` on the \
-              same string in the `if` that holds the call, and `Project::mention_missing` passes the \
-              part after the last `:` of a `Mention.written`, which `links::mention_shape` accepts \
-              only when `looks_like_key_shape` holds for that same part"
+    reason = "each of the three calls passes text that has the key shape, which needs a dash: \
+              `resolve_into_project` and `classify` in this file pass the key `read_key(..)` \
+              returned, and `Project::mention_missing` passes the part after the last `:` of a \
+              `Mention.written`, which `links::mention_shape` accepts only when \
+              `looks_like_key_shape` holds for that same part"
 )]
 pub(crate) fn code_of(key: &str) -> &str {
     key.split_once('-')
         .map(|(code, _)| code)
-        .expect("looks_like_key already found a dash")
+        .expect("a key has a dash")
 }
 
-fn resolve_key(namespace: usize, key: &str, index: &Index) -> Outcome {
+/// `written` with the slug of a key written with one taken off, any prefix kept
+/// (`story-2:WF-5-x` is `story-2:WF-5`); `None` for any other form. A recorded move names the
+/// key alone, so this is what `refs.moved` looks up for such a ref.
+pub(crate) fn without_slug(written: &str) -> Option<String> {
+    let prefix = written.rfind(':').map_or(0, |at| at + 1);
+    match read_key(&written[prefix..])? {
+        (key, Some(_)) => Some(format!("{}{key}", &written[..prefix])),
+        (_, None) => None,
+    }
+}
+
+/// The name in `path` that carries `key`, for a message: the last segment where `key` is
+/// followed by no further digit, or the last segment when none is.
+pub(crate) fn name_with_key<'a>(path: &'a str, key: &str) -> &'a str {
+    let carries = |segment: &str| {
+        segment
+            .match_indices(key)
+            .any(|(at, _)| !segment[at + key.len()..].starts_with(|c: char| c.is_ascii_digit()))
+    };
+    path.rsplit('/')
+        .find(|segment| carries(segment))
+        .or_else(|| path.rsplit('/').next())
+        .unwrap_or(path)
+}
+
+/// `slug` is the one the ref was written with, if any; it plays no part in finding the document
+/// (SPC-14).
+fn resolve_key(namespace: usize, key: &str, slug: Option<&str>, index: &Index) -> Outcome {
     let path = index.key(namespace, key).ok_or(Reason::NotFound)?;
     #[expect(
         clippy::expect_used,
@@ -371,6 +435,11 @@ fn resolve_key(namespace: usize, key: &str, index: &Index) -> Outcome {
         collection: Some(entry.collection),
         via: Via::Key,
         project: None,
+        slug: slug.map(|written| WrittenSlug {
+            key: key.to_owned(),
+            written: written.to_owned(),
+            current: entry.slug.clone(),
+        }),
     })
 }
 
@@ -403,6 +472,7 @@ pub(crate) fn resolve_path(path: &str, index: &Index, root: &Path) -> Outcome {
             collection: Some(entry.collection),
             via: Via::Path,
             project: None,
+            slug: None,
         });
     }
     if case_exact_file(root, path) {
@@ -411,6 +481,7 @@ pub(crate) fn resolve_path(path: &str, index: &Index, root: &Path) -> Outcome {
             collection: None,
             via: Via::Path,
             project: None,
+            slug: None,
         });
     }
     Err(Reason::NotFound)
@@ -624,7 +695,39 @@ mod tests {
     fn a_bare_key_shaped_value_whose_code_exists_is_a_key_in_the_documents_own_namespace() {
         let form = classify_default("WF-1", RefBase::File, &code_set(&["WF"]));
 
-        assert!(matches!(form, Form::Key { namespace: 0, key } if key == "WF-1"));
+        assert!(matches!(form, Form::Key { namespace: 0, key, slug: None } if key == "WF-1"));
+    }
+
+    #[test]
+    fn a_key_written_with_a_slug_is_that_key_with_the_slug_kept_bare_or_prefixed() {
+        let bare = classify_default("WF-1-lock-order", RefBase::File, &code_set(&["WF"]));
+        let sibling = classify_default("story-2:WF-5-x", RefBase::File, &code_set(&[]));
+
+        assert!(matches!(
+            bare,
+            Form::Key { namespace: 0, key, slug: Some(slug) } if key == "WF-1" && slug == "lock-order"
+        ));
+        assert!(matches!(
+            sibling,
+            Form::Key { namespace: 1, key, slug: Some(slug) } if key == "WF-5" && slug == "x"
+        ));
+    }
+
+    /// The rest has to be a slug (SPC-17), or the value is a relative path.
+    #[test]
+    fn a_key_followed_by_text_that_is_not_a_slug_is_a_path() {
+        for written in ["WF-1-", "WF-1-a#b", "WF-1-a b"] {
+            let form = classify_default(written, RefBase::File, &code_set(&["WF"]));
+
+            assert!(
+                matches!(&form, Form::Path { rest, .. } if rest == written),
+                "{written}"
+            );
+        }
+        let sibling = classify_default("story-2:WF-5-a#b", RefBase::File, &code_set(&[]));
+        assert!(
+            matches!(sibling, Form::Path { base, rest } if base == "story-2" && rest == "WF-5-a#b")
+        );
     }
 
     #[test]
@@ -673,7 +776,7 @@ mod tests {
 
         // No code is known on purpose: a sibling key needs only a real namespace, unlike a bare
         // key (SPC-14).
-        assert!(matches!(form, Form::Key { namespace: 1, key } if key == "WF-5"));
+        assert!(matches!(form, Form::Key { namespace: 1, key, slug: None } if key == "WF-5"));
     }
 
     #[test]
@@ -750,6 +853,32 @@ mod tests {
     }
 
     #[test]
+    fn without_slug_keeps_the_prefix_and_drops_only_a_slug() {
+        assert_eq!(without_slug("WF-5-x").as_deref(), Some("WF-5"));
+        assert_eq!(
+            without_slug("story-2:WF-5-x").as_deref(),
+            Some("story-2:WF-5")
+        );
+        assert_eq!(
+            without_slug("chief::story-3:WF-5-x").as_deref(),
+            Some("chief::story-3:WF-5")
+        );
+        for written in ["WF-5", "story-2:WF-5", "old.md", "./WF-5-x"] {
+            assert_eq!(without_slug(written), None, "{written}");
+        }
+    }
+
+    #[test]
+    fn name_with_key_is_the_segment_that_carries_the_key() {
+        assert_eq!(
+            name_with_key("story-2/tickets/WF-5-json-shapes.md", "WF-5"),
+            "WF-5-json-shapes.md"
+        );
+        assert_eq!(name_with_key("WF-5-x/README.md", "WF-5"), "WF-5-x");
+        assert_eq!(name_with_key("WF-5/WF-50.md", "WF-5"), "WF-5");
+    }
+
+    #[test]
     fn folder_of_a_top_level_path_is_the_project_folder() {
         assert_eq!(folder_of("a.md"), "");
         assert_eq!(folder_of("tickets/a.md"), "tickets");
@@ -769,6 +898,7 @@ mod tests {
             collection: None,
             via: Via::Path,
             project: None,
+            slug: None,
         };
 
         assert!(target_allowed(None, &file, None));
@@ -782,6 +912,7 @@ mod tests {
             collection: None,
             via: Via::Path,
             project: None,
+            slug: None,
         };
 
         assert!(!target_allowed(
@@ -872,6 +1003,7 @@ mod tests {
             collection: Some(0),
             via: Via::Key,
             project: None,
+            slug: None,
         };
 
         assert!(target_allowed(
@@ -897,6 +1029,7 @@ mod tests {
             collection: Some(0),
             via: Via::Path,
             project: Some("memory".to_owned()),
+            slug: None,
         };
 
         assert!(
@@ -920,6 +1053,7 @@ mod tests {
             collection: Some(0),
             via: Via::Path,
             project: Some("memory".to_owned()),
+            slug: None,
         };
 
         assert!(target_allowed(

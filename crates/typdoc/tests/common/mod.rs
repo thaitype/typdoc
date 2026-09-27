@@ -314,3 +314,51 @@ pub fn wait_for_file(path: &Path, timeout: Duration) -> bool {
 /// quickly it actually shows up (`acquire` creates it before any of the holding command's own
 /// work runs), so this is headroom for a loaded machine, not the ordinary case.
 pub const LOCK_APPEARS_WITHIN: Duration = Duration::from_secs(20);
+
+/// Two projects side by side, for keys written with a slug: `main` has the namespaces `story-1`
+/// and `story-2` and imports `chief`, which has `story-3` and `story-4`. Each of `story-2` and
+/// `story-3` holds `WF-5` under the slug `json-shapes`, `story-1` holds `WF-1` with no slug, and
+/// `story-1/notes/` is where a test puts a note whose `see` refs it wants read. Every file and
+/// state record is in place, so the pair validates clean before a test adds anything.
+pub fn slugged_projects() -> Scratch {
+    let scratch = Scratch::empty();
+    let ticket = r#"{ "name": "ticket", "code": "WF", "fields": {} }"#;
+    let note = r#"{ "name": "note", "fields": { "see": { "type": "ref[]", "target": "*" } } }"#;
+    for (project, first, second, last) in [
+        ("main", "story-1", "story-2", ("1", "5")),
+        ("chief", "story-3", "story-4", ("5", "1")),
+    ] {
+        let imports = if project == "main" {
+            r#", "imports": { "chief": "../chief" }"#
+        } else {
+            ""
+        };
+        scratch.file(
+            &format!("{project}/.typdoc/config.json"),
+            &format!(r#"{{ "version": 1, "namespaces": ["{first}", "{second}"]{imports} }}"#),
+        );
+        scratch.file(
+            &format!("{project}/.typdoc/collections/tickets.json"),
+            r#"{ "match": "tickets/{key}.md", "schema": "schemas/ticket.json" }"#,
+        );
+        scratch.file(
+            &format!("{project}/.typdoc/collections/notes.json"),
+            r#"{ "match": "notes/*.md", "schema": "schemas/note.json" }"#,
+        );
+        scratch.file(&format!("{project}/schemas/ticket.json"), ticket);
+        scratch.file(&format!("{project}/schemas/note.json"), note);
+        for (namespace, last) in [(first, last.0), (second, last.1)] {
+            scratch.file(
+                &format!("{project}/.typdoc/state/{namespace}.json"),
+                &format!(r#"{{ "tickets": {{ "last": {last} }} }}"#),
+            );
+            let name = if last == "5" {
+                "WF-5-json-shapes.md"
+            } else {
+                "WF-1.md"
+            };
+            scratch.file(&format!("{project}/{namespace}/tickets/{name}"), "");
+        }
+    }
+    scratch
+}
