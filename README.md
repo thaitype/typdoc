@@ -291,7 +291,7 @@ Understand the design:
 
 ## Status
 
-This is 0.3.0. Everything in this README works. Two things from the design aren't built yet:
+Everything in this README works in the latest release. Two things from the design aren't built yet:
 schemas fetched from a URL (and the `pull` command that updates them), and `refs --reverse`
 following refs from inside a project you import. The [changelog](CHANGELOG.md) lists what changed
 in each release.

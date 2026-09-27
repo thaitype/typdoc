@@ -83,7 +83,7 @@ exit 2 and lists every config error it found. Otherwise it's reported as a findi
 | `config.vendor-edited` | A saved copy of a remote schema was edited by hand |
 | `config.config-dir` | `TYPDOC_CONFIG_DIR` isn't an absolute path to an existing folder |
 
-## Known gaps in 0.2.0
+## Known gaps
 
 - A body link into an imported project is checked for its file, not for its `#heading`.
 - `refs --reverse` doesn't look inside projects that import this one.
