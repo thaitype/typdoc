@@ -1,4 +1,7 @@
 {
+  "principles": {
+    "last": 10
+  },
   "spec": {
     "last": 17
   }

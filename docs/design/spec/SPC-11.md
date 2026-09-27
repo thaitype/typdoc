@@ -4,16 +4,22 @@ status: active
 migrated_from: .chief/story-3/_contract/contract.md
 ---
 
-typdoc's own design is kept as typdoc documents, in two collections of this repository's own
+typdoc's own design is kept as typdoc documents, in three collections of this repository's own
 project under `docs/design/`.
 
-## Spec and catalog
+## Principles, spec and catalog
+
+- **`principles`** (`docs/design/principles/PRN-<n>.md`, coded `PRN`) says why typdoc behaves as
+  it does. Each principle names its reason, what follows from it, and where it stops. Its fields
+  are `title` (required), `status` (`draft`, `active` or `superseded`) and `superseded_by` (a ref
+  to the `PRN` that replaces it).
 
 - **`spec`** (`docs/design/spec/SPC-<n>.md`, coded `SPC`) is prose for people. No code and no test
   reads a spec document, or any other design prose, as data: not to import a list from it and
   not to compare the code against it. Its fields are `title` (required), `status` (`draft`,
-  `active` or `superseded`), `superseded_by` (a ref to the `SPC` that replaces it) and
-  `migrated_from` (where the text was moved from).
+  `active` or `superseded`), `superseded_by` (a ref to the `SPC` that replaces it),
+  `migrated_from` (where the text was moved from) and `follows` (optional, a list of refs to the
+  `PRN` documents it follows).
 - **`catalog`** (`docs/design/catalog/<name>.md`, no code: each document is known by its path)
   holds what code and tests read: the lists the code must agree with, such as the rule ids, the
   command names and the exit codes. Its fields are `title` (required), `content_type` (required,
