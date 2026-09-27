@@ -18,19 +18,16 @@ requires exit 0: a project that passed before an upgrade passes after it (PRN-7)
 
 ## Adding one
 
-When a release lets a project hold something new, add a project under that version that uses
-it, with made-up content, in the same pull request as the feature. The build of that pull
-request is the release's binary, so `compat.rs` passing is the proof the project belongs to it.
-To show the project really needs the new release, it can also be run against the previous
-release's prebuilt binary (`TYPDOC_VERSION=v<previous>` with the installer), where it should
-fail. That check is optional.
+A project for a release is added once that release is out, during work on the next version:
+when a release lets a project hold something new, add a project under that version that uses it,
+with made-up content. It is proved with that release's own binary, the prebuilt one
+(`TYPDOC_VERSION=v<version>` with the installer) or a build from its tag: `typdoc validate --json`
+in the project (0.1.0 has no text output) exits 0. The projects written for 0.1.0 and 0.3.0 were
+checked that way, once. To show the project really needs that release, it can also be run against
+the release before it, where it should fail. That check is optional.
 
 A project in real use with a shape these do not cover can be copied in unchanged, under the
 version it was made for. Add a row here either way.
-
-Only a project added afterwards for a release that is already out needs more: build the binary
-from that release's tag and run `typdoc validate --json` in the project (0.1.0 has no text
-output), expecting exit 0. The projects written for 0.1.0 and 0.3.0 were checked that way, once.
 
 ## Never edit these
 
