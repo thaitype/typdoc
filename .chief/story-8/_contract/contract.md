@@ -77,16 +77,19 @@ order. A test that is not about the message is not edited except to pass `env` t
 
 ## Documentation in the same PR
 
-- `CHANGELOG.md` `## [Unreleased]`: under Fixed, the macOS stale report of a running lock, and
-  the two new endings.
+- `CHANGELOG.md` `## [Unreleased]` (the heading is added above `[0.4.0]`):
+  - Fixed: on macOS a lock held by a running process was reported as stale; the two new endings.
+  - Changed, for the `typdoc-core` library: `acquire` takes `env: &dyn Env` in place of
+    `host: &str`, and `Env` has a new required method, `process_status`, with its return type
+    `ProcessStatus`. A caller of `acquire` or an implementer of `Env` must change.
 - `templates/skills/typdoc/references/exit-codes.md` (then `scripts/render_skills.py`) and any
   user doc that lists the endings: all five.
 - `.chief/project.md`: `libc` is an ordinary dependency of the binary crate, and why.
 
-## Open questions
+## Decided
 
-- **T1: `follows` on SPC-10.** None of PRN-1..10 is about "never guess the unsafe answer".
-  Proposal: leave SPC-10 without `follows` in this story and record the gap; a new principle is
-  the owner's.
-- **T2: the `unknown-host` sentinel.** A machine actually named `unknown-host` would always get
-  ending 1. Proposal: accept; it errs to the cautious side and keeps the lock file's shape.
+- **`follows` on SPC-10.** None of PRN-1..10 is about never guessing the unsafe answer where the
+  answer cannot be known. Decided: SPC-10 carries no `follows` in this story, and the gap is
+  recorded here; a principle for it is a separate decision.
+- **The `unknown-host` placeholder.** A machine actually named `unknown-host` always gets ending 1.
+  Decided: accepted, since it errs to the cautious side and keeps the lock file's shape.
