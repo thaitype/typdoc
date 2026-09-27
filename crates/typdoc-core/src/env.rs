@@ -11,8 +11,21 @@ pub trait Env {
     fn current_dir(&self) -> io::Result<PathBuf>;
     /// The machine's hostname, stamped into a lock file. It only words a timeout message and
     /// never decides whether a lock is valid (SPC-10), so a name that cannot be read is no reason
-    /// to refuse a lock, and this cannot fail.
+    /// to refuse a lock, and this cannot fail: a name that cannot be read is `unknown-host`.
     fn hostname(&self) -> String;
+    /// Whether a process with this id is running on this machine. Like the hostname, it only
+    /// words a timeout message (SPC-10).
+    fn process_status(&self, pid: u32) -> ProcessStatus;
+}
+
+/// What the system says about a process id. `Unknown` when it cannot be asked, when asking
+/// fails other than by "no such process", or when the id is not one a process can have: only
+/// `NotRunning` lets a timeout message call a lock stale (SPC-10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessStatus {
+    Running,
+    NotRunning,
+    Unknown,
 }
 
 /// What a command reaches the outside world through.

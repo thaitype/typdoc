@@ -50,7 +50,7 @@ pub use clock::{Clock, at_one_second};
 pub use coerce::{coerce, fits};
 pub use config::{Collection, Config, Level, LockMode, Namespace, RefBase, RuleSetting, Rules};
 pub use document::{Document, Number, Value};
-pub use env::{Deps, Env};
+pub use env::{Deps, Env, ProcessStatus};
 pub use error::{ConfigError, Error, ErrorKind};
 pub use frontmatter::{FrontmatterWriter, YamlSerdeWriter};
 pub use fs::{

@@ -1,7 +1,7 @@
 # 01: The real owner check
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: none
 
 ## What this delivers

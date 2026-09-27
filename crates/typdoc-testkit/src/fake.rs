@@ -4,12 +4,13 @@
 //! the fake to what a file system does rather than to what it was written to do.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use chrono::{DateTime, FixedOffset};
-use typdoc_core::{Clock, FileId, Fs, Mode, WriteHandle};
+use typdoc_core::{Clock, Env, FileId, Fs, Mode, ProcessStatus, WriteHandle};
 
 /// What the usual umask, `022`, leaves of a new regular file.
 const DEFAULT_MODE: Mode = 0o100_644;
@@ -359,5 +360,46 @@ impl FixedClock {
 impl Clock for FixedClock {
     fn now(&self) -> DateTime<FixedOffset> {
         self.0
+    }
+}
+
+/// An environment for tests of a lock: its hostname and its answer about every process id are
+/// the test's to choose. No variables are set, and the current directory is `/`.
+pub struct HostEnv {
+    host: String,
+    status: ProcessStatus,
+}
+
+impl HostEnv {
+    /// A process's status is `Unknown` until [`HostEnv::with_status`] says otherwise, so a test
+    /// that does not care never meets the one answer that calls a lock stale.
+    pub fn new(host: &str) -> Self {
+        HostEnv {
+            host: host.to_owned(),
+            status: ProcessStatus::Unknown,
+        }
+    }
+
+    pub fn with_status(mut self, status: ProcessStatus) -> Self {
+        self.status = status;
+        self
+    }
+}
+
+impl Env for HostEnv {
+    fn var(&self, _name: &str) -> Option<OsString> {
+        None
+    }
+
+    fn current_dir(&self) -> io::Result<PathBuf> {
+        Ok(PathBuf::from("/"))
+    }
+
+    fn hostname(&self) -> String {
+        self.host.clone()
+    }
+
+    fn process_status(&self, _pid: u32) -> ProcessStatus {
+        self.status
     }
 }

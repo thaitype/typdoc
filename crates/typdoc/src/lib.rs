@@ -2,4 +2,5 @@
 
 pub mod cli;
 pub mod clock;
+pub mod process_env;
 pub mod registry;

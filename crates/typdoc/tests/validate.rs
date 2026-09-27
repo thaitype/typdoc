@@ -1871,7 +1871,7 @@ fn a_leftover_left_by_a_stopped_run_is_reported_once_then_removed_by_the_next_co
         &fs,
         &typdoc_testkit::fake::FixedClock::new(),
         lock_path,
-        "leftover-test-host",
+        &typdoc_testkit::fake::HostEnv::new("leftover-test-host"),
         std::time::Duration::from_secs(5),
     )
     .expect("the lock is acquired");

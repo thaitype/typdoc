@@ -267,6 +267,7 @@ mod tests {
     use std::io;
 
     use super::*;
+    use crate::env::ProcessStatus;
 
     struct FixedEnv {
         cwd: PathBuf,
@@ -283,6 +284,10 @@ mod tests {
 
         fn hostname(&self) -> String {
             "fixed-host".to_owned()
+        }
+
+        fn process_status(&self, _pid: u32) -> ProcessStatus {
+            ProcessStatus::Unknown
         }
     }
 

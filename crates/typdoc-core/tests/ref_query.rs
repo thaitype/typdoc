@@ -22,7 +22,7 @@ use std::ffi::OsString;
 use std::io;
 use std::path::PathBuf;
 
-use typdoc_core::{Condition, Env, ListFilter, Project, Scope, Source};
+use typdoc_core::{Condition, Env, ListFilter, ProcessStatus, Project, Scope, Source};
 use typdoc_testkit::fixtures::path;
 
 const REF_QUERY: &str = "valid/ref-query";
@@ -41,6 +41,10 @@ impl Env for NoEnv {
 
     fn hostname(&self) -> String {
         "no-host".to_owned()
+    }
+
+    fn process_status(&self, _pid: u32) -> ProcessStatus {
+        ProcessStatus::Unknown
     }
 }
 

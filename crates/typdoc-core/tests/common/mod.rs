@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use typdoc_core::{Env, Fs};
+use typdoc_core::{Env, Fs, ProcessStatus};
 
 pub const WF_SCHEMA: &str = r#"{
   "name": "ticket",
@@ -42,5 +42,9 @@ impl Env for FixedEnv {
 
     fn hostname(&self) -> String {
         "fixed-host".to_owned()
+    }
+
+    fn process_status(&self, _pid: u32) -> ProcessStatus {
+        ProcessStatus::Unknown
     }
 }

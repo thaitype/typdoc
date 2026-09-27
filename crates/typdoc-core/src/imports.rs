@@ -160,6 +160,7 @@ mod tests {
     use std::io;
 
     use super::*;
+    use crate::env::ProcessStatus;
 
     struct FakeEnv {
         vars: BTreeMap<&'static str, String>,
@@ -176,6 +177,10 @@ mod tests {
 
         fn hostname(&self) -> String {
             "fake-host".to_owned()
+        }
+
+        fn process_status(&self, _pid: u32) -> ProcessStatus {
+            ProcessStatus::Unknown
         }
     }
 

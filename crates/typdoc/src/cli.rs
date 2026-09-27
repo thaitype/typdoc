@@ -1794,7 +1794,7 @@ mod tests {
     use std::path::PathBuf;
 
     use serde_json::json;
-    use typdoc_core::{Deps, Env};
+    use typdoc_core::{Deps, Env, ProcessStatus};
     use typdoc_testkit::fake::{FakeFs, FixedClock};
 
     use super::run;
@@ -1815,6 +1815,10 @@ mod tests {
 
         fn hostname(&self) -> String {
             "fake-host".to_owned()
+        }
+
+        fn process_status(&self, _pid: u32) -> ProcessStatus {
+            ProcessStatus::Unknown
         }
     }
 

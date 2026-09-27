@@ -9,7 +9,7 @@ fn main() {
         &fs,
         &clock,
         std::path::PathBuf::from("/project/.typdoc/locks/default.lock"),
-        "host",
+        &typdoc_testkit::fake::HostEnv::new("host"),
         std::time::Duration::from_secs(1),
     )
     .expect("nothing holds this path in a fresh fake");

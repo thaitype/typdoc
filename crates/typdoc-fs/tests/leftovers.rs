@@ -19,7 +19,7 @@ fn a_lock<'a>(fs: &'a FakeFs, path: &str) -> typdoc_core::NamespaceLock<'a> {
         fs,
         &FixedClock::new(),
         PathBuf::from(path),
-        "leftovers-test-host",
+        &typdoc_testkit::fake::HostEnv::new("leftovers-test-host"),
         Duration::from_secs(5),
     )
     .unwrap_or_else(|e| panic!("the scenario's own lock could not be acquired: {e}"))

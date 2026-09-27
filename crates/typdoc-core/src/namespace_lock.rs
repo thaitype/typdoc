@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::clock::Clock;
+use crate::env::{Env, ProcessStatus};
 use crate::error::Error;
 use crate::fs::{FileId, Fs};
 
@@ -246,8 +247,8 @@ fn release_checked(
 /// [`Error::LockTimeout`]. A lock another process created is never removed or taken over,
 /// whatever its age (SPC-10).
 ///
-/// `host` is stamped into the lock file, and compared with a competing lock's host to word the
-/// timeout message.
+/// `env`'s hostname is stamped into the lock file. It and `env`'s answer about a competing
+/// lock's process word the timeout message and nothing else.
 ///
 /// The folder that holds `path` is created first (SPC-10), so the first lock a project takes
 /// does not fail on a missing `.typdoc/locks/`.
@@ -255,9 +256,10 @@ pub fn acquire<'a>(
     fs: &'a dyn Fs,
     clock: &dyn Clock,
     path: PathBuf,
-    host: &str,
+    env: &dyn Env,
     timeout: Duration,
 ) -> Result<NamespaceLock<'a>, Error> {
+    let host = env.hostname();
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         fs.create_dir_all(parent).map_err(|source| Error::Io {
             file: parent.to_owned(),
@@ -278,7 +280,7 @@ pub fn acquire<'a>(
                 let registry_id = register(path.clone(), identity);
                 let stamp = Stamp {
                     pid: std::process::id(),
-                    host,
+                    host: &host,
                     timestamp: clock.now().to_rfc3339(),
                 };
                 let bytes = serde_json::to_vec(&stamp).unwrap_or_else(|_| b"{}".to_vec());
@@ -297,7 +299,7 @@ pub fn acquire<'a>(
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                 let elapsed = start.elapsed();
                 if elapsed >= timeout {
-                    return Err(timeout_error(&path, host, clock.now()));
+                    return Err(timeout_error(&path, env, &host, clock.now()));
                 }
                 let remaining = timeout - elapsed;
                 std::thread::sleep(backoff.min(remaining));
@@ -315,9 +317,9 @@ pub fn acquire<'a>(
 
 /// The competing lock may have gone by the time it is read; the message then names only the
 /// path.
-fn timeout_error(path: &Path, our_host: &str, now: DateTime<FixedOffset>) -> Error {
+fn timeout_error(path: &Path, env: &dyn Env, our_host: &str, now: DateTime<FixedOffset>) -> Error {
     let message = match read_owner(path) {
-        Some(owner) => owner_message(path, &owner, our_host, now),
+        Some(owner) => owner_message(path, &owner, env, our_host, now),
         None => format!(
             "lock not acquired: {} (its owner could not be read)",
             path.display()
@@ -334,23 +336,46 @@ fn read_owner(path: &Path) -> Option<Owner> {
     serde_json::from_slice(&bytes).ok()
 }
 
-fn owner_message(path: &Path, owner: &Owner, our_host: &str, now: DateTime<FixedOffset>) -> String {
+/// What `Env::hostname` gives when the name cannot be read.
+const UNKNOWN_HOST: &str = "unknown-host";
+
+const DELETE_ONLY_ONCE_STOPPED: &str = "delete it only once you know that process has stopped";
+
+fn owner_message(
+    path: &Path,
+    owner: &Owner,
+    env: &dyn Env,
+    our_host: &str,
+    now: DateTime<FixedOffset>,
+) -> String {
     let age = owner
         .timestamp
         .parse::<DateTime<FixedOffset>>()
         .map(|stamped| now.signed_duration_since(stamped))
         .unwrap_or_default();
-    let status = if owner.host != our_host {
-        "it is on another host and cannot be checked from here: delete it only once you know \
-         that process has stopped"
-            .to_owned()
-    } else if pid_alive(owner.pid) {
-        "it is running on this machine: wait, or run again with a longer --lock-timeout".to_owned()
-    } else {
+    // The first that applies, in SPC-10's order: "stale" is reached only when the system
+    // answered that no process has the id.
+    let status = if our_host == UNKNOWN_HOST || owner.host == UNKNOWN_HOST {
         format!(
-            "it is not running on this machine: the lock is stale, delete {}",
-            path.display()
+            "its host is not known, so it cannot be checked from here: {DELETE_ONLY_ONCE_STOPPED}"
         )
+    } else if owner.host != our_host {
+        format!("it is on another host and cannot be checked from here: {DELETE_ONLY_ONCE_STOPPED}")
+    } else {
+        match env.process_status(owner.pid) {
+            ProcessStatus::Unknown => format!(
+                "it is on this machine, but whether it is running cannot be checked here: \
+                 {DELETE_ONLY_ONCE_STOPPED}"
+            ),
+            ProcessStatus::Running => {
+                "it is running on this machine: wait, or run again with a longer --lock-timeout"
+                    .to_owned()
+            }
+            ProcessStatus::NotRunning => format!(
+                "it is not running on this machine: the lock is stale, delete {}",
+                path.display()
+            ),
+        }
     };
     format!(
         "lock not acquired: {} is held by pid {} on {} (age {}); {status}",
@@ -359,12 +384,6 @@ fn owner_message(path: &Path, owner: &Owner, our_host: &str, now: DateTime<Fixed
         owner.host,
         format_age(age)
     )
-}
-
-/// This only chooses the wording of the timeout message; it never decides whether a lock is
-/// valid (SPC-10). `/proc` is Linux's: elsewhere every process reads as not running.
-fn pid_alive(pid: u32) -> bool {
-    Path::new("/proc").join(pid.to_string()).exists()
 }
 
 fn format_age(age: chrono::TimeDelta) -> String {

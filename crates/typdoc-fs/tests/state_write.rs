@@ -16,7 +16,7 @@ fn a_lock<'a>(fs: &'a dyn Fs, lock_path: &Path) -> typdoc_core::NamespaceLock<'a
         fs,
         &FixedClock::new(),
         lock_path.to_path_buf(),
-        "state-write-test-host",
+        &typdoc_testkit::fake::HostEnv::new("state-write-test-host"),
         Duration::from_secs(5),
     )
     .unwrap_or_else(|e| panic!("the test's own lock could not be acquired: {e}"))

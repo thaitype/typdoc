@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use typdoc_core::{Clock, ErrorKind, Fs, Released, acquire, release, release_all_for_signal};
-use typdoc_testkit::fake::{FakeFs, FixedClock};
+use typdoc_testkit::fake::{FakeFs, FixedClock, HostEnv};
 
 const HOST: &str = "test-host";
 /// Longer than any single test needs to actually wait, but short enough that a suite of these
@@ -26,7 +26,8 @@ fn acquiring_an_uncontended_lock_stamps_pid_host_and_the_clock_s_time() {
     let clock = FixedClock::new();
     let path = PathBuf::from("/project/.typdoc/locks/default.lock");
 
-    let lock = acquire(&fake, &clock, path.clone(), HOST, AMPLE).expect("nothing holds it");
+    let lock =
+        acquire(&fake, &clock, path.clone(), &HostEnv::new(HOST), AMPLE).expect("nothing holds it");
 
     assert_eq!(lock.path(), path);
     let bytes = fake.bytes(&path).expect("the lock file was created");
@@ -44,7 +45,8 @@ fn releasing_a_lock_that_is_still_ours_removes_it() {
     let fake = FakeFs::new();
     let clock = FixedClock::new();
     let path = PathBuf::from("/project/.typdoc/locks/default.lock");
-    let lock = acquire(&fake, &clock, path.clone(), HOST, AMPLE).expect("nothing holds it");
+    let lock =
+        acquire(&fake, &clock, path.clone(), &HostEnv::new(HOST), AMPLE).expect("nothing holds it");
 
     let outcome = release(lock).expect("the release itself does not fail");
 
@@ -58,7 +60,8 @@ fn a_lock_dropped_without_calling_release_is_released_anyway() {
     let clock = FixedClock::new();
     let path = PathBuf::from("/project/.typdoc/locks/default.lock");
     {
-        let _lock = acquire(&fake, &clock, path.clone(), HOST, AMPLE).expect("nothing holds it");
+        let _lock = acquire(&fake, &clock, path.clone(), &HostEnv::new(HOST), AMPLE)
+            .expect("nothing holds it");
     }
 
     assert_eq!(
@@ -78,8 +81,14 @@ fn acquire_times_out_against_a_lock_it_did_not_create_and_never_touches_it_howev
         .bytes(&path)
         .expect("the fixture wrote the foreign lock");
 
-    let err = acquire(&fake, &clock, path.clone(), HOST, Duration::from_millis(30))
-        .expect_err("the path is already a lock file");
+    let err = acquire(
+        &fake,
+        &clock,
+        path.clone(),
+        &HostEnv::new(HOST),
+        Duration::from_millis(30),
+    )
+    .expect_err("the path is already a lock file");
 
     assert_eq!(err.kind(), ErrorKind::LockTimeout);
     assert_eq!(
@@ -100,8 +109,14 @@ fn acquire_times_out_against_a_lock_it_did_not_create_and_never_touches_it_howev
         .bytes(&path)
         .expect("the fixture wrote the foreign lock");
 
-    let err = acquire(&fake, &clock, path.clone(), HOST, Duration::from_millis(30))
-        .expect_err("the path is already a lock file, decades old or not");
+    let err = acquire(
+        &fake,
+        &clock,
+        path.clone(),
+        &HostEnv::new(HOST),
+        Duration::from_millis(30),
+    )
+    .expect_err("the path is already a lock file, decades old or not");
 
     assert_eq!(err.kind(), ErrorKind::LockTimeout);
     assert_eq!(
@@ -116,7 +131,8 @@ fn a_lock_taken_away_and_replaced_is_reported_and_the_replacement_is_left_alone(
     let fake = FakeFs::new();
     let clock = FixedClock::new();
     let path = PathBuf::from("/project/.typdoc/locks/default.lock");
-    let lock = acquire(&fake, &clock, path.clone(), HOST, AMPLE).expect("nothing holds it");
+    let lock =
+        acquire(&fake, &clock, path.clone(), &HostEnv::new(HOST), AMPLE).expect("nothing holds it");
 
     // Another process replaces the lock file with its own.
     fake.remove_file(&path).expect("the path existed");
@@ -145,8 +161,10 @@ fn release_all_for_signal_removes_every_lock_this_process_still_holds() {
     let clock = FixedClock::new();
     let one = PathBuf::from("/project/.typdoc/locks/a.lock");
     let two = PathBuf::from("/project/.typdoc/locks/b.lock");
-    let lock_one = acquire(&fake, &clock, one.clone(), HOST, AMPLE).expect("nothing holds it");
-    let lock_two = acquire(&fake, &clock, two.clone(), HOST, AMPLE).expect("nothing holds it");
+    let lock_one =
+        acquire(&fake, &clock, one.clone(), &HostEnv::new(HOST), AMPLE).expect("nothing holds it");
+    let lock_two =
+        acquire(&fake, &clock, two.clone(), &HostEnv::new(HOST), AMPLE).expect("nothing holds it");
 
     release_all_for_signal(&fake);
 
@@ -162,7 +180,8 @@ fn release_all_for_signal_never_touches_a_lock_taken_away_and_replaced() {
     let fake = FakeFs::new();
     let clock = FixedClock::new();
     let path = PathBuf::from("/project/.typdoc/locks/default.lock");
-    let lock = acquire(&fake, &clock, path.clone(), HOST, AMPLE).expect("nothing holds it");
+    let lock =
+        acquire(&fake, &clock, path.clone(), &HostEnv::new(HOST), AMPLE).expect("nothing holds it");
     // Another process replaces the lock file with its own.
     fake.remove_file(&path).expect("the path existed");
     foreign_lock(
@@ -195,7 +214,8 @@ fn a_lock_released_normally_leaves_a_later_file_at_the_same_path_untouched() {
     let fake = FakeFs::new();
     let clock = FixedClock::new();
     let path = PathBuf::from("/project/.typdoc/locks/default.lock");
-    let lock = acquire(&fake, &clock, path.clone(), HOST, AMPLE).expect("nothing holds it");
+    let lock =
+        acquire(&fake, &clock, path.clone(), &HostEnv::new(HOST), AMPLE).expect("nothing holds it");
     release(lock).expect("the release itself does not fail");
     foreign_lock(&fake, &path, 4242, HOST, &clock.now().to_rfc3339());
     let unrelated = fake.bytes(&path).expect("the foreign lock is there");
@@ -216,7 +236,8 @@ fn a_lock_dropped_without_releasing_leaves_a_later_file_at_the_same_path_untouch
     let clock = FixedClock::new();
     let path = PathBuf::from("/project/.typdoc/locks/default.lock");
     {
-        let _lock = acquire(&fake, &clock, path.clone(), HOST, AMPLE).expect("nothing holds it");
+        let _lock = acquire(&fake, &clock, path.clone(), &HostEnv::new(HOST), AMPLE)
+            .expect("nothing holds it");
     }
     foreign_lock(&fake, &path, 4242, HOST, &clock.now().to_rfc3339());
     let unrelated = fake.bytes(&path).expect("the foreign lock is there");
@@ -241,7 +262,14 @@ fn an_uncontended_lock_is_acquired_well_before_the_timeout() {
     let path = PathBuf::from("/project/.typdoc/locks/default.lock");
     let start = std::time::Instant::now();
 
-    acquire(&fake, &clock, path, HOST, Duration::from_secs(3600)).expect("nothing holds it");
+    acquire(
+        &fake,
+        &clock,
+        path,
+        &HostEnv::new(HOST),
+        Duration::from_secs(3600),
+    )
+    .expect("nothing holds it");
 
     assert!(
         start.elapsed() < Duration::from_secs(1),
@@ -267,7 +295,13 @@ fn a_lock_released_partway_through_the_wait_is_acquired_before_the_timeout() {
             .expect("the foreign lock is there to remove");
     });
 
-    let outcome = acquire(&fake, &clock, path, HOST, Duration::from_secs(2));
+    let outcome = acquire(
+        &fake,
+        &clock,
+        path,
+        &HostEnv::new(HOST),
+        Duration::from_secs(2),
+    );
     releaser
         .join()
         .expect("the releasing thread does not panic");

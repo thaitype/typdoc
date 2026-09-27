@@ -16,7 +16,7 @@ fn a_lock(fake: &FakeFs) -> NamespaceLock<'_> {
         fake,
         &FixedClock::new(),
         PathBuf::from("/project/.typdoc/locks/story-3.lock"),
-        "mv-renumber-seam-test-host",
+        &typdoc_testkit::fake::HostEnv::new("mv-renumber-seam-test-host"),
         Duration::from_secs(5),
     )
     .expect("nothing holds it yet")

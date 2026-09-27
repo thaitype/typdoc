@@ -602,8 +602,7 @@ impl Project {
                 });
             }
         };
-        let host = deps.env.hostname();
-        namespace_lock::acquire(deps.fs, deps.clock, lock_path, &host, lock_timeout)
+        namespace_lock::acquire(deps.fs, deps.clock, lock_path, deps.env, lock_timeout)
     }
 
     /// Unlike [`Project::resolve`], a path matched by no collection is not an error as long as
@@ -4045,10 +4044,9 @@ impl Project {
                 local_namespace_lock_path(&self.root, name),
             )?);
         }
-        let host = deps.env.hostname();
         let mut locks: Vec<NamespaceLock> = Vec::with_capacity(lock_paths.len());
         for path in order_locks(None, lock_paths) {
-            locks.push(acquire(deps.fs, deps.clock, path, &host, lock_timeout)?);
+            locks.push(acquire(deps.fs, deps.clock, path, deps.env, lock_timeout)?);
         }
         Ok(locks)
     }
