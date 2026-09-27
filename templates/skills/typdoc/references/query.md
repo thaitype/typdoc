@@ -1,6 +1,6 @@
 # Queries: `--where`, `--if`, `--set`
 
-typdoc 0.3.1. `list --where` and `set --if` share one expression language. `set`'s
+typdoc {{version}}. `list --where` and `set --if` share one expression language. `set`'s
 `field=value` arguments and `new --set` look similar but follow their own, simpler rules (last
 section).
 
