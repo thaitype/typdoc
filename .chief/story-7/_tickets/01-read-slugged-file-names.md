@@ -1,7 +1,7 @@
 # 01: Read slugged file names — key/slug split, `slug` collection key, name states
 
 Type: implementation
-Status: open
+Status: resolved
 Blocked by: None (can start immediately)
 
 ## What this delivers
