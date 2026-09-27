@@ -4,7 +4,7 @@
 [![crates.io](https://img.shields.io/crates/v/typdoc.svg)](https://crates.io/crates/typdoc)
 [![License](https://img.shields.io/crates/l/typdoc.svg)](LICENSE)
 
-> **Public release 0.3 is ready to test.** typdoc is still in active development, so commands,
+> **Ready to test.** typdoc is still in active development, so commands,
 > output and file formats may still change between releases. What's there is checked by more than
 > a thousand tests, run on Linux and macOS on every change, so it should behave the way the docs
 > say. If it doesn't, please [open an issue](https://github.com/thaitype/typdoc/issues).
@@ -291,7 +291,7 @@ Understand the design:
 
 ## Status
 
-This is 0.3.0. Everything in this README works. Two things from the design aren't built yet:
+Everything in this README works in the latest release. Two things from the design aren't built yet:
 schemas fetched from a URL (and the `pull` command that updates them), and `refs --reverse`
 following refs from inside a project you import. The [changelog](CHANGELOG.md) lists what changed
 in each release.

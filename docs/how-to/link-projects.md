@@ -84,5 +84,5 @@ there, in CI for example, make it an error:
 
 ## What isn't followed yet
 
-In 0.2.0, `typdoc refs --reverse` only looks in this project. A ref held in a project that
+`typdoc refs --reverse` only looks in this project. A ref held in a project that
 imports this one isn't in the result.

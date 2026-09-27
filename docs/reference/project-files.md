@@ -228,5 +228,5 @@ Its entries are added to the project's `imports` without overriding them.
 
 ## Remote schemas
 
-The design allows a schema path to be an `http://` or `https://` URL. typdoc 0.2.0 can't fetch
+The design allows a schema path to be an `http://` or `https://` URL. typdoc can't fetch
 one yet, so a remote schema is reported as `config.schema-unpinned`. Use local schema files.
