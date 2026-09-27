@@ -18,6 +18,6 @@ the list early because the rest of the config could not be interpreted marks the
 leaves checking possible is instead a finding in `validate`'s report, with its `config.` id and
 `file`, and stops nothing.
 
-`docs/design/catalog/config-errors.md` holds the machine-readable form of this same list: twenty
+`docs/design/catalog/config-errors.md` holds the machine-readable form of this same list: twenty-one
 ids, each with the short text naming when it is reported. This document explains why the ids
 exist and what happens once one fires; the catalog is what code and tests read.
