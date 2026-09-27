@@ -97,6 +97,29 @@ Every ref to the old key is rewritten to the new one. A ticket in `story-2` that
 `blocked_by: [WF-1]` now says `blocked_by: [story-1:WF-2]`. The old number is never handed out
 again in `story-2`, so nothing new will ever answer to the old name.
 
+A document with a slug keeps it under the new key. Starting again from
+`story-2/_tickets/WF-5-json-output-shape.md`:
+
+```console
+$ typdoc mv story-2:WF-5 --renumber story-3
+path: story-3/_tickets/WF-8-json-output-shape.md
+collection: tickets
+schema: ticket
+namespace: story-3
+key: WF-8
+title: JSON output shapes
+rewritten: 4 refs in 2 documents
+unrewritten: none
+findings: none
+```
+
+A ref by the key alone gets the new key, `WF-5` becoming `story-3:WF-8`, and a ref written with
+the slug gets the new key and the same slug, `WF-5-json-output-shape` becoming
+`story-3:WF-8-json-output-shape`. A field with `auto: moves` records the old key with its
+namespace, `story-2:WF-5`. typdoc never drops a slug or makes one up here: a name in the form the
+collection's `slug` does not expect, or with a slug holding whitespace, `/`, `#` or `:`, is
+renumbered as it is, and `findings` lists `filename.pattern`.
+
 See [use namespaces](use-namespaces.md) for how namespaces are set up.
 
 ## Deal with refs typdoc couldn't rewrite
