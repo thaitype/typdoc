@@ -1,48 +1,65 @@
 //! Covers SPC-7: `version: 1` keeps its meaning, so a project made for an earlier release still
 //! validates.
 //!
-//! Every project under `fixtures/compat/<version>/` is a copy taken unchanged from a release
-//! (`fixtures/compat/README.md` names the sources). None may fail `validate`.
+//! Every project under `fixtures/compat/<version>/` stands for what a project made for that
+//! release could hold (`fixtures/compat/README.md` says where each came from). None may fail
+//! `validate`.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use common::Spawn;
 use typdoc_testkit::fixtures;
 
 fn compat_projects() -> Vec<PathBuf> {
-    let root = fixtures::root().join("fixtures/compat");
-    let mut found = Vec::new();
-    for version in std::fs::read_dir(&root).expect("fixtures/compat exists") {
-        let version = version.expect("a readable entry").path();
-        if !version.is_dir() {
-            continue;
+    fn walk(dir: &Path, found: &mut Vec<PathBuf>) {
+        if dir.join(".typdoc/config.json").is_file() {
+            found.push(dir.to_path_buf());
+            return;
         }
-        for project in std::fs::read_dir(&version).expect("a readable version folder") {
-            let project = project.expect("a readable entry").path();
-            if project.join(".typdoc/config.json").is_file() {
-                found.push(project);
+        for entry in std::fs::read_dir(dir).expect("a readable folder") {
+            let path = entry.expect("a readable entry").path();
+            if path.is_dir() {
+                walk(&path, found);
             }
         }
     }
+    let mut found = Vec::new();
+    walk(&compat_root(), &mut found);
     found.sort();
     found
 }
 
+fn compat_root() -> PathBuf {
+    fixtures::root().join("fixtures/compat")
+}
+
 #[test]
 fn the_compat_folder_holds_the_projects_its_readme_lists() {
+    let root = compat_root();
     let names: Vec<String> = compat_projects()
         .iter()
         .map(|p| {
-            let version = p.parent().unwrap().file_name().unwrap().to_string_lossy();
-            format!("{version}/{}", p.file_name().unwrap().to_string_lossy())
+            p.strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/")
         })
         .collect();
     assert_eq!(
         names,
-        ["0.1.0/examples", "0.3.1/chief-example", "0.3.1/examples",]
+        [
+            "0.1.0/examples",
+            "0.1.0/stories",
+            "0.1.0/tickets-notes",
+            "0.1.0/with-import/app",
+            "0.1.0/with-import/memory",
+            "0.3.0/stories-excluded",
+            "0.3.1/chief-example",
+            "0.3.1/examples",
+        ]
     );
 }
 

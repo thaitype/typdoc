@@ -1,0 +1,58 @@
+{
+  "name": "ticket",
+  "code": "TK",
+  "extends": "./base.json",
+  "fields": {
+    "status": {
+      "type": "enum",
+      "values": [
+        "open",
+        "claimed",
+        "resolved",
+        "closed"
+      ],
+      "required": true,
+      "default": "open",
+      "transitions": {
+        "open": [
+          "claimed",
+          "closed"
+        ],
+        "claimed": [
+          "resolved",
+          "open",
+          "closed"
+        ]
+      }
+    },
+    "kind": {
+      "type": "enum",
+      "values": [
+        "research",
+        "task",
+        "feature"
+      ],
+      "required": true
+    },
+    "owner": {
+      "type": "string"
+    },
+    "blocked_by": {
+      "type": "ref[]",
+      "target": [
+        "ticket"
+      ],
+      "acyclic": true,
+      "default": []
+    },
+    "notes": {
+      "type": "ref[]",
+      "target": [
+        "note"
+      ]
+    },
+    "estimate": {
+      "type": "number"
+    }
+  }
+}

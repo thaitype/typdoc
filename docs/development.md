@@ -71,8 +71,9 @@ whose names aren't valid UTF-8, which macOS file systems don't allow, so those a
 
 ## Projects from earlier releases
 
-`fixtures/compat/` holds typdoc projects copied unchanged from earlier releases, and
-`crates/typdoc/tests/compat.rs` requires every one of them to pass `validate`. A change that makes
+`fixtures/compat/<version>/` holds typdoc projects that stand for what a project made for that
+release could hold, and `crates/typdoc/tests/compat.rs` requires every one of them to pass
+`validate`. A change that makes
 one fail breaks projects in use: either the change is wrong, or the break is intended and the
 changelog names it. Never edit those projects to make them pass. How to add one is in
 `fixtures/compat/README.md`.
@@ -102,6 +103,6 @@ those.
 2. Add the release to `CHANGELOG.md`.
 3. Run `python3 scripts/render_skills.py` so the skill names the new version, and update the
    install tag in the README and docs.
-4. If `examples/` changed since the last release, copy it unchanged to
-   `fixtures/compat/<version>/examples` and add its row to `fixtures/compat/README.md`.
+4. If the release lets a project hold something new, add a project that uses it under
+   `fixtures/compat/<version>/`, as `fixtures/compat/README.md` describes.
 5. Merge to `main`, then tag `vX.Y.Z`.
