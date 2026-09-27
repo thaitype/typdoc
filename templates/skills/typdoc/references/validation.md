@@ -106,10 +106,11 @@ file, keep the higher `last`.
 | `body.anchors` | `error` | — | A `#heading` in a link does not exist in the target | Use the slug `typdoc toc <target>` prints |
 | `body.mentions` | `off` | `inlineCode` (true), `fencedCode` (false) | A key mentioned in plain body text (`see WF-3`) does not exist | Correct the key |
 | `refs.codedByPath` | `warn` | — | A coded document is referenced by path (`WF-2.md`) instead of its key | Write the key (`WF-2`); a key survives moves |
-| `refs.moved` | `error` | — | A ref points at an old name recorded in some document's `auto: moves` field; the message names the new key | Update the ref to the new name |
+| `refs.moved` | `error` | — | A ref points at an old name recorded in some document's `auto: moves` field; the message names the new key or path | Update the ref to the new name |
+| `refs.slug` | `warn` | — | A ref written with a slug (`story-2:WF-5-json-output-shape`) whose slug is not the one the file carries now, or the file now has none; the ref still resolves by its key, and the message names the file's current name. A ref by the key alone is never reported. `new` and `set` refuse a write over it only at `error` | Write the current slug, or the key alone |
 | `names.shadowed` | `warn` | — | One name is both a sibling namespace and an import alias | Rename one |
 | `frontmatter.unknown` | `warn` | — | A frontmatter field the schema does not declare. `set` writes such a field anyway and this reports it | Remove it (`typdoc set <doc> field=`), fix its name, or add it to the schema |
-| `filename.pattern` | `error` | — | A file in a coded collection's folder fits no `match` template (`tickets/README.md`) | Rename or move it out, or add a collection for it |
+| `filename.pattern` | `error` | — | A file in a coded collection's folder fits no `match` template (`tickets/README.md`). Also a coded document whose name is not in the form its collection's `slug` expects (`WF-1.md` under `required`, `WF-1-x.md` under `none`), or whose slug is empty or holds whitespace, `/`, `#` or `:` (`WF-1-a b.md`); such a file is still the document `WF-1`, and the finding carries its `collection` and `key` | Rename or move it out, or add a collection for it; for a coded document, `typdoc mv` it to the expected form (the same key), or change the collection's `slug` |
 | `imports.absent` | `warn` | — | A ref reaches into an imported project that is not on this machine (including an import path whose `${VAR}` is unset) | Set up the import (see [project-layout.md](project-layout.md)); CI may set this to `error` |
 
 A move is recorded only if the schema has a `list` field with `auto: moves`; without one, a
@@ -132,7 +133,8 @@ finding in `validate`'s report.
 | `config.collection-schema` | a collection names a schema that does not exist |
 | `config.rule-unknown` | a rule name or option is unknown |
 | `config.rule-always-on` | an always-on rule is configured |
-| `config.match-template` | a `match` template breaks the placeholder rules (`{key}` exactly once and no globs for a coded schema; no placeholders for an uncoded one) |
+| `config.collection-slug` | a collection's `slug` is not `optional`, `required` or `none`, or a collection whose schema has no code sets `slug` |
+| `config.match-template` | a `match` template breaks the placeholder rules (`{key}` exactly once and no globs for a coded schema; no placeholders for an uncoded one), or has a digit or `-` right after `{key}` while `slug` is not `none` |
 | `config.coded-schema-shared` | two collections name the same coded schema |
 | `config.state-uncoded` | a state entry names an existing collection whose schema has no code |
 | `config.state-orphan` | a file in `.typdoc/state/` matches no current namespace — delete or rename it |
