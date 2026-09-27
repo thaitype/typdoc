@@ -96,7 +96,8 @@ carries now, including a file that now carries none. The ref still resolves, by 
 refers to `WF-5`, whose file is now `WF-5-json-shapes.md`. A ref by the key alone is never
 reported, since it cannot go out of date. `mv` rewrites every ref this project holds, so what
 this rule finds is a ref `mv` did not reach: one edited by hand, one in a project that imports
-this one, or a file renamed without `mv`.
+this one, or a file renamed without `mv`. `new` and `set` check it before they write, at its
+level (`SPC-2`).
 
 ## `body.mentions`
 

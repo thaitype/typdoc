@@ -27,11 +27,12 @@ caught rather than drifting apart silently.
 Before writing, `new` and `set` check every ref the document's frontmatter will hold (body links are
 left to `validate`): its target must exist, and its schema must be one the field's `target` allows.
 A ref into an import that is absent on this machine is reported at its `imports.absent` level
-instead, and a ref to a document recorded as moved at its `refs.moved` level; either refuses the
-write only at `error`. A cycle on an `acyclic` field refuses the write only when the write forms it:
-the cycle passes through the document being written, on a field whose value the write changes. A
-document that already sits on a cycle can still be written, and `validate` goes on reporting the
-cycle.
+instead, a ref to a document recorded as moved at its `refs.moved` level, and a ref written with a
+slug that is not the file's at its `refs.slug` level; each refuses the write only at `error`, so at
+the default `warn` a stale slug never refuses one. A cycle on an `acyclic` field refuses the write
+only when the write forms it: the cycle passes through the document being written, on a field whose
+value the write changes. A document that already sits on a cycle can still be written, and
+`validate` goes on reporting the cycle.
 
 ## `mv` explained
 
