@@ -1,24 +1,29 @@
 ---
-title: GitHub is how Markdown is read
+title: Markdown is read as Markdown readers read it
 status: active
 ---
 
-**A Markdown link, anchor or file name must work where people read the files: on GitHub.**
+**A link, an anchor or a file name must work in the Markdown readers people use, not only in
+typdoc.** typdoc checks Markdown by the common standard, CommonMark, rather than by a reading of
+its own.
 
 ## Why
 
-The documents typdoc manages are read in a browser far more often than through typdoc. A link that
-passes `validate` but does not open on GitHub is a broken link to every reader, so typdoc checks
-what GitHub does, not what a more lenient reading would allow.
+The documents typdoc manages are read in editors, in browsers and on code-hosting sites far more
+often than through typdoc. A link that passes `validate` but does not open in those readers is a
+broken link to every reader, so typdoc checks what they do, not what a more lenient reading would
+allow.
 
 ## What follows
 
-- A heading's slug follows GitHub's algorithm, and anchors are checked against it (`SPC-14`).
-- A body link names its file exactly; a space must be written `<…>` or `%20`, since CommonMark
-  does not allow it bare (`SPC-1`, `body.links`).
-- A slug may not contain `#`, which a link reads as the start of an anchor.
+- A body link names its file exactly. A space must be written `<…>` or `%20`, since CommonMark does
+  not allow it bare (`SPC-1`, `body.links`).
+- A slug may not contain `#`, which every Markdown reader takes as the start of an anchor.
+- Where CommonMark says nothing, typdoc follows the reading most Markdown readers share. Heading
+  anchors are an example: CommonMark defines none, and typdoc derives them the way GitHub does,
+  since that is the form most readers and tools reproduce (`SPC-14`).
 
 ## Where it stops
 
-GitHub is the reference for how Markdown renders. It is not a reason to limit what typdoc accepts
-beyond what renders correctly: a file name in any language is fine.
+The Markdown standard is the reference for how a document renders. It is not a reason to limit
+what typdoc accepts beyond what renders correctly: a file name in any language is fine.
