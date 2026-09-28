@@ -47,3 +47,17 @@ Second probe (run 36369483540, same runner image, NTFS): a rename through the fi
   which tells it apart from access denied; the target keeps its bytes. With share-delete: succeeds.
 - 2000 replacements while a reader opened the target in a loop (about 25 000 opens): the reader never found
   it missing, for this rename and for `std::fs::rename` alike. Evidence, not proof, of atomicity.
+
+Third probe (run 36404943850, runner process in Administrators at high integrity, NTFS): the replaced file's
+DACL copied onto the temp file (`GetSecurityInfo` through a handle opened for `READ_CONTROL`, `SetSecurityInfo`
+through one opened for `READ_CONTROL | WRITE_DAC`, protected or not as the old DACL was), then the POSIX rename.
+
+- A restrictive protected DACL (`D:PAI(A;;FA;;;BA)(A;;FA;;;SY)(A;;FR;;;WD)`) is the result's DACL, exactly; with
+  the read-only flag carried too, the result is read-only as well.
+- An inherited DACL: the result has the same inherited entries, and gains the auto-inherited flag (`D:AI`), so
+  it grants the same access.
+- The owner denied reading the old DACL: the old file cannot be opened for `READ_CONTROL` (os error 5), so the
+  copy stops and nothing is replaced. The owner denied changing the temp's DACL: the temp cannot be opened for
+  `WRITE_DAC` (5), the copy stops, and the old file keeps its bytes.
+- `SetSecurityInfo` needs `READ_CONTROL` on the handle as well as `WRITE_DAC`: with `WRITE_DAC` alone it
+  refused every change (first run, 36404783071).

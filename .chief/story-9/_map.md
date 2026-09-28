@@ -27,6 +27,8 @@ mode, rename-over and Ctrl+C cleanup are each decided.
 - The shell-examples tests are Unix only, with the reason that SPC-13's shells are POSIX shells, and SPC-13 says that on Windows its examples are not run: a stated scope limit. The config collection-name test's Windows form leaves out `a:b` (an NTFS stream, not a name)
 - The other Windows failures at 812b562 (the `frontmatter.transitions` fixture, the coverage exit-code test, the lock-contention holder, two lock-timeout tests) fail on the refusal, since a write takes its lock before it checks anything, and go with it
 - The lock left behind when a handle's identity cannot be read stays out of this story: the Windows lock reads its identity from the handle it has just created, as on Unix
+- [TK-8](_tickets/TK-8-windows-permissions.md): decided: the DACL and the read-only flag are carried to the temp before the rename; a DACL that cannot be read or set stops the write
+- [TK-9](_tickets/TK-9-refs-file-id-width.md): decided: `FileId` holds a 128-bit id; `typdoc-core` API change in the CHANGELOG
 - `ReplaceFileW` is not used: it is not atomic, so it would weaken the replace guarantee (TK-6)
 
 ## Not yet specified
