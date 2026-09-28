@@ -130,7 +130,7 @@ impl Argument {
             return Ok(Argument::Named(DocumentArg::Path {
                 project,
                 namespace,
-                path: rest.to_owned(),
+                path: project_path_from_argument(rest),
             }));
         }
         // A written slug is dropped: an argument names the key's document whatever its slug,
@@ -145,6 +145,18 @@ impl Argument {
         Err(Error::BadArgument(format!(
             "`{text}` is neither a path, which ends in `.md`, nor a key, `CODE-number`"
         )))
+    }
+}
+
+/// A path relative to the project as it is typed. On Windows `\` cannot be part of a file name, so
+/// it is the separator and is read as `/`, the one every project path is held and printed with;
+/// on Unix it is a character a name may hold, and is kept (SPC-2). Paths written inside documents
+/// never come through here.
+pub fn project_path_from_argument(text: &str) -> String {
+    if cfg!(windows) {
+        text.replace('\\', "/")
+    } else {
+        text.to_owned()
     }
 }
 
@@ -409,6 +421,49 @@ mod tests {
                 project: None,
                 namespace: Some("C".to_owned()),
                 path: "note.md".to_owned()
+            })
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_project_path_written_with_backslashes_is_read_with_slashes_after_any_prefix() {
+        for (text, project, namespace, path) in [
+            (r"notes\a.md", None, None, "notes/a.md"),
+            (
+                r"story-1:story-1\notes\a.md",
+                None,
+                Some("story-1"),
+                "story-1/notes/a.md",
+            ),
+            (
+                r"memory::learnings\a.md",
+                Some("memory"),
+                None,
+                "learnings/a.md",
+            ),
+        ] {
+            assert_eq!(
+                parse(text),
+                Argument::Named(DocumentArg::Path {
+                    project: project.map(str::to_owned),
+                    namespace: namespace.map(str::to_owned),
+                    path: path.to_owned(),
+                }),
+                "{text}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_backslash_inside_a_project_path_is_part_of_the_name_on_unix() {
+        assert_eq!(
+            parse(r"notes\a.md"),
+            Argument::Named(DocumentArg::Path {
+                project: None,
+                namespace: None,
+                path: r"notes\a.md".to_owned()
             })
         );
     }
