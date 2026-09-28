@@ -30,6 +30,7 @@ mode, rename-over and Ctrl+C cleanup are each decided.
 - [TK-8](_tickets/TK-8-windows-permissions.md): decided: the DACL and the read-only flag are carried to the temp before the rename; a DACL that cannot be read or set stops the write
 - [TK-9](_tickets/TK-9-refs-file-id-width.md): decided: `FileId` holds a 128-bit id; `typdoc-core` API change in the CHANGELOG
 - Built: TK-13 (writes), TK-14 (Ctrl+C), TK-15 (`Windows tests` gate). At c8c60a1 the Windows suite passes 1122 / 1122; three faults planted on a throwaway pull request turned the six new Windows tests red
+- Part C built (TK-16 to TK-20): Windows archives for x86_64 and aarch64 (aarch64 builds and runs `typdoc.exe --version` on a `windows-11-arm` runner); `pages/install.ps1`, whose eleven scenarios pass on `windows-latest` under Windows PowerShell 5.1 and 7, the one-liner included with the script served as `application/octet-stream`; the live check proves `/install.ps1` is this repository's, and the Windows install from it is checked only after a release; the Windows docs wait in `windows-docs-for-release.md`. Two faults planted in the installer on a throwaway pull request turned its checksum and missing-archive scenarios red
 - `ReplaceFileW` is not used: it is not atomic, so it would weaken the replace guarantee (TK-6)
 
 ## Not yet specified

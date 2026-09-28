@@ -2,7 +2,7 @@
 blocked_by:
 - TK-16
 - TK-17
-status: open
+status: resolved
 title: Planted faults in the Windows installer and build turn CI red
 type: implementation
 ---

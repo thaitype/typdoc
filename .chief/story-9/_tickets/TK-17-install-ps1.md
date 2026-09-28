@@ -1,7 +1,7 @@
 ---
 blocked_by:
 - TK-16
-status: claimed
+status: resolved
 title: pages/install.ps1, tested on windows-latest against the fixture server
 type: implementation
 ---

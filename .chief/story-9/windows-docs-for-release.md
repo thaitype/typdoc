@@ -35,11 +35,10 @@ Supported platforms:
 
 - macOS — amd64 and arm64
 - Linux — amd64 and arm64
-- Windows — amd64
+- Windows — amd64 and arm64
 ````
 
-(`Windows — amd64 and arm64` if the release has `typdoc-aarch64-pc-windows-msvc.zip` too.) In the
-paragraph after it, "puts `typdoc` in `~/.local/bin`" becomes "puts `typdoc` in `~/.local/bin`
+In the paragraph after it, "puts `typdoc` in `~/.local/bin`" becomes "puts `typdoc` in `~/.local/bin`
 (`%USERPROFILE%\.local\bin` on Windows)".
 
 ## docs/how-to/install.md
@@ -56,7 +55,7 @@ typdoc --version
 ````
 
 and "This works on macOS and Linux, on amd64 and arm64" becomes "This works on macOS and Linux, on
-amd64 and arm64, and on Windows on amd64".
+amd64 and arm64, and on Windows on amd64 and arm64".
 
 Replace the section "## Windows" with:
 

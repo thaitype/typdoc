@@ -1,7 +1,7 @@
 ---
 blocked_by:
 - TK-17
-status: claimed
+status: resolved
 title: The live checks cover install.ps1 without depending on a release
 type: implementation
 ---
