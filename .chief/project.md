@@ -53,7 +53,7 @@ TYPDOC_REGENERATE_GOLDEN=<command>/<case> scripts/test.sh -p typdoc --test golde
 - `fixtures/` — projects the tests read (`valid/`, `broken/`), and the golden cases of `--json` output in `output/<command>/<case>/`
 - `docs/` — design doc
 - `examples/` — sample namespaces (`.typdoc/config.json` + schemas)
-- `.chief/` — planning artifacts
+- `.chief/` — planning artifacts; `.chief/.typdoc/` types and numbers the tickets of story 9 onward (rule 7)
 
 ### Important Development Rules
 
@@ -63,3 +63,10 @@ TYPDOC_REGENERATE_GOLDEN=<command>/<case> scripts/test.sh -p typdoc --test golde
 4. Always write files via temp file + rename (the exception is `new`'s own document creation, which uses `O_EXCL` with no temp file, since the file it creates adds no state a temp file would have to protect — decisions 7 and 15).
 5. Every command must support `--json` and use the exit codes the design defines. The table in the design is the only place they are listed, so adding a code never changes this rule.
 6. The design doc is the source of truth — to deviate from it, change the doc first.
+7. Tickets of a new story are created by typdoc, never numbered by hand. `.chief/.typdoc/` is a typdoc project of its own (the repository root holds another one, which does not know the ticket code), and its namespaces are `story-*` except stories 1 to 8, whose tickets keep their old file names. From the repository root, run:
+
+   ```
+   TYPDOC_DIR=.chief typdoc new <code> "<title>" --namespace story-<N> --slug <slug> --set type=<type>
+   ```
+
+   `<code>` is the `code` in `.chief/.typdoc/schemas/ticket.json`, the one place it is written. `<type>` is `implementation` or one of the `wayfinder:` types. Exit 0 prints the key and the path; the file then holds only the frontmatter, and the body (the `# <key>: <title>` heading and the rest) is written after it. A non-zero exit is a stop: report it and do not number the ticket yourself, because a ticket numbered by hand here looks the same as one typdoc numbered and the mistake would go unseen. Commit `.chief/.typdoc/state/story-<N>.json` with the tickets.
