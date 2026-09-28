@@ -1,6 +1,6 @@
 name: dist-build
 
-# Reusable workflow: builds the four prebuilt-binary targets with cargo-dist and uploads each
+# Reusable workflow: builds the six prebuilt-binary targets with cargo-dist and uploads each
 # target's archive + checksum as a workflow artifact. Called by dist-build-check.yml on every
 # relevant PR, and by publish.yml for the real release build (which adds an
 # actions/attest-build-provenance step over this workflow's output — attestation is not
@@ -41,6 +41,12 @@ jobs:
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-24.04-arm
             archive_ext: tar.gz
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            archive_ext: zip
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            archive_ext: zip
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
@@ -64,11 +70,27 @@ jobs:
           version=$(grep -m1 '^cargo-dist-version' dist-workspace.toml | sed -E 's/.*"([^"]+)".*/\1/')
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Install cargo-dist
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           curl --proto '=https' --tlsv1.2 -LsSf \
             "https://github.com/axodotdev/cargo-dist/releases/download/v${{ steps.dist-version.outputs.version }}/cargo-dist-installer.sh" | sh
-      # Builds only this job's target (dist-workspace.toml lists all four; --target scopes cargo
+      # cargo-dist publishes one Windows binary, for x86_64, which Windows on arm64 runs under
+      # emulation. Its archive is fetched directly, at the pinned version, rather than through its
+      # PowerShell installer, whose choice of binary on an arm64 host is not this workflow's to
+      # guess.
+      - name: Install cargo-dist (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = "${{ steps.dist-version.outputs.version }}"
+          $dir = Join-Path $env:RUNNER_TEMP "cargo-dist"
+          $zip = "$dir.zip"
+          Invoke-WebRequest -Uri "https://github.com/axodotdev/cargo-dist/releases/download/v$version/cargo-dist-x86_64-pc-windows-msvc.zip" -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $dir
+          $exe = Get-ChildItem -Path $dir -Recurse -Filter dist.exe | Select-Object -First 1
+          $exe.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      # Builds only this job's target (dist-workspace.toml lists all six; --target scopes cargo
       # and dist to just this one) and produces the archive + its .sha256 side by side in
       # target/distrib/, plus the staged, unpacked binary this workflow runs next.
       - name: Build archive + checksum

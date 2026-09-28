@@ -1,6 +1,6 @@
 ---
 blocked_by: []
-status: open
+status: claimed
 title: Windows archives in the release build
 type: implementation
 ---
