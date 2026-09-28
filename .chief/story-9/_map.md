@@ -23,15 +23,21 @@ mode, rename-over and Ctrl+C cleanup are each decided.
 - [TK-12](_tickets/TK-12-measure-on-windows.md): measured on the runner (NTFS): delete is POSIX, a held handle then shows links 0 and delete-pending; rename fails over read-only and over a target open without share-delete; Ctrl+Break to a child's group works, exit 0xC000013A
 - TK-12, second probe: a POSIX-semantics rename with ignore-read-only replaces a read-only target and keeps a read-only temp's flag; a target open without share-delete fails with sharing violation (32); no reader saw the target missing
 - [TK-10](_tickets/TK-10-windows-lock-release.md): decided: identity from `FileIdInfo`; the lock is ours while the handle has links and is not delete-pending and the path's id is the held one; access denied at the path is not ours, so nothing is removed (blocked by TK-9 for the id width)
+- A replace that fails with sharing violation (os error 32) exits 6 with: `typdoc: notes/a.md: another program has this file open and does not let it be replaced; close it there and run the command again`; any other I/O error keeps today's message
 - `ReplaceFileW` is not used: it is not atomic, so it would weaken the replace guarantee (TK-6)
 
 ## Not yet specified
 
-- Windows failures that are not the refusal, at 812b562 (990 / 1119 pass): the config collection-name test;
-  the `frontmatter.transitions` fixture in the coverage test; the lock-contention holder's lock not appearing
-  and a lock-timeout test (likely the refusal); the shell-examples tests, where bash on Windows does not reach
-  the typdoc stand-in (`PATH` or the `.exe` name, not diagnosed).
-- Whether the lock left behind when a handle's identity cannot be read must be fixed for the Windows lock work.
+- Windows failures that are not the refusal, at 812b562 (990 / 1119 pass), diagnosed from the logs: the config
+  collection-name test writes `a:b.json`, which NTFS reads as a stream `b.json` of a file `a`, so its Windows
+  form leaves that one name out; the `frontmatter.transitions` fixture, the coverage exit-code test, the
+  lock-contention holder and the lock-timeout tests fail on the refusal (a write takes its lock before it
+  checks anything) and go with it. The shell-examples harness does not reach its stand-in under bash on
+  Windows (a `:`-separated `PATH`, the stand-in copied without `.exe`, `env_clear` dropping `SYSTEMROOT`,
+  and which `bash` the runner finds); whether SPC-13's POSIX shells apply on Windows at all is the director's
+  call.
+- The lock left behind when a handle's identity cannot be read stays out of this story: the Windows lock reads
+  its identity from the handle it just created, as Unix does, so B does not make it any likelier.
 
 ## Out of scope
 
