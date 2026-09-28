@@ -69,10 +69,7 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
             std::fs::create_dir(&to).map_err(|e| format!("{}: {e}", to.display()))?;
             copy_tree(&from, &to)?;
         } else if kind.is_symlink() {
-            let target =
-                std::fs::read_link(&from).map_err(|e| format!("{}: {e}", from.display()))?;
-            std::os::unix::fs::symlink(&target, &to)
-                .map_err(|e| format!("{}: {e}", to.display()))?;
+            crate::link::recreate(&from, &to).map_err(|e| format!("{}: {e}", to.display()))?;
         } else {
             std::fs::copy(&from, &to)
                 .map_err(|e| format!("{} -> {}: {e}", from.display(), to.display()))?;

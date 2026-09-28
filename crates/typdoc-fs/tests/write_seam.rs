@@ -421,9 +421,17 @@ impl Disk for RealDisk {
         std::fs::read(path).ok()
     }
 
+    #[cfg(unix)]
     fn mode(&self, path: &Path) -> Option<Mode> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::metadata(path).ok().map(|m| m.permissions().mode())
+    }
+
+    /// What a mode is on Windows is not decided yet, so a scenario that compares one fails
+    /// there rather than passing on a value made up to match.
+    #[cfg(windows)]
+    fn mode(&self, _path: &Path) -> Option<Mode> {
+        None
     }
 
     fn names_in(&self, directory: &Path) -> Vec<String> {

@@ -242,6 +242,8 @@ fn a_symbolic_link_to_a_file_that_the_template_matches_is_skipped() {
     assert!(!found(&project, "link.md"));
 }
 
+// Unix only: a Windows file name is UTF-16 and cannot be given as arbitrary bytes.
+#[cfg(unix)]
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \

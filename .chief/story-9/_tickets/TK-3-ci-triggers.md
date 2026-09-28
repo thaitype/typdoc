@@ -1,6 +1,6 @@
 ---
 blocked_by: []
-status: claimed
+status: resolved
 title: 'CI runs once per change: push to main and pull requests'
 type: implementation
 ---

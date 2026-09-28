@@ -26,6 +26,7 @@ from windows_test_report import (  # noqa: E402
     ZeroTestsError,
     check_nonzero,
     main,
+    not_counted,
     render_step_summary,
     summarize,
 )
@@ -66,6 +67,19 @@ error: aborting due to 1 previous error; 1 warning emitted
 error: could not compile `typdoc-fs` (lib) due to 1 previous error
 """
 
+# The shipped crates compiled, and the only test target failed to.
+TEST_COMPILE_FAILURE_OUTPUT = """
+   Compiling typdoc v0.5.0 (D:\\a\\typdoc\\typdoc\\crates\\typdoc)
+error[E0425]: cannot find function `kill` in crate `libc`
+
+error: could not compile `typdoc` (test "signals") due to 1 previous error
+"""
+
+# Two suites ran; one test target did not compile and is not in their counts.
+PARTIAL_OUTPUT = SAMPLE_OUTPUT + """
+error: could not compile `typdoc-fs` (test "write_seam") due to 2 previous errors
+"""
+
 # A zero-test run with no compile-failure markers at all -- stands in for a captured run that
 # compiled cleanly but still produced no "test result:" lines for some other reason (wrong
 # working directory, cargo not on PATH, a test binary that ran but printed nothing recognizable).
@@ -73,6 +87,30 @@ NO_RESULT_LINES_OUTPUT = "no test result lines here\n"
 
 
 class SummarizeTests(unittest.TestCase):
+    def test_a_test_target_that_does_not_compile_is_not_the_build_failing(self) -> None:
+        summary = summarize(TEST_COMPILE_FAILURE_OUTPUT)
+        self.assertTrue(summary.compile_failed)
+        self.assertFalse(summary.build_failed)
+        self.assertEqual(summary.uncompiled, ('typdoc (test "signals")',))
+
+    def test_a_library_that_does_not_compile_is_the_build_failing(self) -> None:
+        self.assertTrue(summarize(COMPILE_FAILURE_OUTPUT).build_failed)
+
+    def test_raises_with_test_wording_when_only_the_tests_did_not_compile(self) -> None:
+        with self.assertRaises(ZeroTestsError) as ctx:
+            check_nonzero(summarize(TEST_COMPILE_FAILURE_OUTPUT))
+        self.assertIn("tests do not compile", str(ctx.exception))
+        self.assertIn('typdoc (test "signals")', str(ctx.exception))
+
+    def test_a_rate_names_the_targets_it_leaves_out(self) -> None:
+        summary = summarize(PARTIAL_OUTPUT)
+        self.assertEqual(summary.total, 12)
+        self.assertIn('typdoc-fs (test "write_seam")', not_counted(summary))
+        self.assertIn("Not counted", render_step_summary(summary))
+
+    def test_a_rate_with_every_target_compiled_leaves_nothing_out(self) -> None:
+        self.assertEqual(not_counted(summarize(SAMPLE_OUTPUT)), "")
+
     def test_sums_across_multiple_suites(self) -> None:
         summary = summarize(SAMPLE_OUTPUT)
         self.assertEqual(summary.passed, 11)

@@ -1,6 +1,7 @@
 //! Shared by the CLI tests: the fixtures loader and the one place a process is started.
 
 use std::ffi::OsStr;
+#[cfg(unix)]
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -142,6 +143,8 @@ pub struct RunningChild {
 }
 
 impl RunningChild {
+    /// Unix only: Windows has no signals to send a process.
+    #[cfg(unix)]
     /// Sends `signal` (a POSIX signal number — `libc::SIGINT`, `libc::SIGTERM`) to this
     /// process, through `kill(2)`, the one real way to deliver anything past `SIGKILL`: the
     /// standard library's own [`Child::kill`] reaches no further than that.
@@ -170,11 +173,22 @@ impl RunningChild {
             .expect("the process can be waited on");
         Ended {
             code: output.status.code(),
-            signal: std::os::unix::process::ExitStatusExt::signal(&output.status),
+            signal: ended_by_signal(&output.status),
             stdout: String::from_utf8(output.stdout).expect("UTF-8 on stdout"),
             stderr: String::from_utf8(output.stderr).expect("UTF-8 on stderr"),
         }
     }
+}
+
+#[cfg(unix)]
+fn ended_by_signal(status: &std::process::ExitStatus) -> Option<i32> {
+    std::os::unix::process::ExitStatusExt::signal(status)
+}
+
+/// A Windows process always ends with a code.
+#[cfg(windows)]
+fn ended_by_signal(_status: &std::process::ExitStatus) -> Option<i32> {
+    None
 }
 
 /// `code` is `None` exactly when the process ended by a signal, which is
@@ -218,7 +232,13 @@ impl Scratch {
     }
 
     pub fn symlink(&self, link: &str, target: &str) {
-        std::os::unix::fs::symlink(target, self.dir.path().join(link)).expect("a symbolic link");
+        let at = self.dir.path().join(link);
+        let leads_to = at.parent().expect("a parent").join(target);
+        if leads_to.is_dir() {
+            typdoc_testkit::link::dir(target, at).expect("a symbolic link");
+        } else {
+            typdoc_testkit::link::file(target, at).expect("a symbolic link");
+        }
     }
 
     pub fn read(&self, path: &str) -> String {
@@ -227,6 +247,8 @@ impl Scratch {
     }
 
     /// A file whose path, from the project folder, is given as bytes and may not be valid UTF-8.
+    /// Unix only: a Windows file name is UTF-16 and cannot be given as arbitrary bytes.
+    #[cfg(unix)]
     pub fn file_named_by_bytes(&self, name: &[u8], text: &str) {
         use std::os::unix::ffi::OsStrExt;
         let file = self.dir.path().join(OsStr::from_bytes(name));

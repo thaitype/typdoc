@@ -1,7 +1,7 @@
 ---
 blocked_by:
 - TK-3
-status: open
+status: claimed
 title: Tests compile and run on Windows
 type: implementation
 ---

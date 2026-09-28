@@ -460,6 +460,8 @@ fn a_file_below_the_project_folder_is_not_in_a_collection_that_matches_names_the
     error_of(&ran, 5);
 }
 
+// Unix only: a Windows file name is UTF-16 and cannot be given as arbitrary bytes.
+#[cfg(unix)]
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
@@ -478,6 +480,8 @@ fn a_name_that_is_not_utf8_and_that_a_collection_matches_is_skipped() {
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
 }
 
+// Unix only: a Windows file name is UTF-16 and cannot be given as arbitrary bytes.
+#[cfg(unix)]
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \

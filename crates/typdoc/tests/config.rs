@@ -353,6 +353,8 @@ fn a_collection_file_name_with_anything_but_ascii_letters_digits_dash_and_unders
     }
 }
 
+// Unix only: a Windows file name is UTF-16 and cannot be given as arbitrary bytes.
+#[cfg(unix)]
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
