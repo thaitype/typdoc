@@ -60,7 +60,8 @@ unsafe extern "system" fn on_console_event(_event: u32) -> windows_sys::core::BO
     use windows_sys::Win32::System::Threading::ExitProcess;
 
     let fs = typdoc_fs::SystemFs;
-    typdoc_core::release_all_for_signal(&fs);
+    // PLANTED FAULT 2: no lock released.
+    let _ = fs;
     // SAFETY: ending the process is what the event asks for, and the locks are released first.
     unsafe { ExitProcess(STATUS_CONTROL_C_EXIT as u32) }
 }

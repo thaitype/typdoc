@@ -53,7 +53,8 @@ fn open(path: &Path, access: u32) -> io::Result<File> {
 }
 
 pub(crate) fn rename(from: &Path, to: &Path) -> io::Result<()> {
-    carry_dacl(to, from)?;
+    // PLANTED FAULT 1: no DACL carried.
+    let _ = carry_dacl;
     posix_rename(from, to)
 }
 
@@ -236,7 +237,9 @@ fn posix_rename(from: &Path, to: &Path) -> io::Result<()> {
     }
     let e = io::Error::last_os_error();
     if e.raw_os_error() == Some(ERROR_SHARING_VIOLATION as i32) {
-        return Err(io::Error::new(e.kind(), HELD_OPEN));
+        // PLANTED FAULT 3: the sharing violation keeps the system's message.
+        let _ = HELD_OPEN;
+        return Err(e);
     }
     Err(e)
 }
