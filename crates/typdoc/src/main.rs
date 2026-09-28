@@ -15,7 +15,10 @@ fn main() -> ExitCode {
     // verified: `Signals::new` cannot be made to fail here, so the branch below is not shown to
     // run. Exit 6 is the closest code to a startup failure: a failure of the environment (SPC-3).
     if let Err(source) = signals::install() {
-        eprintln!("typdoc: could not install the SIGINT/SIGTERM handler: {source}");
+        eprintln!(
+            "typdoc: could not install the {} handler: {source}",
+            signals::HANDLER
+        );
         return ExitCode::from(6);
     }
     let args: Vec<OsString> = std::env::args_os().collect();
