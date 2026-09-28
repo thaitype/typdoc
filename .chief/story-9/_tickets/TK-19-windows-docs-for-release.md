@@ -1,6 +1,6 @@
 ---
 blocked_by: []
-status: open
+status: claimed
 title: Prepare the Windows docs for the release branch, not this pull request
 type: implementation
 ---
