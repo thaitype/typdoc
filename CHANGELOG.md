@@ -4,6 +4,13 @@ All notable, user-visible changes to typdoc are documented here. Internal reorga
 example, how the project's own design documents are structured and read in its own test suite)
 are left out unless they change something a user of the `typdoc` binary sees.
 
+## [Unreleased]
+
+### Changed
+
+- `typdoc-core` (library): `FileId::inode` is a `u128`, to hold a Windows file id, which is 128
+  bits on ReFS. Code that builds or reads a `FileId` must change.
+
 ## [0.5.0] - 2026-09-27
 
 ### Fixed

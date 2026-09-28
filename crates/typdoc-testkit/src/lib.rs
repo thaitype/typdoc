@@ -1,3 +1,5 @@
+#[cfg(windows)]
+pub mod acl;
 pub mod check;
 pub mod fake;
 pub mod fixtures;

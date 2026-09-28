@@ -698,6 +698,7 @@ dependencies = [
  "typdoc-core",
  "typdoc-fs",
  "typdoc-testkit",
+ "windows-sys",
 ]
 
 [[package]]
@@ -725,6 +726,7 @@ dependencies = [
  "tempfile",
  "typdoc-core",
  "typdoc-testkit",
+ "windows-sys",
 ]
 
 [[package]]
@@ -736,6 +738,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "typdoc-core",
+ "windows-sys",
 ]
 
 [[package]]
