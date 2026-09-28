@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Parses `cargo test` output and reports a Windows pass-rate summary.
 
-Used by the Windows pass-rate job in .github/workflows/ci.yml. That job is a
-non-blocking measurement, not a gate: it reports how many of the suite's
-tests currently pass on Windows, it does not require that they all do.
+Used by the Windows tests job in .github/workflows/ci.yml. That job is a gate,
+but not through this script: its last step fails when `cargo test` did. This
+script reports what the run was, how many tests passed and which targets did
+not compile, and exits non-zero only when it cannot tell.
 
 This script is the part of that job that must never itself fail silently: if
 it finds zero "test result:" lines, that means the captured run produced no
@@ -167,7 +168,7 @@ def render_step_summary(summary: Summary) -> str:
         f"**{summary.passed} / {summary.total}** tests passed (**{rate}%**) "
         f"across {summary.suite_count} suite(s).\n\n"
         + (f"**{missing}**\n\n" if missing else "")
-        + "This is a baseline measurement, not a gate -- this job never blocks a merge.\n"
+        + "The job's last step fails when any test failed or did not compile.\n"
     )
 
 
@@ -201,11 +202,9 @@ def main(argv: list[str]) -> int:
     except ZeroTestsError as exc:
         print(f"windows_test_report: {exc}", file=sys.stderr)
         if summary.compile_failed:
-            # A known state, not a failure: step one of supporting Windows is "compiles,"
-            # step two is "pass rate," and this run is stuck at step one. The job must stay
-            # green for this (a `::warning::` annotation is how it stays visible on the PR
-            # without turning the check red) -- only a build that compiled yet still
-            # produced no test result is treated as broken, below.
+            # A known state, which this report names; the job's last step is what fails for
+            # it. Only a run that compiled yet produced no test result is one this report
+            # cannot tell apart from a harness fault, below.
             if summary.build_failed:
                 print("::warning::Windows build does not compile -- 0 tests run")
                 _append_step_summary(

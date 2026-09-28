@@ -132,20 +132,15 @@ jobs:
       - run: rustc --version
       - run: cargo build --locked -p typdoc -p typdoc-core -p typdoc-fs
 
-  windows-pass-rate:
-    name: Windows test-suite pass rate (non-blocking)
+  windows-test:
+    name: Windows tests
     runs-on: windows-latest
-    # This job is a measurement, not a gate: it reports how many of the suite's tests
-    # currently pass on Windows, it does not require that they all do. It must never turn a
-    # PR red — not achieved with job-level `continue-on-error` (that keeps the *workflow*
-    # green but still shows the *job's own check* as failed, which reads as red on the PR).
-    # Instead, every step here succeeds for either of the two known states (compiled with a
-    # measured rate; did not compile) and only scripts/windows_test_report.py's own exit
-    # code — non-zero for the one genuinely unknown state, compiled but zero tests counted —
-    # can fail this job. This also runs the suite directly with `cargo test`, not through
-    # scripts/test.sh: that script's memory ceiling is enforced via systemd-run (Linux) or a
-    # vm_stat watchdog (macOS), neither of which exists on Windows, and this job needs no
-    # memory cap of its own — just one run of the suite and an honest count of the result.
+    # A gate, like the test job on ubuntu and macOS: any test that fails, or does not compile,
+    # turns this job red. Tests that cannot apply on Windows are cfg'd out in the test code with
+    # their reason, never skipped here. The suite runs with `cargo test` directly, not through
+    # scripts/test.sh, whose memory ceiling (systemd-run on Linux, a vm_stat watchdog on macOS)
+    # has no Windows form. scripts/windows_test_report.py still reports the count, and names any
+    # test target that did not compile, before the last step decides.
     steps:
       - uses: actions/checkout@v4
       # rust-toolchain.toml pins the toolchain; rustup (preinstalled on windows-latest)
@@ -154,40 +149,28 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
-      # Proves the counting/reporting script itself works — against fixed sample output,
-      # independent of any real `cargo test` run — before trusting it with a real one
-      # below. Same "prove the mechanism before trusting it" shape as scripts/test.sh's own
-      # --self-test step in the `test` job above.
-      - name: Self-test the pass-rate reporting logic
+      # Proves the counting/reporting script works against fixed sample output before it is
+      # trusted with a real run.
+      - name: Self-test the Windows test report
         run: |
           python scripts/test_windows_test_report.py -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      # `--no-fail-fast` for the same reason as the `test` job above: one red suite must
-      # never hide every suite after it. Output is streamed to the terminal and also
-      # captured to a file, so the next step can count what actually ran. This step's own
-      # exit code is deliberately never checked: `cargo test` returning non-zero (a failing
-      # test, or the build not compiling at all) is a *measured outcome* here, not a step
-      # failure — the reporting step below is what decides pass/fail for this job, based on
-      # what actually happened, not on this command's raw exit code. `exit 0` at the end is
-      # required, not decorative: GitHub Actions' pwsh runner fails a step whenever
-      # $LASTEXITCODE is non-zero when the script ends, even with no explicit check for it —
-      # confirmed live (this step showed red with no check present at all, `cargo test`'s own
-      # exit code alone was enough).
-      - name: Run test suite (Windows, no memory cap)
+      # `--no-fail-fast` so one red suite never hides the suites after it. The exit code is
+      # kept for the last step rather than failing here, so that the report below always runs.
+      # `exit 0` is required: pwsh fails a step whenever $LASTEXITCODE is non-zero at its end.
+      - name: Run the test suite
         run: |
           $out = Join-Path $env:RUNNER_TEMP "typdoc-test-windows.txt"
           cargo test --workspace --no-fail-fast --features typdoc/test-stand-in 2>&1 | Tee-Object -FilePath $out
+          "$LASTEXITCODE" | Out-File -FilePath (Join-Path $env:RUNNER_TEMP "typdoc-test-windows.code")
           exit 0
-      # scripts/windows_test_report.py distinguishes three states and exits accordingly:
-      # compiled with a measured rate (reports it, exit 0); did not compile (reports "does
-      # not compile -- 0 tests run" plus a ::warning:: annotation, exit 0 -- a known state,
-      # not a failure); compiled but zero tests counted (the one truly unknown/broken state
-      # -- reports it as an error, exit 1, the only way this job can fail). `if: always()`
-      # runs this even when the step above found failing tests or a build that didn't
-      # compile: this job measures what happened, it does not require a clean run to do so.
-      - name: Compute and report Windows pass rate
+      - name: Report the Windows tests
         if: always()
         run: |
           $out = Join-Path $env:RUNNER_TEMP "typdoc-test-windows.txt"
           python scripts/windows_test_report.py $out
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Fail when any test failed or did not compile
+        run: |
+          $code = (Get-Content (Join-Path $env:RUNNER_TEMP "typdoc-test-windows.code")).Trim()
+          if ($code -ne "0") { Write-Output "cargo test exited $code"; exit 1 }

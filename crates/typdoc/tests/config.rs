@@ -338,7 +338,13 @@ fn both_values_of_ref_base_and_a_validation_object_are_read() {
 #[test]
 fn a_collection_file_name_with_anything_but_ascii_letters_digits_dash_and_underscore_is_config_collection_name()
  {
-    for name in ["my notes", "notes.v2", "n\u{e9}", "\u{200b}x", "a+b", "a:b"] {
+    // On Windows `a:b.json` is a stream `b.json` of a file `a`, not a file named `a:b`.
+    let names: &[&str] = if cfg!(windows) {
+        &["my notes", "notes.v2", "n\u{e9}", "\u{200b}x", "a+b"]
+    } else {
+        &["my notes", "notes.v2", "n\u{e9}", "\u{200b}x", "a+b", "a:b"]
+    };
+    for name in names {
         let path = format!(".typdoc/collections/{name}.json");
         let project = with_collection(&path, r#"{ "match": "*.md", "schema": "note.json" }"#);
 

@@ -5,7 +5,7 @@ Exercises the parsing/rendering logic against fixed sample `cargo test`
 output, independent of any real `cargo test` run -- the same "prove the
 mechanism before trusting it" shape as scripts/test.sh's own --self-test.
 Run in CI as its own step, before the real Windows test run, in the
-windows-pass-rate job of .github/workflows/ci.yml.
+windows-test job of .github/workflows/ci.yml.
 
 Run standalone:
     python scripts/test_windows_test_report.py -v
@@ -173,7 +173,7 @@ class RenderStepSummaryTests(unittest.TestCase):
         self.assertIn("11 / 12", rendered)
         self.assertIn("91.7%", rendered)
         self.assertIn("3 suite(s)", rendered)
-        self.assertIn("never blocks a merge", rendered)
+        self.assertIn("last step fails", rendered)
 
     def test_raises_instead_of_rendering_zero_total(self) -> None:
         summary = summarize(NO_RESULT_LINES_OUTPUT)
@@ -220,10 +220,9 @@ class MainTests(unittest.TestCase):
     def test_compile_failure_is_a_known_state_reported_with_a_warning_annotation_not_a_failure(
         self,
     ) -> None:
-        # "Does not compile" is one of the two known states this job must stay green for
-        # (the other being a measured pass rate) -- only a build that compiled yet reported
-        # zero tests is treated as broken (see the next test). exit 0 here is what keeps the
-        # PR check itself from reading red, per the job's own non-blocking requirement.
+        # "Does not compile" is a known state this report names and exits 0 for; failing the
+        # job is its last step's part. Only a build that compiled yet reported zero tests is
+        # one the report cannot tell apart from a harness fault (see the next test).
         with tempfile.NamedTemporaryFile("w", delete=False, suffix=".txt") as f:
             f.write(COMPILE_FAILURE_OUTPUT)
             path = f.name
