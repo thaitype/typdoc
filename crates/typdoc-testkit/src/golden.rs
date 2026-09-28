@@ -496,7 +496,8 @@ mod tests {
 
         let error = tree.case().check(&output()).unwrap_err();
 
-        assert!(error.contains("golden/stdout.json"), "{error}");
+        let golden = Path::new("golden").join("stdout.json");
+        assert!(error.contains(&golden.display().to_string()), "{error}");
         assert!(
             error.contains("TYPDOC_REGENERATE_GOLDEN=get/one"),
             "{error}"

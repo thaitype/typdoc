@@ -229,6 +229,8 @@ fn star_matching_dir() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("a directory for the unquoted-star runs");
     std::fs::write(dir.path().join("a.md"), "").expect("a.md");
     std::fs::write(dir.path().join("b.md"), "").expect("b.md");
+    // A Windows file name cannot hold `:`, so there only `*` has files to match.
+    #[cfg(unix)]
     std::fs::write(dir.path().join("chief::wf-1"), "").expect("chief::wf-1");
     dir
 }
@@ -250,6 +252,7 @@ fn stand_in_dir() -> &'static Path {
 }
 
 struct ShellRun {
+    #[cfg_attr(not(unix), expect(dead_code, reason = "read only by a Unix-only test"))]
     stdout: String,
     stderr: String,
     /// `None` when the shell never reached the stand-in, a syntax error for one, or when what
@@ -342,6 +345,9 @@ fn every_declared_example_matches_its_declared_value_quoted_in_every_listed_shel
 /// Without quotes, `(` and `)` make most of these a syntax error rather than a value that parses
 /// and differs. The examples built on `*` and on `\,` are the ones that still parse, the quieter
 /// danger the quoting rule warns of.
+// Unix only: an unquoted `chief::*` must match a file for the quotes to matter, and a Windows
+// file name cannot hold `:`.
+#[cfg(unix)]
 #[test]
 fn removing_the_quotes_from_a_declared_example_changes_what_the_shell_passes() {
     let dir = star_matching_dir();

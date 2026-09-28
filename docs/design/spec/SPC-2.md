@@ -184,7 +184,13 @@ key and names the document `WF-5`, as it does in a ref (`SPC-14`), whatever its 
 WF-5-old-name` prints `WF-5` and nothing about the slug, since a command has no findings of its own
 to put the difference in. A key never ends in `.md` and a document is always a `.md` file, so the
 two cannot be confused. Anything else is bad arguments (exit 1). A path that begins with `/`, `./`
-or `../` is a path on disk, absolute or relative to the current directory. Any other path is
+or `../` is a path on disk, absolute or relative to the current directory. So is a path that is
+absolute on the system typdoc runs on, and that is read before any `project::` or `namespace:`
+prefix: on Windows, `C:\notes\a.md`, `C:/notes/a.md` and `\\server\share\a.md` are paths on disk,
+and `C:\notes\a.md` does not name the namespace `C`. On Windows the three forms are also
+written with its own separator, `\`, `.\` and `..\`, and are paths on disk then too; on Unix a leading
+`\` is not. A drive-relative path on Windows, `C:note.md`, is not recognised: it is read as the
+namespace `C` and the path `note.md`. Any other path is
 relative to the project folder, the folder that holds `.typdoc`, which is what `path` is in
 `--json`. The path of a document of an imported project is written `project::path`, relative to that
 project's folder. `mv` reads both its arguments in this way, except that neither may carry a

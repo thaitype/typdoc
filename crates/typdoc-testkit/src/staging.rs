@@ -98,7 +98,7 @@ mod tests {
         let error = refuse_if_in_repository(&run_dir, fixtures_root).unwrap_err();
 
         assert!(error.contains("fixtures tree"), "{error}");
-        assert!(error.contains("/repo/fixtures/broken/example"), "{error}");
+        assert!(error.contains(&run_dir.display().to_string()), "{error}");
     }
 
     #[test]

@@ -95,10 +95,13 @@ impl Argument {
         })?;
         // An absolute path on this system is a path before any prefix is read, so Windows'
         // `C:\notes\a.md` is not the namespace `C`. On Unix that is the leading `/` already.
+        // Windows writes the three leading forms with its own separator too (SPC-2).
         if text.starts_with('/')
             || text.starts_with("./")
             || text.starts_with("../")
             || Path::new(text).is_absolute()
+            || (cfg!(windows)
+                && (text.starts_with('\\') || text.starts_with(".\\") || text.starts_with("..\\")))
         {
             return if text.ends_with(".md") {
                 Ok(Argument::OnDisk(PathBuf::from(text)))
@@ -387,6 +390,40 @@ mod tests {
         for text in ["/a.md", "./a.md", "../a.md"] {
             assert_eq!(parse(text), Argument::OnDisk(PathBuf::from(text)), "{text}");
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_leading_backslash_dot_backslash_or_dot_dot_backslash_is_on_disk_on_windows() {
+        for text in [r"\a.md", r".\a.md", r"..\a.md"] {
+            assert_eq!(parse(text), Argument::OnDisk(PathBuf::from(text)), "{text}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_drive_relative_windows_path_is_read_as_a_namespace_prefix() {
+        assert_eq!(
+            parse("C:note.md"),
+            Argument::Named(DocumentArg::Path {
+                project: None,
+                namespace: Some("C".to_owned()),
+                path: "note.md".to_owned()
+            })
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_leading_backslash_is_not_on_disk_on_unix() {
+        assert_eq!(
+            parse(r"\a.md"),
+            Argument::Named(DocumentArg::Path {
+                project: None,
+                namespace: None,
+                path: r"\a.md".to_owned()
+            })
+        );
     }
 
     #[cfg(windows)]

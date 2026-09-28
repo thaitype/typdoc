@@ -150,6 +150,24 @@ fn an_argument_naming_an_import_this_project_does_not_configure_exits_1() {
     );
 }
 
+/// Windows writes `./` and `../` with its own separator too (SPC-2).
+#[cfg(windows)]
+#[test]
+fn on_windows_a_path_written_with_backslashes_is_read_the_same_as_one_with_slashes() {
+    for argument in [r".\note.md", r"..\minimal\note.md"] {
+        let ran = Spawn::args(["get", argument, "--json"])
+            .cwd(fixture("valid/minimal"))
+            .run();
+
+        assert_eq!(ran.code, 0, "{argument}: {}", ran.stderr);
+        assert_eq!(
+            ran.stdout_json()["document"]["path"],
+            json!("note.md"),
+            "{argument}"
+        );
+    }
+}
+
 #[test]
 fn a_path_relative_to_the_current_directory_is_read_the_same_as_one_relative_to_the_project() {
     for argument in ["./note.md", "../minimal/note.md"] {
