@@ -37,3 +37,13 @@ separate pull request, closed without merging (run 36369183353, repeated in 3636
   `GenerateConsoleCtrlEvent` to a child started with `CREATE_NEW_PROCESS_GROUP` reaches it: with a
   `SetConsoleCtrlHandler` handler, the handler ran its cleanup and `ExitProcess(STATUS_CONTROL_C_EXIT)` gave
   the parent `code() == Some(-1073741510)`; with no handler, the default handling gives the same code.
+
+Second probe (run 36369483540, same runner image, NTFS): a rename through the file's own handle,
+`SetFileInformationByHandle(FileRenameInfoEx)` with replace-if-exists, POSIX semantics and ignore-read-only.
+
+- Over a read-only target: succeeds. With the temp file made read-only first, the result is read-only, so a
+  carried read-only flag survives the replacement. Without the ignore flag: access denied (5).
+- Over a target another handle holds open without share-delete: fails with os error 32 (sharing violation),
+  which tells it apart from access denied; the target keeps its bytes. With share-delete: succeeds.
+- 2000 replacements while a reader opened the target in a loop (about 25 000 opens): the reader never found
+  it missing, for this rename and for `std::fs::rename` alike. Evidence, not proof, of atomicity.

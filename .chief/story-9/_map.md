@@ -21,6 +21,8 @@ mode, rename-over and Ctrl+C cleanup are each decided.
 - [TK-6](_tickets/TK-6-windows-rename-over.md): rename keeps the temp's inherited ACL, fails over read-only; `ReplaceFileW` keeps the DACL but is not atomic and has gaps
 - [TK-7](_tickets/TK-7-windows-ctrl-c.md): decided: Ctrl+C cleanup through `SetConsoleCtrlHandler` (`windows-sys`), the process then exits `STATUS_CONTROL_C_EXIT`, and SPC-3 says so for Windows; tests send Ctrl+Break to a child in its own process group
 - [TK-12](_tickets/TK-12-measure-on-windows.md): measured on the runner (NTFS): delete is POSIX, a held handle then shows links 0 and delete-pending; rename fails over read-only and over a target open without share-delete; Ctrl+Break to a child's group works, exit 0xC000013A
+- TK-12, second probe: a POSIX-semantics rename with ignore-read-only replaces a read-only target and keeps a read-only temp's flag; a target open without share-delete fails with sharing violation (32); no reader saw the target missing
+- [TK-10](_tickets/TK-10-windows-lock-release.md): decided: identity from `FileIdInfo`; the lock is ours while the handle has links and is not delete-pending and the path's id is the held one; access denied at the path is not ours, so nothing is removed (blocked by TK-9 for the id width)
 - `ReplaceFileW` is not used: it is not atomic, so it would weaken the replace guarantee (TK-6)
 
 ## Not yet specified
