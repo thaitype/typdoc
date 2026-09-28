@@ -8,9 +8,12 @@ Used by three callers, all against the real https://typdoc.thaitype.dev (see
     expiry, DNS, GitHub Pages outage) between deploys;
   - ad hoc, by hand, e.g. right after a DNS or Pages-settings change.
 
-Two checks, in this order (the first failure stops the run -- see run_checks below):
+Three checks, in this order (the first failure stops the run -- see run_checks below):
   1. GET <base-url>/install is byte-identical to this repo's pages/install.
-  2. GET <base-url>/ contains the expected redirect target. GitHub Pages serves static files
+  2. GET <base-url>/install.ps1 is byte-identical to this repo's pages/install.ps1. Neither check
+     installs anything, so both hold whether or not a release has an archive for every target:
+     the Windows install itself is proven by publish.yml, after a release is published.
+  3. GET <base-url>/ contains the expected redirect target. GitHub Pages serves static files
      only (no server-side HTTP redirect), so pages/index.html redirects client-side via a
      meta-refresh + a JS fallback (see its own header comment) -- there is no HTTP 3xx to follow
      here, so this checks that the served page actually names the redirect target, not that the
@@ -116,14 +119,16 @@ def run_checks(
     fetch: FetchFn,
     base_url: str,
     install_sh: bytes,
+    install_ps1: bytes,
     redirect_target: str = DEFAULT_REDIRECT_TARGET,
 ) -> list[str]:
     """Runs every live-URL check against base_url, returning one "ok: ..." line per check on
     success. Raises LiveCheckError on the first failure, naming exactly which check failed, so a
-    caller never has to guess which of the two broke."""
+    caller never has to guess which one broke."""
     base = base_url.rstrip("/")
     return [
         check_byte_identical(fetch, f"{base}/install", install_sh, "pages/install"),
+        check_byte_identical(fetch, f"{base}/install.ps1", install_ps1, "pages/install.ps1"),
         check_root_redirects(fetch, f"{base}/", redirect_target),
     ]
 
@@ -132,7 +137,7 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", required=True, help="e.g. https://typdoc.thaitype.dev")
     parser.add_argument(
-        "--repo-root", required=True, help="repo root containing pages/install"
+        "--repo-root", required=True, help="repo root containing pages/install and install.ps1"
     )
     parser.add_argument("--redirect-target", default=DEFAULT_REDIRECT_TARGET)
     parser.add_argument(
@@ -150,9 +155,12 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv[1:])
 
     install_path = os.path.join(args.repo_root, "pages", "install")
+    install_ps1_path = os.path.join(args.repo_root, "pages", "install.ps1")
     try:
         with open(install_path, "rb") as f:
             install_sh = f.read()
+        with open(install_ps1_path, "rb") as f:
+            install_ps1 = f.read()
     except OSError as exc:
         print(f"check_live_install: could not read local pages/ files: {exc}", file=sys.stderr)
         return 2
@@ -160,7 +168,7 @@ def main(argv: list[str]) -> int:
     fetch = retrying(urllib_fetch, attempts=args.attempts, delay_seconds=args.delay_seconds)
 
     try:
-        results = run_checks(fetch, args.base_url, install_sh, args.redirect_target)
+        results = run_checks(fetch, args.base_url, install_sh, install_ps1, args.redirect_target)
     except LiveCheckError as exc:
         print(f"check_live_install: {exc}", file=sys.stderr)
         return 1

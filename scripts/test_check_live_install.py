@@ -98,39 +98,54 @@ class CheckRootRedirectsTests(unittest.TestCase):
 
 
 class RunChecksTests(unittest.TestCase):
-    def test_all_pass_returns_two_ok_lines(self) -> None:
+    def test_all_pass_returns_three_ok_lines(self) -> None:
         fetch = _fake_fetch(
             {
                 "https://example/install": b"sh-bytes",
+                "https://example/install.ps1": b"ps1-bytes",
                 "https://example/": b"redirect to https://github.com/thaitype/typdoc",
             }
         )
-        results = run_checks(fetch, "https://example", b"sh-bytes")
-        self.assertEqual(len(results), 2)
+        results = run_checks(fetch, "https://example", b"sh-bytes", b"ps1-bytes")
+        self.assertEqual(len(results), 3)
 
     def test_stops_at_first_failure_and_names_it(self) -> None:
         fetch = _fake_fetch(
             {
                 "https://example/install": b"WRONG-BYTES",
+                "https://example/install.ps1": b"ps1-bytes",
                 "https://example/": b"redirect to https://github.com/thaitype/typdoc",
             }
         )
         with self.assertRaises(LiveCheckError) as ctx:
-            run_checks(fetch, "https://example", b"sh-bytes")
+            run_checks(fetch, "https://example", b"sh-bytes", b"ps1-bytes")
         self.assertIn("pages/install", str(ctx.exception))
+
+    def test_a_mismatched_install_ps1_is_named(self) -> None:
+        fetch = _fake_fetch(
+            {
+                "https://example/install": b"sh-bytes",
+                "https://example/install.ps1": b"WRONG-BYTES",
+                "https://example/": b"redirect to https://github.com/thaitype/typdoc",
+            }
+        )
+        with self.assertRaises(LiveCheckError) as ctx:
+            run_checks(fetch, "https://example", b"sh-bytes", b"ps1-bytes")
+        self.assertIn("pages/install.ps1", str(ctx.exception))
 
     def test_trailing_slash_on_base_url_does_not_double_up(self) -> None:
         fetch = _fake_fetch(
             {
                 "https://example/install": b"sh-bytes",
+                "https://example/install.ps1": b"ps1-bytes",
                 "https://example/": b"redirect to https://github.com/thaitype/typdoc",
             }
         )
         # Must not require "https://example//install" -- a trailing slash on --base-url is an
         # easy real-world mistake (e.g. typed by hand from a browser address bar) that must not
         # silently break every check.
-        results = run_checks(fetch, "https://example/", b"sh-bytes")
-        self.assertEqual(len(results), 2)
+        results = run_checks(fetch, "https://example/", b"sh-bytes", b"ps1-bytes")
+        self.assertEqual(len(results), 3)
 
 
 class RetryingTests(unittest.TestCase):
@@ -230,6 +245,8 @@ class MainTests(unittest.TestCase):
         os.makedirs(pages_dir, exist_ok=True)
         with open(os.path.join(pages_dir, "install"), "wb") as f:
             f.write(install_sh)
+        with open(os.path.join(pages_dir, "install.ps1"), "wb") as f:
+            f.write(b"ps1-bytes")
 
     def test_reports_success_when_all_checks_pass(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -237,6 +254,7 @@ class MainTests(unittest.TestCase):
             fake = _fake_fetch(
                 {
                     "https://example/install": b"sh-bytes",
+                    "https://example/install.ps1": b"ps1-bytes",
                     "https://example/": b"redirect to https://github.com/thaitype/typdoc",
                 }
             )
@@ -260,6 +278,7 @@ class MainTests(unittest.TestCase):
             fake = _fake_fetch(
                 {
                     "https://example/install": b"DIFFERENT",
+                    "https://example/install.ps1": b"ps1-bytes",
                     "https://example/": b"redirect to https://github.com/thaitype/typdoc",
                 }
             )
