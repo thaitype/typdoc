@@ -19,12 +19,16 @@ mode, rename-over and Ctrl+C cleanup are each decided.
 - [TK-11](_tickets/TK-11-absolute-path-before-prefix.md): an absolute path, and on Windows `\`, `.\`, `..\`, is on disk before any prefix; `C:note.md` stays a namespace (SPC-2)
 - [TK-5](_tickets/TK-5-windows-file-identity.md): identity from a handle, 64-bit volume + 128-bit id; ReFS 64-bit index not unique; after delete `DeletePending`, links 0 by spec
 - [TK-6](_tickets/TK-6-windows-rename-over.md): rename keeps the temp's inherited ACL, fails over read-only; `ReplaceFileW` keeps the DACL but is not atomic and has gaps
-- [TK-7](_tickets/TK-7-windows-ctrl-c.md): `SetConsoleCtrlHandler` via `windows-sys`; tests aim Ctrl+Break at a child's process group; exit with `STATUS_CONTROL_C_EXIT`
+- [TK-7](_tickets/TK-7-windows-ctrl-c.md): decided: Ctrl+C cleanup through `SetConsoleCtrlHandler` (`windows-sys`), the process then exits `STATUS_CONTROL_C_EXIT`, and SPC-3 says so for Windows; tests send Ctrl+Break to a child in its own process group
+- [TK-12](_tickets/TK-12-measure-on-windows.md): measured on the runner (NTFS): delete is POSIX, a held handle then shows links 0 and delete-pending; rename fails over read-only and over a target open without share-delete; Ctrl+Break to a child's group works, exit 0xC000013A
+- `ReplaceFileW` is not used: it is not atomic, so it would weaken the replace guarantee (TK-6)
+
 ## Not yet specified
 
-- How the Windows form of the signal tests delivers Ctrl+C to a child (after TK-7).
-- Undiagnosed Windows failures: the config collection-name test, the `frontmatter.transitions` fixture in the
-  coverage test, the lock-contention holder's lock not appearing (likely the refusal).
+- Windows failures that are not the refusal, at 812b562 (990 / 1119 pass): the config collection-name test;
+  the `frontmatter.transitions` fixture in the coverage test; the lock-contention holder's lock not appearing
+  and a lock-timeout test (likely the refusal); the shell-examples tests, where bash on Windows does not reach
+  the typdoc stand-in (`PATH` or the `.exe` name, not diagnosed).
 - Whether the lock left behind when a handle's identity cannot be read must be fixed for the Windows lock work.
 
 ## Out of scope
