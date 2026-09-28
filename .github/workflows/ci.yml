@@ -117,6 +117,19 @@ jobs:
       - run: rustc --version
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
+  windows-build:
+    name: Windows build (shipped crates)
+    runs-on: windows-latest
+    # A gate, unlike the pass-rate job below: the shipped crates must build on Windows, and
+    # this job's own check is red when they do not. Tests are not compiled here; how many
+    # pass on Windows is the pass-rate job's measurement.
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml pins the toolchain; rustup (preinstalled on windows-latest)
+      # installs it on first use, same as the other jobs.
+      - run: rustc --version
+      - run: cargo build --locked -p typdoc -p typdoc-core -p typdoc-fs
+
   windows-pass-rate:
     name: Windows test-suite pass rate (non-blocking)
     runs-on: windows-latest
