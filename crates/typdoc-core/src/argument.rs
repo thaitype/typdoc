@@ -93,7 +93,13 @@ impl Argument {
                 "{arg:?} is not valid UTF-8, so it names no document"
             ))
         })?;
-        if text.starts_with('/') || text.starts_with("./") || text.starts_with("../") {
+        // An absolute path on this system is a path before any prefix is read, so Windows'
+        // `C:\notes\a.md` is not the namespace `C`. On Unix that is the leading `/` already.
+        if text.starts_with('/')
+            || text.starts_with("./")
+            || text.starts_with("../")
+            || Path::new(text).is_absolute()
+        {
             return if text.ends_with(".md") {
                 Ok(Argument::OnDisk(PathBuf::from(text)))
             } else {
@@ -379,6 +385,14 @@ mod tests {
     #[test]
     fn a_leading_slash_dot_slash_or_dot_dot_slash_is_on_disk() {
         for text in ["/a.md", "./a.md", "../a.md"] {
+            assert_eq!(parse(text), Argument::OnDisk(PathBuf::from(text)), "{text}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_absolute_windows_path_is_on_disk_and_not_a_namespace_prefix() {
+        for text in [r"C:\notes\a.md", "C:/notes/a.md", r"\\server\share\a.md"] {
             assert_eq!(parse(text), Argument::OnDisk(PathBuf::from(text)), "{text}");
         }
     }
