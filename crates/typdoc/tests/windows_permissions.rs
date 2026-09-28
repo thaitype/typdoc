@@ -74,8 +74,9 @@ fn a_set_keeps_a_read_only_document_read_only_and_writes_it() {
     assert_eq!(sddl(&document).unwrap(), RESTRICTIVE);
 }
 
-/// The owner is denied reading the DACL, so it cannot be carried: nothing is replaced. The test
-/// gives the file a DACL it can read before it reads it.
+/// The owner is denied reading the DACL, so it cannot be carried: nothing is replaced. The bytes
+/// are read through a handle that asks only to read data, which that DACL still allows; setting
+/// the DACL back would need the right it denies.
 #[test]
 fn a_dacl_that_cannot_be_read_stops_the_write_and_the_document_is_not_replaced() {
     let project = Scratch::project(&TITLED);
@@ -84,7 +85,6 @@ fn a_dacl_that_cannot_be_read_stops_the_write_and_the_document_is_not_replaced()
     set_sddl(&document, "D:P(D;;RC;;;OW)(A;;FA;;;WD)").unwrap();
 
     let ran = set_title(&project, "B");
-    set_sddl(&document, "D:P(A;;FA;;;WD)").unwrap();
 
     assert_eq!(ran.code, 6, "{}", ran.stderr);
     assert!(
@@ -94,7 +94,13 @@ fn a_dacl_that_cannot_be_read_stops_the_write_and_the_document_is_not_replaced()
         "{}",
         ran.stderr
     );
-    assert_eq!(project.read("a.md"), "---\ntitle: A\n---\n");
+    let mut bytes = String::new();
+    std::fs::OpenOptions::new()
+        .access_mode(0x1) // FILE_READ_DATA, without READ_CONTROL
+        .open(&document)
+        .and_then(|mut file| std::io::Read::read_to_string(&mut file, &mut bytes))
+        .unwrap();
+    assert_eq!(bytes, "---\ntitle: A\n---\n");
 }
 
 #[test]
