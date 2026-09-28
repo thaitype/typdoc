@@ -112,7 +112,8 @@
         $checksumUrl = "$archiveUrl.sha256"
 
         # A release published before Windows builds existed has no archive for Windows.
-        if ((Get-Status $archiveUrl $true).Code -eq 404) {
+        # PLANTED FAULT 2: a release without a Windows archive is not recognised.
+        if ($false) {
             if ((Get-Status "$baseUrl/releases/tag/$tag" $true).Code -eq 404) {
                 Fail "$AppName $tag has no Windows build, or no such release exists. Nothing was installed."
             }
@@ -132,7 +133,8 @@
             $expected = ((Get-Content -Path $checksumPath -Raw) -split '\s+' | Where-Object { $_ })[0]
             if (-not $expected) { Fail "checksum file at $checksumUrl was empty or unreadable" }
             $actual = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash
-            if ($expected.ToLowerInvariant() -ne $actual.ToLowerInvariant()) {
+            # PLANTED FAULT 1: the checksum is never compared.
+            if ($false) {
                 Fail "checksum mismatch for $archiveName`n  expected: $expected`n  actual:   $($actual.ToLowerInvariant())`nnothing was installed."
             }
 
