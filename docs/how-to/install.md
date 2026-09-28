@@ -9,7 +9,15 @@ $ curl -fsSL https://typdoc.thaitype.dev/install | sh
 $ typdoc --version
 ```
 
-This works on macOS and Linux, on amd64 and arm64, with no Rust toolchain. The script picks
+On Windows, in PowerShell:
+
+```powershell
+irm https://typdoc.thaitype.dev/install.ps1 | iex
+typdoc --version
+```
+
+This works on macOS and Linux, on amd64 and arm64, and on Windows on amd64 and arm64, with no
+Rust toolchain. The script picks
 the release for your OS and architecture, checks its SHA-256 checksum, and installs `typdoc` to
 `~/.local/bin`. If the download is corrupted or your platform isn't supported, it stops and
 installs nothing.
@@ -24,7 +32,7 @@ than `~/.local/bin`. The script reads them, not `curl`, so put them after the pi
 `sh`:
 
 ```console
-$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.5.0 sh
+$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.6.0 sh
 $ curl -fsSL https://typdoc.thaitype.dev/install | INSTALL_DIR="$HOME/bin" sh
 ```
 
@@ -86,5 +94,24 @@ $ cargo install --git https://github.com/thaitype/typdoc typdoc
 
 ## Windows
 
-Windows is not supported yet, by the script or by `cargo install`. Run typdoc inside WSL
-instead.
+The PowerShell installer works as the script does: it picks the build for your machine, checks its
+SHA-256 checksum, installs `typdoc.exe` to `%USERPROFILE%\.local\bin`, and never changes PATH. If
+that directory is not on PATH, it prints the command that adds it.
+
+To pin a version or choose the directory, set the variable in the same PowerShell session, before
+the pipe:
+
+```powershell
+$env:TYPDOC_VERSION = 'v0.6.0'; irm https://typdoc.thaitype.dev/install.ps1 | iex
+$env:INSTALL_DIR = "$env:USERPROFILE\bin"; irm https://typdoc.thaitype.dev/install.ps1 | iex
+```
+
+A release from before Windows builds has none: pinned to one, the installer says so and installs
+nothing.
+
+`cargo install typdoc` works on Windows too, from 0.6.0 on.
+
+On Windows typdoc reads and writes as it does elsewhere. A document it replaces keeps its access
+control list and its read-only flag; a document another program holds open without letting it be
+replaced is left as it is, and typdoc says so. Ctrl+C ends it with exit code `0xC000013A`, after
+the locks it holds are removed.

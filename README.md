@@ -49,15 +49,21 @@ The same folder works for people and for tools, and if you stop using typdoc you
 curl -fsSL https://typdoc.thaitype.dev/install | sh
 ```
 
+On Windows, in PowerShell:
+
+```powershell
+irm https://typdoc.thaitype.dev/install.ps1 | iex
+```
+
 Supported platforms:
 
 - macOS — amd64 and arm64
 - Linux — amd64 and arm64
-
-Windows is not supported yet.
+- Windows — amd64 and arm64
 
 It picks the right build for your machine, checks it against its published SHA-256 checksum,
-and puts `typdoc` in `~/.local/bin`. To pin a version, choose another install directory, or
+and puts `typdoc` in `~/.local/bin`
+(`%USERPROFILE%\.local\bin` on Windows). To pin a version, choose another install directory, or
 install with `cargo`, see
 [how to install typdoc](docs/how-to/install.md).
 

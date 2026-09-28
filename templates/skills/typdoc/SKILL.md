@@ -27,7 +27,8 @@ typdoc {{version}}
 **Not found** (`command not found`, exit 127): typdoc is not installed, or its directory is not
 on `PATH`. Try `~/.local/bin/typdoc --version` first, because the install script puts it there and
 never edits `PATH`. If that works, call it by that path, or add the directory for this session:
-`export PATH="$HOME/.local/bin:$PATH"`.
+`export PATH="$HOME/.local/bin:$PATH"`. On Windows the directory is `%USERPROFILE%\.local\bin`,
+added for this PowerShell session with `$env:Path = "$env:USERPROFILE\.local\bin;$env:Path"`.
 
 **Not installed:** installing is the user's decision, since it downloads and runs a script from the
 internet. Tell the user, and install only when they agree. This installs the version this skill
@@ -42,7 +43,9 @@ $ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v{{version}} s
 - Put the variables after the pipe, right before `sh`. Written before `curl`, they never reach
   the script, and you get the latest release in the default directory.
 - With a Rust toolchain instead: `cargo install typdoc --version {{version}}`.
-- Windows is not supported yet, by the script or by `cargo install`. Use WSL.
+- On Windows, in PowerShell, with the variable set before the pipe:
+  `$env:TYPDOC_VERSION = 'v{{version}}'; irm https://typdoc.thaitype.dev/install.ps1 | iex`.
+  It installs `typdoc.exe` to `%USERPROFILE%\.local\bin`, and never edits `PATH` either.
 
 **A different version:** say so to the user before relying on this skill, and prefer what
 `typdoc <command> --help` says wherever the two disagree.

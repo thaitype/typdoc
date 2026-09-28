@@ -1,6 +1,6 @@
 [package]
 name = "typdoc"
-version = "0.5.0"
+version = "0.6.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -17,8 +17,8 @@ libc = "0.2.189"
 # `raw_value` lets `--json` print a `number` with the digits written in the document, which no
 # `serde_json::Number` keeps. `preserve_order` keeps a document's fields in the order of the file.
 serde_json = { version = "1.0.151", features = ["preserve_order", "raw_value"] }
-typdoc-core = { version = "0.5.0", path = "../typdoc-core" }
-typdoc-fs = { version = "0.5.0", path = "../typdoc-fs" }
+typdoc-core = { version = "0.6.0", path = "../typdoc-core" }
+typdoc-fs = { version = "0.6.0", path = "../typdoc-fs" }
 
 [target.'cfg(unix)'.dependencies]
 # Catches SIGINT and SIGTERM, moves the cleanup off the handler onto an ordinary thread, and

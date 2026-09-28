@@ -4,17 +4,26 @@ All notable, user-visible changes to typdoc are documented here. Internal reorga
 example, how the project's own design documents are structured and read in its own test suite)
 are left out unless they change something a user of the `typdoc` binary sees.
 
-## [Unreleased]
-
-### Fixed
-
-- On Windows, a document named on the command line by a path relative to the project and written
-  with `\` (`typdoc get notes\a.md`, also after a `namespace:` or `project::` prefix) was not
-  found (exit 5); it now names the document `notes/a.md` does, in every command that takes a
-  document or a path to create. On Unix `\` stays part of the name.
+## [0.6.0] - 2026-09-28
 
 ### Added
 
+- Windows support, on amd64 and arm64. Every command reads and writes there as it does on macOS and
+  Linux, with the same guarantees: a lock is released only while it is still this process's own,
+  on NTFS and ReFS alike; a document typdoc replaces keeps its access control list and its
+  read-only flag, and one whose access control list cannot be carried is left as it was (exit 6);
+  a document another program holds open without letting it be replaced is left as it was, and the
+  message says so (exit 6). Ctrl+C removes the locks held and ends the process with
+  `STATUS_CONTROL_C_EXIT` (`0xC000013A`).
+- A path on the command line may be written with Windows separators: `C:\notes\a.md`, `\`, `.\`
+  and `..\` name a file on disk, and a path relative to the project may use `\` (`typdoc get
+  notes\a.md`, also after a `namespace:` or `project::` prefix). On Unix `\` stays part of a
+  name. A drive-relative `C:note.md` is still read as the namespace `C`.
+- A PowerShell installer: `irm https://typdoc.thaitype.dev/install.ps1 | iex`, with
+  `TYPDOC_VERSION` and `INSTALL_DIR` as in the shell script. It verifies the checksum before
+  installing, never edits `PATH`, and installs `typdoc.exe` to `%USERPROFILE%\.local\bin`.
+- Releases carry `typdoc-x86_64-pc-windows-msvc.zip` and `typdoc-aarch64-pc-windows-msvc.zip`,
+  each with its `.sha256` and a build attestation.
 - `typdoc-core` (library): `project_path_from_argument`, which reads a project path typed on the
   command line the way `Argument::parse` does.
 
