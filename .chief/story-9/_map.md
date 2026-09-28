@@ -29,6 +29,7 @@ mode, rename-over and Ctrl+C cleanup are each decided.
 - The lock left behind when a handle's identity cannot be read stays out of this story: the Windows lock reads its identity from the handle it has just created, as on Unix
 - [TK-8](_tickets/TK-8-windows-permissions.md): decided: the DACL and the read-only flag are carried to the temp before the rename; a DACL that cannot be read or set stops the write
 - [TK-9](_tickets/TK-9-refs-file-id-width.md): decided: `FileId` holds a 128-bit id; `typdoc-core` API change in the CHANGELOG
+- Built: TK-13 (writes), TK-14 (Ctrl+C), TK-15 (`Windows tests` gate). At c8c60a1 the Windows suite passes 1122 / 1122; three faults planted on a throwaway pull request turned the six new Windows tests red
 - `ReplaceFileW` is not used: it is not atomic, so it would weaken the replace guarantee (TK-6)
 
 ## Not yet specified

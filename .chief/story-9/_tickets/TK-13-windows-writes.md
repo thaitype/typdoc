@@ -4,7 +4,7 @@ blocked_by:
 - TK-9
 - TK-10
 - TK-12
-status: claimed
+status: resolved
 title: Writes on Windows keep the guarantees they keep on Unix
 type: implementation
 ---

@@ -2,7 +2,7 @@
 blocked_by:
 - TK-13
 - TK-14
-status: claimed
+status: resolved
 title: The Windows tests job is a gate
 type: implementation
 ---

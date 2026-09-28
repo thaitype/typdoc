@@ -1,7 +1,7 @@
 ---
 blocked_by:
 - TK-7
-status: claimed
+status: resolved
 title: Ctrl+C on Windows removes the locks and ends with STATUS_CONTROL_C_EXIT
 type: implementation
 ---
