@@ -16,6 +16,10 @@ mode, rename-over and Ctrl+C cleanup are each decided.
 
 ## Decisions so far
 
+- [TK-11](_tickets/TK-11-absolute-path-before-prefix.md): an absolute path, and on Windows `\`, `.\`, `..\`, is on disk before any prefix; `C:note.md` stays a namespace (SPC-2)
+- [TK-5](_tickets/TK-5-windows-file-identity.md): identity from a handle, 64-bit volume + 128-bit id; ReFS 64-bit index not unique; after delete `DeletePending`, links 0 by spec
+- [TK-6](_tickets/TK-6-windows-rename-over.md): rename keeps the temp's inherited ACL, fails over read-only; `ReplaceFileW` keeps the DACL but is not atomic and has gaps
+- [TK-7](_tickets/TK-7-windows-ctrl-c.md): `SetConsoleCtrlHandler` via `windows-sys`; tests aim Ctrl+Break at a child's process group; exit with `STATUS_CONTROL_C_EXIT`
 ## Not yet specified
 
 - How the Windows form of the signal tests delivers Ctrl+C to a child (after TK-7).

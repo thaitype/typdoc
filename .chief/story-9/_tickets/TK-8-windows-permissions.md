@@ -1,6 +1,7 @@
 ---
 blocked_by:
 - TK-6
+- TK-12
 status: open
 title: 'Permissions on Windows: read-only flag only, or ACLs too'
 type: wayfinder:grilling

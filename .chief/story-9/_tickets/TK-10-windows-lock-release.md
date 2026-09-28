@@ -2,6 +2,7 @@
 blocked_by:
 - TK-5
 - TK-9
+- TK-12
 status: open
 title: 'Lock release on Windows: is the identity check as strong as on Unix'
 type: wayfinder:grilling
