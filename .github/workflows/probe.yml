@@ -1,0 +1,20 @@
+# A throwaway probe: measures copying a DACL on the runner. Never merged.
+name: windows-probe
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "probe/**"
+      - ".github/workflows/probe.yml"
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmd /c ver
+      - run: whoami /groups /fo list | Select-String "Group Name|Mandatory Label"
+      - run: Get-Volume | Format-Table DriveLetter, FileSystem, FileSystemLabel -AutoSize
+      - run: cargo run --locked
+        working-directory: probe
