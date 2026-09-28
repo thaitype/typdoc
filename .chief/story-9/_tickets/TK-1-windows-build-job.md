@@ -1,6 +1,6 @@
 ---
 blocked_by: []
-status: claimed
+status: resolved
 title: Blocking Windows build job in CI
 type: implementation
 ---

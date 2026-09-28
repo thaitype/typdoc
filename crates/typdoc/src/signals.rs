@@ -6,12 +6,16 @@
 
 use std::io;
 
+#[cfg(unix)]
 use signal_hook::consts::{SIGINT, SIGTERM};
+#[cfg(unix)]
 use signal_hook::iterator::Signals;
+#[cfg(unix)]
 use signal_hook::low_level;
 
 /// Called at the start of `main`, before any lock file can exist. The instant inside
 /// `namespace_lock::acquire`'s creating call stays open (SPC-10).
+#[cfg(unix)]
 pub fn install() -> io::Result<()> {
     let mut signals = Signals::new([SIGINT, SIGTERM])?;
     std::thread::spawn(move || {
@@ -26,5 +30,12 @@ pub fn install() -> io::Result<()> {
             let _ = low_level::emulate_default_handler(signal);
         }
     });
+    Ok(())
+}
+
+/// Windows has no `SIGTERM`, and nothing here to clean up: every write is refused there before a
+/// lock file is created (`typdoc_fs::SystemFs`). When writing comes to Windows, so does this.
+#[cfg(windows)]
+pub fn install() -> io::Result<()> {
     Ok(())
 }

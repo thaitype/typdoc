@@ -1,7 +1,7 @@
 ---
 blocked_by:
 - TK-1
-status: open
+status: resolved
 title: Windows branches for the file system seam and signals
 type: implementation
 ---

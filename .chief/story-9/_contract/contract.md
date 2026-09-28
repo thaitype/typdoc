@@ -10,8 +10,7 @@ Only two places fail to compile; every other unix-only call is already behind `c
 
 ## The refusal
 
-Pending the owner's decision (Windows read-only, and the wording of the refusal). TK-2 is not built until
-it is made; this section is the proposal.
+Decided: Windows is read-only for now.
 
 - On Windows, `SystemFs::create_new` returns `io::ErrorKind::Unsupported` with a message saying typdoc does not
   write files on Windows yet. Every write creates its first file through `create_new` (the lock file first,
@@ -19,10 +18,12 @@ it is made; this section is the proposal.
   file or document exists. The refusal sits in the one crate that changes files, not in a list of commands.
   The only side effect before it is `create_dir_all` of `.typdoc/locks/` (an empty folder).
 - The command exits 6 (I/O: a file cannot be written), the existing code; no new exit code.
+- `mv` asks for the two files' identities before it takes a lock, so on Windows it is refused there, also
+  with exit 6 and before anything is written.
 - `mode`, `set_mode`, `identity_at` and the handle's `identity` return `Unsupported` on Windows too. They are
   unreachable behind the refusal, and none of them returns a made-up value: no identity of zeros, no mode
   that always matches.
-- `signals::install` is `cfg(unix)`; on Windows it installs nothing. With writes refused no lock file can
+- `signals::install` is `cfg(unix)`; under `cfg(windows)` it installs nothing. With writes refused no lock file can
   exist to clean up. When writes come to Windows, this is reopened.
 - Unix code paths are unchanged byte for byte in behaviour: the Windows branches are additions under
   `cfg(windows)` / `cfg(not(unix))`.
