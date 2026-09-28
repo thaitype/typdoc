@@ -1,7 +1,9 @@
 name: CI
 
 on:
+  # A pull request builds its branch; a push to that branch would build it a second time.
   push:
+    branches: [main]
   pull_request:
     branches: [main]
 
