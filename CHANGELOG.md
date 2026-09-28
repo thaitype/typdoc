@@ -6,6 +6,18 @@ are left out unless they change something a user of the `typdoc` binary sees.
 
 ## [Unreleased]
 
+### Fixed
+
+- On Windows, a document named on the command line by a path relative to the project and written
+  with `\` (`typdoc get notes\a.md`, also after a `namespace:` or `project::` prefix) was not
+  found (exit 5); it now names the document `notes/a.md` does, in every command that takes a
+  document or a path to create. On Unix `\` stays part of the name.
+
+### Added
+
+- `typdoc-core` (library): `project_path_from_argument`, which reads a project path typed on the
+  command line the way `Argument::parse` does.
+
 ### Changed
 
 - `typdoc-core` (library): `FileId::inode` is a `u128`, to hold a Windows file id, which is 128

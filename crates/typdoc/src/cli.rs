@@ -499,7 +499,7 @@ fn parse_new_target(
             )));
         }
         return Ok(NewTarget::Path {
-            path: target.to_owned(),
+            path: typdoc_core::project_path_from_argument(target),
         });
     }
     if looks_like_code(target) {

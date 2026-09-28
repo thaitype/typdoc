@@ -44,7 +44,9 @@ mod state;
 mod template;
 mod validate;
 
-pub use argument::{Argument, DocumentArg, discover_for, resolve_on_disk};
+pub use argument::{
+    Argument, DocumentArg, discover_for, project_path_from_argument, resolve_on_disk,
+};
 pub use body::{Heading, headings};
 pub use clock::{Clock, at_one_second};
 pub use coerce::{coerce, fits};

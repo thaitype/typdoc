@@ -187,19 +187,22 @@ two cannot be confused. Anything else is bad arguments (exit 1). A path that beg
 or `../` is a path on disk, absolute or relative to the current directory. So is a path that is
 absolute on the system typdoc runs on, and that is read before any `project::` or `namespace:`
 prefix: on Windows, `C:\notes\a.md`, `C:/notes/a.md` and `\\server\share\a.md` are paths on disk,
-and `C:\notes\a.md` does not name the namespace `C`. On Windows the three forms are also
-written with its own separator, `\`, `.\` and `..\`, and are paths on disk then too; on Unix a leading
-`\` is not. A drive-relative path on Windows, `C:note.md`, is not recognised: it is read as the
-namespace `C` and the path `note.md`. Any other path is
-relative to the project folder, the folder that holds `.typdoc`, which is what `path` is in
-`--json`. The path of a document of an imported project is written `project::path`, relative to that
-project's folder. `mv` reads both its arguments in this way, except that neither may carry a
-`project::` prefix: `mv` writes only in the project it is run in, so an argument naming a document
-of another project is bad arguments (exit 1). Its second names a file that does not exist yet: a
-`mv` whose destination is already there writes nothing and exits 7, and so does a `--renumber` whose
-destination name is taken. When a path relative to the project names nothing in it but a file of
-that name exists relative to the current directory, the error is exit 5 and says that `./name`
-exists. That is a suggestion; nothing is done in its place.
+and `C:\notes\a.md` does not name the namespace `C`. On Windows the three forms are also written
+with its own separator, `\`, `.\` and `..\`, and are paths on disk then too; on Unix a leading `\`
+is not. A drive-relative path on Windows, `C:note.md`, is not recognised: it is read as the
+namespace `C` and the path `note.md`. Any other path is relative to the project folder, the folder
+that holds `.typdoc`, which is what `path` is in `--json`. The path of a document of an imported
+project is written `project::path`, relative to that project's folder. On Windows, where `\` cannot
+be part of a file name, a path relative to the project may be written with it, after any prefix:
+`notes\a.md` names what `notes/a.md` does, and is printed with `/`. On Unix `\` is a character a
+name may hold, and is read as one. This is about arguments only: a path written inside a document is
+written with `/` everywhere. `mv` reads both its arguments in this way, except that neither may
+carry a `project::` prefix: `mv` writes only in the project it is run in, so an argument naming a
+document of another project is bad arguments (exit 1). Its second names a file that does not exist
+yet: a `mv` whose destination is already there writes nothing and exits 7, and so does a
+`--renumber` whose destination name is taken. When a path relative to the project names nothing in
+it but a file of that name exists relative to the current directory, the error is exit 5 and says
+that `./name` exists. That is a suggestion; nothing is done in its place.
 
 The string that names a document in an argument follows from the name it is printed with
 (`SPC-12`):
