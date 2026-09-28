@@ -121,7 +121,8 @@ mod win {
             return "no DACL (would mean full access to everyone): refused".to_owned();
         }
         let protection = if control & SE_DACL_PROTECTED != 0 { PROTECTED_DACL_SECURITY_INFORMATION } else { UNPROTECTED_DACL_SECURITY_INFORMATION };
-        let f = match open(p, WRITE_DAC) {
+        // SetSecurityInfo reads the descriptor it changes, so the handle needs READ_CONTROL too.
+        let f = match open(p, WRITE_DAC | READ_CONTROL) {
             Ok(f) => f,
             Err(e) => return format!("open for WRITE_DAC: err kind={:?} os={:?}", e.kind(), e.raw_os_error()),
         };
