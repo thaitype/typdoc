@@ -128,3 +128,7 @@ passes unnoticed on the day a CI image loses the shell. No setting turns the che
 one machine, since it would hold only while whoever sets it is careful. The way out is to install
 the shell or to remove it from this list, and the failure says both. Supporting another shell means
 adding it here with its own test.
+
+On Windows the test does not run: sh and bash there are an emulation layer, not the shell a Windows
+user types typdoc into, and PowerShell and cmd are not covered. This is a limit of what the list
+covers, stated here, and not a skip.

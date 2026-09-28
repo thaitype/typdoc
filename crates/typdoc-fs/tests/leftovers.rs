@@ -52,8 +52,8 @@ fn find_leftovers_never_follows_a_symbolic_link() {
     std::fs::create_dir_all(root.join("real")).unwrap();
     let real_leftover = root.join("real").join(format!("{TEMP_PREFIX}333-ccc"));
     std::fs::write(&real_leftover, "").unwrap();
-    std::os::unix::fs::symlink(root.join("real"), root.join("linked")).unwrap();
-    std::os::unix::fs::symlink(&real_leftover, root.join(format!("{TEMP_PREFIX}444-ddd"))).unwrap();
+    typdoc_testkit::link::dir(root.join("real"), root.join("linked")).unwrap();
+    typdoc_testkit::link::file(&real_leftover, root.join(format!("{TEMP_PREFIX}444-ddd"))).unwrap();
 
     let found = find_leftovers(root);
 

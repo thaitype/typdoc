@@ -10,6 +10,11 @@ description = "File system access for typdoc: the only crate that writes files."
 [dependencies]
 typdoc-core = { version = "0.5.0", path = "../typdoc-core" }
 
+# Windows only: a file's identity, the DACL carried to a replacement and a POSIX-semantics
+# rename, none of which the standard library offers there on stable.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 tempfile = "3.27.0"
 typdoc-testkit = { path = "../typdoc-testkit" }

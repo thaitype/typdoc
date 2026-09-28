@@ -1,5 +1,8 @@
 //! Covers SPC-13.
 //!
+//! Unix only: SPC-13's shells are POSIX shells. On Windows its examples meet PowerShell or cmd,
+//! which SPC-13 does not cover, so they are not run there (SPC-13 says so).
+//!
 //! Every example is listed here by hand, since no test reads design prose as data (SPC-11).
 //!
 //! This file spawns a shell rather than going through `common::Spawn`, which starts the `typdoc`
@@ -10,6 +13,7 @@
 //! the safe set (letters, digits, `_ - . / : = , @ % +` and the space): with no such character,
 //! no shell can change what it means, so the expected value is its words split on whitespace.
 
+#![cfg(unix)]
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;

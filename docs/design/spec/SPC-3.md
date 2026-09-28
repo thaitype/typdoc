@@ -44,7 +44,9 @@ finding's `message` as its `error`, as above, not a phrase wrapped around it. Fo
 
 ## An interrupted run
 
-When typdoc is interrupted by `SIGINT` or `SIGTERM`, it removes the locks it holds and then ends
-by that signal. The caller sees a process killed by a signal, not a code from the table above,
-and no error object is written. The table describes the outcomes of a command, not every way a
-process can end.
+When typdoc is interrupted by `SIGINT` or `SIGTERM`, it removes the locks it holds and then ends by
+that signal. The caller sees a process killed by a signal, not a code from the table above, and no
+error object is written. Windows has no ending by a signal: there Ctrl+C, Ctrl+Break and the console
+closing remove the locks the same way, and the process then ends with `STATUS_CONTROL_C_EXIT`
+(`0xC000013A`), the code Ctrl+C ends a Windows process with. The table describes the outcomes of a
+command, not every way a process can end.

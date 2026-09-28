@@ -280,7 +280,7 @@ impl Fs for FakeFs {
         state.admit(On::IdentityAt)?;
         Ok(state.files.get(path).map(|entry| FileId {
             device: 0,
-            inode: entry.identity,
+            inode: u128::from(entry.identity),
             links: 1,
         }))
     }
@@ -327,7 +327,7 @@ impl WriteHandle for FakeHandle {
         );
         Ok(FileId {
             device: 0,
-            inode: self.identity,
+            inode: u128::from(self.identity),
             links,
         })
     }

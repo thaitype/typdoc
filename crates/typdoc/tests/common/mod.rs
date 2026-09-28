@@ -128,6 +128,12 @@ impl Spawn {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // In a process group of its own, so that a Ctrl+Break reaches it and not the test.
+        #[cfg(windows)]
+        std::os::windows::process::CommandExt::creation_flags(
+            &mut command,
+            windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP,
+        );
         let child = command.spawn().expect("the typdoc binary starts");
         RunningChild { child, _home: home }
     }
@@ -142,6 +148,22 @@ pub struct RunningChild {
 }
 
 impl RunningChild {
+    /// Sends Ctrl+Break to this process, which `spawn` started in a process group of its own:
+    /// Ctrl+C cannot be sent to one process group, and typdoc handles both alike (SPC-3).
+    /// It may not be sent once the process has ended.
+    #[cfg(windows)]
+    pub fn interrupt(&self) -> io::Result<()> {
+        use windows_sys::Win32::System::Console::{CTRL_BREAK_EVENT, GenerateConsoleCtrlEvent};
+        // SAFETY: the call takes an event and a process group id, the child's own pid.
+        let sent = unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, self.child.id()) };
+        if sent == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// Unix only: Windows has no signals to send a process.
+    #[cfg(unix)]
     /// Sends `signal` (a POSIX signal number — `libc::SIGINT`, `libc::SIGTERM`) to this
     /// process, through `kill(2)`, the one real way to deliver anything past `SIGKILL`: the
     /// standard library's own [`Child::kill`] reaches no further than that.
@@ -170,11 +192,22 @@ impl RunningChild {
             .expect("the process can be waited on");
         Ended {
             code: output.status.code(),
-            signal: std::os::unix::process::ExitStatusExt::signal(&output.status),
+            signal: ended_by_signal(&output.status),
             stdout: String::from_utf8(output.stdout).expect("UTF-8 on stdout"),
             stderr: String::from_utf8(output.stderr).expect("UTF-8 on stderr"),
         }
     }
+}
+
+#[cfg(unix)]
+fn ended_by_signal(status: &std::process::ExitStatus) -> Option<i32> {
+    std::os::unix::process::ExitStatusExt::signal(status)
+}
+
+/// A Windows process always ends with a code.
+#[cfg(windows)]
+fn ended_by_signal(_status: &std::process::ExitStatus) -> Option<i32> {
+    None
 }
 
 /// `code` is `None` exactly when the process ended by a signal, which is
@@ -218,7 +251,13 @@ impl Scratch {
     }
 
     pub fn symlink(&self, link: &str, target: &str) {
-        std::os::unix::fs::symlink(target, self.dir.path().join(link)).expect("a symbolic link");
+        let at = self.dir.path().join(link);
+        let leads_to = at.parent().expect("a parent").join(target);
+        if leads_to.is_dir() {
+            typdoc_testkit::link::dir(target, at).expect("a symbolic link");
+        } else {
+            typdoc_testkit::link::file(target, at).expect("a symbolic link");
+        }
     }
 
     pub fn read(&self, path: &str) -> String {
@@ -227,6 +266,8 @@ impl Scratch {
     }
 
     /// A file whose path, from the project folder, is given as bytes and may not be valid UTF-8.
+    /// Unix only: a Windows file name is UTF-16 and cannot be given as arbitrary bytes.
+    #[cfg(unix)]
     pub fn file_named_by_bytes(&self, name: &[u8], text: &str) {
         use std::os::unix::ffi::OsStrExt;
         let file = self.dir.path().join(OsStr::from_bytes(name));

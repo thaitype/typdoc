@@ -150,6 +150,24 @@ fn an_argument_naming_an_import_this_project_does_not_configure_exits_1() {
     );
 }
 
+/// Windows writes `./` and `../` with its own separator too (SPC-2).
+#[cfg(windows)]
+#[test]
+fn on_windows_a_path_written_with_backslashes_is_read_the_same_as_one_with_slashes() {
+    for argument in [r".\note.md", r"..\minimal\note.md"] {
+        let ran = Spawn::args(["get", argument, "--json"])
+            .cwd(fixture("valid/minimal"))
+            .run();
+
+        assert_eq!(ran.code, 0, "{argument}: {}", ran.stderr);
+        assert_eq!(
+            ran.stdout_json()["document"]["path"],
+            json!("note.md"),
+            "{argument}"
+        );
+    }
+}
+
 #[test]
 fn a_path_relative_to_the_current_directory_is_read_the_same_as_one_relative_to_the_project() {
     for argument in ["./note.md", "../minimal/note.md"] {
@@ -460,6 +478,8 @@ fn a_file_below_the_project_folder_is_not_in_a_collection_that_matches_names_the
     error_of(&ran, 5);
 }
 
+// Unix only: a Windows file name is UTF-16 and cannot be given as arbitrary bytes.
+#[cfg(unix)]
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \
@@ -478,6 +498,8 @@ fn a_name_that_is_not_utf8_and_that_a_collection_matches_is_skipped() {
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
 }
 
+// Unix only: a Windows file name is UTF-16 and cannot be given as arbitrary bytes.
+#[cfg(unix)]
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \

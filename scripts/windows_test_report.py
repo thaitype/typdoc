@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Parses `cargo test` output and reports a Windows pass-rate summary.
 
-Used by the Windows pass-rate job in .github/workflows/ci.yml. That job is a
-non-blocking measurement, not a gate: it reports how many of the suite's
-tests currently pass on Windows, it does not require that they all do.
+Used by the Windows tests job in .github/workflows/ci.yml. That job is a gate,
+but not through this script: its last step fails when `cargo test` did. This
+script reports what the run was, how many tests passed and which targets did
+not compile, and exits non-zero only when it cannot tell.
 
 This script is the part of that job that must never itself fail silently: if
 it finds zero "test result:" lines, that means the captured run produced no
@@ -12,20 +13,19 @@ bad, measurement rather than as "this measurement did not happen." That case
 is refused loudly instead (see ZeroTestsError below), the same way
 scripts/test.sh refuses to report success on a zero count.
 
-A zero-test result has two different causes, and the message names which one
-it is instead of using one generic wording for both:
-  - the build never compiled (today's actual state on Windows: typdoc-fs,
-    the crate implementing typdoc_core::Fs, is Unix-only by design and has
-    no Windows branch at all, so `cargo test` fails before any test binary
-    exists to run) -- reported as "does not compile -- 0 tests run";
-  - the build compiled but the captured run still produced no "test result:"
+A zero-test result has three different causes, and the message names which
+one it is instead of using one generic wording for all of them:
+  - the shipped crates do not compile (a library or binary target in cargo's
+    "could not compile" lines) -- "does not compile -- 0 tests run";
+  - the shipped crates compile but every test target fails to --
+    "tests do not compile -- 0 tests run", naming the targets;
+  - everything compiled but the captured run still produced no "test result:"
     lines for some other reason (wrong working directory, cargo not on
     PATH, a test binary that ran but printed nothing recognizable, ...) --
-    reported with the older, more general "found zero tests" wording.
-Supporting Windows is a two-step ladder: step one is "compiles," step two is
-"pass rate." Today's run is stuck at step one, and this script's job is to
-say exactly that in the step summary, not to blur it into a generic error
-that reads the same whether the build compiled or not.
+    reported with the more general "found zero tests" wording.
+The suite runs with --no-fail-fast, so a test target that does not compile
+does not stop the others: a pass rate is then over the targets that ran, and
+the report names the ones that did not compile, which the rate leaves out.
 
 Run standalone:
     python windows_test_report.py <captured-cargo-test-output-file>
@@ -55,6 +55,23 @@ _RESULT_LINE = re.compile(r"^test result:.*?(\d+) passed;\s*(\d+) failed", re.MU
 # phrases are cargo's own terminal wording for a build that didn't produce a test binary.
 _COMPILE_FAILURE_MARKERS = ("error: could not compile", "error: aborting due to")
 
+# cargo's line for each target it could not build: the crate, then the target kind, such as
+# `lib`, `bin "typdoc"`, `lib test` or `test "signals"`.
+_UNCOMPILED_TARGET = re.compile(r"^error: could not compile `([^`]+)` \(([^)]*)\)", re.MULTILINE)
+
+
+def _uncompiled_targets(cargo_test_output: str) -> tuple[str, ...]:
+    found = []
+    for match in _UNCOMPILED_TARGET.finditer(cargo_test_output):
+        target = f"{match.group(1)} ({match.group(2)})"
+        if target not in found:
+            found.append(target)
+    return tuple(found)
+
+
+def _is_test_target(target: str) -> bool:
+    return "test" in target.rsplit("(", 1)[-1]
+
 
 def _looks_like_compile_failure(cargo_test_output: str) -> bool:
     if "error[E" in cargo_test_output:
@@ -74,6 +91,15 @@ class Summary:
     failed: int
     suite_count: int
     compile_failed: bool = False
+    uncompiled: tuple[str, ...] = ()
+
+    @property
+    def build_failed(self) -> bool:
+        """Whether a shipped target, not only test code, failed to compile. A compile failure
+        with no target line to tell by is read as the build's."""
+        if not self.uncompiled:
+            return self.compile_failed
+        return any(not _is_test_target(target) for target in self.uncompiled)
 
     @property
     def total(self) -> int:
@@ -96,6 +122,7 @@ def summarize(cargo_test_output: str) -> Summary:
         failed=failed,
         suite_count=suites,
         compile_failed=_looks_like_compile_failure(cargo_test_output),
+        uncompiled=_uncompiled_targets(cargo_test_output),
     )
 
 
@@ -105,11 +132,16 @@ def check_nonzero(summary: Summary) -> None:
     about *why* there are zero tests: a build that never compiled is a different, earlier
     failure than one that compiled but happened to run nothing."""
     if summary.total == 0:
-        if summary.compile_failed:
+        if summary.compile_failed and summary.build_failed:
             raise ZeroTestsError(
                 "does not compile -- 0 tests run. The Windows build failed before any test "
                 "binary could run. Supporting Windows is two steps, compiles then pass rate, "
                 "and this run is stuck at step one -- there is no pass rate to report yet."
+            )
+        if summary.compile_failed:
+            raise ZeroTestsError(
+                "tests do not compile -- 0 tests run. The shipped crates build on Windows; "
+                f"these test targets do not: {', '.join(summary.uncompiled)}."
             )
         raise ZeroTestsError(
             f"found zero tests across {summary.suite_count} suite(s) -- the build compiled but "
@@ -118,14 +150,25 @@ def check_nonzero(summary: Summary) -> None:
         )
 
 
+def not_counted(summary: Summary) -> str:
+    """The targets a pass rate leaves out because they did not compile, or "" when none."""
+    if not summary.uncompiled:
+        return ""
+    return (
+        f"Not counted: {len(summary.uncompiled)} target(s) did not compile: "
+        f"{', '.join(summary.uncompiled)}."
+    )
+
+
 def render_step_summary(summary: Summary) -> str:
     rate = summary.rate_percent
+    missing = not_counted(summary)
     return (
         "## Windows test-suite pass rate\n\n"
         f"**{summary.passed} / {summary.total}** tests passed (**{rate}%**) "
         f"across {summary.suite_count} suite(s).\n\n"
-        "This is a baseline measurement, not a gate -- this job never blocks a merge, "
-        "and this story does not fix any Windows failure it finds.\n"
+        + (f"**{missing}**\n\n" if missing else "")
+        + "The job's last step fails when any test failed or did not compile.\n"
     )
 
 
@@ -159,18 +202,25 @@ def main(argv: list[str]) -> int:
     except ZeroTestsError as exc:
         print(f"windows_test_report: {exc}", file=sys.stderr)
         if summary.compile_failed:
-            # A known state, not a failure: step one of supporting Windows is "compiles,"
-            # step two is "pass rate," and this run is stuck at step one. The job must stay
-            # green for this (a `::warning::` annotation is how it stays visible on the PR
-            # without turning the check red) -- only a build that compiled yet still
-            # produced no test result is treated as broken, below.
-            print("::warning::Windows build does not compile -- 0 tests run")
-            _append_step_summary(
-                "## Windows test-suite pass rate\n\n"
-                "**Does not compile -- 0 tests run.** The Windows build failed before any test "
-                "could execute. Supporting Windows is two steps, compiles then pass rate, and "
-                "this run is stuck at step one; there is no pass rate to report yet.\n"
-            )
+            # A known state, which this report names; the job's last step is what fails for
+            # it. Only a run that compiled yet produced no test result is one this report
+            # cannot tell apart from a harness fault, below.
+            if summary.build_failed:
+                print("::warning::Windows build does not compile -- 0 tests run")
+                _append_step_summary(
+                    "## Windows test-suite pass rate\n\n"
+                    "**Does not compile -- 0 tests run.** The Windows build failed before any "
+                    "test could execute. Supporting Windows is two steps, compiles then pass "
+                    "rate, and this run is stuck at step one; there is no pass rate to report "
+                    "yet.\n"
+                )
+            else:
+                print("::warning::Windows tests do not compile -- 0 tests run")
+                _append_step_summary(
+                    "## Windows test-suite pass rate\n\n"
+                    "**Tests do not compile -- 0 tests run.** The shipped crates build on "
+                    f"Windows; these test targets do not: {', '.join(summary.uncompiled)}.\n"
+                )
             return 0
         _append_step_summary(
             "## Windows test-suite pass rate\n\n"
@@ -183,6 +233,9 @@ def main(argv: list[str]) -> int:
         f"windows_test_report: {summary.passed} / {summary.total} passed "
         f"({summary.rate_percent}%) across {summary.suite_count} suite(s)."
     )
+    missing = not_counted(summary)
+    if missing:
+        print(f"::warning::{missing}")
     _append_step_summary(render_step_summary(summary))
     return 0
 

@@ -10,8 +10,8 @@ name: release-rc
 # satisfies exactly as well as a dispatch does.
 #
 # Mirrors publish.yml's gate -> dist-build -> attest -> release shape, minus any `cargo publish`
-# step (never touches crates.io) and with `prerelease: true` on the created release. The four
-# release targets are the same four this repo ships everywhere else — see dist-build.yml.
+# step (never touches crates.io) and with `prerelease: true` on the created release. The six
+# release targets are the same six this repo ships everywhere else — see dist-build.yml.
 
 on:
   push:
@@ -34,7 +34,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   dist-build:
-    name: dist build (4 targets)
+    name: dist build (6 targets)
     needs: gate
     uses: ./.github/workflows/dist-build.yml
 
@@ -56,7 +56,10 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v4
         with:
-          subject-path: "dist-artifacts/typdoc-*.tar.gz"
+          # Every archive, the Windows .zip as well as the .tar.gz of the others.
+          subject-path: |
+            dist-artifacts/typdoc-*.tar.gz
+            dist-artifacts/typdoc-*.zip
 
   release:
     name: create GitHub pre-release + upload assets

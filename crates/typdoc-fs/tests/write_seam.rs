@@ -19,7 +19,11 @@ use typdoc_testkit::fake::{Failure, FakeFs, FixedClock, On, Stage};
 
 /// An unusual mode, which no umask hands out by itself, so that a mode found on a file after a
 /// write was carried there rather than defaulted there.
+#[cfg(unix)]
 const UNUSUAL: Mode = 0o100_400;
+/// On Windows a mode is the read-only flag, and a new file is not read-only.
+#[cfg(windows)]
+const UNUSUAL: Mode = 0o444;
 
 /// What a scenario looks at afterwards, without going back through the seam it is testing.
 trait Disk {
@@ -421,9 +425,22 @@ impl Disk for RealDisk {
         std::fs::read(path).ok()
     }
 
+    #[cfg(unix)]
     fn mode(&self, path: &Path) -> Option<Mode> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::metadata(path).ok().map(|m| m.permissions().mode())
+    }
+
+    /// The read-only flag, read directly rather than through the seam.
+    #[cfg(windows)]
+    fn mode(&self, path: &Path) -> Option<Mode> {
+        std::fs::metadata(path).ok().map(|m| {
+            if m.permissions().readonly() {
+                0o444
+            } else {
+                0o666
+            }
+        })
     }
 
     fn names_in(&self, directory: &Path) -> Vec<String> {

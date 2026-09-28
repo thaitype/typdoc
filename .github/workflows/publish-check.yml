@@ -6,7 +6,9 @@ name: publish-check
 # job within one — putting this in ci.yml would stop test/fmt/clippy running on any PR that
 # doesn't touch a manifest.
 on:
+  # As in ci.yml: a pull request builds its branch, so a push is checked only on main.
   push:
+    branches: [main]
     paths:
       - "Cargo.toml"
       - "Cargo.lock"

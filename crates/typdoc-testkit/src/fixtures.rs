@@ -73,7 +73,9 @@ mod tests {
         let error = locate(Path::new("/no/such/place/crates/typdoc")).unwrap_err();
 
         assert!(error.contains("checkout of the repository"), "{error}");
-        assert!(error.contains("/no/such/place/fixtures"), "{error}");
+        // Joined as the loader joins it, so the separator is this system's.
+        let fixtures = Path::new("/no/such/place").join("fixtures");
+        assert!(error.contains(&fixtures.display().to_string()), "{error}");
     }
 
     #[test]

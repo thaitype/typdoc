@@ -1,7 +1,7 @@
 [workspace]
 members = ["cargo:."]
 
-# Config for 'dist' (cargo-dist) — builds the four prebuilt-binary targets consumed by
+# Config for 'dist' (cargo-dist) — builds the six prebuilt-binary targets consumed by
 # .github/workflows/dist-build.yml. See that workflow for how these settings are used in CI.
 [dist]
 # Pinned to an exact version (not a range) so upgrading it later is a deliberate, visible change.
@@ -20,14 +20,16 @@ ci = "github"
 # archive + checksum for the given target) — so dist's own installer, with its PATH-modifying
 # default (`NO_MODIFY_PATH` is a runtime env var the generated script reads, not a build-time
 # key here — see ticket 01's report), is never generated or shipped anywhere by this repo's
-# pipeline. Only the hand-written, PATH-never-editing script below ever reaches a user. Windows
-# is not a release target for this story — see .chief/story-5/_goal/goal.md — so `installers`
-# no longer lists `powershell`.
+# pipeline. Only the hand-written, PATH-never-editing scripts in pages/ ever reach a user; the
+# Windows one, pages/install.ps1, is hand-written for the same reason, so `installers` does not
+# list `powershell` either.
 installers = ["shell"]
 # Every asset name/extension below must match the contract's naming table exactly.
-targets = ["x86_64-apple-darwin", "aarch64-apple-darwin", "x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]
+targets = ["x86_64-apple-darwin", "aarch64-apple-darwin", "x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl", "x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"]
 # .tar.gz, not dist's own .tar.xz default, per the contract's asset naming table.
 unix-archive = ".tar.gz"
+# Windows archives are .zip, which Windows opens without anything installed.
+windows-archive = ".zip"
 # This repo's CI is a hand-written reusable workflow (dist-build.yml) with a fixed
 # runner-per-target, not `dist generate`'s own release.yml — `dist` would otherwise refuse to
 # run at all, insisting that file be regenerated and committed.

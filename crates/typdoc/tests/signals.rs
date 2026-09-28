@@ -1,9 +1,13 @@
 //! Covers SPC-3, SPC-10.
 //!
+//! Unix only: these tests send `SIGINT` and `SIGTERM`, which Windows does not have.
+//!
 //! Under the lock, before it writes, `new` reads every document already there from disk for its
 //! ref checks (`Project::prescan_refs`). With enough documents that holds the lock for a real
 //! stretch of time, which these tests wait on instead of a sleep: the binary has no mode that
 //! holds a lock and waits, and needs none.
+
+#![cfg(unix)]
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;

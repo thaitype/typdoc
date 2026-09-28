@@ -11,13 +11,22 @@
 
 use std::fs;
 use std::io::{self, Write};
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 
 use typdoc_core::{FileId, Fs, Mode, WriteHandle};
 
-/// The file system this process is running on. Linux is the platform that is run and claimed,
-/// and the mode and the identity of a file are read the way Unix reports them.
+#[cfg(unix)]
+mod unix;
+#[cfg(unix)]
+use unix as platform;
+
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+use windows as platform;
+
+/// The file system this process is running on: Unix, or Windows (`windows.rs` says how each
+/// Unix reading is made there).
 pub struct SystemFs;
 
 impl Fs for SystemFs {
@@ -26,7 +35,7 @@ impl Fs for SystemFs {
     }
 
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
-        fs::rename(from, to)
+        platform::rename(from, to)
     }
 
     fn remove_file(&self, path: &Path) -> io::Result<()> {
@@ -38,11 +47,11 @@ impl Fs for SystemFs {
     }
 
     fn mode(&self, path: &Path) -> io::Result<Mode> {
-        Ok(fs::metadata(path)?.permissions().mode())
+        platform::mode_at(path)
     }
 
     fn set_mode(&self, path: &Path, mode: Mode) -> io::Result<()> {
-        fs::set_permissions(path, fs::Permissions::from_mode(mode))
+        platform::set_mode_at(path, mode)
     }
 
     fn exists(&self, path: &Path) -> io::Result<bool> {
@@ -61,19 +70,7 @@ impl Fs for SystemFs {
     }
 
     fn identity_at(&self, path: &Path) -> io::Result<Option<FileId>> {
-        match fs::metadata(path) {
-            Ok(data) => Ok(Some(file_id(&data))),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e),
-        }
-    }
-}
-
-fn file_id(data: &fs::Metadata) -> FileId {
-    FileId {
-        device: data.dev(),
-        inode: data.ino(),
-        links: data.nlink(),
+        platform::identity_at(path)
     }
 }
 
@@ -89,6 +86,6 @@ impl WriteHandle for OpenFile {
     }
 
     fn identity(&self) -> io::Result<FileId> {
-        Ok(file_id(&self.0.metadata()?))
+        platform::identity_of(&self.0)
     }
 }

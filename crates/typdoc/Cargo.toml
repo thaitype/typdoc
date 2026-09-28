@@ -17,15 +17,26 @@ libc = "0.2.189"
 # `raw_value` lets `--json` print a `number` with the digits written in the document, which no
 # `serde_json::Number` keeps. `preserve_order` keeps a document's fields in the order of the file.
 serde_json = { version = "1.0.151", features = ["preserve_order", "raw_value"] }
+typdoc-core = { version = "0.5.0", path = "../typdoc-core" }
+typdoc-fs = { version = "0.5.0", path = "../typdoc-fs" }
+
+[target.'cfg(unix)'.dependencies]
 # Catches SIGINT and SIGTERM, moves the cleanup off the handler onto an ordinary thread, and
 # re-raises so the process ends by the signal (SPC-3, SPC-10), all in one dependency.
 signal-hook = "0.4.4"
-typdoc-core = { version = "0.5.0", path = "../typdoc-core" }
-typdoc-fs = { version = "0.5.0", path = "../typdoc-fs" }
+
+[target.'cfg(windows)'.dependencies]
+# `SetConsoleCtrlHandler` and `ExitProcess`, for Ctrl+C (SPC-3, SPC-10).
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
 typdoc-testkit = { path = "../typdoc-testkit" }
+
+[target.'cfg(windows)'.dev-dependencies]
+# `GenerateConsoleCtrlEvent` and `CREATE_NEW_PROCESS_GROUP`, for the Ctrl+C tests, and the DACL
+# a test puts on a document.
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Threading"] }
 
 # Off by default so that `cargo install` does not put the stand-in below on a caller's `PATH`.
 # `cargo install` builds every binary a package declares unless it is told otherwise, and a

@@ -496,7 +496,8 @@ mod tests {
 
         let error = tree.case().check(&output()).unwrap_err();
 
-        assert!(error.contains("golden/stdout.json"), "{error}");
+        let golden = Path::new("golden").join("stdout.json");
+        assert!(error.contains(&golden.display().to_string()), "{error}");
         assert!(
             error.contains("TYPDOC_REGENERATE_GOLDEN=get/one"),
             "{error}"
@@ -587,7 +588,7 @@ mod tests {
         let tree = Tree::new();
         let golden = tree.root().join("get/one/golden/stdout.json");
         std::fs::remove_file(&golden).unwrap();
-        std::os::unix::fs::symlink("../assertions.json", &golden).unwrap();
+        crate::link::file("../assertions.json", &golden).unwrap();
         let before = tree.read("get/one/assertions.json");
 
         let error = write_golden(&golden, &json!({ "x": 1 })).unwrap_err();
@@ -600,7 +601,7 @@ mod tests {
     fn a_stale_temporary_file_that_links_to_an_assertion_file_is_not_written_through() {
         let tree = Tree::new();
         let temporary = tree.root().join("get/one/golden/.stdout.json.tmp");
-        std::os::unix::fs::symlink("../assertions.json", &temporary).unwrap();
+        crate::link::file("../assertions.json", &temporary).unwrap();
         let before = tree.read("get/one/assertions.json");
 
         write_golden(
@@ -688,7 +689,7 @@ mod tests {
         let tree = Tree::new();
         std::fs::remove_dir_all(tree.root().join("get/one/golden")).unwrap();
         tree.put("elsewhere/keep", "");
-        std::os::unix::fs::symlink("../../elsewhere", tree.root().join("get/one/golden")).unwrap();
+        crate::link::dir("../../elsewhere", tree.root().join("get/one/golden")).unwrap();
 
         let error =
             write_golden(&tree.root().join("get/one/golden/stdout.json"), &json!({})).unwrap_err();

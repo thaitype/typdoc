@@ -498,6 +498,8 @@ fn a_link_named_in_plain_text_is_an_error_where_the_same_link_under_a_glob_is_a_
     assert_eq!(globbed.code, 0, "{}", globbed.stderr);
 }
 
+// Unix only: a Windows file name is UTF-16 and cannot be given as arbitrary bytes.
+#[cfg(unix)]
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "a non-UTF-8 filename needs a POSIX filesystem that allows arbitrary bytes in a \

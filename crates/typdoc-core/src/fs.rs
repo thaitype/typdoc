@@ -32,10 +32,14 @@ pub fn is_temp_name(name: &str) -> bool {
 /// `device` and `inode` are what a lock's release compares between the path and its handle.
 /// Only the handle's `links` is read: whether the file behind the handle has been unlinked is
 /// not something a `stat` on a path that may now lead elsewhere can tell.
+///
+/// On Windows `device` is the volume serial number and `inode` the file id, which is 128 bits
+/// on ReFS; a Unix inode fits in it as it is. A Windows handle whose file is waiting to be
+/// deleted reports no links.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FileId {
     pub device: u64,
-    pub inode: u64,
+    pub inode: u128,
     pub links: u64,
 }
 

@@ -66,6 +66,15 @@ changing them needs privilege typdoc does not have, and access control lists and
 attributes are not carried either. A file that did not exist has no mode to carry and gets the
 default.
 
+On Windows the mode is the read-only flag, and the access control list is carried too: the
+replaced file's DACL, protected from inheritance or not as it was, is put on the temp file before
+the rename, which is made with POSIX semantics and so replaces the name in one step, as on Unix,
+read-only file included. A DACL that cannot be read from the file or set on the temp file stops
+the write: it exits 6 and the document stays as it was, since a document is never replaced by one
+that grants other access. The owner and the audit list are not carried. A file that another
+program holds open without letting it be deleted cannot be replaced: the write exits 6 and says
+that another program has the file open.
+
 ## Taking a lock
 
 A lock is a file created with `O_EXCL`, holding the process id, the hostname and the time it was
@@ -73,6 +82,15 @@ taken. A process that finds the file already there retries with backoff until a 
 seconds unless `--lock-timeout` says otherwise, and then exits 4. typdoc never deletes or takes
 over a lock that another process created, whatever its age and whether or not that process is
 still running: there is no age threshold.
+
+## Releasing a lock
+
+A lock is removed only while it is still the file this process created: the file at its path has
+the identity that the process's own open handle reports, and that handle still has a link. The
+identity is the device and inode on Unix, and the volume and the 128-bit file id on Windows, where
+a file waiting to be deleted has no link. A path that cannot be opened is not the process's own.
+Otherwise the lock was taken away while the command ran, and removing what is at the path now
+would take over another process's lock, so nothing is removed.
 
 ## When a lock is not acquired
 
@@ -113,16 +131,16 @@ the host's hostname makes the status unreliable.
 
 ## The window when a lock is taken
 
-The handler for interrupt signals is registered before the first lock file is created, not when
-the first lock is wanted, so a run never holds a lock it has not arranged to release. What remains
-is the instant inside the creating call itself: the file system makes the lock file, and the
-process records that it holds it when the call returns. An interrupt in between leaves a lock file
-that no list in the process names, and typdoc does not remove it, because in that instant it has
-no evidence the file is its own, and removing a lock on no evidence is the takeover typdoc never
-does. The result is a lock with no owner in one namespace. The next run that wants it waits,
-times out and exits 4; where the process id can be looked up, the message says the owner is no
-longer running and which file to delete. No document is written and none is damaged; the window
-is left open knowingly.
+The handler for interrupt signals, on Windows the console control handler, is registered before the
+first lock file is created, not when the first lock is wanted, so a run never holds a lock it has
+not arranged to release. What remains is the instant inside the creating call itself: the file
+system makes the lock file, and the process records that it holds it when the call returns. An
+interrupt in between leaves a lock file that no list in the process names, and typdoc does not
+remove it, because in that instant it has no evidence the file is its own, and removing a lock on no
+evidence is the takeover typdoc never does. The result is a lock with no owner in one namespace. The
+next run that wants it waits, times out and exits 4; where the process id can be looked up, the
+message says the owner is no longer running and which file to delete. No document is written and
+none is damaged; the window is left open knowingly.
 
 ## Lock order
 
