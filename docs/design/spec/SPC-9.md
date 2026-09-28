@@ -5,11 +5,9 @@ status: active
 
 ## Supported platforms
 
-Prebuilt binaries exist for four targets: macOS x86_64 and aarch64, Linux x86_64 and aarch64.
-Windows is not supported yet — not by the installer, and not by `cargo install` either, which
-has never compiled there. `typdoc-fs`, the crate implementing `typdoc_core::Fs`, is Unix-only by
-design, so a Windows binary cannot compile at all today. Supporting Windows is its own later
-story, not a gap in this one.
+Prebuilt binaries exist for six targets: macOS x86_64 and aarch64, Linux x86_64 and aarch64,
+Windows x86_64 and aarch64. Windows builds start with 0.6.0; a release before it has none.
+`cargo install typdoc` builds on every one of these platforms.
 
 The two Linux targets are musl, not gnu. A gnu-linked binary refuses to start on a distro whose
 glibc is older than the one it linked against; musl binaries are statically linked and carry no
@@ -37,7 +35,7 @@ instead of the latest one) and `INSTALL_DIR` (install into this directory instea
 before `sh`, not before `curl`:
 
 ```console
-$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.5.0 sh
+$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.6.0 sh
 ```
 
 The script never edits `PATH` or any shell startup file. If the install directory isn't already
@@ -60,12 +58,34 @@ path otherwise. Where it's under `$HOME`, the persisted command keeps `$HOME` as
 unexpanded text (the script builds it inside single quotes) so the line stays correct regardless
 of which `$HOME` happened to be set when the installer ran.
 
-`cargo install typdoc` stays a supported install path alongside the script, on every platform it
-already worked on.
+## The Windows installer
+
+`https://typdoc.thaitype.dev/install.ps1` is the same installer for Windows, piped into PowerShell:
+
+```powershell
+irm https://typdoc.thaitype.dev/install.ps1 | iex
+```
+
+It runs under Windows PowerShell 5.1 and PowerShell 7 and behaves as the script does: it takes
+the tag from `TYPDOC_VERSION` or from the latest release, downloads the archive for the machine's
+architecture, verifies its SHA-256 checksum before installing anything, and installs `typdoc.exe`
+to `INSTALL_DIR`, by default `%USERPROFILE%\.local\bin`. A release that has no Windows archive, a
+tag that does not exist, or a checksum mismatch fails with one `error:` line and installs nothing.
+The variables are set in the same session before the pipe:
+
+```powershell
+$env:TYPDOC_VERSION = 'v0.6.0'; irm https://typdoc.thaitype.dev/install.ps1 | iex
+```
+
+It never edits `PATH`, for the user or the machine. If the directory is not on `PATH`, it prints
+the command that adds it for the user permanently and the one that adds it to the current session.
+
+`cargo install typdoc` stays a supported install path alongside the scripts, on every platform.
 
 ## What a release carries
 
-Every release carries, for each of the four targets: the archive, a `.sha256` checksum file next
+Every release carries, for each of the six targets: the archive (`.tar.gz`, or `.zip` for
+Windows), a `.sha256` checksum file next
 to it, and a GitHub artifact attestation (`actions/attest-build-provenance`), independently
 verifiable with `gh attestation verify`. A checksum only catches a corrupted download; the
 attestation shows the binary was actually built by this repository's own workflow.
@@ -77,11 +97,12 @@ that runs.
 
 ## The Pages site
 
-`typdoc.thaitype.dev` serves exactly two files: the installer script itself, and a root
-`index.html` that redirects to this GitHub repository. Nothing else lives there.
+`typdoc.thaitype.dev` serves exactly three files: the two installer scripts, `install` and
+`install.ps1`, and a root `index.html` that redirects to this GitHub repository. Nothing else lives
+there.
 
 ## Deferred
 
-The release-target list (the four targets above) may become a `catalog/` entry of its own later,
-checked against `dist-workspace.toml` and `pages/install` so the three can never silently drift
-apart. Not built in this story — no catalog entry exists yet for it.
+The release-target list (the six targets above) may become a `catalog/` entry of its own later,
+checked against `dist-workspace.toml`, `pages/install` and `pages/install.ps1` so the four can
+never silently drift apart. No catalog entry exists yet for it.

@@ -1,7 +1,7 @@
 # Validation
 
-typdoc 0.5.0. `typdoc validate` checks the project, or the documents named, against its schemas
-and rules. Every finding carries a `rule` id; this page lists every id 0.5.0 can report, what it
+typdoc 0.6.0. `typdoc validate` checks the project, or the documents named, against its schemas
+and rules. Every finding carries a `rule` id; this page lists every id 0.6.0 can report, what it
 means, and the usual fix.
 
 ## Running it
@@ -150,7 +150,7 @@ finding in `validate`'s report.
 The messages of `config.vendor-*` mention `typdoc pull`; that command does not exist yet.
 Restore the pinned copy from version control instead.
 
-## Known gaps in 0.5.0
+## Known gaps in 0.6.0
 
 - `refs --reverse` scans this project's namespaces only, not the projects it imports, so a ref
   held in an imported project that points back here is missing from its result.

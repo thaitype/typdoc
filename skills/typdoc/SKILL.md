@@ -5,7 +5,7 @@ description: Work with a typdoc project — a folder of Markdown documents whose
 
 # typdoc
 
-Written for **typdoc 0.5.0**. Source and issues: https://github.com/thaitype/typdoc —
+Written for **typdoc 0.6.0**. Source and issues: https://github.com/thaitype/typdoc —
 use it only when something here does not match what the binary does.
 
 typdoc treats a folder of Markdown files as typed, linked documents. Each document is YAML
@@ -21,28 +21,31 @@ does not decide for you.
 
 ```console
 $ typdoc --version
-typdoc 0.5.0
+typdoc 0.6.0
 ```
 
 **Not found** (`command not found`, exit 127): typdoc is not installed, or its directory is not
 on `PATH`. Try `~/.local/bin/typdoc --version` first, because the install script puts it there and
 never edits `PATH`. If that works, call it by that path, or add the directory for this session:
-`export PATH="$HOME/.local/bin:$PATH"`.
+`export PATH="$HOME/.local/bin:$PATH"`. On Windows the directory is `%USERPROFILE%\.local\bin`,
+added for this PowerShell session with `$env:Path = "$env:USERPROFILE\.local\bin;$env:Path"`.
 
 **Not installed:** installing is the user's decision, since it downloads and runs a script from the
 internet. Tell the user, and install only when they agree. This installs the version this skill
 is written for:
 
 ```console
-$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.5.0 sh
+$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.6.0 sh
 ```
 
 - macOS and Linux, amd64 and arm64, with no Rust toolchain. The script checks the SHA-256
   checksum and installs to `~/.local/bin`; `INSTALL_DIR` changes the directory.
 - Put the variables after the pipe, right before `sh`. Written before `curl`, they never reach
   the script, and you get the latest release in the default directory.
-- With a Rust toolchain instead: `cargo install typdoc --version 0.5.0`.
-- Windows is not supported yet, by the script or by `cargo install`. Use WSL.
+- With a Rust toolchain instead: `cargo install typdoc --version 0.6.0`.
+- On Windows, in PowerShell, with the variable set before the pipe:
+  `$env:TYPDOC_VERSION = 'v0.6.0'; irm https://typdoc.thaitype.dev/install.ps1 | iex`.
+  It installs `typdoc.exe` to `%USERPROFILE%\.local\bin`, and never edits `PATH` either.
 
 **A different version:** say so to the user before relying on this skill, and prefer what
 `typdoc <command> --help` says wherever the two disagree.
