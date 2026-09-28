@@ -74,15 +74,14 @@ fn a_set_keeps_a_read_only_document_read_only_and_writes_it() {
     assert_eq!(sddl(&document).unwrap(), RESTRICTIVE);
 }
 
-/// The owner is denied reading the DACL, so it cannot be carried: nothing is replaced. The bytes
-/// are read through a handle that asks only to read data, which that DACL still allows; setting
-/// the DACL back would need the right it denies.
+/// The folder hands every new file an entry denying its owner `WRITE_DAC`, so the temp file
+/// cannot be given the document's DACL: nothing is replaced. (A DACL that cannot be read is not
+/// reached: reading a document asks for `READ_CONTROL` too, so that write stops earlier.)
 #[test]
-fn a_dacl_that_cannot_be_read_stops_the_write_and_the_document_is_not_replaced() {
+fn a_dacl_that_cannot_be_carried_stops_the_write_and_the_document_is_not_replaced() {
     let project = Scratch::project(&TITLED);
     project.file("a.md", "---\ntitle: A\n---\n");
-    let document = project.path().join("a.md");
-    set_sddl(&document, "D:P(D;;RC;;;OW)(A;;FA;;;WD)").unwrap();
+    set_sddl(project.path(), "D:P(D;OICI;WD;;;OW)(A;OICI;FA;;;WD)").unwrap();
 
     let ran = set_title(&project, "B");
 
@@ -94,13 +93,7 @@ fn a_dacl_that_cannot_be_read_stops_the_write_and_the_document_is_not_replaced()
         "{}",
         ran.stderr
     );
-    let mut bytes = String::new();
-    std::fs::OpenOptions::new()
-        .access_mode(0x1) // FILE_READ_DATA, without READ_CONTROL
-        .open(&document)
-        .and_then(|mut file| std::io::Read::read_to_string(&mut file, &mut bytes))
-        .unwrap();
-    assert_eq!(bytes, "---\ntitle: A\n---\n");
+    assert_eq!(project.read("a.md"), "---\ntitle: A\n---\n");
 }
 
 #[test]
