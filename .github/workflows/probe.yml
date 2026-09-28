@@ -16,8 +16,7 @@ jobs:
       - run: cmd /c ver
       - run: |
           echo "TEMP=$env:TEMP"
-          fsutil fsinfo volumeinfo C:\
-          fsutil fsinfo volumeinfo D:\
+          Get-Volume | Format-Table DriveLetter, FileSystem, FileSystemLabel -AutoSize
           exit 0
       - run: cargo run --locked
         working-directory: probe
