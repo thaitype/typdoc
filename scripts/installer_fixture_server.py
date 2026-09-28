@@ -8,6 +8,11 @@ directory, and the installer script is pointed at it via TYPDOC_INSTALL_BASE_URL
 
     /releases/latest/download/<name>   -> 302 redirect to /releases/download/<latest tag>/<name>
     /releases/download/<tag>/<name>    -> serves fixtures_dir/<tag>/<name>, 404 if missing
+    /releases/tag/<tag>                -> 200 when fixtures_dir/<tag> exists, 404 if not, as
+                                          GitHub answers for a release page
+
+HEAD is answered as GET is, without the body: pages/install.ps1 asks with HEAD whether a
+release and its Windows archive exist before it downloads anything.
 
 The fixtures directory holds one subdirectory per release tag, each containing the archive +
 `.sha256` files an installer would download for it. scripts/test_installer_posix.sh populates
@@ -55,11 +60,34 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             f.write(f"{self.command} {path}\n")
 
     def do_GET(self) -> None:  # noqa: N802
+        self._serve(send_body=True)
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        self._serve(send_body=False)
+
+    def _serve(self, send_body: bool) -> None:
         path = self.path.split("?", 1)[0]
         self._log_request_path(path)
 
         latest_prefix = "/releases/latest/download/"
         download_prefix = "/releases/download/"
+        tag_prefix = "/releases/tag/"
+
+        if path.startswith(tag_prefix):
+            tag = path[len(tag_prefix):]
+            if not tag or "/" in tag or tag in (".", "..") or not os.path.isdir(
+                os.path.join(self.fixtures_dir, tag)
+            ):
+                self.send_error(404)
+                return
+            body = f"release {tag}\n".encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if send_body:
+                self.wfile.write(body)
+            return
 
         if path.startswith(latest_prefix):
             name = path[len(latest_prefix):]
@@ -99,7 +127,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/octet-stream")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(body)
+            if send_body:
+                self.wfile.write(body)
             return
 
         self.send_error(404)

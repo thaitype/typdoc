@@ -102,6 +102,31 @@ class FixtureServerTests(unittest.TestCase):
             self._get("/releases/download/v1.0.0/does-not-exist.tar.gz")
         self.assertEqual(ctx.exception.code, 404)
 
+    def _head(self, path: str):
+        request = urllib.request.Request(f"{self.base_url}{path}", method="HEAD")
+        opener = urllib.request.build_opener(_NoRedirect())
+        try:
+            resp = opener.open(request)
+            return resp.status, resp.headers.get("Location"), resp.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.headers.get("Location"), b""
+
+    def test_head_answers_as_get_does_without_a_body(self) -> None:
+        self.assertEqual(self._head("/releases/download/v1.0.0/typdoc-x.tar.gz"), (200, None, b""))
+        self.assertEqual(
+            self._head("/releases/latest/download/typdoc-x.tar.gz"),
+            (302, "/releases/download/v1.0.0/typdoc-x.tar.gz", b""),
+        )
+        self.assertEqual(self._head("/releases/download/v1.0.0/nope.zip")[0], 404)
+
+    def test_a_release_page_exists_exactly_for_a_fixture_tag(self) -> None:
+        status, body = self._get("/releases/tag/v1.0.0")
+        self.assertEqual(status, 200)
+        self.assertIn(b"v1.0.0", body)
+        self.assertEqual(self._head("/releases/tag/v1.0.0")[0], 200)
+        self.assertEqual(self._head("/releases/tag/v9.9.9-does-not-exist")[0], 404)
+        self.assertEqual(self._head("/releases/tag/..")[0], 404)
+
     def test_unknown_path_is_404(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self._get("/nonsense")
