@@ -687,7 +687,7 @@ dependencies = [
 
 [[package]]
 name = "typdoc"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "clap",
@@ -703,7 +703,7 @@ dependencies = [
 
 [[package]]
 name = "typdoc-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "pulldown-cmark",
@@ -721,7 +721,7 @@ dependencies = [
 
 [[package]]
 name = "typdoc-fs"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "tempfile",
  "typdoc-core",

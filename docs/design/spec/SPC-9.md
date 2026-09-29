@@ -35,7 +35,7 @@ instead of the latest one) and `INSTALL_DIR` (install into this directory instea
 before `sh`, not before `curl`:
 
 ```console
-$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.6.0 sh
+$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.7.0 sh
 ```
 
 The script never edits `PATH` or any shell startup file. If the install directory isn't already
@@ -74,7 +74,7 @@ tag that does not exist, or a checksum mismatch fails with one `error:` line and
 The variables are set in the same session before the pipe:
 
 ```powershell
-$env:TYPDOC_VERSION = 'v0.6.0'; irm https://typdoc.thaitype.dev/install.ps1 | iex
+$env:TYPDOC_VERSION = 'v0.7.0'; irm https://typdoc.thaitype.dev/install.ps1 | iex
 ```
 
 It never edits `PATH`, for the user or the machine. If the directory is not on `PATH`, it prints
