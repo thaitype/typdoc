@@ -25,10 +25,12 @@ A name is read in this order; the first step that applies decides.
 
 1. As an argument only, a path on disk: an absolute path, or one beginning with `/`, `./` or
    `../`, and on Windows `\`, `.\` or `..\`, read from the current directory (`SPC-2`).
-2. `alias::rest`: `rest` is read in the imported project `alias`, from its folder and with its
-   namespaces. An alias the project does not configure is a bad prefix, and one configured but not
-   on this machine is an absent import (`imports.absent`). A second `::` is a bad prefix: imports of
-   imports are not read. A key into a project with several namespaces names one
+2. In a body link, a URL is not a ref: a name that begins with a scheme followed by `//`, or with
+   `http:`, `https:`, `mailto:` or `file:`, the schemes no namespace or alias may be named.
+   `alias::rest` otherwise: `rest` is read in the imported project `alias`, from its folder and with
+   its namespaces. An alias the project does not configure is a bad prefix, and one configured but
+   not on this machine is an absent import (`imports.absent`). A second `::` is a bad prefix:
+   imports of imports are not read. A key into a project with several namespaces names one
    (`chief::story-3:WF-5`); `chief::WF-5` is a bad prefix there, since only a project with one
    namespace has `default`.
 3. `name:rest`, where `name` is exactly a namespace of the project, or `default` in a project with
@@ -36,7 +38,7 @@ A name is read in this order; the first step that applies decides.
    path from that namespace's folder. `name` is never a glob or a list; those are for `--namespace`
    and `TYPDOC_NAMESPACE` only.
 4. `name:rest`, where `name` is no namespace: a bad prefix. In a body link it is one only when
-   `rest` does not begin with `//` and ends in `.md`; otherwise the link is a URL, and not a ref.
+   `rest` ends in `.md`; otherwise the link is a URL (`tel:123`), and not a ref.
 5. A name with the shape of a key, `CODE-number` with or without a slug (`SPC-17`): a key, in the
    writer's namespace in a ref, in the command's scope as an argument, whatever its code. A key no
    document has is `no document with key <key>`. In a body link this step does not apply.

@@ -1,7 +1,7 @@
 ---
 blocked_by:
 - TK-2
-status: open
+status: resolved
 title: Survey by running how each place reads a glob today
 type: implementation
 ---

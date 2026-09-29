@@ -462,6 +462,20 @@ impl Project {
         self.project_codes()
     }
 
+    /// The project as names are read in it.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "no caller reads names through a scene yet")
+    )]
+    pub(crate) fn scene(&self) -> crate::name::Scene<'_> {
+        crate::name::Scene {
+            namespaces: &self.config.namespaces,
+            index: &self.index,
+            root: &self.root,
+            imports: &self.imports,
+        }
+    }
+
     /// The namespaces a command reads. `prefix` is the namespace an argument names.
     pub fn scope(
         &self,

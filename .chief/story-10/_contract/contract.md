@@ -19,9 +19,12 @@ of the writer, and the place:
 
 A new module, `crates/typdoc-core/src/name.rs`, holds both directions and nothing else reads or writes a name:
 
-- `resolve(text, context) -> Result<Identity, Unresolved>`, read in this order:
+- `resolve(text, place, scene) -> Result<Resolved, Unresolved>` (`Resolved` as refs report it today, with the
+  path, the project and a written slug; `Unresolved` adds `Absolute`, `NotARef` and, for an argument's key,
+  `Ambiguous`), read in this order:
   1. An argument only: a path on disk (absolute, `/`, `./`, `../`, and on Windows `\`, `.\`, `..\`), from the
-     current directory.
+     current directory. This step needs the current directory and stays with the argument's caller, before
+     `resolve`.
   2. `alias::rest`: the import `alias`, `rest` read as from that project's folder with its own namespaces. An
      alias not configured is a bad prefix; one not present is an absent import. A second `::` is a bad prefix.
   3. `name:rest`, `name` exactly a namespace (D8: never a glob or a list, which only `--namespace` and
@@ -33,12 +36,14 @@ A new module, `crates/typdoc-core/src/name.rs`, holds both directions and nothin
      for an argument, whatever the code (D2: `no document with key XX-1`). Not in a body link.
   6. An absolute path in a ref or a body link: `Unresolved::AbsolutePath`, a finding (D3).
   7. Anything else: a path from the place's base.
-- `format(identity, form, context) -> String`, three forms:
+- `format(identity, form, place, namespaces) -> String`, `identity` carrying the key and slug a form may
+  write, four forms:
   - `Path`: the path from the project folder; what `--json` `path` is today, byte for byte.
   - `Portable`: `[alias::][namespace:]KEY` for a coded document, the namespace written when the project has more
     than one; `[alias::]namespace:path-from-its-folder` for any other, `default:path` in a project with one
     namespace (D7). It resolves to the document from every
     context of the project it is printed for.
+  - `Relative`: the path from the place's base, what a path with no prefix is in a document.
   - `Like(written)`: the name written the way `written` was (key or path, with or without a prefix, `./`, a slug,
     an anchor kept by the caller), for the refs `mv` rewrites.
 - Round trip: for every document and every context, `resolve(format(d, form, c), c) == d` for each form that

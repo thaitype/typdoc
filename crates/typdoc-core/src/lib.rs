@@ -31,6 +31,14 @@ mod lines;
 mod links;
 mod lock;
 mod mv;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "no caller reads or writes names through this module yet"
+    )
+)]
+mod name;
 mod namespace_lock;
 mod namespaces;
 mod project;

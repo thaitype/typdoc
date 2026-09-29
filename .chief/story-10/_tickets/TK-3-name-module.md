@@ -2,7 +2,7 @@
 blocked_by:
 - TK-1
 - TK-2
-status: open
+status: resolved
 title: 'name.rs: resolve and format, with the round trip'
 type: implementation
 ---
