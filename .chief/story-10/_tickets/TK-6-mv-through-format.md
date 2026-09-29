@@ -1,7 +1,7 @@
 ---
 blocked_by:
 - TK-3
-status: open
+status: resolved
 title: mv rewrites through format, and keeps a body link's form
 type: implementation
 ---

@@ -1,4 +1,4 @@
-//! Covers SPC-2, SPC-5, SPC-8, SPC-17.
+//! Covers SPC-2, SPC-5, SPC-8, SPC-17, SPC-18.
 //!
 //! `--renumber` shares plain `mv`'s prepare-then-rename commit and its refusals, which `mv.rs` and
 //! `crates/typdoc-core/tests/mv_seam.rs` cover; this file covers what is its own.
@@ -682,6 +682,55 @@ fn renumber_does_not_report_a_mention_of_an_unrelated_key() {
 
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     assert_eq!(ran.stdout_json()["unrewritten"], json!([]));
+}
+
+/// The same key written in another namespace, or prefixed with another namespace, names another
+/// document: only the mentions that read as the moved document are reported.
+#[test]
+fn renumber_reports_only_the_mentions_that_name_the_moved_document() {
+    let project = project();
+    project.file(
+        ".typdoc/collections/notes.json",
+        r#"{ "match": "notes/*.md", "schema": "note.json" }"#,
+    );
+    project.file(
+        "note.json",
+        r#"{ "name": "note", "fields": { "title": { "type": "string" } } }"#,
+    );
+    project.file("story-1/tickets/WF-5.md", "---\ntitle: One\n---\n");
+    project.file(
+        "story-1/notes/holder.md",
+        "---\ntitle: Holder\n---\n\nWF-5 and story-3:WF-5.\n",
+    );
+    project.file(
+        "story-3/notes/other.md",
+        "---\ntitle: Other\n---\n\nWF-5 and story-1:WF-5.\n",
+    );
+
+    let ran = renumber(&project, "story-1:WF-5", "story-3");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let found: Vec<(String, String)> = ran.stdout_json()["unrewritten"]
+        .as_array()
+        .expect("array")
+        .iter()
+        .map(|entry| {
+            (
+                entry["path"].as_str().unwrap().to_owned(),
+                entry["written"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("story-1/notes/holder.md".to_owned(), "WF-5".to_owned()),
+            (
+                "story-3/notes/other.md".to_owned(),
+                "story-1:WF-5".to_owned()
+            ),
+        ]
+    );
 }
 
 #[test]

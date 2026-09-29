@@ -1,4 +1,4 @@
-//! Covers SPC-1, SPC-2, SPC-5, SPC-10, SPC-12, SPC-17.
+//! Covers SPC-1, SPC-2, SPC-5, SPC-10, SPC-12, SPC-17, SPC-18.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -373,6 +373,83 @@ fn a_body_link_written_with_percent_encoding_keeps_that_convention() {
     assert_eq!(
         project.read("holder.md"),
         "---\ntitle: B\n---\n\nSee [a](new%20file.md).\n"
+    );
+}
+
+/// Two links to the moved document on one line, one written with `./`: each keeps its form and
+/// its anchor, and the project validates clean after the move. The new name is shorter, so a
+/// splice of the first link would move the second back from the column it was found at.
+#[test]
+fn every_body_link_on_a_line_is_rewritten_keeping_its_dot_slash_and_its_anchor() {
+    let project = Scratch::project(&NOTES);
+    project.file("a-much-longer-name.md", "---\ntitle: B\n---\n\n## Part\n");
+    project.file(
+        "a.md",
+        "---\ntitle: A\n---\n\n[one](./a-much-longer-name.md#part) and [two](a-much-longer-name.md#part)\n",
+    );
+
+    let ran = mv(&project, "a-much-longer-name.md", "c.md");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(
+        project.read("a.md"),
+        "---\ntitle: A\n---\n\n[one](./c.md#part) and [two](c.md#part)\n"
+    );
+    let validated = common::Spawn::args(["validate", "--json"])
+        .cwd(project.path())
+        .run();
+    assert_eq!(validated.code, 0, "{}", validated.stdout);
+}
+
+/// A written `./` is kept even where the new path climbs out of the folder.
+#[test]
+fn a_dot_slash_is_kept_in_front_of_a_path_that_climbs_out_of_the_folder() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "**/*.md", "schema": "note.json" }"#,
+        ),
+        ("note.json", r#"{ "name": "note", "fields": {} }"#),
+    ]);
+    project.file("a.md", "---\n---\n");
+    project.file("sub/h.md", "---\n---\n\n[a](./../a.md)\n");
+
+    let ran = mv(&project, "a.md", "b.md");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(project.read("sub/h.md"), "---\n---\n\n[a](./../b.md)\n");
+}
+
+/// No prefix names a folder outside every namespace, so a prefixed ref becomes a path from the
+/// document that holds it.
+#[test]
+fn a_prefixed_ref_to_a_document_moved_outside_every_namespace_becomes_a_path() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/config.json",
+            r#"{ "version": 1, "namespaces": ["story-1", "story-2"] }"#,
+        ),
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "notes/*.md", "schema": "note.json" }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": { "see": { "type": "ref[]", "target": "*" } } }"#,
+        ),
+    ]);
+    project.file("story-1/notes/a.md", "---\n---\n");
+    project.file(
+        "story-2/notes/h.md",
+        "---\nsee: [story-1:notes/a.md]\n---\n\n[l](story-1:notes/a.md)\n",
+    );
+
+    let ran = mv(&project, "story-1:notes/a.md", "outside/a.md");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(
+        project.read("story-2/notes/h.md"),
+        "---\nsee:\n- ../../outside/a.md\n---\n\n[l](../../outside/a.md)\n"
     );
 }
 

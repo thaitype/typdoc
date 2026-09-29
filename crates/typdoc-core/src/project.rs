@@ -231,6 +231,15 @@ impl MovedFrom {
     }
 }
 
+/// The document `mv` moves, as it is named once moved: where every ref to it is rewritten to.
+struct Moved<'a> {
+    path: &'a str,
+    /// `None` outside every namespace folder, which only an uncoded document can move to.
+    namespace: Option<usize>,
+    key: Option<&'a str>,
+    slug: Option<&'a str>,
+}
+
 /// What an argument names: a path from the project folder, not yet looked up, or the path of the
 /// document a key was found at.
 enum ArgumentName {
@@ -3756,6 +3765,7 @@ impl Project {
         let (from_path, from_entry, from_text) = self.resolve(from, scope, deps.env)?;
         let from_namespace = from_entry.namespace;
         let from_key = from_entry.key.clone();
+        let from_slug = from_entry.slug.clone();
         let from_file = from_entry.file.clone();
         let from_collection = from_entry.collection;
 
@@ -3795,7 +3805,7 @@ impl Project {
             None => None,
         };
 
-        let to_namespace = mv::namespace_of(&self.config.namespaces, &to_path);
+        let to_namespace = name::namespace_of_path(&self.config.namespaces, &to_path);
         let to_below = to_namespace
             .map(|ns| strip_namespace_folder(&to_path, &self.config.namespaces[ns].folder));
         let to_collection = if to_slug.is_some() {
@@ -3839,15 +3849,16 @@ impl Project {
             });
         }
 
-        let key_change = from_key
-            .as_deref()
-            .zip(to_slug.as_ref())
-            .map(|(key, slug)| mv::KeyChange::Slug {
-                key,
-                slug: slug.as_deref(),
-            });
-        let (mut changes, rewritten) =
-            self.mv_rewrite_changes(&rewrite_by_holder, &to_path, key_change)?;
+        let moved = Moved {
+            path: &to_path,
+            namespace: to_namespace,
+            key: from_key.as_deref(),
+            slug: match &to_slug {
+                Some(slug) => slug.as_deref(),
+                None => from_slug.as_deref(),
+            },
+        };
+        let (mut changes, rewritten) = self.mv_rewrite_changes(&rewrite_by_holder, &moved)?;
         if let Some(change) = self.mv_document_change(
             &from_path,
             from_collection,
@@ -3959,14 +3970,13 @@ impl Project {
             });
         }
 
-        let (mut changes, rewritten) = self.mv_rewrite_changes(
-            &rewrite_by_holder,
-            &to_path,
-            Some(mv::KeyChange::Renumber {
-                old_key: &from_key,
-                new_key: &new_key,
-            }),
-        )?;
+        let moved = Moved {
+            path: &to_path,
+            namespace: Some(to_namespace),
+            key: Some(&new_key),
+            slug: from_slug.as_deref(),
+        };
+        let (mut changes, rewritten) = self.mv_rewrite_changes(&rewrite_by_holder, &moved)?;
         // With its namespace prefix: a bare key would not say which namespace issued it.
         let previous_name = format!("{}:{from_key}", self.config.namespaces[from_namespace].name);
         if let Some(change) = self.mv_document_change(
@@ -4054,15 +4064,16 @@ impl Project {
         Ok((rewrite_by_holder, unrewritten))
     }
 
-    /// A mention is never rewritten, so every mention of `from`'s key is reported (SPC-2). A
+    /// A mention is never rewritten, so every mention of `from` is reported (SPC-2): one that reads
+    /// as `from`, not every mention of the same key, which another namespace may have issued. A
     /// mention is always a key, so a move of a document without a code reads no file here.
     ///
     /// A second full read of the project: the reverse scan keeps no raw text, and
     /// `links::mentions` needs the whole file to compute positions.
     fn mv_reverse_mentions(&self, from: &RefName) -> Result<Vec<UnrewrittenRef>, Error> {
-        let Some(from_key) = &from.key else {
+        if from.key.is_none() {
             return Ok(Vec::new());
-        };
+        }
         let mut holders: Vec<(&str, &Indexed)> = self.index.iter().collect();
         holders.sort_by_key(|(path, _)| *path);
         let mut found = Vec::new();
@@ -4081,15 +4092,14 @@ impl Project {
             let Ok(mentions) = links::mentions(&text, inline_code, fenced_code) else {
                 continue;
             };
+            let place = name::Place::Mention {
+                namespace: entry.namespace,
+            };
             for mention in mentions {
-                // Compared with `from`'s key rather than checked for resolving: before the move
-                // it still resolves.
-                let key = mention
-                    .written
-                    .rsplit(':')
-                    .next()
-                    .unwrap_or(&mention.written);
-                if key != from_key {
+                // Before the move a mention of `from` still resolves, to its path now.
+                let names_from = name::resolve(&mention.written, place, &self.scene())
+                    .is_ok_and(|resolved| resolved.project.is_none() && resolved.path == from.path);
+                if !names_from {
                     continue;
                 }
                 found.push(UnrewrittenRef {
@@ -4145,8 +4155,7 @@ impl Project {
     fn mv_rewrite_changes(
         &self,
         rewrite_by_holder: &RewriteByHolder,
-        to_path: &str,
-        key_change: Option<mv::KeyChange>,
+        moved: &Moved,
     ) -> Result<(Vec<ContentChange>, Vec<RewrittenRef>), Error> {
         let mut changes = Vec::new();
         let mut rewritten = Vec::new();
@@ -4162,7 +4171,7 @@ impl Project {
                 .expect("holder paths in this map were already looked up above");
             let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
             let (new_text, holder_rewritten) =
-                self.rewrite_holder(holder_path, entry, &text, refs, to_path, key_change)?;
+                self.rewrite_holder(holder_path, entry, &text, refs, moved)?;
             if new_text != text {
                 changes.push(ContentChange {
                     path: entry.file.clone(),
@@ -4224,7 +4233,7 @@ impl Project {
         key: &str,
         to_path: &str,
     ) -> Result<Option<String>, Error> {
-        if mv::namespace_of(&self.config.namespaces, to_path) != Some(from_namespace) {
+        if name::namespace_of_path(&self.config.namespaces, to_path) != Some(from_namespace) {
             return Err(Error::BadArgument(format!(
                 "`{from_path}` is a coded document: its key `{key}` belongs to the namespace that \
                  issued it, so `mv` cannot move it to another namespace; use `mv --renumber` \
@@ -4269,8 +4278,7 @@ impl Project {
         entry: &Indexed,
         text: &str,
         refs: &[RefsReference],
-        new_target: &str,
-        key_change: Option<mv::KeyChange>,
+        moved: &Moved,
     ) -> Result<(String, Vec<RewrittenRef>), Error> {
         let collection = &self.collections[entry.collection];
         let bad = |message| Error::Frontmatter {
@@ -4282,52 +4290,72 @@ impl Project {
             Some(block) => frontmatter::fields(block, &collection.schema).map_err(bad)?,
             None => Vec::new(),
         };
-        let mut writer = frontmatter::YamlSerdeWriter::new(fields.clone());
-        let mut frontmatter_touched = false;
+        let holder = name::InDocument {
+            path: holder_path,
+            namespace: entry.namespace,
+            ref_base: collection.ref_base,
+        };
+        // A ref a stopped run already rewrote, or a key that still names the document, is left as
+        // it is: `None`.
+        let mut new_names: Vec<Option<String>> = refs
+            .iter()
+            .map(|reference| {
+                let new_written = if reference.field == "$body" {
+                    self.moved_body_link(&reference.written, holder, moved)
+                } else {
+                    self.moved_name(&reference.written, name::Place::Ref(holder), moved)
+                };
+                (new_written != reference.written).then_some(new_written)
+            })
+            .collect();
+
+        // Last on its line first, so a splice never moves a column a later link was found at.
         let mut body = text.to_owned();
         let mut body_touched = false;
-        let mut rewritten = Vec::new();
-
-        for reference in refs {
-            let new_written = mv::rewritten_path_ref(
-                &reference.written,
-                collection.ref_base,
-                entry.namespace,
-                holder_path,
-                &self.config.namespaces,
-                new_target,
-                key_change,
-            );
-            // A key written alone, or a ref a stopped run already rewrote, is left as it is.
-            if new_written == reference.written {
-                continue;
-            }
-            let after = new_written.clone();
-            if reference.field == "$body" {
-                let Some(position) = reference.position else {
-                    continue;
-                };
-                let Some((line_start, line_end)) = mv::line_span(&body, position.line) else {
-                    continue;
-                };
-                let Some(new_line) = mv::splice_body_destination(
-                    &body[line_start..line_end],
+        let mut in_body: Vec<(usize, Position)> = refs
+            .iter()
+            .enumerate()
+            .filter(|(at, reference)| reference.field == "$body" && new_names[*at].is_some())
+            .filter_map(|(at, reference)| reference.position.map(|position| (at, position)))
+            .collect();
+        in_body.sort_by_key(|(_, position)| std::cmp::Reverse((position.line, position.col)));
+        for (at, position) in in_body {
+            let reference = &refs[at];
+            let spliced = mv::line_span(&body, position.line).and_then(|(start, end)| {
+                let new_written = new_names[at].as_deref()?;
+                mv::splice_body_destination(
+                    &body[start..end],
                     position.col,
                     &reference.written,
-                    &new_written,
-                ) else {
-                    // Leave the line untouched rather than guess at a shape
-                    // `mv::splice_body_destination` does not cover.
-                    continue;
-                };
-                body.replace_range(line_start..line_end, &new_line);
-                body_touched = true;
-            } else {
+                    new_written,
+                )
+                .map(|line| (start, end, line))
+            });
+            match spliced {
+                Some((start, end, line)) => {
+                    body.replace_range(start..end, &line);
+                    body_touched = true;
+                }
+                // Leave the line untouched rather than guess at a shape
+                // `mv::splice_body_destination` does not cover.
+                None => new_names[at] = None,
+            }
+        }
+
+        let mut writer = frontmatter::YamlSerdeWriter::new(fields.clone());
+        let mut frontmatter_touched = false;
+        let mut rewritten = Vec::new();
+        for (reference, new_name) in refs.iter().zip(new_names) {
+            let Some(after) = new_name else {
+                continue;
+            };
+            if reference.field != "$body" {
+                let value = after.clone();
                 match fields.iter().find(|(name, _)| name == &reference.field) {
                     Some((_, Value::List(_))) => {
-                        writer.replace_item(&reference.field, &reference.written, new_written);
+                        writer.replace_item(&reference.field, &reference.written, value);
                     }
-                    _ => writer.set_scalar(&reference.field, new_written),
+                    _ => writer.set_scalar(&reference.field, value),
                 }
                 frontmatter_touched = true;
             }
@@ -4352,6 +4380,59 @@ impl Project {
             assemble_frontmatter(split.block.is_some(), &new_block, &body[body_split.body..]),
             rewritten,
         ))
+    }
+
+    /// The name `written` becomes for the document `mv` moved, in `written`'s own form (SPC-18):
+    /// a key stays a key, a prefix stays, a slug is kept or renamed, `./` is kept.
+    fn moved_name(&self, written: &str, place: name::Place, moved: &Moved) -> String {
+        match moved.namespace {
+            Some(namespace) => name::format(
+                name::Identity {
+                    project: None,
+                    namespace,
+                    path: moved.path,
+                    key: moved.key,
+                    slug: moved.slug,
+                },
+                name::Form::Like(written),
+                place,
+                &self.config.namespaces,
+            ),
+            // Outside every namespace folder no prefix names where the document is: a path from
+            // the place's base, `./` kept. Neither form reads `namespace`.
+            None => {
+                let form = if written.starts_with("./") || written.starts_with("../") {
+                    name::Form::Like(written)
+                } else {
+                    name::Form::Relative
+                };
+                name::format(
+                    name::Identity {
+                        project: None,
+                        namespace: 0,
+                        path: moved.path,
+                        key: None,
+                        slug: None,
+                    },
+                    form,
+                    place,
+                    &self.config.namespaces,
+                )
+            }
+        }
+    }
+
+    /// A body link's destination as [`Project::moved_name`] writes it, its `#anchor` kept.
+    fn moved_body_link(&self, written: &str, holder: name::InDocument, moved: &Moved) -> String {
+        let (destination, anchor) = match written.split_once('#') {
+            Some((destination, anchor)) => (destination, Some(anchor)),
+            None => (written, None),
+        };
+        let renamed = self.moved_name(destination, name::Place::BodyLink(holder), moved);
+        match anchor {
+            Some(anchor) => format!("{renamed}#{anchor}"),
+            None => renamed,
+        }
     }
 
     /// `None` also when the `auto: moves` field already ends with `previous_name`: a re-run after

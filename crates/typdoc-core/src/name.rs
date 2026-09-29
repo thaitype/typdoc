@@ -508,7 +508,7 @@ fn relative(identity: Identity, place: Place, namespaces: &[Namespace], dot: boo
         .split('/')
         .next()
         .is_some_and(|first| first.contains(':'));
-    if (dot || colon) && !relative.starts_with("../") {
+    if dot || colon {
         format!("./{relative}")
     } else {
         relative
@@ -611,6 +611,26 @@ mod tests {
     fn folder_of_a_top_level_path_is_the_project_folder() {
         assert_eq!(folder_of("a.md"), "");
         assert_eq!(folder_of("tickets/a.md"), "tickets");
+    }
+
+    #[test]
+    fn relative_to_the_same_folder_is_the_bare_file_name() {
+        assert_eq!(relative_to("tickets", "tickets/new.md"), "new.md");
+        assert_eq!(relative_to("", "new.md"), "new.md");
+    }
+
+    #[test]
+    fn relative_to_a_sibling_folder_walks_up_and_back_down() {
+        assert_eq!(
+            relative_to("tickets/sub", "tickets/other.md"),
+            "../other.md"
+        );
+        assert_eq!(
+            relative_to("a/b/c", "a/x/y.md"),
+            "../../x/y.md",
+            "two folders up, from the deepest shared ancestor `a`"
+        );
+        assert_eq!(relative_to("notes", "top.md"), "../top.md");
     }
 
     #[test]
@@ -921,7 +941,7 @@ mod tests {
                 "../tickets/WF-1.md",
                 "../../story-2/tickets/WF-9-new-slug.md",
             ),
-            ("./WF-1.md", "../../story-2/tickets/WF-9-new-slug.md"),
+            ("./WF-1.md", "./../../story-2/tickets/WF-9-new-slug.md"),
         ] {
             assert_eq!(
                 format(moved, Form::Like(written), place, &ns),
@@ -932,6 +952,51 @@ mod tests {
         let near = identity(0, "story-1/notes/b.md", None);
         assert_eq!(format(near, Form::Like("./a.md"), place, &ns), "./b.md");
         assert_eq!(format(near, Form::Like("a.md"), place, &ns), "b.md");
+    }
+
+    /// A slug change keeps the key and its namespace: a key written alone stays as it is, and a
+    /// written slug becomes the new one, or none.
+    #[test]
+    fn like_under_a_slug_change_keeps_a_key_written_alone() {
+        let ns = two();
+        let place = Place::Ref(InDocument {
+            path: "story-2/notes/a.md",
+            namespace: 1,
+            ref_base: RefBase::File,
+        });
+        let renamed = Identity {
+            slug: Some("new"),
+            ..identity(1, "story-2/tickets/WF-5-new.md", Some("WF-5"))
+        };
+        let unslugged = Identity {
+            slug: None,
+            ..identity(1, "story-2/tickets/WF-5.md", Some("WF-5"))
+        };
+        for (identity, written, expected) in [
+            (renamed, "WF-5", "WF-5"),
+            (renamed, "story-2:WF-5", "story-2:WF-5"),
+            (renamed, "WF-5-old", "WF-5-new"),
+            (renamed, "story-2:WF-5-old", "story-2:WF-5-new"),
+            (unslugged, "story-2:WF-5-old", "story-2:WF-5"),
+            (renamed, "../tickets/WF-5-old.md", "../tickets/WF-5-new.md"),
+        ] {
+            assert_eq!(
+                format(identity, Form::Like(written), place, &ns),
+                expected,
+                "{written}"
+            );
+        }
+    }
+
+    /// A prefix is kept even where the key could now be written alone.
+    #[test]
+    fn like_keeps_a_prefix_into_the_holders_own_namespace() {
+        let moved = identity(0, "story-1/tickets/WF-1.md", Some("WF-1"));
+        let place = Place::Ref(holder(RefBase::File));
+        assert_eq!(
+            format(moved, Form::Like("story-2:WF-5"), place, &two()),
+            "story-1:WF-1"
+        );
     }
 
     struct NoEnv;

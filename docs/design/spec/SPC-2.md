@@ -158,8 +158,9 @@ travels in `mv`'s `--json` output, and CI catches it by running `validate`.
   because an imported project is read-only and `mv` never crosses a project boundary. `mv`
   reports them, naming the project each unrewritten ref is in and the refs themselves. A project
   this one cannot see at all cannot be reported.
-- **Mentions.** Plain-text mentions are never rewritten. `body.mentions` checks them when it is
-  on, and `refs.moved` names the new key.
+- **Mentions.** Plain-text mentions are never rewritten. `mv` reports each one that reads as the
+  moved document (`SPC-18`), not the same key issued in another namespace. `body.mentions` checks
+  them when it is on, and `refs.moved` names the new key.
 - **Body links, when `body.links` is `off`.** A body link that `mv` cannot follow to the old path
   is caught by `body.links` at validation; with that rule off, it is not caught.
 - **Refs from projects that do not import this one.** They are invisible from here, caught when
