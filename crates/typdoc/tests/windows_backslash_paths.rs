@@ -182,3 +182,9 @@ fn mv_renumber_takes_a_source_written_with_backslashes() {
             .is_file()
     );
 }
+
+/// Planted for the proof that a failing Windows test turns the publish gate red.
+#[test]
+fn planted_failure_for_the_publish_gate_proof() {
+    panic!("planted: the publish gate must turn red on Windows");
+}
