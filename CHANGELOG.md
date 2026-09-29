@@ -4,7 +4,7 @@ All notable, user-visible changes to typdoc are documented here. Internal reorga
 example, how the project's own design documents are structured and read in its own test suite)
 are left out unless they change something a user of the `typdoc` binary sees.
 
-## [Unreleased]
+## [0.7.0] - 2026-09-29
 
 ### Added
 

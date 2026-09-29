@@ -16,7 +16,7 @@
 #
 # Environment variables (end-user facing). Set them in the same session, before the pipe:
 #
-#   $env:TYPDOC_VERSION = 'v0.6.0'; irm https://typdoc.thaitype.dev/install.ps1 | iex
+#   $env:TYPDOC_VERSION = 'v0.7.0'; irm https://typdoc.thaitype.dev/install.ps1 | iex
 #
 #   TYPDOC_VERSION   Install this exact release tag instead of the latest one.
 #   INSTALL_DIR      Install into this directory instead of the default (see $DefaultInstallDir).

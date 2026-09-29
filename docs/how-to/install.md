@@ -32,7 +32,7 @@ than `~/.local/bin`. The script reads them, not `curl`, so put them after the pi
 `sh`:
 
 ```console
-$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.6.0 sh
+$ curl -fsSL https://typdoc.thaitype.dev/install | TYPDOC_VERSION=v0.7.0 sh
 $ curl -fsSL https://typdoc.thaitype.dev/install | INSTALL_DIR="$HOME/bin" sh
 ```
 
@@ -102,7 +102,7 @@ To pin a version or choose the directory, set the variable in the same PowerShel
 the pipe:
 
 ```powershell
-$env:TYPDOC_VERSION = 'v0.6.0'; irm https://typdoc.thaitype.dev/install.ps1 | iex
+$env:TYPDOC_VERSION = 'v0.7.0'; irm https://typdoc.thaitype.dev/install.ps1 | iex
 $env:INSTALL_DIR = "$env:USERPROFILE\bin"; irm https://typdoc.thaitype.dev/install.ps1 | iex
 ```
 
