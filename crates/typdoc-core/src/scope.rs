@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::config::{Namespace, plain_name};
 use crate::env::Env;
 use crate::error::Error;
+use crate::name;
 use crate::template::Segment;
 
 /// What decided the scope.
@@ -54,10 +55,15 @@ pub(crate) fn choose(
     env: &dyn Env,
     imports: &[ImportListing],
 ) -> Result<Scope, Error> {
+    // A prefix names one namespace exactly, as it does in a ref (SPC-18): a glob or a list is for
+    // `--namespace` and `TYPDOC_NAMESPACE`.
     if let Some(prefix) = prefix {
+        let Some(at) = name::namespace_named(namespaces, prefix) else {
+            return Err(Error::BadArgument(name::not_a_prefix(prefix, namespaces)));
+        };
         return Ok(Scope {
             source: Source::Prefix,
-            namespaces: select(namespaces, prefix, "a prefix", &[])?.0,
+            namespaces: vec![namespaces[at].name.clone()],
             imports: Vec::new(),
         });
     }
@@ -104,9 +110,8 @@ fn names(namespaces: &[Namespace]) -> Vec<String> {
 /// (`alias::pattern`), its alias with the namespace names chosen inside it.
 type Selected = (Vec<String>, Vec<(String, Vec<String>)>);
 
-/// The namespaces and the imports (`alias::pattern`, patterns merged per alias) that `list`
-/// names. The `prefix` origin passes no `imports`, since an argument's import prefix never
-/// reaches a `Scope`.
+/// The namespaces and the imports (`alias::pattern`, patterns merged per alias) that a
+/// `--namespace` or `TYPDOC_NAMESPACE` `list` names.
 fn select(
     namespaces: &[Namespace],
     list: &str,

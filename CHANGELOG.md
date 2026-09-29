@@ -4,6 +4,75 @@ All notable, user-visible changes to typdoc are documented here. Internal reorga
 example, how the project's own design documents are structured and read in its own test suite)
 are left out unless they change something a user of the `typdoc` binary sees.
 
+## [Unreleased]
+
+### Added
+
+- Every document typdoc prints carries `ref`, its portable name: the name that finds it from
+  anywhere in the project, in a ref, in a body link when it is a path, and on the command line.
+  It is `WF-5` (or `story-2:WF-5` in a project with several namespaces) for a numbered document,
+  `default:notes/x.md` (or `story-2:notes/x.md`) for any other, and a document of an imported
+  project has its `alias::` in front. In `--json` every document object (`get`, `set`, `new`,
+  `mv`, `list`, `toc`, `refs` and its entries) gains `ref` beside `path`, which is unchanged. Text
+  output gains a `ref:` line (`get`, `set`, `new`, `mv`) and a `ref` column (`list`, `refs`). A file
+  outside every namespace folder has none.
+- `refs --json` lists an absolute path in a ref or a body link as `unresolved: "absolute"`: typdoc
+  never looks one up, so it is not reported as `not-found`.
+- `typdoc-core` (library): `Names`, from `Project::names`, writes a document's portable name
+  (`Names::portable`) and the name a command prints for it (`Names::printed`).
+
+### Changed
+
+- On the command line, a path after a namespace prefix is read from that namespace's folder, as in
+  a ref: `typdoc get story-2:notes/x.md` reads `story-2/notes/x.md`. It used to be read from the
+  project folder, with the prefix only choosing the namespace, so `story-2:story-2/notes/x.md` is
+  now `story-2/story-2/notes/x.md`. This holds for every command, `new`'s path and `mv`'s
+  destination included.
+- A namespace prefix is one namespace's exact name, on the command line as in a ref. A glob or a
+  list in a prefix (`story-*:WF-1`, `story-1,story-2:WF-1`) is exit 1; select several namespaces
+  with `--namespace` or `TYPDOC_NAMESPACE`: `typdoc get WF-1 --namespace 'story-*'`. `default:`
+  names the only namespace of a project, or of an imported project, that has one, whatever it is
+  called.
+- `./` and `../` in a frontmatter ref or a body link are read from the document's folder under
+  both `refBase` values; `refBase` moves only a path with no prefix. A project whose collection sets
+  `"refBase": "namespace"` and writes `./x.md` in frontmatter meaning the namespace folder's `x.md`
+  now finds nothing there: `refs.resolve` and `body.links` say where the name used to lead and what
+  to write instead, `story-1:x.md` in a ref (`default:x.md` in a project with one namespace) and a
+  path from the document in a body link.
+- A ref with the shape of a key (`XX-1`) is a key whatever its code, as on the command line: it
+  used to be read as a relative path when no schema had the code. A key no document has is
+  reported as `no document with key XX-1`, in `refs.resolve` and as a command's error (exit 5,
+  which used to say `no document at XX-1`).
+- An absolute path in a ref or a body link, a Windows drive letter included (`C:\notes\a.md`), is
+  reported by `refs.resolve` or `body.links` as an absolute path and never followed.
+- A body link `name:rest.md` whose `name` is no namespace is reported by `body.links`, as its prefix
+  names no namespace; it used to be taken for a URL and skipped. A link that does not end in `.md`
+  (`tel:123`) is still a URL.
+- A document of an imported project is printed with its `alias::` in `list` (`typdoc list
+  --namespace 'memory::*'` prints `memory::LRN-1`, not `LRN-1`), and a key in it is qualified by
+  that project's namespaces in `refs` (`several::story-2:WF-9`, not `several::WF-9`), so every name
+  typdoc prints reads back.
+- A collection's `match` and `body.links`' `ignore` refuse `?`, `[`, `]`, `\`, `,` and a leading `!`
+  as a config error that names the pattern; such a pattern used to match nothing, silently. Both
+  take `*` and `**` only.
+- `typdoc-core` (library): `Error` has a new variant, `NoKey`, for a key no document has, which
+  used to be `NotFound`; a `match` on `Error` must add it. A path in a `DocumentArg` with a
+  namespace prefix is read from that namespace's folder.
+
+### Fixed
+
+- `mv` rewrote a body link to the moved document without its `./` or its `#anchor`
+  (`[one](./b.md#part)` became `[one](c.md)`), and left a second link to it on the same line
+  unchanged when the first rewrite shortened the line. Every link on a line is rewritten, keeping
+  its `./`, its `#anchor` and its `<...>` or `%20`.
+- A move recorded in `auto: moves` is matched by the document a ref names, not by its text: a
+  recorded key only in the namespace that issued it, so `WF-4` in one namespace is no longer
+  reported as moved because another namespace's `WF-4` moved, and a recorded path from whatever
+  folder the ref is written in. The message names the document with its namespace
+  (`story-2:WF-5`). `mv` reports only the plain-text mentions of the moved document, not every
+  mention of the same key, and a mention with an import prefix (`chief::story-3:WF-5`) is looked
+  up in that import instead of always reported as not found.
+
 ## [0.6.0] - 2026-09-28
 
 ### Added

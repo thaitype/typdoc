@@ -2,6 +2,7 @@
 title: Namespaces and project discovery explained
 status: active
 migrated_from: docs/archived-design/design.md#model
+follows: [PRN-12]
 ---
 
 A project is a folder containing `.typdoc/config.json`. It is what `imports` points at;
@@ -49,13 +50,12 @@ is read after the project is found. There is no `--dir` flag. Config, collection
 schemas are read on every run with no cache; remote schemas are read from their pinned copies.
 
 **Namespaces.** Without `namespaces`, the project is one namespace named `default`, and `match`
-counts from the folder that holds `.typdoc`. With it, each entry of the list is one of three
-kinds: a plain name, a glob (`*` only), or either prefixed with `!` to exclude what it matches.
-Entries apply in list order, gitignore-style: the last entry that matches a folder decides
-whether it is a namespace, so a later `!` can exclude what an earlier entry included, and a
-later plain entry can re-include what an earlier `!` excluded. Every folder still standing after
-all entries are applied is one namespace, named by its folder, with `match` counting from that
-folder.
+counts from the folder that holds `.typdoc`. With it, each entry of the list is one of three kinds:
+a plain name, a glob (`*` only, `SPC-19`), or either prefixed with `!` to exclude what it matches.
+Entries apply in list order, gitignore-style: the last entry that matches a folder decides whether
+it is a namespace, so a later `!` can exclude what an earlier entry included, and a later plain
+entry can re-include what an earlier `!` excluded. Every folder still standing after all entries are
+applied is one namespace, named by its folder, with `match` counting from that folder.
 
 - An entry is one path segment. `/` and `**` are config errors, because a namespace name has to
   show where it ends in a path reference such as `chief::story-3/_tickets/WF-5.md`. Anything
@@ -115,8 +115,8 @@ In a project with more than one namespace, a command takes its scope from the fi
 applies:
 
 1. A prefix on a key or path argument (`story-2:WF-5`).
-2. `--namespace <list>`: names separated by `,`, or globs (`*` only). `'*'` means every namespace
-   of this project; imported projects are not included and are named explicitly, as in
+2. `--namespace <list>`: names separated by `,`, or globs (`*` only, `SPC-19`). `'*'` means every
+   namespace of this project; imported projects are not included and are named explicitly, as in
    `'chief::*'`.
 3. `TYPDOC_NAMESPACE`, with the same syntax as `--namespace`.
 4. The current directory, when it is inside a namespace folder or below one.

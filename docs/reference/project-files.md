@@ -23,7 +23,7 @@ down with its own `.typdoc/` is a separate project.
   "imports": { "memory": "../memory" },
   "validation": {
     "global": {
-      "body.links": { "level": "error", "ignore": ["assets/**"] },
+      "body.links": { "level": "error", "ignore": ["**/assets/**"] },
       "frontmatter.unknown": { "level": "off" }
     }
   }
@@ -62,6 +62,7 @@ collection's name.
 | `match` | yes | Which files belong to the collection, relative to each namespace folder |
 | `schema` | yes | Path to the schema, from the project folder |
 | `slug` | no | Numbered schemas only: whether a file name carries a slug after its key. `optional` (default), `required` or `none`. See [Slugs](#slugs) |
+| `refBase` | no | Where a path with no prefix in a frontmatter ref is read from: `file` (default, the document's folder) or `namespace` (its namespace folder). `./` and `../` are always from the document's folder |
 | `validation` | no | Rule levels for this collection's documents, merged over `validation.global` |
 
 In `match`:

@@ -1,6 +1,7 @@
 {
   "document": {
     "path": "tickets/WF-2.md",
+    "ref": "WF-2",
     "namespace": "default",
     "key": "WF-2",
     "code": "WF",

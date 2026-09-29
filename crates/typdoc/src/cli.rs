@@ -9,9 +9,9 @@ use serde_json::value::RawValue;
 use serde_json::{Map, Value as Json, json};
 use typdoc_core::{
     Argument, AuditReport, Condition, Deps, Document, DocumentArg, Env, Error, ErrorKind, FieldRef,
-    Finding, Heading, ListFilter, ListResult, MvReport, NewTarget, Position, Project, RefField,
-    RefName, RefOutcome, RefsDirection, RefsReference, RefsReport, RewrittenRef, Scope, SetOp,
-    Severity, SortKey, Source, Toc, UnrewrittenReason, UnrewrittenRef, ValidateReport,
+    Finding, Heading, ListFilter, ListResult, MvReport, Names, NewTarget, Position, Project,
+    RefField, RefName, RefOutcome, RefsDirection, RefsReference, RefsReport, RewrittenRef, Scope,
+    SetOp, Severity, SortKey, Source, Toc, UnrewrittenReason, UnrewrittenRef, ValidateReport,
     ValidateScope, Value, discover, discover_for, parse_field, parse_query, resolve_on_disk,
 };
 
@@ -217,24 +217,26 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 Duration::from_secs(lock_timeout),
                 cli.namespace.as_deref(),
             ) {
-                Ok(document) if json => {
-                    success_raw(&raw_object(&[("document", document_json(&document))]))
-                }
-                Ok(document) => Outcome {
+                Ok((document, names)) if json => success_raw(&raw_object(&[(
+                    "document",
+                    document_json(&document, &names),
+                )])),
+                Ok((document, names)) => Outcome {
                     code: 0,
-                    stdout: document_text(&document),
+                    stdout: document_text(&document, &names),
                     stderr: String::new(),
                 },
                 Err(e) => failure(json, exit_code(e.kind()), &e),
             }
         }
         Command::Get { document, json } => match get(deps, &document, cli.namespace.as_deref()) {
-            Ok(document) if json => {
-                success_raw(&raw_object(&[("document", document_json(&document))]))
-            }
-            Ok(document) => Outcome {
+            Ok((document, names)) if json => success_raw(&raw_object(&[(
+                "document",
+                document_json(&document, &names),
+            )])),
+            Ok((document, names)) => Outcome {
                 code: 0,
-                stdout: document_text(&document),
+                stdout: document_text(&document, &names),
                 stderr: String::new(),
             },
             Err(e) => failure(json, exit_code(e.kind()), &e),
@@ -273,12 +275,13 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 Duration::from_secs(lock_timeout),
                 cli.namespace.as_deref(),
             ) {
-                Ok(document) if json => {
-                    success_raw(&raw_object(&[("document", document_json(&document))]))
-                }
-                Ok(document) => Outcome {
+                Ok((document, names)) if json => success_raw(&raw_object(&[(
+                    "document",
+                    document_json(&document, &names),
+                )])),
+                Ok((document, names)) => Outcome {
                     code: 0,
-                    stdout: document_text(&document),
+                    stdout: document_text(&document, &names),
                     stderr: String::new(),
                 },
                 Err(e) => failure(json, exit_code(e.kind()), &e),
@@ -309,14 +312,14 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 &sort,
                 cli.namespace.as_deref(),
             ) {
-                Ok((result, multi_namespace)) => list_outcome(
+                Ok((result, names)) => list_outcome(
                     &result,
                     limit,
                     fields.as_deref(),
                     &where_,
                     ids,
                     json,
-                    multi_namespace,
+                    &names,
                 ),
                 Err(e) => failure(json, exit_code(e.kind()), &e),
             }
@@ -333,8 +336,8 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
             field.as_deref(),
             cli.namespace.as_deref(),
         ) {
-            Ok((report, _)) if json => success(refs_json(&report)),
-            Ok((report, multi_namespace)) => refs_outcome(&report, multi_namespace),
+            Ok((report, names)) if json => success(refs_json(&report, &names)),
+            Ok((report, names)) => refs_outcome(&report, &names),
             Err(e) => failure(json, exit_code(e.kind()), &e),
         },
         Command::Toc {
@@ -342,8 +345,8 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
             depth,
             json,
         } => match toc(deps, &document, cli.namespace.as_deref()) {
-            Ok(toc) if json => success(toc_json(&toc, depth)),
-            Ok(toc) => toc_outcome(&toc, depth),
+            Ok((toc, names)) if json => success(toc_json(&toc, depth, &names)),
+            Ok((toc, _)) => toc_outcome(&toc, depth),
             Err(e) => failure(json, exit_code(e.kind()), &e),
         },
         Command::Validate {
@@ -409,10 +412,10 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                 Duration::from_secs(lock_timeout),
                 cli.namespace.as_deref(),
             ) {
-                Ok((report, _)) if json => success_raw(&mv_json(&report)),
-                Ok((report, multi_namespace)) => Outcome {
+                Ok((report, names)) if json => success_raw(&mv_json(&report, &names)),
+                Ok((report, names)) => Outcome {
                     code: 0,
-                    stdout: mv_text(&report, multi_namespace),
+                    stdout: mv_text(&report, &names),
                     stderr: String::new(),
                 },
                 Err(e) => failure(json, exit_code(e.kind()), &e),
@@ -425,10 +428,10 @@ pub fn run(args: &[OsString], deps: &Deps) -> Outcome {
                     Duration::from_secs(lock_timeout),
                     cli.namespace.as_deref(),
                 ) {
-                    Ok((report, _)) if json => success_raw(&mv_json(&report)),
-                    Ok((report, multi_namespace)) => Outcome {
+                    Ok((report, names)) if json => success_raw(&mv_json(&report, &names)),
+                    Ok((report, names)) => Outcome {
                         code: 0,
-                        stdout: mv_text(&report, multi_namespace),
+                        stdout: mv_text(&report, &names),
                         stderr: String::new(),
                     },
                     Err(e) => failure(json, exit_code(e.kind()), &e),
@@ -473,11 +476,11 @@ fn get(
     deps: &Deps,
     document: &std::ffi::OsStr,
     namespace: Option<&str>,
-) -> Result<Document, Error> {
+) -> Result<(Document, Names), Error> {
     let (root, arg) = discover_for(Argument::parse(document)?, deps.env)?;
     let project = Project::load(&root, deps.env)?;
     let scope = scope_for(&project, &arg, namespace, deps.env)?;
-    project.get(&arg, &scope, deps.env)
+    Ok((project.get(&arg, &scope, deps.env)?, project.names()))
 }
 
 fn parse_new_target(
@@ -532,10 +535,11 @@ fn new_document(
     sets: &[SetOp],
     lock_timeout: Duration,
     namespace: Option<&str>,
-) -> Result<Document, Error> {
+) -> Result<(Document, Names), Error> {
     let root = discover(deps.env)?;
     let project = Project::load(&root, deps.env)?;
-    project.new_document(target, deps, sets, lock_timeout, namespace)
+    let document = project.new_document(target, deps, sets, lock_timeout, namespace)?;
+    Ok((document, project.names()))
 }
 
 #[allow(
@@ -549,11 +553,12 @@ fn set(
     ifs: &[(String, Condition)],
     lock_timeout: Duration,
     namespace: Option<&str>,
-) -> Result<Document, Error> {
+) -> Result<(Document, Names), Error> {
     let (root, arg) = discover_for(Argument::parse(document)?, deps.env)?;
     let project = Project::load(&root, deps.env)?;
     let scope = scope_for(&project, &arg, namespace, deps.env)?;
-    project.set(&arg, &scope, deps, sets, ifs, lock_timeout)
+    let document = project.set(&arg, &scope, deps, sets, ifs, lock_timeout)?;
+    Ok((document, project.names()))
 }
 
 fn parse_set_op(raw: &str) -> Result<SetOp, Error> {
@@ -590,11 +595,15 @@ fn parse_ifs(raw: &[String]) -> Result<Vec<(String, Condition)>, Error> {
         .collect()
 }
 
-fn toc(deps: &Deps, document: &std::ffi::OsStr, namespace: Option<&str>) -> Result<Toc, Error> {
+fn toc(
+    deps: &Deps,
+    document: &std::ffi::OsStr,
+    namespace: Option<&str>,
+) -> Result<(Toc, Names), Error> {
     let (root, arg) = discover_for(Argument::parse(document)?, deps.env)?;
     let project = Project::load(&root, deps.env)?;
     let scope = scope_for(&project, &arg, namespace, deps.env)?;
-    project.toc(&arg, &scope, deps.env)
+    Ok((project.toc(&arg, &scope, deps.env)?, project.names()))
 }
 
 /// Returns every match, before `--limit`: `list_outcome` applies it, so `total` and the table's
@@ -606,10 +615,9 @@ fn list(
     wheres: &[String],
     sort: &[String],
     namespace: Option<&str>,
-) -> Result<(ListResult, bool), Error> {
+) -> Result<(ListResult, Names), Error> {
     let root = discover(deps.env)?;
     let project = Project::load(&root, deps.env)?;
-    let multi_namespace = project.config().namespaces.len() > 1;
     let scope = project.scope(None, namespace, deps.env)?;
     let collections = split_list(collection);
     let codes = split_list(code);
@@ -628,7 +636,7 @@ fn list(
         sort: &sort_keys,
     };
     let result = project.list_all(&scope, &filter)?;
-    Ok((result, multi_namespace))
+    Ok((result, project.names()))
 }
 
 fn split_list(value: Option<&str>) -> Vec<String> {
@@ -663,7 +671,7 @@ fn list_outcome(
     wheres: &[String],
     ids: bool,
     json: bool,
-    multi_namespace: bool,
+    names: &Names,
 ) -> Outcome {
     let matched = &result.documents;
     let stderr = dangling_refs_stderr(&result.dangling_refs);
@@ -676,13 +684,13 @@ fn list_outcome(
     if json {
         return Outcome {
             stderr,
-            ..success_raw(&list_json(listed, total, truncated))
+            ..success_raw(&list_json(listed, total, truncated, names))
         };
     }
     if ids {
         let mut stdout = String::new();
         for doc in listed {
-            stdout.push_str(&identity_text(doc, multi_namespace));
+            stdout.push_str(&identity_text(doc, names));
             stdout.push('\n');
         }
         return Outcome {
@@ -694,7 +702,7 @@ fn list_outcome(
     let columns = table_columns(fields, wheres);
     Outcome {
         code: 0,
-        stdout: list_table(matched, listed.len(), &columns, multi_namespace),
+        stdout: list_table(matched, listed.len(), &columns, names),
         stderr,
     }
 }
@@ -708,8 +716,16 @@ fn dangling_refs_stderr(dangling_refs: &[String]) -> String {
     text
 }
 
-fn list_json(documents: &[Document], total: usize, truncated: bool) -> Box<RawValue> {
-    let documents: Vec<Box<RawValue>> = documents.iter().map(document_json).collect();
+fn list_json(
+    documents: &[Document],
+    total: usize,
+    truncated: bool,
+    names: &Names,
+) -> Box<RawValue> {
+    let documents: Vec<Box<RawValue>> = documents
+        .iter()
+        .map(|document| document_json(document, names))
+        .collect();
     raw_object(&[
         ("documents", raw_array(&documents)),
         ("total", raw(&json!(total))),
@@ -764,15 +780,15 @@ fn list_table(
     matched: &[Document],
     listed_len: usize,
     columns: &[String],
-    multi_namespace: bool,
+    names: &Names,
 ) -> String {
     if listed_len == 0 {
         return String::new();
     }
-    let column_count = 2 + columns.len();
+    let column_count = 3 + columns.len();
     let rows: Vec<Vec<String>> = matched
         .iter()
-        .map(|doc| table_row(doc, columns, multi_namespace))
+        .map(|doc| table_row(doc, columns, names))
         .collect();
     let identity_label = if matched.iter().all(|doc| doc.key.is_some()) {
         "key"
@@ -783,6 +799,7 @@ fn list_table(
     };
     let mut header = Vec::with_capacity(column_count);
     header.push(identity_label.to_owned());
+    header.push("ref".to_owned());
     header.push("title".to_owned());
     header.extend(columns.iter().cloned());
 
@@ -829,8 +846,9 @@ fn render_row(out: &mut String, row: &[String], widths: &[usize]) {
     out.push('\n');
 }
 
-fn table_row(doc: &Document, columns: &[String], multi_namespace: bool) -> Vec<String> {
-    let mut row = vec![identity_text(doc, multi_namespace)];
+fn table_row(doc: &Document, columns: &[String], names: &Names) -> Vec<String> {
+    let mut row = vec![identity_text(doc, names)];
+    row.push(portable_of(doc, names).unwrap_or_default());
     row.push(cell_value(doc, "title"));
     for column in columns {
         row.push(cell_value(doc, column));
@@ -838,14 +856,13 @@ fn table_row(doc: &Document, columns: &[String], multi_namespace: bool) -> Vec<S
     row
 }
 
-/// Qualified as `namespace:key` only when the project has several namespaces, so a printed name
-/// is one every command accepts (SPC-2).
-fn identity_text(doc: &Document, multi_namespace: bool) -> String {
-    match (&doc.key, &doc.namespace) {
-        (Some(key), Some(namespace)) if multi_namespace => format!("{namespace}:{key}"),
-        (Some(key), _) => key.clone(),
-        _ => doc.path.clone(),
-    }
+fn identity_text(doc: &Document, names: &Names) -> String {
+    names.printed(
+        doc.project.as_deref(),
+        doc.namespace.as_deref(),
+        doc.key.as_deref(),
+        &doc.path,
+    )
 }
 
 fn cell_value(doc: &Document, field: &str) -> String {
@@ -878,9 +895,12 @@ fn render_cell(value: &Value) -> String {
 
 /// The labeled block of `get`, `set`, `new` and `mv` (SPC-5). An empty `collection` means `mv`
 /// moved the document out of every collection, and then there is no schema either (SPC-2).
-fn document_text(document: &Document) -> String {
+fn document_text(document: &Document, names: &Names) -> String {
     let mut out = String::new();
     push_line(&mut out, "path", &document.path);
+    if let Some(portable) = portable_of(document, names) {
+        push_line(&mut out, "ref", &portable);
+    }
     if !document.collection.is_empty() {
         push_line(&mut out, "collection", &document.collection);
         push_line(&mut out, "schema", &document.schema);
@@ -923,13 +943,12 @@ fn refs(
     reverse: bool,
     field: Option<&str>,
     namespace: Option<&str>,
-) -> Result<(RefsReport, bool), Error> {
+) -> Result<(RefsReport, Names), Error> {
     let (root, arg) = discover_for(Argument::parse(document)?, deps.env)?;
     let project = Project::load(&root, deps.env)?;
-    let multi_namespace = project.config().namespaces.len() > 1;
     let scope = scope_for(&project, &arg, namespace, deps.env)?;
     let report = project.refs(&arg, &scope, reverse, field, deps.env)?;
-    Ok((report, multi_namespace))
+    Ok((report, project.names()))
 }
 
 /// `to` is read as `from` is (SPC-2), and an on-disk `to` against the project `from` found: a
@@ -940,17 +959,16 @@ fn mv(
     to: &std::ffi::OsStr,
     lock_timeout: Duration,
     namespace: Option<&str>,
-) -> Result<(MvReport, bool), Error> {
+) -> Result<(MvReport, Names), Error> {
     let (root, from_arg) = discover_for(Argument::parse(from)?, deps.env)?;
     let project = Project::load(&root, deps.env)?;
-    let multi_namespace = project.config().namespaces.len() > 1;
     let to_arg = match Argument::parse(to)? {
         Argument::Named(document) => document,
         Argument::OnDisk(path) => resolve_on_disk(&root, &path, deps.env)?,
     };
     let scope = scope_for(&project, &from_arg, namespace, deps.env)?;
     let report = project.mv(&from_arg, &to_arg, &scope, lock_timeout, deps)?;
-    Ok((report, multi_namespace))
+    Ok((report, project.names()))
 }
 
 /// `namespace` is a bare namespace name, not a document argument, so `Argument::parse` does not
@@ -961,10 +979,9 @@ fn mv_renumber(
     namespace: &std::ffi::OsStr,
     lock_timeout: Duration,
     namespace_flag: Option<&str>,
-) -> Result<(MvReport, bool), Error> {
+) -> Result<(MvReport, Names), Error> {
     let (root, from_arg) = discover_for(Argument::parse(from)?, deps.env)?;
     let project = Project::load(&root, deps.env)?;
-    let multi_namespace = project.config().namespaces.len() > 1;
     let namespace_text = match namespace.to_str() {
         Some(text) => text,
         None => {
@@ -975,15 +992,15 @@ fn mv_renumber(
     };
     let scope = scope_for(&project, &from_arg, namespace_flag, deps.env)?;
     let report = project.mv_renumber(&from_arg, namespace_text, &scope, lock_timeout, deps)?;
-    Ok((report, multi_namespace))
+    Ok((report, project.names()))
 }
 
 /// The three lines after the block are always printed, so a clean move reads as loud as a busy
 /// one (SPC-5).
-fn mv_text(report: &MvReport, multi_namespace: bool) -> String {
-    let mut out = document_text(&report.document);
+fn mv_text(report: &MvReport, names: &Names) -> String {
+    let mut out = document_text(&report.document, names);
     push_line(&mut out, "rewritten", &rewritten_summary(&report.rewritten));
-    push_unrewritten_lines(&mut out, &report.unrewritten, multi_namespace);
+    push_unrewritten_lines(&mut out, &report.unrewritten, names);
     push_findings_lines(&mut out, &report.findings);
     out
 }
@@ -1006,51 +1023,42 @@ fn count_noun(n: usize, noun: &str) -> String {
     }
 }
 
-fn push_unrewritten_lines(out: &mut String, unrewritten: &[UnrewrittenRef], multi_namespace: bool) {
+fn push_unrewritten_lines(out: &mut String, unrewritten: &[UnrewrittenRef], names: &Names) {
     if unrewritten.is_empty() {
         push_line(out, "unrewritten", "none");
         return;
     }
     push_line(out, "unrewritten", &unrewritten.len().to_string());
     for item in unrewritten {
-        out.push_str(&unrewritten_text(item, multi_namespace));
+        out.push_str(&unrewritten_text(item, names));
         out.push('\n');
     }
 }
 
 /// `item.reference.other` is always `Resolved` (`mv_reverse_scan` builds no other), but nothing
 /// across the crate boundary enforces it, so the unresolved form is rendered too.
-fn unrewritten_text(item: &UnrewrittenRef, multi_namespace: bool) -> String {
-    let name = ref_outcome_text(&item.reference.other, multi_namespace);
+fn unrewritten_text(item: &UnrewrittenRef, names: &Names) -> String {
+    let name = ref_outcome_text(&item.reference.other, names);
     format!(
         "{name}  {}  {}",
         item.reference.field, item.reference.written
     )
 }
 
-fn ref_outcome_text(outcome: &RefOutcome, multi_namespace: bool) -> String {
+fn ref_outcome_text(outcome: &RefOutcome, names: &Names) -> String {
     match outcome {
-        RefOutcome::Resolved(name) => ref_name_text(name, multi_namespace),
+        RefOutcome::Resolved(name) => ref_name_text(name, names),
         RefOutcome::Unresolved(reason) => format!("(unresolved: {reason})"),
     }
 }
 
-fn ref_name_text(name: &RefName, multi_namespace: bool) -> String {
-    let mut out = String::new();
-    if let Some(project) = &name.project {
-        out.push_str(project);
-        out.push_str("::");
-    }
-    match (&name.namespace, &name.key) {
-        (Some(namespace), Some(key)) if multi_namespace => {
-            out.push_str(namespace);
-            out.push(':');
-            out.push_str(key);
-        }
-        (_, Some(key)) => out.push_str(key),
-        _ => out.push_str(&name.path),
-    }
-    out
+fn ref_name_text(name: &RefName, names: &Names) -> String {
+    names.printed(
+        name.project.as_deref(),
+        name.namespace.as_deref(),
+        name.key.as_deref(),
+        &name.path,
+    )
 }
 
 fn push_findings_lines(out: &mut String, findings: &[Finding]) {
@@ -1454,7 +1462,7 @@ fn within_depth(level: u8, depth: Option<u8>) -> bool {
 }
 
 /// A heading's `end` is its end in the whole document, whatever `depth` leaves out (SPC-12).
-fn toc_json(toc: &Toc, depth: Option<u8>) -> Json {
+fn toc_json(toc: &Toc, depth: Option<u8>, names: &Names) -> Json {
     let headings: Vec<Json> = toc
         .headings
         .iter()
@@ -1475,6 +1483,7 @@ fn toc_json(toc: &Toc, depth: Option<u8>) -> Json {
             Some(&toc.namespace),
             toc.key.as_deref(),
             toc.project.as_deref(),
+            names,
         )),
         "headings": headings,
     })
@@ -1555,19 +1564,19 @@ fn push_toc_row(out: &mut String, cells: &[String; 4], widths: &[usize; 4]) {
     out.push('\n');
 }
 
-fn refs_outcome(report: &RefsReport, multi_namespace: bool) -> Outcome {
+fn refs_outcome(report: &RefsReport, names: &Names) -> Outcome {
     Outcome {
         code: 0,
-        stdout: refs_text(report, multi_namespace),
+        stdout: refs_text(report, names),
         stderr: String::new(),
     }
 }
 
 /// `written` is a column only for `out`: with `--reverse` it only repeats the document named on
 /// the command line (SPC-5).
-fn refs_text(report: &RefsReport, multi_namespace: bool) -> String {
+fn refs_text(report: &RefsReport, names: &Names) -> String {
     let forward = report.direction == RefsDirection::Out;
-    let mut header = vec!["document".to_owned(), "field".to_owned()];
+    let mut header = vec!["document".to_owned(), "ref".to_owned(), "field".to_owned()];
     if forward {
         header.push("written".to_owned());
     }
@@ -1575,8 +1584,13 @@ fn refs_text(report: &RefsReport, multi_namespace: bool) -> String {
         .refs
         .iter()
         .map(|reference| {
+            let portable = match &reference.other {
+                RefOutcome::Resolved(name) => ref_name_portable(name, names),
+                RefOutcome::Unresolved(_) => None,
+            };
             let mut row = vec![
-                ref_outcome_text(&reference.other, multi_namespace),
+                ref_outcome_text(&reference.other, names),
+                portable.unwrap_or_default(),
                 reference.field.clone(),
             ];
             if forward {
@@ -1589,11 +1603,11 @@ fn refs_text(report: &RefsReport, multi_namespace: bool) -> String {
     render_table(&header, &rows, listed_len)
 }
 
-fn refs_json(report: &RefsReport) -> Json {
+fn refs_json(report: &RefsReport, names: &Names) -> Json {
     let refs: Vec<Json> = report
         .refs
         .iter()
-        .map(|reference| Json::Object(reference_json(reference)))
+        .map(|reference| Json::Object(reference_json(reference, names)))
         .collect();
     json!({
         "document": Json::Object(document_name(
@@ -1601,6 +1615,7 @@ fn refs_json(report: &RefsReport) -> Json {
             report.document.namespace.as_deref(),
             report.document.key.as_deref(),
             report.document.project.as_deref(),
+            names,
         )),
         "direction": direction_name(report.direction),
         "refs": refs,
@@ -1616,25 +1631,21 @@ fn direction_name(direction: RefsDirection) -> &'static str {
 
 /// Returns the fields rather than an object, so `unrewritten_json` can add `reason` to the same
 /// object (SPC-12).
-fn reference_json(reference: &RefsReference) -> Map<String, Json> {
-    let mut object = Map::new();
-    match &reference.other {
-        RefOutcome::Resolved(name) => {
-            object.insert("path".to_owned(), json!(name.path));
-            if let Some(namespace) = &name.namespace {
-                object.insert("namespace".to_owned(), json!(namespace));
-            }
-            if let Some(key) = &name.key {
-                object.insert("key".to_owned(), json!(key));
-            }
-            if let Some(project) = &name.project {
-                object.insert("project".to_owned(), json!(project));
-            }
-        }
+fn reference_json(reference: &RefsReference, names: &Names) -> Map<String, Json> {
+    let mut object = match &reference.other {
+        RefOutcome::Resolved(name) => document_name(
+            &name.path,
+            name.namespace.as_deref(),
+            name.key.as_deref(),
+            name.project.as_deref(),
+            names,
+        ),
         RefOutcome::Unresolved(reason) => {
+            let mut object = Map::new();
             object.insert("unresolved".to_owned(), json!(reason));
+            object
         }
-    }
+    };
     object.insert("field".to_owned(), json!(reference.field));
     object.insert("written".to_owned(), json!(reference.written));
     if let Some(position) = reference.position {
@@ -1645,16 +1656,20 @@ fn reference_json(reference: &RefsReference) -> Map<String, Json> {
 }
 
 /// Built as JSON text for the same reason as `document_json` (SPC-12, The write commands).
-fn mv_json(report: &MvReport) -> Box<RawValue> {
+fn mv_json(report: &MvReport, names: &Names) -> Box<RawValue> {
     let rewritten: Vec<Box<RawValue>> = report.rewritten.iter().map(rewritten_json).collect();
-    let unrewritten: Vec<Box<RawValue>> = report.unrewritten.iter().map(unrewritten_json).collect();
+    let unrewritten: Vec<Box<RawValue>> = report
+        .unrewritten
+        .iter()
+        .map(|item| unrewritten_json(item, names))
+        .collect();
     let findings: Vec<Box<RawValue>> = report
         .findings
         .iter()
         .map(|finding| raw(&finding_json(finding)))
         .collect();
     raw_object(&[
-        ("document", document_json(&report.document)),
+        ("document", document_json(&report.document, names)),
         ("rewritten", raw_array(&rewritten)),
         ("unrewritten", raw_array(&unrewritten)),
         ("findings", raw_array(&findings)),
@@ -1670,8 +1685,8 @@ fn rewritten_json(item: &RewrittenRef) -> Box<RawValue> {
     }))
 }
 
-fn unrewritten_json(item: &UnrewrittenRef) -> Box<RawValue> {
-    let mut object = reference_json(&item.reference);
+fn unrewritten_json(item: &UnrewrittenRef, names: &Names) -> Box<RawValue> {
+    let mut object = reference_json(&item.reference, names);
     object.insert("reason".to_owned(), json!(reason_name(item.reason)));
     raw(&Json::Object(object))
 }
@@ -1684,14 +1699,20 @@ fn reason_name(reason: UnrewrittenReason) -> &'static str {
     }
 }
 
+/// `ref`, the portable name, is beside `path`, and absent for a file outside every namespace
+/// folder, which has none (SPC-12).
 fn document_name(
     path: &str,
     namespace: Option<&str>,
     key: Option<&str>,
     project: Option<&str>,
+    names: &Names,
 ) -> Map<String, Json> {
     let mut object = Map::new();
     object.insert("path".to_owned(), json!(path));
+    if let Some(portable) = names.portable(project, namespace, key, path) {
+        object.insert("ref".to_owned(), json!(portable));
+    }
     if let Some(namespace) = namespace {
         object.insert("namespace".to_owned(), json!(namespace));
     }
@@ -1707,12 +1728,13 @@ fn document_name(
 /// Built as JSON text so that a `number` keeps the digits written in the document (SPC-12): no
 /// `serde_json::Number` holds `1e3` as `1e3`. It is either converted to `1000.0` or, with the
 /// digits kept, written back with an exponent sign the file never had.
-fn document_json(document: &Document) -> Box<RawValue> {
+fn document_json(document: &Document, names: &Names) -> Box<RawValue> {
     let name = document_name(
         &document.path,
         document.namespace.as_deref(),
         document.key.as_deref(),
         document.project.as_deref(),
+        names,
     );
     let mut object: Vec<(&str, Box<RawValue>)> = name
         .iter()
@@ -1733,6 +1755,24 @@ fn document_json(document: &Document) -> Box<RawValue> {
     }
     object.push(("fields", raw_object(&fields)));
     raw_object(&object)
+}
+
+fn portable_of(document: &Document, names: &Names) -> Option<String> {
+    names.portable(
+        document.project.as_deref(),
+        document.namespace.as_deref(),
+        document.key.as_deref(),
+        &document.path,
+    )
+}
+
+fn ref_name_portable(name: &RefName, names: &Names) -> Option<String> {
+    names.portable(
+        name.project.as_deref(),
+        name.namespace.as_deref(),
+        name.key.as_deref(),
+        &name.path,
+    )
 }
 
 fn value_json(value: &Value) -> Box<RawValue> {

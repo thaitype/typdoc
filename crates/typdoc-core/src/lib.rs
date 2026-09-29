@@ -31,6 +31,14 @@ mod lines;
 mod links;
 mod lock;
 mod mv;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "no caller reads or writes names through this module yet"
+    )
+)]
+mod name;
 mod namespace_lock;
 mod namespaces;
 mod project;
@@ -71,9 +79,9 @@ pub use namespace_lock::{
     release, release_all_for_signal,
 };
 pub use project::{
-    AuditCollection, AuditNotRead, AuditOverlap, AuditReport, ListFilter, ListResult, NewTarget,
-    Project, RefName, RefOutcome, RefsDirection, RefsReference, RefsReport, SetOp, SortKey, Toc,
-    ValidateReport, discover,
+    AuditCollection, AuditNotRead, AuditOverlap, AuditReport, ListFilter, ListResult, Names,
+    NewTarget, Project, RefName, RefOutcome, RefsDirection, RefsReference, RefsReport, SetOp,
+    SortKey, Toc, ValidateReport, discover,
 };
 pub use query::{
     Condition, Dir, FieldRef, Item, Op, PlainCondition, Quant, QueryError, RefCondition, RefField,

@@ -23,6 +23,7 @@ use crate::index::{Entry as Indexed, Index, Member};
 use crate::lines::Position;
 use crate::links::{self, BodyLink, BodyLinks};
 use crate::mv::{self, ContentChange, MvReport, RewrittenRef, UnrewrittenReason, UnrewrittenRef};
+use crate::name;
 use crate::namespace_lock::{
     self, NamespaceLock, acquire, local_namespace_lock_path, order_locks, release,
 };
@@ -63,6 +64,69 @@ pub struct Toc {
     /// The alias this document was reached through, when it belongs to an imported project.
     pub project: Option<String>,
     pub headings: Vec<Heading>,
+}
+
+/// What a document's portable name is written from (SPC-18): the namespaces of this project and
+/// of each import loaded on this machine.
+#[derive(Debug, Clone)]
+pub struct Names {
+    own: Vec<crate::config::Namespace>,
+    imports: BTreeMap<String, Vec<crate::config::Namespace>>,
+}
+
+impl Names {
+    /// The portable name, `ref` in output, of the document at `path` in `namespace` of `project`
+    /// (an import's alias, `None` for this one): `None` for a file outside every namespace folder,
+    /// which no name reaches from every place.
+    pub fn portable(
+        &self,
+        project: Option<&str>,
+        namespace: Option<&str>,
+        key: Option<&str>,
+        path: &str,
+    ) -> Option<String> {
+        let namespaces = match project {
+            None => &self.own,
+            Some(alias) => self.imports.get(alias)?,
+        };
+        let namespace = namespaces
+            .iter()
+            .position(|space| Some(space.name.as_str()) == namespace)?;
+        let identity = name::Identity {
+            project,
+            namespace,
+            path,
+            key,
+            slug: None,
+        };
+        Some(name::format(
+            identity,
+            name::Form::Portable,
+            name::Place::Argument { scope: &[] },
+            namespaces,
+        ))
+    }
+
+    /// The name a command prints for a document in a table or a line (SPC-5): a coded document's
+    /// portable name, its key qualified only where its project needs it, and any other document's
+    /// path from its project's folder, after the import's `alias::`.
+    pub fn printed(
+        &self,
+        project: Option<&str>,
+        namespace: Option<&str>,
+        key: Option<&str>,
+        path: &str,
+    ) -> String {
+        if key.is_some()
+            && let Some(portable) = self.portable(project, namespace, key, path)
+        {
+            return portable;
+        }
+        match project {
+            Some(alias) => format!("{alias}::{path}"),
+            None => path.to_owned(),
+        }
+    }
 }
 
 /// The name of a document at the other end of a reference, once it is known to exist. `key` is
@@ -138,7 +202,6 @@ struct RefEvalCtx<'a> {
     me_entry: &'a Indexed,
     me_fields: &'a [(String, Value)],
     me_body: &'a BodyLinks,
-    codes: &'a BTreeSet<String>,
     incoming: Option<&'a [IncomingRef]>,
 }
 
@@ -198,15 +261,57 @@ pub(crate) enum ImportState {
 }
 
 struct RefProject {
-    /// A bare-key ref needs its code to exist in this project.
+    /// A mention is checked only when its code is one of this project's (`body.mentions`).
     codes: BTreeSet<String>,
-    /// A written ref that no longer resolves, to the current key or path of the document that
-    /// recorded moving away from it (`auto: moves`).
-    moved: BTreeMap<String, String>,
+    /// A name that no longer resolves, to the current name of the document that recorded moving
+    /// away from it (`auto: moves`).
+    moved: BTreeMap<MovedFrom, String>,
+}
+
+/// What a name read as, to find the document that recorded moving away from it: a key in its
+/// namespace, since the same key can be issued once in each, or a path from the project folder.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum MovedFrom {
+    Key { namespace: usize, key: String },
+    Path(String),
+}
+
+impl MovedFrom {
+    fn of(reading: name::Reading) -> Option<MovedFrom> {
+        match reading {
+            name::Reading::Key {
+                namespaces, key, ..
+            } => match namespaces.as_slice() {
+                [namespace] => Some(MovedFrom::Key {
+                    namespace: *namespace,
+                    key,
+                }),
+                _ => None,
+            },
+            name::Reading::Path(path) => Some(MovedFrom::Path(path)),
+            _ => None,
+        }
+    }
+}
+
+/// The document `mv` moves, as it is named once moved: where every ref to it is rewritten to.
+struct Moved<'a> {
+    path: &'a str,
+    /// `None` outside every namespace folder, which only an uncoded document can move to.
+    namespace: Option<usize>,
+    key: Option<&'a str>,
+    slug: Option<&'a str>,
+}
+
+/// What an argument names: a path from the project folder, not yet looked up, or the path of the
+/// document a key was found at.
+enum ArgumentName {
+    Path(String),
+    Found(String),
 }
 
 struct PrescanAccum {
-    moved: BTreeMap<String, String>,
+    moved: BTreeMap<MovedFrom, String>,
     edges: BTreeMap<String, Vec<(String, String)>>,
 }
 
@@ -216,7 +321,7 @@ struct BodyDocContext<'a> {
     doc_text: &'a str,
     ctx: &'a refs::Ctx<'a>,
     ignore: &'a [Template],
-    moved: &'a BTreeMap<String, String>,
+    moved: &'a BTreeMap<MovedFrom, String>,
     collection: &'a Rules,
     strict: bool,
     audit: bool,
@@ -442,6 +547,23 @@ impl Project {
         })
     }
 
+    /// What every document's portable name is written from, for printing it.
+    pub fn names(&self) -> Names {
+        Names {
+            own: self.config.namespaces.clone(),
+            imports: self
+                .imports
+                .iter()
+                .filter_map(|(alias, state)| match state {
+                    ImportState::Loaded(project) => {
+                        Some((alias.clone(), project.config.namespaces.clone()))
+                    }
+                    ImportState::Absent(_) => None,
+                })
+                .collect(),
+        }
+    }
+
     pub fn config(&self) -> &Config {
         &self.config
     }
@@ -458,8 +580,83 @@ impl Project {
         &self.root
     }
 
-    pub(crate) fn codes(&self) -> BTreeSet<String> {
-        self.project_codes()
+    /// For a `./` or `../` name that names nothing from the document's folder but names a file
+    /// from the namespace folder, a clause saying so, with the name to write for it: in a ref its
+    /// portable name, and in a body link, which is a Markdown link (`PRN-6`), its path from the
+    /// document.
+    fn namespace_folder_hint(&self, written: &str, ctx: &refs::Ctx, link: bool) -> Option<String> {
+        if ctx.ref_base != RefBase::Namespace || !name::from_document(written) {
+            return None;
+        }
+        let destination = written.split('#').next().unwrap_or(written);
+        let folder = &self.config.namespaces[ctx.doc_namespace].folder;
+        let found = refs::resolve_path(&name::join(folder, destination), &self.index, &self.root)
+            .ok()?
+            .path;
+        let namespace = name::namespace_of_path(&self.config.namespaces, &found);
+        let instead = match (link, namespace) {
+            (false, Some(namespace)) => {
+                let entry = self.index.get(&found);
+                self.portable_at(
+                    namespace,
+                    &found,
+                    entry.and_then(|entry| entry.key.as_deref()),
+                    entry.and_then(|entry| entry.slug.as_deref()),
+                )
+            }
+            // `./` or `../` in front, which is read from the document whatever `refBase` says.
+            _ => match name::relative_to(&name::folder_of(ctx.doc_path), &found) {
+                climbing if climbing.starts_with("../") => climbing,
+                below => format!("./{below}"),
+            },
+        };
+        Some(format!(
+            "`./` and `../` are read from the document's folder, and from the namespace folder it \
+             would be `{found}`: write `{instead}`"
+        ))
+    }
+
+    /// The name of the document at `path` that reads as it from every place in this project
+    /// (SPC-18).
+    fn portable_name(&self, path: &str, entry: &Indexed) -> String {
+        self.portable_at(
+            entry.namespace,
+            path,
+            entry.key.as_deref(),
+            entry.slug.as_deref(),
+        )
+    }
+
+    fn portable_at(
+        &self,
+        namespace: usize,
+        path: &str,
+        key: Option<&str>,
+        slug: Option<&str>,
+    ) -> String {
+        let identity = name::Identity {
+            project: None,
+            namespace,
+            path,
+            key,
+            slug,
+        };
+        name::format(
+            identity,
+            name::Form::Portable,
+            name::Place::Argument { scope: &[] },
+            &self.config.namespaces,
+        )
+    }
+
+    /// The project as names are read in it.
+    pub(crate) fn scene(&self) -> name::Scene<'_> {
+        name::Scene {
+            namespaces: &self.config.namespaces,
+            index: &self.index,
+            root: &self.root,
+            imports: &self.imports,
+        }
     }
 
     /// The namespaces a command reads. `prefix` is the namespace an argument names.
@@ -613,11 +810,11 @@ impl Project {
         scope: &Scope,
         env: &dyn Env,
     ) -> Result<WriteTarget, Error> {
-        let path = match arg {
-            DocumentArg::Path { path, .. } => {
-                if let Some((_, collections)) = self.index.overlap(path) {
+        let path = match self.read_argument(arg, scope)? {
+            ArgumentName::Path(path) => {
+                if let Some((_, collections)) = self.index.overlap(&path) {
                     return Err(Error::Config {
-                        file: self.root.join(path),
+                        file: self.root.join(&path),
                         message: format!(
                             "{}, so there is no one schema to write it with: see \
                              collections.overlap in a validate report",
@@ -625,17 +822,15 @@ impl Project {
                         ),
                     });
                 }
-                if self.index.get(path).is_some() {
-                    path.clone()
-                } else if self.root.join(path).is_file() {
-                    return Ok(WriteTarget::Loose { path: path.clone() });
+                if self.index.get(&path).is_some() {
+                    path
+                } else if self.root.join(&path).is_file() {
+                    return Ok(WriteTarget::Loose { path });
                 } else {
-                    return Err(self.not_found(path, env));
+                    return Err(self.not_found(&path, env));
                 }
             }
-            DocumentArg::Key { namespace, key, .. } => {
-                self.resolve_key(namespace.as_deref(), key, scope)?
-            }
+            ArgumentName::Found(path) => path,
         };
         Ok(WriteTarget::Collected { path })
     }
@@ -728,8 +923,8 @@ impl Project {
             clippy::expect_used,
             reason = "`resolve_write_target` only ever returns `WriteTarget::Collected` for a \
                       path `self.index.get` just found `Some` for (the `Path` branch) or a path \
-                      `resolve_key` read out of the same index (the `Key` branch); the index has \
-                      no mutator between that check and here"
+                      `name::resolve` read out of the same index (the `Key` branch); the index \
+                      has no mutator between that check and here"
         )]
         let entry = self
             .index
@@ -1064,6 +1259,7 @@ impl Project {
         sets: &[SetOp],
         lock_timeout: Duration,
     ) -> Result<Document, Error> {
+        let path = &self.new_path(path)?;
         let (namespace_idx, collection_idx) = self.resolve_uncoded_target(path)?;
         let collection = &self.collections[collection_idx];
         let schema = &collection.schema;
@@ -1181,33 +1377,49 @@ impl Project {
         Ok(findings)
     }
 
+    /// `new`'s path read as an argument (SPC-18): with no prefix from the project folder, and
+    /// `namespace:path` from that namespace's folder.
+    fn new_path(&self, written: &str) -> Result<String, Error> {
+        // A namespace name holds no `/`, so a colon after one is part of the path.
+        if written
+            .split_once(':')
+            .is_some_and(|(before, _)| before.contains('/'))
+        {
+            return Ok(written.to_owned());
+        }
+        let place = name::Place::Argument { scope: &[] };
+        match name::read(written, place, &self.config.namespaces) {
+            name::Reading::Path(path) => Ok(path),
+            name::Reading::Import { .. } => Err(Error::BadArgument(format!(
+                "`{written}` names a document of another project, and `new` writes only in the \
+                 project it is run in"
+            ))),
+            // A path ends in `.md`, so it is never read as a key: only a prefix fails here.
+            _ => Err(Error::BadArgument(name::not_a_prefix(
+                written
+                    .split_once(':')
+                    .map_or(written, |(prefix, _)| prefix),
+                &self.config.namespaces,
+            ))),
+        }
+    }
+
     /// The namespace and the uncoded collection of a path not yet on disk, which the index
     /// cannot answer for. More than one matching collection is refused as `collections.overlap`.
     fn resolve_uncoded_target(&self, path: &str) -> Result<(usize, usize), Error> {
-        let namespace_idx = self
-            .config
-            .namespaces
-            .iter()
-            .position(|space| {
-                space.folder.is_empty() || path.starts_with(&format!("{}/", space.folder))
-            })
-            .ok_or_else(|| {
+        let namespace_idx =
+            name::namespace_of_path(&self.config.namespaces, path).ok_or_else(|| {
                 Error::BadArgument(format!(
                     "`{path}` is not inside any namespace of this project"
                 ))
             })?;
         let namespace = &self.config.namespaces[namespace_idx];
-        let below = if namespace.folder.is_empty() {
-            path.to_owned()
-        } else {
-            #[expect(
-                clippy::expect_used,
-                reason = "`namespace_idx` was found above by testing exactly this condition"
-            )]
-            path.strip_prefix(&format!("{}/", namespace.folder))
-                .expect("the namespace was found by this same prefix test")
-                .to_owned()
-        };
+        // The namespace's folder holds `path`, or is the project folder, whose `/` no path starts
+        // with; a path equal to the folder itself is no `.md` file, and is read whole.
+        let below = path
+            .strip_prefix(&format!("{}/", namespace.folder))
+            .unwrap_or(path)
+            .to_owned();
 
         let matches: Vec<usize> = self
             .collections
@@ -1388,7 +1600,6 @@ impl Project {
                 Condition::Ref(ref_condition) => self.check_ref_condition_scope(ref_condition)?,
             }
         }
-        let codes = self.project_codes();
         // Only `ref.*` reads the candidate's own body links; `refby.*` reads the other documents'
         // refs, gathered once here.
         let needs_own_body = filter
@@ -1400,7 +1611,7 @@ impl Project {
             .iter()
             .any(|c| matches!(c, Condition::Ref(r) if r.dir == Dir::RefBy))
         {
-            Some(self.incoming_refs(&codes)?)
+            Some(self.incoming_refs()?)
         } else {
             None
         };
@@ -1452,7 +1663,6 @@ impl Project {
                 me_entry: entry,
                 me_fields: &fields,
                 me_body: &body,
-                codes: &codes,
                 incoming: incoming.as_deref(),
             };
             let mut keep = true;
@@ -1733,13 +1943,7 @@ impl Project {
         match condition.dir {
             Dir::Ref => {
                 let refs: Vec<RefsReference> = self
-                    .document_out_refs(
-                        &ctx.me.path,
-                        ctx.me_entry,
-                        ctx.me_fields,
-                        ctx.me_body,
-                        ctx.codes,
-                    )
+                    .document_out_refs(&ctx.me.path, ctx.me_entry, ctx.me_fields, ctx.me_body)
                     .into_iter()
                     .filter(|r| r.field == wanted)
                     .collect();
@@ -1855,7 +2059,7 @@ impl Project {
         condition_matches(inner, &collection.schema, &doc)
     }
 
-    fn incoming_refs(&self, codes: &BTreeSet<String>) -> Result<Vec<IncomingRef>, Error> {
+    fn incoming_refs(&self) -> Result<Vec<IncomingRef>, Error> {
         let mut holders: Vec<(&str, &Indexed)> = self.index.iter().collect();
         holders.sort_by_key(|(path, _)| *path);
         let mut out = Vec::new();
@@ -1875,7 +2079,7 @@ impl Project {
                 project: None,
                 fields: fields.clone(),
             };
-            for reference in self.document_out_refs(path, entry, &fields, &body, codes) {
+            for reference in self.document_out_refs(path, entry, &fields, &body) {
                 out.push(IncomingRef {
                     holder: holder.clone(),
                     collection: entry.collection,
@@ -1939,7 +2143,6 @@ impl Project {
         }
         let (path, entry, text) = self.resolve(arg, scope, env)?;
         let document = self.ref_name_of(&path);
-        let codes = self.project_codes();
         let bad = |message| Error::Frontmatter {
             file: entry.file.clone(),
             message,
@@ -1957,7 +2160,7 @@ impl Project {
                       this `text`"
         )]
         let body = links::scan(&text).expect("frontmatter.parse already refused an unclosed block");
-        let own = self.document_out_refs(&path, entry, &fields, &body, &codes);
+        let own = self.document_out_refs(&path, entry, &fields, &body);
 
         if !reverse {
             let refs = filtered(own, field);
@@ -1982,7 +2185,7 @@ impl Project {
                 continue;
             };
             let outgoing =
-                self.document_out_refs(other_path, other_entry, &other_fields, &other_body, &codes);
+                self.document_out_refs(other_path, other_entry, &other_fields, &other_body);
             for reference in filtered(outgoing, field) {
                 let RefOutcome::Resolved(target) = &reference.other else {
                     continue;
@@ -2012,7 +2215,6 @@ impl Project {
         entry: &Indexed,
         fields: &[(String, Value)],
         body: &BodyLinks,
-        codes: &BTreeSet<String>,
     ) -> Vec<RefsReference> {
         let collection = &self.collections[entry.collection];
         let ctx = refs::Ctx {
@@ -2020,7 +2222,6 @@ impl Project {
             doc_path: path,
             ref_base: collection.ref_base,
             namespaces: &self.config.namespaces,
-            codes,
             index: &self.index,
             root: &self.root,
             imports: &self.imports,
@@ -2060,6 +2261,7 @@ impl Project {
                 refs::BodyDestination::Skip => continue,
                 refs::BodyDestination::BadPrefix => RefOutcome::Unresolved("bad-prefix"),
                 refs::BodyDestination::ImportAbsent(_) => RefOutcome::Unresolved("import-absent"),
+                refs::BodyDestination::Absolute => RefOutcome::Unresolved("absolute"),
                 refs::BodyDestination::Path(joined) => {
                     match refs::resolve_path(&joined, &self.index, &self.root) {
                         Ok(resolved) => RefOutcome::Resolved(self.ref_name_of(&resolved.path)),
@@ -2327,14 +2529,14 @@ impl Project {
             }
             let scope = self.scope(arg.namespace_prefix(), flag, env)?;
             reject_import_scope(&scope)?;
-            if let DocumentArg::Path { path, .. } = arg
-                && let Some((namespace_idx, collections)) = self.index.overlap(path)
+            if let ArgumentName::Path(path) = self.read_argument(arg, &scope)?
+                && let Some((namespace_idx, collections)) = self.index.overlap(&path)
             {
                 if overlapping.insert(path.clone()) {
                     let namespace = &self.config.namespaces[namespace_idx].name;
                     namespaces.insert(namespace.clone());
                     findings.push(validate::overlap_finding(
-                        path,
+                        &path,
                         namespace,
                         overlap_message(collections),
                     ));
@@ -2553,7 +2755,6 @@ impl Project {
             doc_path: path,
             ref_base: collection.ref_base,
             namespaces: &self.config.namespaces,
-            codes: &ref_project.codes,
             index: &self.index,
             root: &self.root,
             imports: &self.imports,
@@ -2570,16 +2771,32 @@ impl Project {
             }
             for written in ref_values(value) {
                 match refs::resolve_one(written, &ctx) {
-                    Err(reason) => findings.extend(self.unresolved_ref_finding(
-                        name,
-                        field_name,
-                        written,
-                        reason,
-                        &ref_project.moved,
-                        &collection.validation,
-                        strict,
-                        audit,
-                    )),
+                    Err(reason) => findings.extend(
+                        self.unresolved_ref_finding(
+                            name,
+                            field_name,
+                            written,
+                            reason,
+                            MovedFrom::of(name::read(
+                                written,
+                                name::Place::Ref(ctx.document()),
+                                &self.config.namespaces,
+                            ))
+                            .and_then(|from| ref_project.moved.get(&from))
+                            .map(String::as_str),
+                            &collection.validation,
+                            strict,
+                            audit,
+                        )
+                        .map(|mut finding| {
+                            if finding.rule == "refs.resolve"
+                                && let Some(hint) = self.namespace_folder_hint(written, &ctx, false)
+                            {
+                                finding.message = format!("{}; {hint}", finding.message);
+                            }
+                            finding
+                        }),
+                    ),
                     Ok(resolved) => {
                         let info = self.schema_info_of(&resolved);
                         if !refs::target_allowed(field.target.as_ref(), &resolved, info.as_ref()) {
@@ -2704,7 +2921,6 @@ impl Project {
             doc_path: path,
             ref_base: collection.ref_base,
             namespaces: &self.config.namespaces,
-            codes: &ref_project.codes,
             index: &self.index,
             root: &self.root,
             imports: &self.imports,
@@ -2836,9 +3052,14 @@ impl Project {
                     line: mention.line,
                     col: mention.col,
                 };
+                let place = name::Place::Mention {
+                    namespace: entry.namespace,
+                };
+                let lookup =
+                    MovedFrom::of(name::read(&mention.written, place, &self.config.namespaces));
                 match self.moved_outcome(
                     name,
-                    &mention.written,
+                    lookup.as_ref(),
                     &mention.written,
                     position,
                     &ref_project.moved,
@@ -2882,18 +3103,19 @@ impl Project {
         findings: &mut Vec<Finding>,
     ) {
         let name = doc.name;
-        // Looked up by `target`, not `written`: a recorded move never has a `#anchor`, so
-        // `[t](old.md#section)` must be looked up as `old.md` (SPC-1).
-        let missing = |findings: &mut Vec<Finding>, lookup: &str| match self.moved_outcome(
-            name,
-            lookup,
-            written,
-            position,
-            doc.moved,
-            doc.collection,
-            doc.strict,
-            doc.audit,
-        ) {
+        // Looked up by the path `target` reads as, not `written`: a recorded move never has a
+        // `#anchor`, so `[t](old.md#section)` must be looked up as `old.md` (SPC-1).
+        let missing = |findings: &mut Vec<Finding>, lookup: Option<&MovedFrom>| match self
+            .moved_outcome(
+                name,
+                lookup,
+                written,
+                position,
+                doc.moved,
+                doc.collection,
+                doc.strict,
+                doc.audit,
+            ) {
             Some(Some(finding)) => findings.push(finding),
             Some(None) => {}
             None => {
@@ -2904,7 +3126,14 @@ impl Project {
                         "body.links",
                         None,
                         position,
-                        missing_target_message(written, uses),
+                        match target
+                            .and_then(|target| self.namespace_folder_hint(target, doc.ctx, true))
+                        {
+                            Some(hint) => {
+                                format!("{}; {hint}", missing_target_message(written, uses))
+                            }
+                            None => missing_target_message(written, uses),
+                        },
                     ));
                 }
             }
@@ -2914,7 +3143,32 @@ impl Project {
             Some(target) => match refs::classify_body(target, doc.ctx) {
                 refs::BodyDestination::Skip => return,
                 refs::BodyDestination::BadPrefix => {
-                    missing(findings, target);
+                    if let Some(level) = doc.links_level {
+                        findings.push(validate::finding_at(
+                            name,
+                            level,
+                            "body.links",
+                            None,
+                            position,
+                            format!("the link `{written}` does not resolve: its prefix names no namespace"),
+                        ));
+                    }
+                    None
+                }
+                refs::BodyDestination::Absolute => {
+                    if let Some(level) = doc.links_level {
+                        findings.push(validate::finding_at(
+                            name,
+                            level,
+                            "body.links",
+                            None,
+                            position,
+                            format!(
+                                "the link `{written}` is an absolute path, which is never followed: \
+                                 write it from the document, or with a `namespace:` prefix"
+                            ),
+                        ));
+                    }
                     None
                 }
                 refs::BodyDestination::ImportAbsent(absence) => {
@@ -2942,14 +3196,7 @@ impl Project {
                     match refs::resolve_path(&joined, &self.index, &self.root) {
                         Ok(resolved) => Some(resolved.path),
                         Err(_) => {
-                            // A move records the path from the project folder, which a link
-                            // written from another folder names only once joined (SPC-1).
-                            let lookup = if doc.moved.contains_key(&joined) {
-                                joined.as_str()
-                            } else {
-                                target
-                            };
-                            missing(findings, lookup);
+                            missing(findings, Some(&MovedFrom::Path(joined)));
                             None
                         }
                     }
@@ -2962,7 +3209,7 @@ impl Project {
                         // The `#anchor` is not checked there (see `resolve_import_outcome`).
                         RefOutcome::Resolved(_) => None,
                         RefOutcome::Unresolved(_) => {
-                            missing(findings, target);
+                            missing(findings, None);
                             None
                         }
                     }
@@ -3004,9 +3251,9 @@ impl Project {
             .unwrap_or_default()
     }
 
-    /// `None` when the mention's code is not a code of this project, so `UTF-8` is never
-    /// checked; otherwise whether it fails to resolve. A prefix naming no sibling namespace and an
-    /// import prefix both read as not found: a mention has one outcome for every failed lookup,
+    /// `None` when the mention's code is not a code of the project it reads into, so `UTF-8` is
+    /// never checked; otherwise whether it fails to resolve. Every failed reading, a bad prefix or
+    /// an absent import included, is not found: a mention has one outcome for every failed lookup,
     /// unlike a ref's `bad-prefix` (SPC-1).
     fn mention_missing(
         &self,
@@ -3014,21 +3261,18 @@ impl Project {
         doc_namespace: usize,
         codes: &BTreeSet<String>,
     ) -> Option<bool> {
-        let key = written.rsplit(':').next().unwrap_or(written);
-        if !codes.contains(refs::code_of(key)) {
-            return None;
-        }
-        if written.contains("::") {
-            return Some(true);
-        }
-        let namespace = match written.rsplit_once(':') {
-            Some((prefix, _)) => match self.namespace_index(prefix) {
-                Some(namespace) => namespace,
-                None => return Some(true),
-            },
-            None => doc_namespace,
+        let place = name::Place::Mention {
+            namespace: doc_namespace,
         };
-        Some(self.index.key(namespace, key).is_none())
+        let key = written.rsplit(':').next().unwrap_or(written);
+        let code = refs::code_of(key);
+        // An import that is not on this machine has no codes to ask, so this project's stand in.
+        let alias = written.split_once("::").map(|(alias, _)| alias);
+        let known = match alias.and_then(|alias| self.imports.get(alias)) {
+            Some(ImportState::Loaded(imported)) => imported.project_codes().contains(code),
+            _ => codes.contains(code),
+        };
+        known.then(|| name::resolve(written, place, &self.scene()).is_err())
     }
 
     /// `None` when `lookup` matches no recorded move, and the caller reports its own missing
@@ -3043,15 +3287,15 @@ impl Project {
     fn moved_outcome(
         &self,
         name: &DocName,
-        lookup: &str,
+        lookup: Option<&MovedFrom>,
         display: &str,
         position: Position,
-        moved: &BTreeMap<String, String>,
+        moved: &BTreeMap<MovedFrom, String>,
         collection: &Rules,
         strict: bool,
         audit: bool,
     ) -> Option<Option<Finding>> {
-        let new_id = moved.get(lookup)?;
+        let new_id = moved.get(lookup?)?;
         Some(
             validate::effective_level(
                 Level::Error,
@@ -3087,15 +3331,12 @@ impl Project {
         field_name: &str,
         written: &str,
         reason: refs::Reason,
-        moved: &BTreeMap<String, String>,
+        moved_to: Option<&str>,
         collection: &Rules,
         strict: bool,
         audit: bool,
     ) -> Option<Finding> {
-        let recorded = moved.get(written).or_else(|| {
-            refs::without_slug(written).and_then(|without| moved.get(without.as_str()))
-        });
-        if let Some(new_id) = recorded {
+        if let Some(new_id) = moved_to {
             let level = validate::effective_level(
                 Level::Error,
                 "refs.moved",
@@ -3174,7 +3415,7 @@ impl Project {
     }
 
     /// `None` for a target in no collection (reachable through `target: "*"`). An alias that is
-    /// not loaded also reads as no schema, though `refs::resolve_into_import` never produces one.
+    /// not loaded also reads as no schema, though `name::resolve` never produces one.
     fn schema_info_of(&self, resolved: &refs::Resolved) -> Option<refs::SchemaInfo<'_>> {
         let collection = resolved.collection?;
         match &resolved.project {
@@ -3216,7 +3457,7 @@ impl Project {
         candidate: Option<(&str, &Indexed, &str)>,
     ) -> Result<(RefProject, Vec<Finding>), Error> {
         let codes = self.project_codes();
-        let (moved, acyclic) = self.prescan_refs(&codes, candidate)?;
+        let (moved, acyclic) = self.prescan_refs(candidate)?;
         Ok((RefProject { codes, moved }, acyclic))
     }
 
@@ -3391,17 +3632,16 @@ impl Project {
     }
 
     /// A whole-project pass: a move can be recorded, and a cycle can pass, outside the scope of
-    /// the run that reads them. Returns the `auto: moves` map from a written ref to the current
-    /// key or path of the document that moved away from it, and one `refs.acyclic` finding per
+    /// the run that reads them. Returns the `auto: moves` map from what a recorded name reads
+    /// as to the current name of the document that moved away from it, and one `refs.acyclic` finding per
     /// document on a cycle, per field.
     ///
     /// `candidate` is one write in progress: its `path` is scanned from its text instead of disk,
     /// and as an extra document when it is not indexed yet.
     fn prescan_refs(
         &self,
-        codes: &BTreeSet<String>,
         candidate: Option<(&str, &Indexed, &str)>,
-    ) -> Result<(BTreeMap<String, String>, Vec<Finding>), Error> {
+    ) -> Result<(BTreeMap<MovedFrom, String>, Vec<Finding>), Error> {
         let mut accum = PrescanAccum {
             moved: BTreeMap::new(),
             edges: BTreeMap::new(),
@@ -3420,7 +3660,7 @@ impl Project {
                 }
                 _ => fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?,
             };
-            self.prescan_one(path, entry, &text, codes, phantom.as_ref(), &mut accum);
+            self.prescan_one(path, entry, &text, phantom.as_ref(), &mut accum);
         }
         if let Some((candidate_path, candidate_entry, candidate_text)) = candidate
             && self.index.get(candidate_path).is_none()
@@ -3429,7 +3669,6 @@ impl Project {
                 candidate_path,
                 candidate_entry,
                 candidate_text,
-                codes,
                 phantom.as_ref(),
                 &mut accum,
             );
@@ -3476,7 +3715,6 @@ impl Project {
         path: &str,
         entry: &Indexed,
         text: &str,
-        codes: &BTreeSet<String>,
         phantom: Option<&refs::Candidate>,
         accum: &mut PrescanAccum,
     ) {
@@ -3490,12 +3728,11 @@ impl Project {
             doc_path: path,
             ref_base: collection.ref_base,
             namespaces: &self.config.namespaces,
-            codes,
             index: &self.index,
             root: &self.root,
             imports: &self.imports,
         };
-        let identity = entry.key.clone().unwrap_or_else(|| path.to_owned());
+        let scope = [entry.namespace];
         for (field_name, value) in &fields {
             let Some(field) = collection.schema.field(field_name) else {
                 continue;
@@ -3505,19 +3742,22 @@ impl Project {
                 && let Value::List(items) = value
             {
                 for item in items {
-                    // A recorded path is pointed to the path the document has now, even for a
-                    // coded document, whose slug change records the path and keeps the key
-                    // (SPC-2).
-                    let recorded_key = item
-                        .rsplit(':')
-                        .next()
-                        .is_some_and(|last| crate::argument::read_key(last).is_some());
-                    let now = if recorded_key {
-                        identity.clone()
-                    } else {
-                        path.to_owned()
+                    // A record is read as `mv` writes it: a key in the document's own namespace
+                    // unless prefixed, or a path from the project folder. A recorded key points
+                    // to the document's portable name, a recorded path to the path it has now,
+                    // even for a coded document, whose slug change records the path and keeps
+                    // the key (SPC-2).
+                    let place = name::Place::Argument { scope: &scope };
+                    let Some(from) =
+                        MovedFrom::of(name::read(item, place, &self.config.namespaces))
+                    else {
+                        continue;
                     };
-                    moved.entry(item.clone()).or_insert(now);
+                    let now = match &from {
+                        MovedFrom::Key { .. } => self.portable_name(path, entry),
+                        MovedFrom::Path(_) => path.to_owned(),
+                    };
+                    moved.entry(from).or_insert(now);
                 }
             }
             if field.is_acyclic()
@@ -3542,18 +3782,64 @@ impl Project {
         }
     }
 
-    /// A path is read as it stands, relative to the project folder: a namespace prefix only
-    /// chooses scope. A key is resolved against the namespaces in `scope`, since the same key can
-    /// be issued once in each.
+    /// What `arg` names, read by the name grammar as an argument (SPC-18): a path with no prefix
+    /// from the project folder, `namespace:path` from that namespace's folder, and a key in
+    /// `scope`, since the same key can be issued once in each namespace. A path is not looked up.
+    fn read_argument(&self, arg: &DocumentArg, scope: &Scope) -> Result<ArgumentName, Error> {
+        let (prefix, rest) = match arg {
+            // Already a path from the project folder, one from disk included. It is not read again:
+            // a colon in it would be taken for a prefix.
+            DocumentArg::Path {
+                namespace: None,
+                path,
+                ..
+            } => return Ok(ArgumentName::Path(path.clone())),
+            DocumentArg::Path {
+                namespace, path, ..
+            } => (namespace.as_deref(), path),
+            DocumentArg::Key { namespace, key, .. } => (namespace.as_deref(), key),
+        };
+        let written = match prefix {
+            Some(prefix) => format!("{prefix}:{rest}"),
+            None => rest.clone(),
+        };
+        let in_scope: Vec<usize> = scope
+            .namespaces
+            .iter()
+            .filter_map(|name| self.namespace_index(name))
+            .collect();
+        let place = name::Place::Argument { scope: &in_scope };
+        match name::read(&written, place, &self.config.namespaces) {
+            name::Reading::Path(path) => Ok(ArgumentName::Path(path)),
+            name::Reading::Key { .. } => match name::resolve(&written, place, &self.scene()) {
+                Ok(resolved) => Ok(ArgumentName::Found(resolved.path)),
+                Err(name::Unresolved::Ambiguous(namespaces)) => Err(Error::AmbiguousKey {
+                    key: rest.clone(),
+                    candidates: namespaces
+                        .iter()
+                        .map(|&at| format!("{}:{rest}", self.config.namespaces[at].name))
+                        .collect(),
+                }),
+                Err(_) => Err(Error::NoKey { key: written }),
+            },
+            // `scope` has refused a prefix that names no namespace already; this is the same refusal
+            // for a caller that did not ask it.
+            _ => Err(Error::BadArgument(name::not_a_prefix(
+                prefix.unwrap_or(&written),
+                &self.config.namespaces,
+            ))),
+        }
+    }
+
     fn resolve(
         &self,
         arg: &DocumentArg,
         scope: &Scope,
         env: &dyn Env,
     ) -> Result<(String, &Indexed, String), Error> {
-        let path = match arg {
-            DocumentArg::Path { path, .. } => {
-                if let Some((_, collections)) = self.index.overlap(path) {
+        let path = match self.read_argument(arg, scope)? {
+            ArgumentName::Path(path) => {
+                if let Some((_, collections)) = self.index.overlap(&path) {
                     return Err(Error::Config {
                         file: self.root.join(path),
                         message: format!(
@@ -3562,19 +3848,17 @@ impl Project {
                         ),
                     });
                 }
-                if self.index.get(path).is_none() {
-                    return Err(self.not_found(path, env));
+                if self.index.get(&path).is_none() {
+                    return Err(self.not_found(&path, env));
                 }
-                path.clone()
+                path
             }
-            DocumentArg::Key { namespace, key, .. } => {
-                self.resolve_key(namespace.as_deref(), key, scope)?
-            }
+            ArgumentName::Found(path) => path,
         };
         #[expect(
             clippy::expect_used,
             reason = "the `Path` arm above returns `NotFound` unless `self.index.get(path)` is \
-                      `Some`, and the `Key` arm's path comes from `resolve_key`, which reads it \
+                      `Some`, and the `Key` arm's path comes from `name::resolve`, which reads it \
                       from `self.index.key(..)`; `Index::build` binds a key to a path in the same \
                       step that inserts the path's entry, and when it removes an overlapping path's \
                       entry it removes the path from its key group too; `Index` has no other \
@@ -3586,39 +3870,6 @@ impl Project {
             .expect("the path was just looked up above");
         let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
         Ok((path, entry, text))
-    }
-
-    /// `NotFound` carries no `./name` hint: a key names no place on disk.
-    fn resolve_key(&self, prefix: Option<&str>, key: &str, scope: &Scope) -> Result<String, Error> {
-        let found: Vec<(String, String)> = scope
-            .namespaces
-            .iter()
-            .filter_map(|name| self.namespace_index(name).map(|index| (name, index)))
-            .filter_map(|(name, index)| {
-                self.index
-                    .key(index, key)
-                    .map(|path| (name.clone(), path.to_owned()))
-            })
-            .collect();
-        match found.len() {
-            0 => Err(Error::NotFound {
-                path: printed_key(prefix, key),
-                hint: false,
-            }),
-            #[expect(
-                clippy::expect_used,
-                reason = "this arm of `match found.len()` runs only when `found.len()` is 1, so \
-                          `found.into_iter().next()` is `Some`"
-            )]
-            1 => Ok(found.into_iter().next().expect("checked above").1),
-            _ => Err(Error::AmbiguousKey {
-                key: key.to_owned(),
-                candidates: found
-                    .into_iter()
-                    .map(|(namespace, _)| format!("{namespace}:{key}"))
-                    .collect(),
-            }),
-        }
     }
 
     fn namespace_index(&self, name: &str) -> Option<usize> {
@@ -3660,6 +3911,7 @@ impl Project {
         let (from_path, from_entry, from_text) = self.resolve(from, scope, deps.env)?;
         let from_namespace = from_entry.namespace;
         let from_key = from_entry.key.clone();
+        let from_slug = from_entry.slug.clone();
         let from_file = from_entry.file.clone();
         let from_collection = from_entry.collection;
 
@@ -3699,7 +3951,7 @@ impl Project {
             None => None,
         };
 
-        let to_namespace = mv::namespace_of(&self.config.namespaces, &to_path);
+        let to_namespace = name::namespace_of_path(&self.config.namespaces, &to_path);
         let to_below = to_namespace
             .map(|ns| strip_namespace_folder(&to_path, &self.config.namespaces[ns].folder));
         let to_collection = if to_slug.is_some() {
@@ -3743,15 +3995,16 @@ impl Project {
             });
         }
 
-        let key_change = from_key
-            .as_deref()
-            .zip(to_slug.as_ref())
-            .map(|(key, slug)| mv::KeyChange::Slug {
-                key,
-                slug: slug.as_deref(),
-            });
-        let (mut changes, rewritten) =
-            self.mv_rewrite_changes(&rewrite_by_holder, &to_path, key_change)?;
+        let moved = Moved {
+            path: &to_path,
+            namespace: to_namespace,
+            key: from_key.as_deref(),
+            slug: match &to_slug {
+                Some(slug) => slug.as_deref(),
+                None => from_slug.as_deref(),
+            },
+        };
+        let (mut changes, rewritten) = self.mv_rewrite_changes(&rewrite_by_holder, &moved)?;
         if let Some(change) = self.mv_document_change(
             &from_path,
             from_collection,
@@ -3816,14 +4069,9 @@ impl Project {
         };
 
         let Some(to_namespace) = self.namespace_index(namespace) else {
-            return Err(Error::BadArgument(format!(
-                "`{namespace}` is not a namespace of this project, which has: {}",
-                self.config
-                    .namespaces
-                    .iter()
-                    .map(|n| n.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
+            return Err(Error::BadArgument(name::not_a_namespace(
+                namespace,
+                &self.config.namespaces,
             )));
         };
         if to_namespace == from_namespace {
@@ -3868,14 +4116,13 @@ impl Project {
             });
         }
 
-        let (mut changes, rewritten) = self.mv_rewrite_changes(
-            &rewrite_by_holder,
-            &to_path,
-            Some(mv::KeyChange::Renumber {
-                old_key: &from_key,
-                new_key: &new_key,
-            }),
-        )?;
+        let moved = Moved {
+            path: &to_path,
+            namespace: Some(to_namespace),
+            key: Some(&new_key),
+            slug: from_slug.as_deref(),
+        };
+        let (mut changes, rewritten) = self.mv_rewrite_changes(&rewrite_by_holder, &moved)?;
         // With its namespace prefix: a bare key would not say which namespace issued it.
         let previous_name = format!("{}:{from_key}", self.config.namespaces[from_namespace].name);
         if let Some(change) = self.mv_document_change(
@@ -3963,15 +4210,16 @@ impl Project {
         Ok((rewrite_by_holder, unrewritten))
     }
 
-    /// A mention is never rewritten, so every mention of `from`'s key is reported (SPC-2). A
+    /// A mention is never rewritten, so every mention of `from` is reported (SPC-2): one that reads
+    /// as `from`, not every mention of the same key, which another namespace may have issued. A
     /// mention is always a key, so a move of a document without a code reads no file here.
     ///
     /// A second full read of the project: the reverse scan keeps no raw text, and
     /// `links::mentions` needs the whole file to compute positions.
     fn mv_reverse_mentions(&self, from: &RefName) -> Result<Vec<UnrewrittenRef>, Error> {
-        let Some(from_key) = &from.key else {
+        if from.key.is_none() {
             return Ok(Vec::new());
-        };
+        }
         let mut holders: Vec<(&str, &Indexed)> = self.index.iter().collect();
         holders.sort_by_key(|(path, _)| *path);
         let mut found = Vec::new();
@@ -3990,15 +4238,14 @@ impl Project {
             let Ok(mentions) = links::mentions(&text, inline_code, fenced_code) else {
                 continue;
             };
+            let place = name::Place::Mention {
+                namespace: entry.namespace,
+            };
             for mention in mentions {
-                // Compared with `from`'s key rather than checked for resolving: before the move
-                // it still resolves.
-                let key = mention
-                    .written
-                    .rsplit(':')
-                    .next()
-                    .unwrap_or(&mention.written);
-                if key != from_key {
+                // Before the move a mention of `from` still resolves, to its path now.
+                let names_from = name::resolve(&mention.written, place, &self.scene())
+                    .is_ok_and(|resolved| resolved.project.is_none() && resolved.path == from.path);
+                if !names_from {
                     continue;
                 }
                 found.push(UnrewrittenRef {
@@ -4054,8 +4301,7 @@ impl Project {
     fn mv_rewrite_changes(
         &self,
         rewrite_by_holder: &RewriteByHolder,
-        to_path: &str,
-        key_change: Option<mv::KeyChange>,
+        moved: &Moved,
     ) -> Result<(Vec<ContentChange>, Vec<RewrittenRef>), Error> {
         let mut changes = Vec::new();
         let mut rewritten = Vec::new();
@@ -4071,7 +4317,7 @@ impl Project {
                 .expect("holder paths in this map were already looked up above");
             let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
             let (new_text, holder_rewritten) =
-                self.rewrite_holder(holder_path, entry, &text, refs, to_path, key_change)?;
+                self.rewrite_holder(holder_path, entry, &text, refs, moved)?;
             if new_text != text {
                 changes.push(ContentChange {
                     path: entry.file.clone(),
@@ -4133,7 +4379,7 @@ impl Project {
         key: &str,
         to_path: &str,
     ) -> Result<Option<String>, Error> {
-        if mv::namespace_of(&self.config.namespaces, to_path) != Some(from_namespace) {
+        if name::namespace_of_path(&self.config.namespaces, to_path) != Some(from_namespace) {
             return Err(Error::BadArgument(format!(
                 "`{from_path}` is a coded document: its key `{key}` belongs to the namespace that \
                  issued it, so `mv` cannot move it to another namespace; use `mv --renumber` \
@@ -4165,11 +4411,8 @@ impl Project {
     /// A key names the path it already has, which is then refused as existing: `mv` never
     /// invents a key for its destination.
     fn mv_destination_path(&self, to: &DocumentArg, scope: &Scope) -> Result<String, Error> {
-        match to {
-            DocumentArg::Path { path, .. } => Ok(path.clone()),
-            DocumentArg::Key { namespace, key, .. } => {
-                self.resolve_key(namespace.as_deref(), key, scope)
-            }
+        match self.read_argument(to, scope)? {
+            ArgumentName::Path(path) | ArgumentName::Found(path) => Ok(path),
         }
     }
 
@@ -4181,8 +4424,7 @@ impl Project {
         entry: &Indexed,
         text: &str,
         refs: &[RefsReference],
-        new_target: &str,
-        key_change: Option<mv::KeyChange>,
+        moved: &Moved,
     ) -> Result<(String, Vec<RewrittenRef>), Error> {
         let collection = &self.collections[entry.collection];
         let bad = |message| Error::Frontmatter {
@@ -4194,52 +4436,72 @@ impl Project {
             Some(block) => frontmatter::fields(block, &collection.schema).map_err(bad)?,
             None => Vec::new(),
         };
-        let mut writer = frontmatter::YamlSerdeWriter::new(fields.clone());
-        let mut frontmatter_touched = false;
+        let holder = name::InDocument {
+            path: holder_path,
+            namespace: entry.namespace,
+            ref_base: collection.ref_base,
+        };
+        // A ref a stopped run already rewrote, or a key that still names the document, is left as
+        // it is: `None`.
+        let mut new_names: Vec<Option<String>> = refs
+            .iter()
+            .map(|reference| {
+                let new_written = if reference.field == "$body" {
+                    self.moved_body_link(&reference.written, holder, moved)
+                } else {
+                    self.moved_name(&reference.written, name::Place::Ref(holder), moved)
+                };
+                (new_written != reference.written).then_some(new_written)
+            })
+            .collect();
+
+        // Last on its line first, so a splice never moves a column a later link was found at.
         let mut body = text.to_owned();
         let mut body_touched = false;
-        let mut rewritten = Vec::new();
-
-        for reference in refs {
-            let new_written = mv::rewritten_path_ref(
-                &reference.written,
-                collection.ref_base,
-                entry.namespace,
-                holder_path,
-                &self.config.namespaces,
-                new_target,
-                key_change,
-            );
-            // A key written alone, or a ref a stopped run already rewrote, is left as it is.
-            if new_written == reference.written {
-                continue;
-            }
-            let after = new_written.clone();
-            if reference.field == "$body" {
-                let Some(position) = reference.position else {
-                    continue;
-                };
-                let Some((line_start, line_end)) = mv::line_span(&body, position.line) else {
-                    continue;
-                };
-                let Some(new_line) = mv::splice_body_destination(
-                    &body[line_start..line_end],
+        let mut in_body: Vec<(usize, Position)> = refs
+            .iter()
+            .enumerate()
+            .filter(|(at, reference)| reference.field == "$body" && new_names[*at].is_some())
+            .filter_map(|(at, reference)| reference.position.map(|position| (at, position)))
+            .collect();
+        in_body.sort_by_key(|(_, position)| std::cmp::Reverse((position.line, position.col)));
+        for (at, position) in in_body {
+            let reference = &refs[at];
+            let spliced = mv::line_span(&body, position.line).and_then(|(start, end)| {
+                let new_written = new_names[at].as_deref()?;
+                mv::splice_body_destination(
+                    &body[start..end],
                     position.col,
                     &reference.written,
-                    &new_written,
-                ) else {
-                    // Leave the line untouched rather than guess at a shape
-                    // `mv::splice_body_destination` does not cover.
-                    continue;
-                };
-                body.replace_range(line_start..line_end, &new_line);
-                body_touched = true;
-            } else {
+                    new_written,
+                )
+                .map(|line| (start, end, line))
+            });
+            match spliced {
+                Some((start, end, line)) => {
+                    body.replace_range(start..end, &line);
+                    body_touched = true;
+                }
+                // Leave the line untouched rather than guess at a shape
+                // `mv::splice_body_destination` does not cover.
+                None => new_names[at] = None,
+            }
+        }
+
+        let mut writer = frontmatter::YamlSerdeWriter::new(fields.clone());
+        let mut frontmatter_touched = false;
+        let mut rewritten = Vec::new();
+        for (reference, new_name) in refs.iter().zip(new_names) {
+            let Some(after) = new_name else {
+                continue;
+            };
+            if reference.field != "$body" {
+                let value = after.clone();
                 match fields.iter().find(|(name, _)| name == &reference.field) {
                     Some((_, Value::List(_))) => {
-                        writer.replace_item(&reference.field, &reference.written, new_written);
+                        writer.replace_item(&reference.field, &reference.written, value);
                     }
-                    _ => writer.set_scalar(&reference.field, new_written),
+                    _ => writer.set_scalar(&reference.field, value),
                 }
                 frontmatter_touched = true;
             }
@@ -4264,6 +4526,59 @@ impl Project {
             assemble_frontmatter(split.block.is_some(), &new_block, &body[body_split.body..]),
             rewritten,
         ))
+    }
+
+    /// The name `written` becomes for the document `mv` moved, in `written`'s own form (SPC-18):
+    /// a key stays a key, a prefix stays, a slug is kept or renamed, `./` is kept.
+    fn moved_name(&self, written: &str, place: name::Place, moved: &Moved) -> String {
+        match moved.namespace {
+            Some(namespace) => name::format(
+                name::Identity {
+                    project: None,
+                    namespace,
+                    path: moved.path,
+                    key: moved.key,
+                    slug: moved.slug,
+                },
+                name::Form::Like(written),
+                place,
+                &self.config.namespaces,
+            ),
+            // Outside every namespace folder no prefix names where the document is: a path from
+            // the place's base, `./` kept. Neither form reads `namespace`.
+            None => {
+                let form = if name::from_document(written) {
+                    name::Form::Like(written)
+                } else {
+                    name::Form::Relative
+                };
+                name::format(
+                    name::Identity {
+                        project: None,
+                        namespace: 0,
+                        path: moved.path,
+                        key: None,
+                        slug: None,
+                    },
+                    form,
+                    place,
+                    &self.config.namespaces,
+                )
+            }
+        }
+    }
+
+    /// A body link's destination as [`Project::moved_name`] writes it, its `#anchor` kept.
+    fn moved_body_link(&self, written: &str, holder: name::InDocument, moved: &Moved) -> String {
+        let (destination, anchor) = match written.split_once('#') {
+            Some((destination, anchor)) => (destination, Some(anchor)),
+            None => (written, None),
+        };
+        let renamed = self.moved_name(destination, name::Place::BodyLink(holder), moved);
+        match anchor {
+            Some(anchor) => format!("{renamed}#{anchor}"),
+            None => renamed,
+        }
     }
 
     /// `None` also when the `auto: moves` field already ends with `previous_name`: a re-run after
@@ -4957,6 +5272,9 @@ fn ref_values(value: &Value) -> Vec<&str> {
 fn reason_message(written: &str, reason: &refs::Reason) -> String {
     match reason {
         refs::Reason::NotFound => format!("the ref `{written}` does not resolve: not found"),
+        refs::Reason::NoKey(key) => {
+            format!("the ref `{written}` does not resolve: no document with key {key}")
+        }
         refs::Reason::BadPrefix => {
             format!("the ref `{written}` does not resolve: its prefix names no namespace")
         }
@@ -4966,12 +5284,17 @@ fn reason_message(written: &str, reason: &refs::Reason) -> String {
                 absence.message()
             )
         }
+        refs::Reason::Absolute => format!(
+            "the ref `{written}` is an absolute path, which is never followed: write it from the \
+             document, or with a `namespace:` prefix"
+        ),
     }
 }
 
 fn reason_id(reason: &refs::Reason) -> &'static str {
     match reason {
-        refs::Reason::NotFound => "not-found",
+        refs::Reason::NotFound | refs::Reason::NoKey(_) => "not-found",
+        refs::Reason::Absolute => "absolute",
         refs::Reason::BadPrefix => "bad-prefix",
         refs::Reason::ImportAbsent(_) => "import-absent",
     }
@@ -5057,13 +5380,6 @@ fn overlap_message(collections: &[String]) -> String {
     )
 }
 
-fn printed_key(prefix: Option<&str>, key: &str) -> String {
-    match prefix {
-        Some(namespace) => format!("{namespace}:{key}"),
-        None => key.to_owned(),
-    }
-}
-
 /// No `validate` run reads an import (SPC-14), so accepting one in scope would give a report
 /// that reads as checked and clean when nothing it named was checked.
 fn reject_import_scope(scope: &Scope) -> Result<(), Error> {
@@ -5085,7 +5401,7 @@ fn reject_import_scope(scope: &Scope) -> Result<(), Error> {
 /// with several namespaces must name one even when it is not ambiguous, as a ref must (SPC-14).
 fn imported_scope(imported: &Project, arg: &DocumentArg) -> Result<Scope, Error> {
     if let Some(name) = arg.namespace_prefix() {
-        let index = imported.namespace_index(name).ok_or_else(|| {
+        let index = name::namespace_named(&imported.config.namespaces, name).ok_or_else(|| {
             let known: Vec<&str> = imported
                 .config
                 .namespaces
@@ -5138,17 +5454,9 @@ fn ref_name_in(
             project,
         };
     }
-    let namespace = namespaces
-        .iter()
-        .filter(|space| {
-            !space.folder.is_empty()
-                && (path == space.folder || path.starts_with(&format!("{}/", space.folder)))
-        })
-        .max_by_key(|space| space.folder.len())
-        .or_else(|| namespaces.iter().find(|space| space.folder.is_empty()));
     RefName {
         path: path.to_owned(),
-        namespace: namespace.map(|space| space.name.clone()),
+        namespace: name::namespace_of_path(namespaces, path).map(|at| namespaces[at].name.clone()),
         key: None,
         project,
     }

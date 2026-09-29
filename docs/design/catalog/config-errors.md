@@ -21,7 +21,7 @@ explained_by: [SPC-6, SPC-17]
       "id": "config.collection-schema",
       "reported_when": "a collection names a schema that does not exist"
     },
-    { "id": "config.rule-unknown", "reported_when": "a rule name or option is unknown" },
+    { "id": "config.rule-unknown", "reported_when": "a rule name or option is unknown, or an option's value is not one it accepts, such as an `ignore` pattern with glob syntax it does not take" },
     { "id": "config.rule-always-on", "reported_when": "an always-on rule is configured" },
     {
       "id": "config.collection-slug",
@@ -29,7 +29,7 @@ explained_by: [SPC-6, SPC-17]
     },
     {
       "id": "config.match-template",
-      "reported_when": "a `match` template breaks the placeholder rules, or has a digit or `-` right after `{key}` in a collection whose `slug` is not `none`"
+      "reported_when": "a `match` template breaks the placeholder rules, has glob syntax a `match` does not take (`?`, `[`, `]`, a backslash, `,`, a leading `!`), or has a digit or `-` right after `{key}` in a collection whose `slug` is not `none`"
     },
     {
       "id": "config.coded-schema-shared",

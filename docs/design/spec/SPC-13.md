@@ -2,6 +2,7 @@
 title: Queries explained
 status: active
 migrated_from: docs/archived-design/design.md#query
+follows: [PRN-12]
 ---
 
 Each `--where` is evaluated while standing on one candidate document: a plain condition reads the
@@ -67,14 +68,14 @@ reported once, there.
 
 ## Values and escaping
 
-An unescaped `*` is a glob; alone, in `k=*`, it means "present". In a value only three characters
-are special: `,` (separates alternatives), `*` (glob) and `\`. Put `\` before one to mean it
-literally: `title=Cosmos\, or SQL`, `k=\*`. `\` before any other character, or at the end of a
-value, is an error, which catches typos and leaves room to add special characters later. `*` is
-the only glob; there is no `?` and no `[...]`. `k=*` means "present" and `k=\*` a literal star.
-`=`, `<`, `>` and `!` need no escape in a value, because the expression is split at the first
-operator after the field name, taking the longest of `!=`, `<=`, `>=`, `=`, `<`, `>`. Wrap the
-whole expression in single quotes so the shell leaves `\`, `*`, `<` and `>` alone.
+An unescaped `*` is a glob (`SPC-19`); alone, in `k=*`, it means "present". In a value only three
+characters are special: `,` (separates alternatives), `*` (glob) and `\`. Put `\` before one to mean
+it literally: `title=Cosmos\, or SQL`, `k=\*`. `\` before any other character, or at the end of a
+value, is an error, which catches typos and leaves room to add special characters later. `*` is the
+only glob; there is no `?` and no `[...]`. `k=*` means "present" and `k=\*` a literal star. `=`,
+`<`, `>` and `!` need no escape in a value, because the expression is split at the first operator
+after the field name, taking the longest of `!=`, `<=`, `>=`, `=`, `<`, `>`. Wrap the whole
+expression in single quotes so the shell leaves `\`, `*`, `<` and `>` alone.
 
 The same rules apply to `--where`, `--if` and `--set`, with two differences in `--set`: an
 unescaped `*` is an error, since a value that is written has no glob, and `,` splits a value only

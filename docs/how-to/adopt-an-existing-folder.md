@@ -98,6 +98,7 @@ $ mkdir -p .typdoc/state
 $ echo '{ "decisions": { "last": 4 } }' > .typdoc/state/default.json
 $ typdoc new ADR "Next decision"
 path: decisions/ADR-5.md
+ref: ADR-5
 ...
 ```
 
@@ -114,7 +115,7 @@ collection file, for that collection's documents:
   "validation": {
     "global": {
       "frontmatter.unknown": { "level": "off" },
-      "body.links": { "level": "error", "ignore": ["assets/**"] }
+      "body.links": { "level": "error", "ignore": ["**/assets/**"] }
     }
   }
 }

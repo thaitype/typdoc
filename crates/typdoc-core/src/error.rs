@@ -38,6 +38,9 @@ pub enum Error {
     #[error("no document at {path}{}", not_found_hint(*hint, path))]
     NotFound { path: String, hint: bool },
 
+    #[error("no document with key {key}")]
+    NoKey { key: String },
+
     #[error("`{key}` is a key in more than one namespace: {}", candidates.join(", "))]
     AmbiguousKey {
         key: String,
@@ -106,9 +109,10 @@ impl Error {
             Error::BadArgument(_) | Error::AmbiguousKey { .. } | Error::AmbiguousScope { .. } => {
                 ErrorKind::BadArguments
             }
-            Error::NoProject { .. } | Error::NoProjectAt { .. } | Error::NotFound { .. } => {
-                ErrorKind::NotFound
-            }
+            Error::NoProject { .. }
+            | Error::NoProjectAt { .. }
+            | Error::NotFound { .. }
+            | Error::NoKey { .. } => ErrorKind::NotFound,
             Error::Config { .. }
             | Error::ConfigErrors { .. }
             | Error::Frontmatter { .. }

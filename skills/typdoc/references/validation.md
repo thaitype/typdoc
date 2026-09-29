@@ -70,7 +70,7 @@ configured. **Configurable** rules take their level from typdoc's default, then
 merging key by key:
 
 ```json
-"validation": { "global": { "body.links": { "level": "error", "ignore": ["assets/**"] },
+"validation": { "global": { "body.links": { "level": "error", "ignore": ["**/assets/**"] },
                             "frontmatter.unknown": { "level": "off" } } }
 ```
 
@@ -102,7 +102,7 @@ file, keep the higher `last`.
 
 | Rule | Default | Options | Reported when | Usual fix |
 | --- | --- | --- | --- | --- |
-| `body.links` | `error` | `ignore`: globs of relative targets to skip | A Markdown link in the body (inline, image, reference-style) points at a missing file; also text that looks like a link but is not (usually a space in the target — write `<my file.md>` or `my%20file.md`), and a reference label defined twice | Fix the path. `typdoc mv` keeps links right when you move files |
+| `body.links` | `error` | `ignore`: globs (`*`, `**`) of targets to skip, matched against the target's path from the project folder | A Markdown link in the body (inline, image, reference-style) points at a missing file, or at an absolute path (never followed), or has a `name:` prefix that names no namespace; also text that looks like a link but is not (usually a space in the target — write `<my file.md>` or `my%20file.md`), and a reference label defined twice | Fix the path. `typdoc mv` keeps links right when you move files |
 | `body.anchors` | `error` | — | A `#heading` in a link does not exist in the target | Use the slug `typdoc toc <target>` prints |
 | `body.mentions` | `off` | `inlineCode` (true), `fencedCode` (false) | A key mentioned in plain body text (`see WF-3`) does not exist | Correct the key |
 | `refs.codedByPath` | `warn` | — | A coded document is referenced by path (`WF-2.md`) instead of its key | Write the key (`WF-2`); a key survives moves |

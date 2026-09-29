@@ -34,11 +34,8 @@ fn a_project_path_with_backslashes_names_the_document_the_slashed_one_does() {
 
 #[test]
 fn a_namespace_prefixed_path_with_backslashes_names_the_document_the_slashed_one_does() {
-    // The path after the prefix names its namespace folder too (SPC-2).
-    for argument in [
-        r"story-1:story-1/tickets/WF-1.md",
-        r"story-1:story-1\tickets\WF-1.md",
-    ] {
+    // The path after the prefix is read from that namespace's folder (SPC-18).
+    for argument in [r"story-1:tickets/WF-1.md", r"story-1:tickets\WF-1.md"] {
         let ran = get(argument, "valid/several-namespaces");
 
         assert_eq!(ran.code, 0, "{argument}: {}", ran.stderr);

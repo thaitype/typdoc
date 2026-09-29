@@ -1,6 +1,7 @@
 {
   "document": {
     "path": "records/misfit.md",
+    "ref": "default:records/misfit.md",
     "namespace": "default",
     "code": null,
     "collection": "records",

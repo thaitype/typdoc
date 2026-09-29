@@ -25,7 +25,8 @@ see: [memory::notes/lesson.md]
 ```
 
 A key works too, `memory::LRN-1`. If the imported project has several namespaces, name one:
-`chief::story-3:WF-5`.
+`chief::story-3:WF-5`. A document of another project is printed with its alias, as its `ref`, so you
+can copy the name from typdoc's output.
 
 typdoc follows these refs when it validates and queries, and you can read the other project's
 documents directly:

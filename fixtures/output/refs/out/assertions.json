@@ -1,5 +1,5 @@
 {
-  "/document": { "path": "tickets/WF-1.md", "namespace": "default", "key": "WF-1" },
+  "/document": { "path": "tickets/WF-1.md", "ref": "WF-1", "namespace": "default", "key": "WF-1" },
   "/direction": "out",
   "/refs/0/field": "context",
   "/refs/0/written": "chief::WF-5",
@@ -7,6 +7,7 @@
   "/refs/1/field": "blocked_by",
   "/refs/1/written": "WF-2",
   "/refs/1/path": "tickets/WF-2.md",
+  "/refs/1/ref": "WF-2",
   "/refs/1/namespace": "default",
   "/refs/1/key": "WF-2",
   "/refs/2/field": "blocked_by",
@@ -15,6 +16,7 @@
   "/refs/3/field": "$body",
   "/refs/3/written": "../notes/a.md",
   "/refs/3/path": "notes/a.md",
+  "/refs/3/ref": "default:notes/a.md",
   "/refs/3/namespace": "default",
   "/refs/3/line": 7,
   "/refs/3/col": 8,

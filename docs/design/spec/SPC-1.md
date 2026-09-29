@@ -2,7 +2,7 @@
 title: Validation rules explained
 status: active
 migrated_from: docs/archived-design/design.md#validation-rules
-follows: [PRN-2, PRN-3, PRN-7]
+follows: [PRN-2, PRN-3, PRN-7, PRN-12]
 ---
 
 Every rule `typdoc validate` can report falls into one of two groups.
@@ -65,7 +65,13 @@ after; `validate` does not report it on a file as it stands.
 
 Markdown links in the body (inline, image and reference-style) point at existing files; also text
 that looks like a link but is not, and a reference label defined twice. Its `ignore` option holds
-globs of relative targets to skip, matched after percent-decoding.
+globs (`SPC-19`) of targets to skip, matched after percent-decoding against the target's path from
+the project folder, not the link as written: `**/assets/**` skips a link into any `assets` folder,
+from any document.
+
+A link's destination is read as a name (`SPC-18`). An absolute path is reported and never followed.
+`name:rest.md`, where `name` is no namespace of the project, is reported as a prefix naming none;
+`tel:123` and other destinations that do not end in `.md` are URLs, and not checked.
 
 **Text that looks like a link but is not.** A `[text](inner)` or `![text](inner)` outside code that
 the parser does not read as a link, and a line `[label]: inner` that it does not read as a
@@ -83,8 +89,11 @@ text, and the shape is too common in ordinary prose (`a[0][1]`).
 ## `refs.moved`
 
 A ref, or a mention when `body.mentions` is on, points at a key or path recorded in some
-document's `auto: moves` field and no longer resolves. It replaces the ordinary missing-target
-finding for that ref and names the new key. A body link is a ref here like a frontmatter value,
+document's `auto: moves` field and no longer resolves. The two are matched by what they read as
+(`SPC-18`), not by their text: a recorded key in the namespace that issued it, and a recorded path
+from the project folder, whatever folder the ref is written from. It replaces the ordinary
+missing-target finding for that ref and names the document now: its portable name (`SPC-18`) for a
+recorded key, its path for a recorded path. A body link is a ref here like a frontmatter value,
 so a body link to a moved target is `refs.moved`, not `body.links`; it is looked up without its
 `#anchor`, since a recorded move never has one. Without a field with `auto: moves`, a moved ref
 is still reported as missing, without the new key.
@@ -112,12 +121,13 @@ is not read as a mention, so neither it nor its key is checked.
 | `` `WF-3` `` (inline code) | per `inlineCode` |
 | Inside a fenced code block | per `fencedCode` |
 | `[WF-3](WF-3.md)` | no; `body.links` checks it |
-| `UTF-8`, `SHA-256` | no; not a known code |
+| `UTF-8`, `SHA-256` | no; not a code of the project the mention reads into |
 | `WF-3a`, `xWF-3` | no; word boundaries required |
 | `WF-3-lock-order` | no; a key written with its slug is not a mention |
 
-A mention with no prefix is looked up in the document's own namespace only, and a mention with a
-sibling prefix (`story-2:WF-5`) in the namespace it names. A mention has one outcome for every
+A mention is read as a key (`SPC-18`): with no prefix, in the document's own namespace only; with a
+sibling prefix (`story-2:WF-5`), in the namespace it names; with an import prefix
+(`chief::story-3:WF-5`), in that import. A mention has one outcome for every
 lookup that fails, not found, unlike a ref, whose `unresolved` tells the causes apart.
 `fencedCode` defaults to `false` because code blocks often hold logs, commands and diffs that
 contain key-like text.

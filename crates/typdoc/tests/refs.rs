@@ -1,4 +1,4 @@
-//! Covers SPC-2, SPC-5, SPC-12, SPC-14.
+//! Covers SPC-2, SPC-5, SPC-12, SPC-14, SPC-18.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -31,7 +31,7 @@ fn outgoing_refs_are_in_document_field_order_then_body_by_position() {
     let out = ran.stdout_json();
     assert_eq!(
         out["document"],
-        json!({ "path": "tickets/WF-1.md", "namespace": "default", "key": "WF-1" })
+        json!({ "path": "tickets/WF-1.md", "ref": "WF-1", "namespace": "default", "key": "WF-1" })
     );
     assert_eq!(out["direction"], json!("out"));
     let fields: Vec<&str> = out["refs"]
@@ -256,9 +256,9 @@ fn refs_without_json_prints_the_designs_worked_example() {
     assert_eq!(ran.stderr, "");
     assert_eq!(
         ran.stdout,
-        "document             field    written\n\
-         chief:WF-7           context  chief:WF-7\n\
-         team/learnings/x.md  $body    learnings/x.md\n"
+        "document             ref                  field    written\n\
+         chief:WF-7           chief:WF-7           context  chief:WF-7\n\
+         team/learnings/x.md  team:learnings/x.md  $body    learnings/x.md\n"
     );
 }
 
@@ -271,10 +271,10 @@ fn refs_reverse_without_json_prints_the_holders_name_and_field_per_line() {
     assert_eq!(ran.stderr, "");
     assert_eq!(
         ran.stdout,
-        "document    field\n\
-         notes/a.md  $body\n\
-         WF-1        blocked_by\n\
-         WF-3        context\n"
+        "document    ref                 field\n\
+         notes/a.md  default:notes/a.md  $body\n\
+         WF-1        WF-1                blocked_by\n\
+         WF-3        WF-3                context\n"
     );
 }
 
@@ -289,9 +289,9 @@ fn refs_field_without_json_keeps_only_that_fields_refs() {
     assert_eq!(ran.stderr, "");
     assert_eq!(
         ran.stdout,
-        "document                 field       written\n\
-         WF-2                     blocked_by  WF-2\n\
-         (unresolved: not-found)  blocked_by  WF-99\n"
+        "document                 ref   field       written\n\
+         WF-2                     WF-2  blocked_by  WF-2\n\
+         (unresolved: not-found)        blocked_by  WF-99\n"
     );
 }
 

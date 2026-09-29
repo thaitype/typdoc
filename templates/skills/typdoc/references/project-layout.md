@@ -26,7 +26,7 @@ separate project.
   "version": 1,
   "namespaces": ["story-*", "archive"],
   "imports": { "memory": "../memory" },
-  "validation": { "global": { "body.links": { "level": "error", "ignore": ["assets/**"] } } }
+  "validation": { "global": { "body.links": { "level": "error", "ignore": ["**/assets/**"] } } }
 }
 ```
 
@@ -56,6 +56,9 @@ A collection says which files a schema applies to:
 - `slug` (coded schemas only): whether a file name carries a slug after its key, `optional`
   (default), `required` or `none`. Any other value, or `slug` on a schema without a code, is
   `config.collection-slug`. A `match` with a digit or `-` right after `{key}` needs `none`.
+- `refBase`: where a path with no prefix in a frontmatter ref is read from, `file` (default, the
+  document's folder) or `namespace` (its namespace folder). `./` and `../` are always from the
+  document's folder.
 - A collection file may carry its own `validation`, merged over the project's.
 
 A schema says which fields a document has:
@@ -135,7 +138,9 @@ schemas. Keys are unique per namespace: two namespaces may each have a `WF-1`.
 
 Which namespaces a command reads, first match wins:
 
-1. a prefix on the argument: `story-2:WF-1`, `story-2:notes/x.md`;
+1. a prefix on the argument: `story-2:WF-1`, or `story-2:notes/x.md` (read from the namespace's
+   folder: `story-2/notes/x.md`). A prefix is one namespace's exact name, never a glob or a list;
+   `default:` names the only namespace of a one-namespace project;
 2. `--namespace <list>` — names or `*` globs, comma-separated; `'*'` means every namespace;
 3. `TYPDOC_NAMESPACE`, same syntax;
 4. the current directory, when it is inside a namespace folder;

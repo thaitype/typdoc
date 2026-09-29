@@ -1,4 +1,4 @@
-//! Covers SPC-1, SPC-2, SPC-4, SPC-5, SPC-7, SPC-10, SPC-12, SPC-14, SPC-15, SPC-17.
+//! Covers SPC-1, SPC-2, SPC-4, SPC-5, SPC-7, SPC-10, SPC-12, SPC-14, SPC-15, SPC-17, SPC-18.
 //!
 //! The exact set each rule's `broken/` fixture trips is checked by `coverage.rs`.
 
@@ -1395,6 +1395,71 @@ fn ref_base_namespace_reads_a_relative_ref_from_the_namespace_folder() {
     assert_eq!(ran.stdout_json()["findings"], json!([]));
 }
 
+/// The fix a ref is given is its target's portable name; a body link's is a path from the document,
+/// since a Markdown reader follows no prefix.
+#[test]
+fn ref_base_namespace_reads_dot_slash_from_the_documents_folder_and_names_the_fix() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "notes/*.md", "schema": "note.json", "refBase": "namespace" }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": { "see": { "type": "ref[]", "target": "*" } } }"#,
+        ),
+    ]);
+    project.file("target.md", "");
+    project.file("notes/near.md", "---\n---\n");
+    project.file(
+        "notes/a.md",
+        "---\nsee: [./near.md, ./target.md]\n---\n\n[t](./target.md#top)\n",
+    );
+
+    let ran = validate(&[], project.path());
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let found = rules_and_messages(&ran);
+    let hint = "`./` and `../` are read from the document's folder, and from the namespace folder it \
+                would be `target.md`: write";
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert_eq!(found[0].0, "body.links");
+    assert!(
+        found[0].2.ends_with(&format!("{hint} `../target.md`")),
+        "{found:?}"
+    );
+    assert_eq!(found[1].0, "refs.resolve");
+    assert!(
+        found[1].2.ends_with(&format!("{hint} `default:target.md`")),
+        "{found:?}"
+    );
+}
+
+/// Outside every namespace folder a file has no portable name, so a ref is given the path from the
+/// document too.
+#[test]
+fn ref_base_namespace_names_a_path_for_a_target_outside_every_namespace() {
+    let projects = slugged_projects();
+    projects.file(
+        "main/.typdoc/collections/notes.json",
+        r#"{ "match": "notes/*.md", "schema": "schemas/note.json", "refBase": "namespace" }"#,
+    );
+    projects.file("main/top.md", "");
+    slug_note(&projects, "../top.md");
+
+    let ran = validate(&[], &projects.path().join("main"));
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let found = rules_and_messages(&ran);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0]
+            .2
+            .ends_with("from the namespace folder it would be `top.md`: write `../../top.md`"),
+        "{found:?}"
+    );
+}
+
 #[test]
 fn refs_target_refuses_a_schema_not_named_by_target() {
     let project = Scratch::project(&[
@@ -2736,7 +2801,8 @@ fn a_ref_written_with_a_slug_to_a_key_recorded_as_moved_is_refs_moved() {
     let found = rules_and_messages(&ran);
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].0, "refs.moved");
-    assert!(found[0].2.contains("`WF-5`"), "{found:?}");
+    // Named with its namespace: the project has several, and `WF-5` alone could be any of them.
+    assert!(found[0].2.contains("`story-2:WF-5`"), "{found:?}");
 }
 
 /// `new` and `set` check `refs.slug` at its level before they write, refusing only at `error`.
@@ -2813,5 +2879,207 @@ fn a_relative_path_that_starts_like_a_key_with_a_slug_is_still_a_path() {
     assert_eq!(
         refs.stdout_json()["refs"][0]["path"],
         json!("story-1/notes/WF-1-x.md")
+    );
+}
+
+/// `main`'s config from [`slugged_projects`], with `body.links` and `body.mentions` at `error`.
+fn names_config(projects: &Scratch) {
+    projects.file(
+        "main/.typdoc/config.json",
+        r#"{ "version": 1, "namespaces": ["story-1", "story-2"], "imports": { "chief": "../chief" },
+            "validation": { "global": {
+                "body.links": { "level": "error" }, "body.mentions": { "level": "error" }
+            } } }"#,
+    );
+}
+
+#[test]
+fn a_ref_with_the_shape_of_a_key_is_a_key_whatever_its_code() {
+    let projects = slugged_projects();
+    slug_note(&projects, "XX-1");
+
+    let ran = validate(&[], &projects.path().join("main"));
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    assert_eq!(
+        rules_and_messages(&ran),
+        [(
+            "refs.resolve".to_owned(),
+            "error".to_owned(),
+            "the ref `XX-1` does not resolve: no document with key XX-1".to_owned()
+        )]
+    );
+}
+
+/// `/story-2/…` would name a document from the project folder, if an absolute path were followed.
+#[test]
+fn an_absolute_path_in_a_ref_or_a_body_link_is_reported_and_never_followed() {
+    let projects = slugged_projects();
+    names_config(&projects);
+    let target = "/story-2/tickets/WF-5-json-shapes.md";
+    projects.file(
+        "main/story-1/notes/a.md",
+        &format!("---\nsee: [{target}]\n---\n\n[t]({target})\n"),
+    );
+
+    let ran = validate(&[], &projects.path().join("main"));
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let found = rules_and_messages(&ran);
+    let rules: Vec<&str> = found.iter().map(|(rule, _, _)| rule.as_str()).collect();
+    assert_eq!(rules, ["body.links", "refs.resolve"], "{found:?}");
+    for (_, _, message) in &found {
+        assert!(message.contains("is an absolute path"), "{found:?}");
+    }
+}
+
+#[test]
+#[cfg(windows)]
+fn a_windows_absolute_path_in_a_ref_or_a_body_link_is_reported_as_an_absolute_path() {
+    let projects = slugged_projects();
+    names_config(&projects);
+    let target = projects
+        .path()
+        .join(r"main\story-2\tickets\WF-5-json-shapes.md");
+    let target = target.to_str().expect("a UTF-8 scratch path");
+    projects.file(
+        "main/story-1/notes/a.md",
+        &format!("---\nsee: ['{target}']\n---\n\n[t](<{target}>)\n"),
+    );
+
+    let ran = validate(&[], &projects.path().join("main"));
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let found = rules_and_messages(&ran);
+    let rules: Vec<&str> = found.iter().map(|(rule, _, _)| rule.as_str()).collect();
+    assert_eq!(rules, ["body.links", "refs.resolve"], "{found:?}");
+    for (_, _, message) in &found {
+        assert!(message.contains("is an absolute path"), "{found:?}");
+    }
+    let refs = Spawn::args(["refs", "story-1/notes/a.md", "--json"])
+        .cwd(projects.path().join("main"))
+        .run();
+    assert_eq!(refs.code, 0, "{}", refs.stderr);
+    let unresolved: Vec<Value> = refs.stdout_json()["refs"]
+        .as_array()
+        .expect("an array")
+        .iter()
+        .map(|reference| reference["unresolved"].clone())
+        .collect();
+    assert_eq!(unresolved, [json!("absolute"), json!("absolute")]);
+}
+
+#[test]
+fn a_body_link_whose_prefix_names_no_namespace_is_reported_and_a_url_is_not() {
+    let projects = slugged_projects();
+    names_config(&projects);
+    projects.file(
+        "main/story-1/notes/a.md",
+        "[one](stroy-2:tickets/WF-5-json-shapes.md) [two](tel:123) [three](story-2:tickets/WF-5-json-shapes.md)\n",
+    );
+
+    let ran = validate(&[], &projects.path().join("main"));
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let found = rules_and_messages(&ran);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].0, "body.links");
+    assert_eq!(
+        found[0].2,
+        "the link `stroy-2:tickets/WF-5-json-shapes.md` does not resolve: its prefix names no \
+         namespace"
+    );
+}
+
+#[test]
+fn a_mention_through_an_import_is_looked_up_in_the_import() {
+    let projects = slugged_projects();
+    names_config(&projects);
+    projects.file(
+        "main/story-1/notes/a.md",
+        "Found: chief::story-3:WF-5. Not found: chief::story-3:WF-9.\n",
+    );
+
+    let ran = validate(&[], &projects.path().join("main"));
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    assert_eq!(
+        rules_and_messages(&ran),
+        [(
+            "body.mentions".to_owned(),
+            "error".to_owned(),
+            "chief::story-3:WF-9 not found".to_owned()
+        )]
+    );
+}
+
+/// `CH` is a code of the import alone: a mention of it through the import is checked, and the
+/// same text with no import prefix is not a mention.
+#[test]
+fn a_mention_through_an_import_is_checked_against_the_imports_codes() {
+    let projects = slugged_projects();
+    names_config(&projects);
+    projects.file(
+        "chief/.typdoc/collections/charters.json",
+        r#"{ "match": "charters/{key}.md", "schema": "schemas/charter.json" }"#,
+    );
+    projects.file(
+        "chief/schemas/charter.json",
+        r#"{ "name": "charter", "code": "CH", "fields": {} }"#,
+    );
+    projects.file(
+        "main/story-1/notes/a.md",
+        "Needs a namespace: chief::CH-1. Not a mention: CH-1.\n",
+    );
+
+    let ran = validate(&[], &projects.path().join("main"));
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    assert_eq!(
+        rules_and_messages(&ran),
+        [(
+            "body.mentions".to_owned(),
+            "error".to_owned(),
+            "chief::CH-1 not found".to_owned()
+        )]
+    );
+}
+
+/// A move recorded in one namespace is not a move of the same key in another, and a recorded path
+/// is found for a ref that reads as it from another folder.
+#[test]
+fn a_recorded_move_is_found_by_what_a_ref_reads_as_not_by_its_text() {
+    let projects = slugged_projects();
+    projects.file(
+        "main/schemas/ticket.json",
+        r#"{ "name": "ticket", "code": "WF", "fields": {
+            "moved_from": { "type": "list", "auto": "moves" }
+        } }"#,
+    );
+    projects.file(
+        "main/story-2/tickets/WF-5-json-shapes.md",
+        "---\nmoved_from: [WF-4, story-1/notes/old.md]\n---\n",
+    );
+    slug_note(&projects, "WF-4, old.md");
+
+    let ran = validate(&[], &projects.path().join("main"));
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    assert_eq!(
+        rules_and_messages(&ran),
+        [
+            (
+                "refs.moved".to_owned(),
+                "error".to_owned(),
+                "the ref `old.md` no longer resolves: it was moved to \
+                 `story-2/tickets/WF-5-json-shapes.md`"
+                    .to_owned()
+            ),
+            (
+                "refs.resolve".to_owned(),
+                "error".to_owned(),
+                "the ref `WF-4` does not resolve: no document with key WF-4".to_owned()
+            ),
+        ]
     );
 }

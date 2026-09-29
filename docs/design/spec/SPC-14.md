@@ -2,7 +2,7 @@
 title: Refs explained
 status: active
 migrated_from: docs/archived-design/design.md#refs
-follows: [PRN-2, PRN-6]
+follows: [PRN-2, PRN-6, PRN-11]
 ---
 
 Refs come from two places, frontmatter fields and body links, and both resolve through the same
@@ -21,17 +21,10 @@ do about case.
 
 ## Frontmatter values
 
-A `ref` or `ref[]` value is a plain string, read in this order:
-
-| Value | Read as | Condition |
-| --- | --- | --- |
-| `WF-3` | Key in the document's own namespace | Matches `^[A-Z][A-Z0-9]*-\d+$` and the code exists in this project |
-| `WF-3-lock-order` | Key `WF-3` in the document's own namespace, written with a slug | The part before the slug is a key as above, and the rest is a slug (`SPC-17`) |
-| `story-2:WF-5` | Key in the sibling namespace `story-2` | `story-2` is a namespace of this project |
-| `story-2:notes/x.md` | Path inside the sibling namespace `story-2`, from its folder | Same |
-| `memory::precedents/x.md` | Path inside the imported project `memory`, which has one namespace | `memory` is an alias in `imports` |
-| `chief::story-3:WF-5` | Key in namespace `story-3` of the imported project `chief` | `chief` is an alias in `imports` |
-| anything else | Relative path | Resolved from the document (`refBase: file`) or the namespace folder (`refBase: namespace`) |
+A `ref` or `ref[]` value is a plain string, read as a name (`SPC-18`): a key, or a path, with or
+without a `namespace:` or `project::` prefix. A key, and a path after a prefix, mean what they mean
+anywhere else. A path with no prefix is read from the document's folder (`refBase: file`) or from
+its namespace folder (`refBase: namespace`), and `./` or `../` from the document's folder.
 
 Wherever a key is read, the key followed by its slug is read too, in every form:
 `story-2:WF-5-json-output-shape` and `chief::story-3:WF-5-json-output-shape` are the keys
@@ -41,14 +34,9 @@ and `validate` reports the difference under `refs.slug`. A value of this form wa
 relative path before slugs existed, and it named no document then, since a document is always
 a `.md` file.
 
-`name:` reaches a sibling namespace and `name::` an import, and the two never fall back to each
-other: a name that does not exist on the side the syntax names is an error, never a relative
-path. A path that really contains a colon is written with a leading `./`. A ref into a project
-with several namespaces must name one (`chief::story-3:WF-5`); `chief::WF-5` is an error there,
-since only a one-namespace project has a `default`. A name may be both a sibling and an import;
-the `names.shadowed` rule warns. Sibling names and import aliases may not collide with URL
-schemes (`http`, `https`, `mailto`, `file`); `validate` enforces this, as `config.namespace-name`
-for a namespace and as `schema.valid` for an import alias.
+A name may be both a sibling and an import; the `names.shadowed` rule warns. Sibling names and
+import aliases may not collide with URL schemes (`http`, `https`, `mailto`, `file`); `validate`
+enforces this, as `config.namespace-name` for a namespace and as `schema.valid` for an import alias.
 
 ## Canonical form
 
@@ -61,8 +49,8 @@ link as it is written.
 ## Body links that are not refs
 
 A body link that names no path, such as `[t]()` or `[t](#a)`, is not a ref, and neither is a link
-with a URL scheme: neither has a document at the other end. `refs` lists neither, in either
-direction.
+with a URL scheme (`SPC-18`, step 4): neither has a document at the other end. `refs` lists neither,
+in either direction.
 
 ## Ownership rules
 

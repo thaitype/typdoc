@@ -2,7 +2,7 @@
 title: Collections explained
 status: active
 migrated_from: docs/archived-design/design.md#config-typdocconfigjson
-follows: [PRN-1, PRN-2, PRN-3, PRN-5, PRN-6, PRN-7]
+follows: [PRN-1, PRN-2, PRN-3, PRN-5, PRN-6, PRN-7, PRN-12]
 ---
 
 A collection is one file in `.typdoc/collections/` that maps files to a schema: which files belong
@@ -47,13 +47,13 @@ file maps files to a schema. It is configuration only: numbering state lives in 
 | `match` | yes | Which files belong to the collection. See Match templates. |
 | `schema` | yes | Relative path or `http://` or `https://` URL of the schema. See `SPC-16`. |
 | `slug` | no | Coded schemas only: whether a file name carries a slug after its key, `optional` (default), `required` or `none`. See Slugs in file names. |
-| `refBase` | no | How frontmatter paths resolve: `file` (default, relative to the document) or `namespace` (relative to the namespace folder) |
+| `refBase` | no | Where a frontmatter path with no prefix is read from: `file` (default, the document's folder) or `namespace` (the namespace folder). `./` and `../` are always read from the document's folder. See `SPC-18`. |
 | `validation` | no | Rule levels and options for this collection only, merged over `validation.global`. See `SPC-1`. |
 
 ## Match templates
 
 For a coded schema, `match` is a template with a placeholder; for a schema without a code, it is a
-glob.
+glob (`SPC-19`): `*` and `**`, and no other character of the syntax.
 
 | Placeholder | Stands for | Allowed in |
 | --- | --- | --- |

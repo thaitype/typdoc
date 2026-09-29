@@ -1,6 +1,7 @@
 {
   "document": {
     "path": "duplicates.md",
+    "ref": "default:duplicates.md",
     "namespace": "default"
   },
   "headings": [

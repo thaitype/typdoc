@@ -8,7 +8,8 @@ labeled with the name of the field it came from. No command prints a bare, unlab
 its own line.
 
 **`get`, `set`, and both forms of `new` print the same labeled block** — one `name: value` line
-per field: `path`, `collection`, `schema` (the last two left out for a document `mv` has moved
+per field: `path`, `ref` (its portable name, `SPC-18`, left out for a file outside every namespace
+folder, which has none), `collection`, `schema` (the last two left out for a document `mv` has moved
 out of every collection), `namespace` (left out for a file outside every namespace folder), `key`
 (present only for a coded document), then the frontmatter fields in file order. A `number` field
 prints the document's own digits, not the value they convert to — the same rule the write path
@@ -17,6 +18,7 @@ already holds itself to.
 ```console
 $ typdoc new WF "Decide the numbering scheme"
 path: tickets/WF-2.md
+ref: WF-2
 collection: wayfinder
 schema: wayfinder
 namespace: default
@@ -78,6 +80,7 @@ present**, so a clean move reads as loud as a busy one:
 ```console
 $ typdoc mv plain.md tasks/plain.md
 path: tasks/plain.md
+ref: default:tasks/plain.md
 collection: tasks
 schema: task
 namespace: default
@@ -98,6 +101,7 @@ prints all three lines:
 ```console
 $ typdoc mv a.md renamed.md
 path: renamed.md
+ref: default:renamed.md
 collection: notes
 schema: note
 namespace: default
@@ -113,15 +117,17 @@ per rewritten ref: `{document, field, before, after}`. It sits between `document
 
 ```console
 $ typdoc mv notes/first.md notes/renamed.md --json
-{"document":{"path":"notes/renamed.md","namespace":"default","code":null,"collection":"notes",
-  "schema":"note","fields":{"title":"A note"}},"rewritten":[],"unrewritten":[],"findings":[]}
+{"document":{"path":"notes/renamed.md","ref":"default:notes/renamed.md","namespace":"default",
+  "code":null,"collection":"notes","schema":"note","fields":{"title":"A note"}},"rewritten":[],
+  "unrewritten":[],"findings":[]}
 ```
 
 There is no `--verbose` flag: the detail lives in `--json`, and a human at a terminal already has
 it in `git diff`.
 
-**`list` prints a header row** above its table: the identity column, `title`, then each
-`--where`/`--fields` column, in that order. The identity column is labeled `key` when every matched
+**`list` prints a header row** above its table: the identity column, `ref` (the portable name,
+empty for a file outside every namespace folder), `title`, then each `--where`/`--fields` column,
+in that order. The identity column is labeled `key` when every matched
 document has one (a coded collection), `path` when none does, and `document` when the matched set is
 a genuine mix of both (spanning collections with and without a code) — a header must not claim a
 column holds something a row in it plainly doesn't, and once even one row of each shape is present,
@@ -133,17 +139,17 @@ and nothing printed, when the result is empty. `--ids` prints one key or path pe
 
 ```console
 $ typdoc list --collection tickets --where status=open --where 'ref.all(blocked_by).status=done'
-key   title          status  blocked_by
-WF-2  Second ticket  open    WF-1
+key   ref   title          status  blocked_by
+WF-2  WF-2  Second ticket  open    WF-1
 ```
 
 A result spanning a coded collection and an uncoded one gets `document` instead:
 
 ```console
 $ typdoc list
-document    title
-WF-1        Ticket one
-notes/a.md  A note
+document    ref                 title
+WF-1        WF-1                Ticket one
+notes/a.md  default:notes/a.md  A note
 ```
 
 **`refs` and plain/`--schemas` `validate` print a header row**, as `list` and `toc` do: `refs`
@@ -153,28 +159,29 @@ Both use the same column-aligned, two-space-separated shape as `list`'s table: n
 nothing printed, when there is nothing to show, the same empty-result rule `list` and `toc`
 follow.
 
-`refs`' first two columns are always `document` — the document at the other end, the same identity
+`refs`' first three columns are always `document` — the document at the other end, the same identity
 `list`'s own `document`/`key`/`path` column names (a coded document as its bare key when the project
-has exactly one namespace and `namespace:key` when it has several, so a key is qualified only when
-the project needs it; otherwise its bare path, with a `project::` prefix for an imported project's
-document), or `(unresolved: <reason>)` when a forward ref did not resolve — and `field`. A third
-column, `written`, appears only for the forward direction (no `--reverse`): `written` can genuinely
-differ from the resolved `document` there (an alias, a relative form), so it is real information.
-`--reverse` answers "who points at this document", and there `written` is only how the holder
-happened to write the reference back to the very document already named on the command line — it
-tells the reader nothing `document` doesn't already say, so it is dropped, header included.
+it is in has exactly one namespace and `namespace:key` when it has several, so a key is qualified
+only when that project needs it; otherwise its bare path; with a `project::` prefix for an imported
+project's document), or `(unresolved: <reason>)` when a forward ref did not resolve — then `ref`,
+that document's portable name (empty when unresolved), and `field`. A fourth column, `written`,
+appears only for the forward direction (no `--reverse`): `written` can genuinely differ from the
+resolved `document` there (an alias, a relative form), so it is real information. `--reverse`
+answers "who points at this document", and there `written` is only how the holder happened to write
+the reference back to the very document already named on the command line — it tells the reader
+nothing `document` doesn't already say, so it is dropped, header included.
 
 ```console
 $ typdoc refs team/doc.md
-document             field    written
-chief:WF-7           context  chief:WF-7
-team/learnings/x.md  $body    learnings/x.md
+document             ref                  field    written
+chief:WF-7           chief:WF-7           context  chief:WF-7
+team/learnings/x.md  team:learnings/x.md  $body    learnings/x.md
 ```
 
 ```console
 $ typdoc refs WF-1 --reverse
-document  field
-WF-2      blocked_by
+document  ref   field
+WF-2      WF-2  blocked_by
 ```
 
 `validate`'s columns are reordered to `path`, `level`, `rule`, `message` — `rule` moves before

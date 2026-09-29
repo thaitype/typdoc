@@ -43,7 +43,7 @@ layer only needs the keys it changes:
 
 | Rule | Default | Options | Reports |
 | --- | --- | --- | --- |
-| `body.links` | error | `ignore`: globs of link targets to skip | A body link to a file that doesn't exist. Also text that looks like a link but isn't one, usually because of a space in the path (write `<my file.md>` or `my%20file.md`), and a reference-style label defined twice |
+| `body.links` | error | `ignore`: globs of link targets to skip, matched against the target's path from the project folder (`**/assets/**`) | A body link to a file that doesn't exist. Also text that looks like a link but isn't one, usually because of a space in the path (write `<my file.md>` or `my%20file.md`), and a reference-style label defined twice |
 | `body.anchors` | error | | A `#heading` in a link that doesn't exist in the target. `typdoc toc` shows the right slugs |
 | `body.mentions` | off | `inlineCode` (true), `fencedCode` (false) | A key mentioned in plain text, like "see WF-3", that doesn't exist |
 | `refs.codedByPath` | warn | | A numbered document referred to by path instead of by key |

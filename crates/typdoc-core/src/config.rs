@@ -372,6 +372,15 @@ fn rule_setting(
             _ if !option_fits(key, value) => Some(format!(
                 "the option `{key}` of `{rule}` is {value}, which it does not accept"
             )),
+            "ignore" => match ignore_problem(value) {
+                Some((pattern, problem)) => Some(format!(
+                    "the option `ignore` of `{rule}` has `{pattern}`, which {problem}"
+                )),
+                None => {
+                    options.insert(key.clone(), value.clone());
+                    None
+                }
+            },
             _ => {
                 options.insert(key.clone(), value.clone());
                 None
@@ -392,6 +401,23 @@ fn level_named(name: &str) -> Option<Level> {
         "error" => Some(Level::Error),
         _ => None,
     }
+}
+
+/// The first pattern of `ignore` that cannot be read, and why. Checked here so that a pattern is
+/// never dropped later without a word.
+fn ignore_problem(value: &Value) -> Option<(String, String)> {
+    value.as_array()?.iter().find_map(|item| {
+        let pattern = item.as_str()?;
+        if let Some(c) = crate::template::untaken_glob_character(pattern) {
+            return Some((
+                pattern.to_owned(),
+                format!("has `{c}`, which is not taken there: it takes `*` and `**`"),
+            ));
+        }
+        crate::template::Template::parse(pattern)
+            .err()
+            .map(|reason| (pattern.to_owned(), format!("cannot be read ({reason})")))
+    })
 }
 
 /// Every option but `ignore` is a boolean (SPC-1).

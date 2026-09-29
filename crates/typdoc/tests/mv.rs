@@ -1,4 +1,4 @@
-//! Covers SPC-1, SPC-2, SPC-5, SPC-10, SPC-12, SPC-17.
+//! Covers SPC-1, SPC-2, SPC-5, SPC-10, SPC-12, SPC-17, SPC-18.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -376,6 +376,122 @@ fn a_body_link_written_with_percent_encoding_keeps_that_convention() {
     );
 }
 
+/// Two links to the moved document on one line, one written with `./`: each keeps its form and
+/// its anchor, and the project validates clean after the move. The new name is shorter, so a
+/// splice of the first link would move the second back from the column it was found at.
+#[test]
+fn every_body_link_on_a_line_is_rewritten_keeping_its_dot_slash_and_its_anchor() {
+    let project = Scratch::project(&NOTES);
+    project.file("a-much-longer-name.md", "---\ntitle: B\n---\n\n## Part\n");
+    project.file(
+        "a.md",
+        "---\ntitle: A\n---\n\n[one](./a-much-longer-name.md#part) and [two](a-much-longer-name.md#part)\n",
+    );
+
+    let ran = mv(&project, "a-much-longer-name.md", "c.md");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(
+        project.read("a.md"),
+        "---\ntitle: A\n---\n\n[one](./c.md#part) and [two](c.md#part)\n"
+    );
+    let validated = common::Spawn::args(["validate", "--json"])
+        .cwd(project.path())
+        .run();
+    assert_eq!(validated.code, 0, "{}", validated.stdout);
+}
+
+/// A written `./` is kept even where the new path climbs out of the folder.
+#[test]
+fn a_dot_slash_is_kept_in_front_of_a_path_that_climbs_out_of_the_folder() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "**/*.md", "schema": "note.json" }"#,
+        ),
+        ("note.json", r#"{ "name": "note", "fields": {} }"#),
+    ]);
+    project.file("a.md", "---\n---\n");
+    project.file("sub/h.md", "---\n---\n\n[a](./../a.md)\n");
+
+    let ran = mv(&project, "a.md", "b.md");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(project.read("sub/h.md"), "---\n---\n\n[a](./../b.md)\n");
+}
+
+/// Under `refBase: namespace`, a path with no prefix cannot reach a document moved out of the
+/// namespace folder, so `mv` changes its form: a frontmatter ref takes the namespace prefix, and a
+/// body link, which a Markdown reader follows with no prefix, the path from the document.
+#[test]
+fn a_no_prefix_path_to_a_document_moved_out_of_the_namespace_becomes_prefixed_or_a_link_path() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/config.json",
+            r#"{ "version": 1, "namespaces": ["story-1", "story-2"] }"#,
+        ),
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "notes/*.md", "schema": "note.json", "refBase": "namespace" }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": { "see": { "type": "ref[]", "target": "*" } } }"#,
+        ),
+    ]);
+    project.file("story-1/notes/q.md", "---\n---\n");
+    project.file("story-2/.keep", "");
+    project.file(
+        "story-1/notes/h.md",
+        "---\nsee: [notes/q.md]\n---\n\n[q](notes/q.md)\n",
+    );
+
+    let ran = mv(&project, "story-1:notes/q.md", "story-2:notes/q.md");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(
+        project.read("story-1/notes/h.md"),
+        "---\nsee:\n- story-2:notes/q.md\n---\n\n[q](../../story-2/notes/q.md)\n"
+    );
+    let validated = common::Spawn::args(["validate", "--json"])
+        .cwd(project.path())
+        .run();
+    assert_eq!(validated.code, 0, "{}", validated.stdout);
+}
+
+/// No prefix names a folder outside every namespace, so a prefixed ref becomes a path from the
+/// document that holds it.
+#[test]
+fn a_prefixed_ref_to_a_document_moved_outside_every_namespace_becomes_a_path() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/config.json",
+            r#"{ "version": 1, "namespaces": ["story-1", "story-2"] }"#,
+        ),
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "notes/*.md", "schema": "note.json" }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": { "see": { "type": "ref[]", "target": "*" } } }"#,
+        ),
+    ]);
+    project.file("story-1/notes/a.md", "---\n---\n");
+    project.file(
+        "story-2/notes/h.md",
+        "---\nsee: [story-1:notes/a.md]\n---\n\n[l](story-1:notes/a.md)\n",
+    );
+
+    let ran = mv(&project, "story-1:notes/a.md", "outside/a.md");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(
+        project.read("story-2/notes/h.md"),
+        "---\nsee:\n- ../../outside/a.md\n---\n\n[l](../../outside/a.md)\n"
+    );
+}
+
 // --- `auto: moves` and the file mode ---
 
 #[test]
@@ -474,6 +590,7 @@ fn a_move_that_rewrites_refs_prints_the_labeled_block_and_the_rewritten_count() 
     assert_eq!(
         ran.stdout,
         "path: renamed.md\n\
+         ref: default:renamed.md\n\
          collection: notes\n\
          schema: note\n\
          namespace: default\n\
@@ -530,6 +647,7 @@ fn a_move_that_rewrites_exactly_one_ref_in_one_document_uses_the_singular_form()
     assert_eq!(
         ran.stdout,
         "path: renamed.md\n\
+         ref: default:renamed.md\n\
          collection: notes\n\
          schema: note\n\
          namespace: default\n\
@@ -566,6 +684,7 @@ fn a_move_that_leaves_a_ref_unrewritten_prints_its_own_count_and_entry_line() {
     assert_eq!(
         ran.stdout,
         "path: new.md\n\
+         ref: default:new.md\n\
          collection: notes\n\
          schema: note\n\
          namespace: default\n\
@@ -611,6 +730,7 @@ fn unrewritten_names_a_coded_holder_by_its_bare_key_in_a_single_namespace_projec
     assert_eq!(
         ran.stdout,
         "path: new.md\n\
+         ref: default:new.md\n\
          collection: notes\n\
          schema: note\n\
          namespace: default\n\
@@ -643,6 +763,7 @@ fn a_clean_move_prints_zero_rewritten_and_none_unrewritten() {
     assert_eq!(
         ran.stdout,
         "path: b.md\n\
+         ref: default:b.md\n\
          collection: notes\n\
          schema: note\n\
          namespace: default\n\
@@ -704,6 +825,7 @@ fn a_move_that_fails_the_destination_schema_lists_the_finding_in_text_mode() {
     assert_eq!(
         ran.stdout,
         "path: tasks/plain.md\n\
+         ref: default:tasks/plain.md\n\
          collection: tasks\n\
          schema: task\n\
          namespace: default\n\

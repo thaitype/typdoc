@@ -76,6 +76,7 @@ Say which one, with `--namespace`:
 ```console
 $ typdoc new WF "Set up CI" --namespace story-1
 path: story-1/tickets/WF-3.md
+ref: story-1:WF-3
 ...
 ```
 
@@ -88,8 +89,12 @@ $ typdoc new WF "Set up CI"
 
 ## Refer to a document in another namespace
 
-Prefix the key with the namespace name and a colon: `story-2:WF-1`. The same works for paths:
-`story-2:notes/kickoff.md`.
+Prefix the key with the namespace name and a colon: `story-2:WF-1`. The same works for a path,
+written from the namespace's folder: `story-2:notes/kickoff.md` is `story-2/notes/kickoff.md`.
+Both mean the same document wherever you write them, on the command line or in a document.
+
+You don't have to work the name out: every document typdoc prints comes with its `ref`, the name
+that reaches it from anywhere in the project. Copy that.
 
 On the command line:
 
@@ -118,7 +123,8 @@ typdoc: `WF-1` is a key in more than one namespace: story-1:WF-1, story-2:WF-1
 
 In order of precedence:
 
-1. a prefix on the argument: `typdoc get story-2:WF-1`
+1. a prefix on the argument: `typdoc get story-2:WF-1`. A prefix is always one namespace's exact
+   name, never a glob or a list
 2. `--namespace`: one name, several separated by commas, or a glob such as `'story-*'`;
    `--namespace '*'` means all of them
 3. the `TYPDOC_NAMESPACE` environment variable, with the same syntax
@@ -127,9 +133,9 @@ In order of precedence:
 
 ```console
 $ typdoc list --namespace '*'
-key           title
-story-1:WF-1  Set up the folder
-story-2:WF-1  Choose the folder layout
+key           ref           title
+story-1:WF-1  story-1:WF-1  Set up the folder
+story-2:WF-1  story-2:WF-1  Choose the folder layout
 ```
 
 Quote `'*'` so the shell doesn't expand it into file names.

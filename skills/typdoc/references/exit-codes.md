@@ -10,7 +10,7 @@ act differently, so the code alone says what kind of next step makes sense.
   With `--json` it is one object:
 
   ```json
-  {"error":"no document at WF-9","code":5,"details":[]}
+  {"error":"no document with key WF-9","code":5,"details":[]}
   ```
 
   `details` holds findings (same shape as `validate`'s) when there is something to locate, and an
