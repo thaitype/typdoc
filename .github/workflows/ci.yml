@@ -119,6 +119,22 @@ jobs:
       - run: rustc --version
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
+  own-projects:
+    # The repository holds two typdoc projects of its own: the design documents at the root and the
+    # tickets in .chief/. This builds typdoc from the pull request and validates both, so a broken
+    # ref or a document that no longer matches its schema fails here.
+    name: typdoc validate (repository projects)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustc --version
+      - run: cargo build --locked -p typdoc
+      - name: validate the project at the repository root
+        run: target/debug/typdoc validate
+      - name: validate the project in .chief
+        working-directory: .chief
+        run: ../target/debug/typdoc validate
+
   windows-build:
     name: Windows build (shipped crates)
     runs-on: windows-latest
