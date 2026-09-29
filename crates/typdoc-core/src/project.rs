@@ -231,6 +231,13 @@ impl MovedFrom {
     }
 }
 
+/// What an argument names: a path from the project folder, not yet looked up, or the path of the
+/// document a key was found at.
+enum ArgumentName {
+    Path(String),
+    Found(String),
+}
+
 struct PrescanAccum {
     moved: BTreeMap<MovedFrom, String>,
     edges: BTreeMap<String, Vec<(String, String)>>,
@@ -663,11 +670,11 @@ impl Project {
         scope: &Scope,
         env: &dyn Env,
     ) -> Result<WriteTarget, Error> {
-        let path = match arg {
-            DocumentArg::Path { path, .. } => {
-                if let Some((_, collections)) = self.index.overlap(path) {
+        let path = match self.read_argument(arg, scope)? {
+            ArgumentName::Path(path) => {
+                if let Some((_, collections)) = self.index.overlap(&path) {
                     return Err(Error::Config {
-                        file: self.root.join(path),
+                        file: self.root.join(&path),
                         message: format!(
                             "{}, so there is no one schema to write it with: see \
                              collections.overlap in a validate report",
@@ -675,17 +682,15 @@ impl Project {
                         ),
                     });
                 }
-                if self.index.get(path).is_some() {
-                    path.clone()
-                } else if self.root.join(path).is_file() {
-                    return Ok(WriteTarget::Loose { path: path.clone() });
+                if self.index.get(&path).is_some() {
+                    path
+                } else if self.root.join(&path).is_file() {
+                    return Ok(WriteTarget::Loose { path });
                 } else {
-                    return Err(self.not_found(path, env));
+                    return Err(self.not_found(&path, env));
                 }
             }
-            DocumentArg::Key { namespace, key, .. } => {
-                self.resolve_key(namespace.as_deref(), key, scope)?
-            }
+            ArgumentName::Found(path) => path,
         };
         Ok(WriteTarget::Collected { path })
     }
@@ -778,8 +783,8 @@ impl Project {
             clippy::expect_used,
             reason = "`resolve_write_target` only ever returns `WriteTarget::Collected` for a \
                       path `self.index.get` just found `Some` for (the `Path` branch) or a path \
-                      `resolve_key` read out of the same index (the `Key` branch); the index has \
-                      no mutator between that check and here"
+                      `name::resolve` read out of the same index (the `Key` branch); the index \
+                      has no mutator between that check and here"
         )]
         let entry = self
             .index
@@ -1114,6 +1119,7 @@ impl Project {
         sets: &[SetOp],
         lock_timeout: Duration,
     ) -> Result<Document, Error> {
+        let path = &self.new_path(path)?;
         let (namespace_idx, collection_idx) = self.resolve_uncoded_target(path)?;
         let collection = &self.collections[collection_idx];
         let schema = &collection.schema;
@@ -1231,33 +1237,49 @@ impl Project {
         Ok(findings)
     }
 
+    /// `new`'s path read as an argument (SPC-18): with no prefix from the project folder, and
+    /// `namespace:path` from that namespace's folder.
+    fn new_path(&self, written: &str) -> Result<String, Error> {
+        // A namespace name holds no `/`, so a colon after one is part of the path.
+        if written
+            .split_once(':')
+            .is_some_and(|(before, _)| before.contains('/'))
+        {
+            return Ok(written.to_owned());
+        }
+        let place = name::Place::Argument { scope: &[] };
+        match name::read(written, place, &self.config.namespaces) {
+            name::Reading::Path(path) => Ok(path),
+            name::Reading::Import { .. } => Err(Error::BadArgument(format!(
+                "`{written}` names a document of another project, and `new` writes only in the \
+                 project it is run in"
+            ))),
+            // A path ends in `.md`, so it is never read as a key: only a prefix fails here.
+            _ => Err(Error::BadArgument(name::not_a_prefix(
+                written
+                    .split_once(':')
+                    .map_or(written, |(prefix, _)| prefix),
+                &self.config.namespaces,
+            ))),
+        }
+    }
+
     /// The namespace and the uncoded collection of a path not yet on disk, which the index
     /// cannot answer for. More than one matching collection is refused as `collections.overlap`.
     fn resolve_uncoded_target(&self, path: &str) -> Result<(usize, usize), Error> {
-        let namespace_idx = self
-            .config
-            .namespaces
-            .iter()
-            .position(|space| {
-                space.folder.is_empty() || path.starts_with(&format!("{}/", space.folder))
-            })
-            .ok_or_else(|| {
+        let namespace_idx =
+            name::namespace_of_path(&self.config.namespaces, path).ok_or_else(|| {
                 Error::BadArgument(format!(
                     "`{path}` is not inside any namespace of this project"
                 ))
             })?;
         let namespace = &self.config.namespaces[namespace_idx];
-        let below = if namespace.folder.is_empty() {
-            path.to_owned()
-        } else {
-            #[expect(
-                clippy::expect_used,
-                reason = "`namespace_idx` was found above by testing exactly this condition"
-            )]
-            path.strip_prefix(&format!("{}/", namespace.folder))
-                .expect("the namespace was found by this same prefix test")
-                .to_owned()
-        };
+        // The namespace's folder holds `path`, or is the project folder, whose `/` no path starts
+        // with; a path equal to the folder itself is no `.md` file, and is read whole.
+        let below = path
+            .strip_prefix(&format!("{}/", namespace.folder))
+            .unwrap_or(path)
+            .to_owned();
 
         let matches: Vec<usize> = self
             .collections
@@ -2367,14 +2389,14 @@ impl Project {
             }
             let scope = self.scope(arg.namespace_prefix(), flag, env)?;
             reject_import_scope(&scope)?;
-            if let DocumentArg::Path { path, .. } = arg
-                && let Some((namespace_idx, collections)) = self.index.overlap(path)
+            if let ArgumentName::Path(path) = self.read_argument(arg, &scope)?
+                && let Some((namespace_idx, collections)) = self.index.overlap(&path)
             {
                 if overlapping.insert(path.clone()) {
                     let namespace = &self.config.namespaces[namespace_idx].name;
                     namespaces.insert(namespace.clone());
                     findings.push(validate::overlap_finding(
-                        path,
+                        &path,
                         namespace,
                         overlap_message(collections),
                     ));
@@ -3605,18 +3627,64 @@ impl Project {
         }
     }
 
-    /// A path is read as it stands, relative to the project folder: a namespace prefix only
-    /// chooses scope. A key is resolved against the namespaces in `scope`, since the same key can
-    /// be issued once in each.
+    /// What `arg` names, read by the name grammar as an argument (SPC-18): a path with no prefix
+    /// from the project folder, `namespace:path` from that namespace's folder, and a key in
+    /// `scope`, since the same key can be issued once in each namespace. A path is not looked up.
+    fn read_argument(&self, arg: &DocumentArg, scope: &Scope) -> Result<ArgumentName, Error> {
+        let (prefix, rest) = match arg {
+            // Already a path from the project folder, one from disk included. It is not read again:
+            // a colon in it would be taken for a prefix.
+            DocumentArg::Path {
+                namespace: None,
+                path,
+                ..
+            } => return Ok(ArgumentName::Path(path.clone())),
+            DocumentArg::Path {
+                namespace, path, ..
+            } => (namespace.as_deref(), path),
+            DocumentArg::Key { namespace, key, .. } => (namespace.as_deref(), key),
+        };
+        let written = match prefix {
+            Some(prefix) => format!("{prefix}:{rest}"),
+            None => rest.clone(),
+        };
+        let in_scope: Vec<usize> = scope
+            .namespaces
+            .iter()
+            .filter_map(|name| self.namespace_index(name))
+            .collect();
+        let place = name::Place::Argument { scope: &in_scope };
+        match name::read(&written, place, &self.config.namespaces) {
+            name::Reading::Path(path) => Ok(ArgumentName::Path(path)),
+            name::Reading::Key { .. } => match name::resolve(&written, place, &self.scene()) {
+                Ok(resolved) => Ok(ArgumentName::Found(resolved.path)),
+                Err(name::Unresolved::Ambiguous(namespaces)) => Err(Error::AmbiguousKey {
+                    key: rest.clone(),
+                    candidates: namespaces
+                        .iter()
+                        .map(|&at| format!("{}:{rest}", self.config.namespaces[at].name))
+                        .collect(),
+                }),
+                Err(_) => Err(Error::NoKey { key: written }),
+            },
+            // `scope` has refused a prefix that names no namespace already; this is the same refusal
+            // for a caller that did not ask it.
+            _ => Err(Error::BadArgument(name::not_a_prefix(
+                prefix.unwrap_or(&written),
+                &self.config.namespaces,
+            ))),
+        }
+    }
+
     fn resolve(
         &self,
         arg: &DocumentArg,
         scope: &Scope,
         env: &dyn Env,
     ) -> Result<(String, &Indexed, String), Error> {
-        let path = match arg {
-            DocumentArg::Path { path, .. } => {
-                if let Some((_, collections)) = self.index.overlap(path) {
+        let path = match self.read_argument(arg, scope)? {
+            ArgumentName::Path(path) => {
+                if let Some((_, collections)) = self.index.overlap(&path) {
                     return Err(Error::Config {
                         file: self.root.join(path),
                         message: format!(
@@ -3625,19 +3693,17 @@ impl Project {
                         ),
                     });
                 }
-                if self.index.get(path).is_none() {
-                    return Err(self.not_found(path, env));
+                if self.index.get(&path).is_none() {
+                    return Err(self.not_found(&path, env));
                 }
-                path.clone()
+                path
             }
-            DocumentArg::Key { namespace, key, .. } => {
-                self.resolve_key(namespace.as_deref(), key, scope)?
-            }
+            ArgumentName::Found(path) => path,
         };
         #[expect(
             clippy::expect_used,
             reason = "the `Path` arm above returns `NotFound` unless `self.index.get(path)` is \
-                      `Some`, and the `Key` arm's path comes from `resolve_key`, which reads it \
+                      `Some`, and the `Key` arm's path comes from `name::resolve`, which reads it \
                       from `self.index.key(..)`; `Index::build` binds a key to a path in the same \
                       step that inserts the path's entry, and when it removes an overlapping path's \
                       entry it removes the path from its key group too; `Index` has no other \
@@ -3649,39 +3715,6 @@ impl Project {
             .expect("the path was just looked up above");
         let text = fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?;
         Ok((path, entry, text))
-    }
-
-    /// `NotFound` carries no `./name` hint: a key names no place on disk.
-    fn resolve_key(&self, prefix: Option<&str>, key: &str, scope: &Scope) -> Result<String, Error> {
-        let found: Vec<(String, String)> = scope
-            .namespaces
-            .iter()
-            .filter_map(|name| self.namespace_index(name).map(|index| (name, index)))
-            .filter_map(|(name, index)| {
-                self.index
-                    .key(index, key)
-                    .map(|path| (name.clone(), path.to_owned()))
-            })
-            .collect();
-        match found.len() {
-            0 => Err(Error::NotFound {
-                path: printed_key(prefix, key),
-                hint: false,
-            }),
-            #[expect(
-                clippy::expect_used,
-                reason = "this arm of `match found.len()` runs only when `found.len()` is 1, so \
-                          `found.into_iter().next()` is `Some`"
-            )]
-            1 => Ok(found.into_iter().next().expect("checked above").1),
-            _ => Err(Error::AmbiguousKey {
-                key: key.to_owned(),
-                candidates: found
-                    .into_iter()
-                    .map(|(namespace, _)| format!("{namespace}:{key}"))
-                    .collect(),
-            }),
-        }
     }
 
     fn namespace_index(&self, name: &str) -> Option<usize> {
@@ -3879,14 +3912,9 @@ impl Project {
         };
 
         let Some(to_namespace) = self.namespace_index(namespace) else {
-            return Err(Error::BadArgument(format!(
-                "`{namespace}` is not a namespace of this project, which has: {}",
-                self.config
-                    .namespaces
-                    .iter()
-                    .map(|n| n.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
+            return Err(Error::BadArgument(name::not_a_namespace(
+                namespace,
+                &self.config.namespaces,
             )));
         };
         if to_namespace == from_namespace {
@@ -4228,11 +4256,8 @@ impl Project {
     /// A key names the path it already has, which is then refused as existing: `mv` never
     /// invents a key for its destination.
     fn mv_destination_path(&self, to: &DocumentArg, scope: &Scope) -> Result<String, Error> {
-        match to {
-            DocumentArg::Path { path, .. } => Ok(path.clone()),
-            DocumentArg::Key { namespace, key, .. } => {
-                self.resolve_key(namespace.as_deref(), key, scope)
-            }
+        match self.read_argument(to, scope)? {
+            ArgumentName::Path(path) | ArgumentName::Found(path) => Ok(path),
         }
     }
 
@@ -5127,13 +5152,6 @@ fn overlap_message(collections: &[String]) -> String {
     )
 }
 
-fn printed_key(prefix: Option<&str>, key: &str) -> String {
-    match prefix {
-        Some(namespace) => format!("{namespace}:{key}"),
-        None => key.to_owned(),
-    }
-}
-
 /// No `validate` run reads an import (SPC-14), so accepting one in scope would give a report
 /// that reads as checked and clean when nothing it named was checked.
 fn reject_import_scope(scope: &Scope) -> Result<(), Error> {
@@ -5155,7 +5173,7 @@ fn reject_import_scope(scope: &Scope) -> Result<(), Error> {
 /// with several namespaces must name one even when it is not ambiguous, as a ref must (SPC-14).
 fn imported_scope(imported: &Project, arg: &DocumentArg) -> Result<Scope, Error> {
     if let Some(name) = arg.namespace_prefix() {
-        let index = imported.namespace_index(name).ok_or_else(|| {
+        let index = name::namespace_named(&imported.config.namespaces, name).ok_or_else(|| {
             let known: Vec<&str> = imported
                 .config
                 .namespaces
@@ -5208,17 +5226,9 @@ fn ref_name_in(
             project,
         };
     }
-    let namespace = namespaces
-        .iter()
-        .filter(|space| {
-            !space.folder.is_empty()
-                && (path == space.folder || path.starts_with(&format!("{}/", space.folder)))
-        })
-        .max_by_key(|space| space.folder.len())
-        .or_else(|| namespaces.iter().find(|space| space.folder.is_empty()));
     RefName {
         path: path.to_owned(),
-        namespace: namespace.map(|space| space.name.clone()),
+        namespace: name::namespace_of_path(namespaces, path).map(|at| namespaces[at].name.clone()),
         key: None,
         project,
     }

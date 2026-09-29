@@ -186,10 +186,15 @@ fn rows(project: &Scratch) -> Vec<Row> {
         // A key-shaped name with a code no schema has: a key in a ref and as an argument, which
         // no document has.
         row("XX-1", NOT_FOUND, NOT_FOUND, "exit 5", "exit 5"),
-        // A path after a namespace prefix: from the namespace's folder in a ref and a body link,
-        // from the project folder as an argument.
-        row("story-2:notes/x.md", X2, X2, "exit 5", "exit 5"),
-        row("story-2:story-2/notes/x.md", NOT_FOUND, NOT_FOUND, X2, X2),
+        // A path after a namespace prefix: from the namespace's folder, in every place.
+        row("story-2:notes/x.md", X2, X2, X2, X2),
+        row(
+            "story-2:story-2/notes/x.md",
+            NOT_FOUND,
+            NOT_FOUND,
+            "exit 5",
+            "exit 5",
+        ),
         // A path with no prefix: from the document in a ref and a body link, from the project
         // folder as an argument, whatever the current directory.
         row("notes/x.md", NOT_FOUND, NOT_FOUND, "exit 5", "exit 5"),

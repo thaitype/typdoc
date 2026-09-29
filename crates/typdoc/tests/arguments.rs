@@ -1,4 +1,4 @@
-//! Covers SPC-2, SPC-7, SPC-17.
+//! Covers SPC-2, SPC-7, SPC-17, SPC-18.
 //!
 //! Every argument is written by hand from SPC-2's table, never taken from typdoc's own output.
 
@@ -7,7 +7,7 @@ mod common;
 
 use std::path::Path;
 
-use common::{Ran, Spawn, fixture, slugged_projects};
+use common::{Ran, Scratch, Spawn, fixture, slugged_projects};
 use serde_json::json;
 
 fn get(project: &Path, argument: &str) -> Ran {
@@ -56,22 +56,22 @@ fn in_several_namespaces_the_path_form_takes_no_prefix_and_the_key_form_needs_on
     round_trips(&project, "story-2:WF-9", "story-2/tickets/WF-9.md");
 }
 
+/// As in a ref: `namespace:path` is read from that namespace's folder.
 #[test]
-fn a_namespace_prefix_on_a_path_validates_the_namespace_and_leaves_the_path_as_written() {
+fn a_namespace_prefix_on_a_path_reads_the_path_from_that_namespaces_folder() {
     let project = fixture("valid/several-namespaces");
 
     round_trips(
         &project,
-        "story-2:story-2/tickets/WF-9.md",
+        "story-2:tickets/WF-9.md",
         "story-2/tickets/WF-9.md",
     );
 
-    // The prefix names a real namespace, but the path, read from the project folder rather
-    // than from that namespace's folder, names nothing: not found.
-    let missing = get(&project, "story-2:tickets/WF-9.md");
+    // The folder written twice: `story-2/story-2/tickets/WF-9.md`, which names nothing.
+    let missing = get(&project, "story-2:story-2/tickets/WF-9.md");
     assert_eq!(missing.code, 5, "{}", missing.stderr);
 
-    let unknown = get(&project, "nosuch:story-2/tickets/WF-9.md");
+    let unknown = get(&project, "nosuch:tickets/WF-9.md");
     assert_eq!(unknown.code, 1, "{}", unknown.stderr);
     assert!(
         unknown.stderr_json()["error"]
@@ -81,6 +81,50 @@ fn a_namespace_prefix_on_a_path_validates_the_namespace_and_leaves_the_path_as_w
         "{}",
         unknown.stderr
     );
+}
+
+/// A prefix names one namespace exactly; `--namespace` is where a glob or a list selects several.
+#[test]
+fn a_namespace_prefix_is_never_a_glob_or_a_list() {
+    let project = fixture("valid/several-namespaces");
+
+    for argument in [
+        "story-*:WF-9",
+        "story-1,story-2:WF-9",
+        "story-*:tickets/WF-9.md",
+    ] {
+        let ran = get(&project, argument);
+
+        assert_eq!(ran.code, 1, "{argument}: {}", ran.stderr);
+        assert!(
+            ran.stderr_json()["error"]
+                .as_str()
+                .unwrap()
+                .contains("`--namespace` selects several"),
+            "{argument}: {}",
+            ran.stderr
+        );
+    }
+    let selected = Spawn::args(["get", "WF-9", "--namespace", "story-*", "--json"])
+        .cwd(&project)
+        .run();
+    assert_eq!(selected.code, 0, "{}", selected.stderr);
+}
+
+#[test]
+fn a_key_no_document_has_says_so_by_its_key() {
+    let project = fixture("valid/several-namespaces");
+
+    for argument in ["story-2:WF-99", "XX-1"] {
+        let ran = get(&project, argument);
+
+        assert_eq!(ran.code, 5, "{argument}: {}", ran.stderr);
+        assert_eq!(
+            ran.stderr_json()["error"],
+            json!(format!("no document with key {argument}")),
+            "{argument}"
+        );
+    }
 }
 
 #[test]
@@ -191,4 +235,102 @@ fn a_key_followed_by_text_that_is_not_a_slug_is_bad_arguments() {
 
         assert_eq!(ran.code, 1, "{argument}: {}", ran.stderr);
     }
+}
+
+/// Every command that takes a path reads a prefix that way, a destination and a new document
+/// included.
+#[test]
+fn new_and_mv_read_a_prefixed_path_from_the_namespaces_folder() {
+    let projects = slugged_projects();
+    let main = projects.path().join("main");
+
+    let created = Spawn::args(["new", "story-2:notes/n.md", "--json"])
+        .cwd(&main)
+        .run();
+    assert_eq!(created.code, 0, "{}", created.stderr);
+    assert_eq!(
+        created.stdout_json()["document"]["path"],
+        json!("story-2/notes/n.md")
+    );
+
+    let moved = Spawn::args(["mv", "story-2:notes/n.md", "story-1:notes/m.md", "--json"])
+        .cwd(&main)
+        .run();
+    assert_eq!(moved.code, 0, "{}", moved.stderr);
+    assert!(main.join("story-1/notes/m.md").is_file());
+    assert!(!main.join("story-2/notes/n.md").exists());
+}
+
+/// A project with one namespace calls it `default` in a prefix, whatever its name.
+#[test]
+fn default_names_the_one_namespace_of_a_project_whatever_it_is_called() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/config.json",
+            r#"{ "version": 1, "namespaces": ["docs"] }"#,
+        ),
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "notes/*.md", "schema": "note.json" }"#,
+        ),
+        ("note.json", r#"{ "name": "note", "fields": {} }"#),
+        ("docs/notes/a.md", "---\n---\n"),
+    ]);
+
+    round_trips(project.path(), "default:notes/a.md", "docs/notes/a.md");
+    round_trips(project.path(), "docs:notes/a.md", "docs/notes/a.md");
+}
+
+/// `default` holds through an import too: `alias::default:` names the import's one namespace.
+#[test]
+fn default_through_an_import_names_its_one_namespace_whatever_it_is_called() {
+    let projects = Scratch::empty();
+    projects.file(
+        "main/.typdoc/config.json",
+        r#"{ "version": 1, "imports": { "mem": "../mem" } }"#,
+    );
+    projects.file(
+        "mem/.typdoc/config.json",
+        r#"{ "version": 1, "namespaces": ["docs"] }"#,
+    );
+    projects.file(
+        "mem/.typdoc/collections/notes.json",
+        r#"{ "match": "notes/*.md", "schema": "note.json" }"#,
+    );
+    projects.file("mem/note.json", r#"{ "name": "note", "fields": {} }"#);
+    projects.file("mem/docs/notes/y.md", "---\n---\n");
+    let main = projects.path().join("main");
+
+    for argument in [
+        "mem::default:notes/y.md",
+        "mem::docs:notes/y.md",
+        "mem::docs/notes/y.md",
+    ] {
+        let ran = get(&main, argument);
+
+        assert_eq!(ran.code, 0, "{argument}: {}", ran.stderr);
+        assert_eq!(
+            ran.stdout_json()["document"]["path"],
+            json!("docs/notes/y.md"),
+            "{argument}"
+        );
+    }
+}
+
+/// A namespace name holds no `/`, so a colon after one is part of the file name.
+#[test]
+#[cfg_attr(windows, ignore = "a file name on Windows cannot hold a colon")]
+fn new_takes_a_path_with_a_colon_after_a_folder_as_it_is_written() {
+    let projects = slugged_projects();
+    let main = projects.path().join("main");
+
+    let created = Spawn::args(["new", "story-2/notes/c:d.md", "--json"])
+        .cwd(&main)
+        .run();
+
+    assert_eq!(created.code, 0, "{}", created.stderr);
+    assert_eq!(
+        created.stdout_json()["document"]["path"],
+        json!("story-2/notes/c:d.md")
+    );
 }

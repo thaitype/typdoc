@@ -13,8 +13,8 @@ use crate::template::valid_slug;
 
 /// The argument of a command that names a document, once the project is known. A path or a
 /// key may carry a namespace prefix (`story-2:notes/x.md`, `story-2:WF-5`), an import prefix
-/// (`memory::precedents/x.md`), or both (`chief::story-3:WF-5`). A namespace prefix only
-/// chooses scope: a path is still read against the project folder (SPC-2). An import prefix
+/// (`memory::precedents/x.md`), or both (`chief::story-3:WF-5`). A path with a namespace
+/// prefix is read from that namespace's folder, as in a ref (SPC-18). An import prefix
 /// changes which project the rest is read against.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocumentArg {

@@ -1,7 +1,7 @@
 ---
 blocked_by:
 - TK-3
-status: open
+status: resolved
 title: Arguments read through resolve
 type: implementation
 ---

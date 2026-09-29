@@ -524,6 +524,45 @@ pub(crate) fn namespace_named(namespaces: &[Namespace], name: &str) -> Option<us
         .or_else(|| (name == "default" && namespaces.len() == 1).then_some(0))
 }
 
+/// The message for `name`, written where a namespace of this project is expected.
+pub(crate) fn not_a_namespace(name: &str, namespaces: &[Namespace]) -> String {
+    let mut known: Vec<&str> = namespaces.iter().map(|space| space.name.as_str()).collect();
+    known.sort_unstable();
+    format!(
+        "`{name}` is not a namespace of this project, which has: {}",
+        known.join(", ")
+    )
+}
+
+/// The message for a prefix that names no namespace of this project.
+pub(crate) fn not_a_prefix(name: &str, namespaces: &[Namespace]) -> String {
+    format!(
+        "{}; a prefix names one namespace exactly, and `--namespace` selects several",
+        not_a_namespace(name, namespaces)
+    )
+}
+
+/// The namespace a path from the project folder is in: the one whose folder holds it, the deepest
+/// when folders nest, else one whose folder is the project folder; `None` outside every namespace
+/// folder, which a ref can still reach (SPC-7).
+pub(crate) fn namespace_of_path(namespaces: &[Namespace], path: &str) -> Option<usize> {
+    namespaces
+        .iter()
+        .enumerate()
+        .filter(|(_, space)| {
+            !space.folder.is_empty()
+                && (path == space.folder || path.starts_with(&format!("{}/", space.folder)))
+        })
+        .max_by_key(|(_, space)| space.folder.len())
+        .or_else(|| {
+            namespaces
+                .iter()
+                .enumerate()
+                .find(|(_, space)| space.folder.is_empty())
+        })
+        .map(|(index, _)| index)
+}
+
 /// `""` (the project folder) for a path with no folder.
 pub(crate) fn folder_of(path: &str) -> String {
     match path.rsplit_once('/') {

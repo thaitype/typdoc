@@ -233,9 +233,10 @@ Whether `--slug` may or must be given follows the collection's `slug` (`SPC-17`)
 `--slug` exits 1 before a number is spent. `--slug` with a path is bad arguments (exit 1): the
 path already names the file.
 
-For a path, the path must match a collection, so `new` cannot create a file outside every
-collection. The path already names its namespace folder, so `--namespace` and
-`TYPDOC_NAMESPACE` play no part: one given alongside a path is ignored, not checked against it.
+A path is read as any argument is (above): `story-2:notes/x.md` is `story-2/notes/x.md`. It must
+match a collection, so `new` cannot create a file outside every collection. The path already names
+its namespace folder, so `--namespace` and `TYPDOC_NAMESPACE` play no part: one given alongside a
+path is ignored, not checked against it.
 
 `new` fills defaults and `auto` fields (`SPC-15`), validates, and only then writes: a refused
 `--set` spends no number. The number is written to the state file before the document is
