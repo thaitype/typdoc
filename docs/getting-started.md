@@ -67,6 +67,7 @@ Now tell typdoc where tickets live. Save this as `.typdoc/collections/tickets.js
 ```console
 $ typdoc new TK "Choose a static site generator"
 path: tickets/TK-1.md
+ref: TK-1
 collection: tickets
 schema: ticket
 namespace: default
@@ -76,7 +77,8 @@ status: open
 title: Choose a static site generator
 ```
 
-typdoc picked the number, created `tickets/TK-1.md`, and filled in the defaults. Two more, one of
+typdoc picked the number, created `tickets/TK-1.md`, and filled in the defaults. `ref` is the
+name to use for it anywhere: on the command line and in another document. Two more, one of
 them blocked by the first:
 
 ```console
@@ -103,10 +105,10 @@ List everything:
 
 ```console
 $ typdoc list
-key   title
-TK-1  Choose a static site generator
-TK-2  Write the landing page
-TK-3  Buy a domain
+key   ref   title
+TK-1  TK-1  Choose a static site generator
+TK-2  TK-2  Write the landing page
+TK-3  TK-3  Buy a domain
 ```
 
 Now something more useful: which open tickets can we start right now, because nothing blocking
@@ -114,9 +116,9 @@ them is unfinished?
 
 ```console
 $ typdoc list --where status=open --where 'ref.all(blocked_by).status=done'
-key   title                           status  blocked_by
-TK-1  Choose a static site generator  open
-TK-3  Buy a domain                    open
+key   ref   title                           status  blocked_by
+TK-1  TK-1  Choose a static site generator  open
+TK-3  TK-3  Buy a domain                    open
 ```
 
 `TK-2` isn't there, because `TK-1` isn't done yet. The single quotes matter: they stop the shell
@@ -129,6 +131,7 @@ Start on `TK-1`, but only if it's still open:
 ```console
 $ typdoc set TK-1 status=doing --if status=open
 path: tickets/TK-1.md
+ref: TK-1
 ...
 status: doing
 title: Choose a static site generator
@@ -149,9 +152,9 @@ Finish it and ask the same question as before:
 ```console
 $ typdoc set TK-1 status=done
 $ typdoc list --where status=open --where 'ref.all(blocked_by).status=done'
-key   title                   status  blocked_by
-TK-2  Write the landing page  open    TK-1
-TK-3  Buy a domain            open
+key   ref   title                   status  blocked_by
+TK-2  TK-2  Write the landing page  open    TK-1
+TK-3  TK-3  Buy a domain            open
 ```
 
 `TK-2` is ready now.
@@ -227,9 +230,9 @@ typdoc reads those links. Ask what points at `TK-1`:
 
 ```console
 $ typdoc refs TK-1 --reverse
-document             field
-notes/site-ideas.md  $body
-TK-2                 blocked_by
+document             ref                          field
+notes/site-ideas.md  default:notes/site-ideas.md  $body
+TK-2                 TK-2                         blocked_by
 ```
 
 `$body` means a link in the Markdown body; `blocked_by` is the frontmatter field.
@@ -241,6 +244,7 @@ TK-2                 blocked_by
 ```console
 $ typdoc mv notes/site-ideas.md notes/website.md
 path: notes/website.md
+ref: default:notes/website.md
 collection: notes
 schema: note
 namespace: default

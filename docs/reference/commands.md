@@ -24,9 +24,17 @@ is relative to the current directory instead.
 | --- | --- |
 | `WF-2` | key in the current namespace |
 | `story-2:WF-1` | key in namespace `story-2` |
-| `story-2:notes/x.md` | path in namespace `story-2` |
+| `story-2:notes/x.md` | path from namespace `story-2`'s folder: `story-2/notes/x.md` |
+| `default:notes/x.md` | path from the folder of a project's only namespace, whatever it's called |
 | `memory::notes/x.md` | path in the imported project `memory` |
 | `chief::story-3:WF-5` | key in namespace `story-3` of the imported project `chief` |
+
+A prefix names one namespace exactly. To pick from several, use `--namespace`, which takes a glob or
+a list: `typdoc get WF-1 --namespace 'story-*'`, not `story-*:WF-1`.
+
+Every document typdoc prints comes with its `ref`: a name that finds it from anywhere in the
+project, in a ref, a body link (when it's a path) and on the command line. Copy `ref`, not `path`,
+into another document: in a document, a path with no prefix is read from that document's folder.
 
 A key can also be written with the slug its file name carries: `WF-5-json-output-shape`,
 `story-2:WF-5-json-output-shape` and `chief::story-3:WF-5-json-output-shape` all name `WF-5`.
@@ -42,18 +50,19 @@ as a table with a header row. An empty list prints nothing.
 With `--json`, the result is one object on stdout. A document inside it looks like this:
 
 ```json
-{"path":"tickets/WF-2.md","namespace":"default","key":"WF-2","code":"WF",
+{"path":"tickets/WF-2.md","ref":"WF-2","namespace":"default","key":"WF-2","code":"WF",
  "collection":"tickets","schema":"ticket","fields":{"title":"...","status":"open"}}
 ```
 
 `key` appears only for documents whose schema has a code, and `project` only for a document in an
-imported project. `fields` holds all the frontmatter, including fields the schema doesn't
+imported project. `ref` is the name to copy elsewhere; a file outside every namespace folder has
+none. `fields` holds all the frontmatter, including fields the schema doesn't
 declare. A number is printed with the digits the file holds.
 
 On failure, the message goes to stderr, and with `--json` it's an object:
 
 ```json
-{"error":"no document at WF-9","code":5,"details":[]}
+{"error":"no document with key WF-9","code":5,"details":[]}
 ```
 
 ---
@@ -69,6 +78,7 @@ Prints one document's frontmatter.
 ```console
 $ typdoc get WF-2
 path: tickets/WF-2.md
+ref: WF-2
 collection: tickets
 schema: ticket
 namespace: default
@@ -99,16 +109,16 @@ Prints the documents that match every `--where`.
 | `--limit <n>` | Print at most n documents |
 | `--ids` | Print one name per line, with no header |
 
-The table's columns are the document's name, `title`, each field used in `--where`, then
+The table's columns are the document's name, its `ref`, `title`, each field used in `--where`, then
 `--fields`. The first column is headed `key` when every row is a numbered document, `path` when
 none is, and `document` when the result mixes both.
 
 ```console
 $ typdoc list --collection tickets --sort estimate:desc --fields estimate
-key   title             estimate
-WF-2  Write the schema  5
-WF-5  Cosmos, or SQL?   2
-WF-1  Pick a database
+key   ref   title             estimate
+WF-2  WF-2  Write the schema  5
+WF-5  WF-5  Cosmos, or SQL?   2
+WF-1  WF-1  Pick a database
 ```
 
 `--json`: `{"documents": [...], "total": n, "truncated": bool}`. `total` counts every match before
@@ -129,16 +139,16 @@ Prints the refs a document holds, or with `--reverse`, the refs that point at it
 
 ```console
 $ typdoc refs TK-1 --reverse
-document             field
-notes/site-ideas.md  $body
-TK-2                 blocked_by
+document             ref                          field
+notes/site-ideas.md  default:notes/site-ideas.md  $body
+TK-2                 TK-2                         blocked_by
 ```
 
 `--json`: `{"document": <name>, "direction": "out" | "in", "refs": [...]}`. Each ref names the
-document at the other end, its `field`, and `written`, the text as it appears in the file; a body
-link also has `line` and `col`. A ref that doesn't resolve has `unresolved` instead of a path:
-`not-found`, `import-absent`, `bad-prefix` or `absolute` (an absolute path, which typdoc never
-follows).
+document at the other end (with its `ref`), its `field`, and `written`, the text as it appears in
+the file; a body link also has `line` and `col`. A ref that doesn't resolve has `unresolved` instead
+of a path: `not-found`, `import-absent`, `bad-prefix` or `absolute` (an absolute path, which typdoc
+never follows).
 
 `--reverse` doesn't look inside projects that import this one.
 
@@ -222,6 +232,7 @@ Defaults and `auto` fields are filled in. The output is the new document, the sa
 ```console
 $ typdoc new TK "Choose a static site generator"
 path: tickets/TK-1.md
+ref: TK-1
 collection: tickets
 schema: ticket
 namespace: default
@@ -290,7 +301,8 @@ typdoc mv <doc> --renumber <namespace>
 ```
 
 Moves a document and rewrites every ref to it in this project, in frontmatter and in body links.
-Each ref keeps the form it was written in.
+Each ref keeps the form it was written in: a key stays a key, a prefix stays, and a body link keeps
+its `./`, its `#anchor` and its `<...>` or `%20`.
 
 | Option | Meaning |
 | --- | --- |
@@ -318,6 +330,7 @@ it is, with `filename.pattern` in `findings`.
 ```console
 $ typdoc mv notes/site-ideas.md notes/website.md
 path: notes/website.md
+ref: default:notes/website.md
 collection: notes
 schema: note
 namespace: default

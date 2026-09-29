@@ -26,7 +26,7 @@ separate project.
   "version": 1,
   "namespaces": ["story-*", "archive"],
   "imports": { "memory": "../memory" },
-  "validation": { "global": { "body.links": { "level": "error", "ignore": ["assets/**"] } } }
+  "validation": { "global": { "body.links": { "level": "error", "ignore": ["**/assets/**"] } } }
 }
 ```
 
@@ -135,7 +135,9 @@ schemas. Keys are unique per namespace: two namespaces may each have a `WF-1`.
 
 Which namespaces a command reads, first match wins:
 
-1. a prefix on the argument: `story-2:WF-1`, `story-2:notes/x.md`;
+1. a prefix on the argument: `story-2:WF-1`, or `story-2:notes/x.md` (read from the namespace's
+   folder: `story-2/notes/x.md`). A prefix is one namespace's exact name, never a glob or a list;
+   `default:` names the only namespace of a one-namespace project;
 2. `--namespace <list>` — names or `*` globs, comma-separated; `'*'` means every namespace;
 3. `TYPDOC_NAMESPACE`, same syntax;
 4. the current directory, when it is inside a namespace folder;

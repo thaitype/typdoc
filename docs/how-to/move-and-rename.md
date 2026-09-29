@@ -9,6 +9,7 @@ in the project that points at it, both frontmatter refs and links in Markdown bo
 ```console
 $ typdoc mv notes/site-ideas.md notes/website.md
 path: notes/website.md
+ref: default:notes/website.md
 collection: notes
 schema: note
 namespace: default
@@ -19,7 +20,8 @@ findings: none
 ```
 
 `rewritten` counts the refs typdoc changed. Each ref keeps the form it was written in: a relative
-link stays relative, a link written with `%20` or `<...>` keeps that spelling. `git diff` shows
+link stays relative and keeps its `./` and its `#anchor`, and a link written with `%20` or `<...>`
+keeps that spelling. `git diff` shows
 exactly what changed.
 
 The destination must not exist yet. If it does, nothing happens and the command exits 7.
@@ -36,6 +38,7 @@ for people, and changing it is a move to the same key with another slug:
 ```console
 $ typdoc mv story-2:WF-5 story-2/_tickets/WF-5-json-shapes.md
 path: story-2/_tickets/WF-5-json-shapes.md
+ref: story-2:WF-5
 collection: tickets
 schema: ticket
 namespace: story-2
@@ -83,6 +86,7 @@ What you can do is move it into another namespace, where it gets the next free k
 ```console
 $ typdoc mv story-2:WF-1 --renumber story-1
 path: story-1/tickets/WF-2.md
+ref: story-1:WF-2
 collection: tickets
 schema: ticket
 namespace: story-1
@@ -103,6 +107,7 @@ A document with a slug keeps it under the new key. Starting again from
 ```console
 $ typdoc mv story-2:WF-5 --renumber story-3
 path: story-3/_tickets/WF-8-json-output-shape.md
+ref: story-3:WF-8
 collection: tickets
 schema: ticket
 namespace: story-3

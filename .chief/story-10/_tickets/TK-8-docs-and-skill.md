@@ -3,7 +3,7 @@ blocked_by:
 - TK-5
 - TK-7
 - TK-12
-status: open
+status: resolved
 title: The docs and the skill say how names are written
 type: implementation
 ---

@@ -11,8 +11,10 @@ a list prints as a table with a header row, and an empty result prints nothing.
 
 ## The shared shapes in `--json`
 
-- **Name of a document**: `path` (from the project folder), `namespace`, `key` when coded, and
-  `project` when it belongs to an imported project.
+- **Name of a document**: `path` (from the project folder), `ref` (its portable name: the name to
+  write in a ref or pass as an argument from anywhere in the project; absent for a file outside
+  every namespace folder), `namespace`, `key` when coded, and `project` when it belongs to an
+  imported project.
 - **Document**: the name plus `code` (may be `null`), `collection`, `schema` and `fields` — all
   of the frontmatter, including fields the schema does not declare.
 - **Finding**: `rule`, `level`, `message`, `path`, plus `namespace`/`collection`/`key` for a
@@ -38,6 +40,7 @@ One document's frontmatter.
 ```console
 $ typdoc get WF-2
 path: tickets/WF-2.md
+ref: WF-2
 collection: tickets
 schema: ticket
 namespace: default
@@ -47,7 +50,7 @@ status: open
 title: Write the schema
 
 $ typdoc get WF-2 --json
-{"document":{"path":"tickets/WF-2.md","namespace":"default","key":"WF-2","code":"WF","collection":"tickets","schema":"ticket","fields":{"blocked_by":["WF-1"],"status":"open","title":"Write the schema"}}}
+{"document":{"path":"tickets/WF-2.md","ref":"WF-2","namespace":"default","key":"WF-2","code":"WF","collection":"tickets","schema":"ticket","fields":{"blocked_by":["WF-1"],"status":"open","title":"Write the schema"}}}
 ```
 
 A value that does not fit its type is returned as written; `validate` reports it. Missing → exit 5.
@@ -69,15 +72,15 @@ typdoc list [--collection <list>] [--code <list>] [--where <expr>]... [--fields 
 | `--limit <n>` | print at most n; `total` still counts every match |
 | `--ids` | one key or path per line, no header — for pipes |
 
-The text table's columns are the name (key, or path), `title`, each field used in `--where`, then
-`--fields`:
+The text table's columns are the name (key, or path), `ref`, `title`, each field used in `--where`,
+then `--fields`:
 
 ```console
 $ typdoc list --collection tickets --sort estimate:desc --fields estimate
-key   title             estimate
-WF-2  Write the schema  5
-WF-5  Cosmos, or SQL?   2
-WF-1  Pick a database
+key   ref   title             estimate
+WF-2  WF-2  Write the schema  5
+WF-5  WF-5  Cosmos, or SQL?   2
+WF-1  WF-1  Pick a database
 
 $ typdoc list --collection tickets --limit 1 --json
 {"documents":[{"path":"tickets/WF-1.md",…,"fields":{…}}],"total":3,"truncated":true}
@@ -100,14 +103,15 @@ means body links.
 
 ```console
 $ typdoc refs WF-1 --reverse --json
-{"document":{"path":"tickets/WF-1.md","namespace":"default","key":"WF-1"},"direction":"in",
- "refs":[{"path":"tickets/WF-2.md","namespace":"default","key":"WF-2","field":"blocked_by","written":"WF-1"}]}
+{"document":{"path":"tickets/WF-1.md","ref":"WF-1","namespace":"default","key":"WF-1"},"direction":"in",
+ "refs":[{"path":"tickets/WF-2.md","ref":"WF-2","namespace":"default","key":"WF-2","field":"blocked_by","written":"WF-1"}]}
 ```
 
 Each reference is the name of the document at the other end, plus `field` and `written` (the
 text as written in the file), and `line`/`col` for a body link. A reference that does not resolve
 has no `path` and has `unresolved` instead: `not-found`, `import-absent` (the import is not on
-this machine) or `bad-prefix` (the prefix names no namespace or import).
+this machine), `bad-prefix` (the prefix names no namespace or import) or `absolute` (an absolute
+path, which typdoc never follows).
 
 ## toc
 
@@ -142,6 +146,7 @@ typdoc new <path.md> [--set k=v]...                         # uncoded: you name 
 ```console
 $ typdoc new WF "Pick a database"
 path: tickets/WF-1.md
+ref: WF-1
 collection: tickets
 schema: ticket
 namespace: default
@@ -151,7 +156,7 @@ status: open
 title: Pick a database
 
 $ typdoc new notes/setup.md --set title="Setup notes" --json
-{"document":{"path":"notes/setup.md","namespace":"default","code":null,"collection":"notes","schema":"note","fields":{"title":"Setup notes"}}}
+{"document":{"path":"notes/setup.md","ref":"default:notes/setup.md","namespace":"default","code":null,"collection":"notes","schema":"note","fields":{"title":"Setup notes"}}}
 ```
 
 - Coded: takes the namespace lock, issues the larger of (highest existing number, recorded
@@ -229,11 +234,12 @@ typdoc mv <coded-doc> --renumber <namespace> # coded document into another names
 
 Moves the file and rewrites every ref this project holds to it — frontmatter and body links, in
 every namespace — keeping each ref's written form (a key stays a key, a relative link stays
-relative, `%20` and `<…>` are kept).
+relative, and `./`, `#anchor`, `%20` and `<…>` are kept).
 
 ```console
 $ typdoc mv notes/setup.md notes/install.md
 path: notes/install.md
+ref: default:notes/install.md
 collection: notes
 schema: note
 namespace: default
