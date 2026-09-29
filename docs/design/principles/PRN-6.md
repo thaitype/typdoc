@@ -21,11 +21,11 @@ allow.
   which no Markdown reader follows. A name that reaches a document from anywhere belongs in a ref
   (`PRN-11`).
 - A body link names its file exactly. A space must be written `<…>` or `%20`, since CommonMark does
-  not allow it bare (`SPC-1`, `body.links`).
+  not allow it bare.
 - A slug may not contain `#`, which every Markdown reader takes as the start of an anchor.
 - Where CommonMark says nothing, typdoc follows the reading most Markdown readers share. Heading
   anchors are an example: CommonMark defines none, and typdoc derives them the way GitHub does,
-  since that is the form most readers and tools reproduce (`SPC-14`).
+  since that is the form most readers and tools reproduce.
 
 ## Where it stops
 

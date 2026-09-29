@@ -8,10 +8,10 @@ part that no longer matches is reported, not treated as a broken reference.**
 
 ## Why
 
-A key is issued once and never reused (`SPC-8`), so it is the one thing about a coded document
-that does not change. Everything else a reference may carry alongside it, such as the words in a
-file name, can drift without anyone meaning to change which document is meant. Failing a
-reference because of the part that drifts punishes the reader for the part that does not matter.
+A key is issued once and never reused, so it is the one thing about a coded document that does not
+change. Everything else a reference may carry alongside it, such as the words in a file name, can
+drift without anyone meaning to change which document is meant. Failing a reference because of the
+part that drifts punishes the reader for the part that does not matter.
 
 ## What follows
 
@@ -22,5 +22,5 @@ reference because of the part that drifts punishes the reader for the part that 
 
 ## Where it stops
 
-A body link is a file path, not a key (`SPC-14`), and it has to match the file exactly (see
-`PRN-6`). A path ref to a document without a code has no key to fall back on and resolves by path.
+A body link is a file path, not a key, and it has to match the file exactly (see `PRN-6`). A path
+ref to a document without a code has no key to fall back on and resolves by path.

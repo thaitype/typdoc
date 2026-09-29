@@ -2,7 +2,7 @@
 title: Namespaces and project discovery explained
 status: active
 migrated_from: docs/archived-design/design.md#model
-follows: [PRN-12]
+follows: [PRN-7, PRN-12]
 ---
 
 A project is a folder containing `.typdoc/config.json`. It is what `imports` points at;

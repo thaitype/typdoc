@@ -2,6 +2,7 @@
 title: Exit codes explained
 status: active
 migrated_from: docs/archived-design/design.md#exit-codes-and-errors
+follows: [PRN-8]
 ---
 
 Exit codes let an agent branch on what happened without parsing stderr text.

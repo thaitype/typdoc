@@ -16,12 +16,11 @@ broken references.
 
 ## What follows
 
-- `new` validates before it writes and refuses a value the schema rejects (`SPC-2`).
+- `new` validates before it writes and refuses a value the schema rejects.
 - A file already on disk whose name does not match its collection's expected form is still that
   document, and `filename.pattern` reports it.
-- `mv` onto a schema the document does not satisfy is carried out and reported, exit 0
-  (`SPC-2`): the move itself produces nothing invalid; the document was never checked against
-  that schema before.
+- `mv` onto a schema the document does not satisfy is carried out and reported, exit 0: the move
+  itself produces nothing invalid; the document was never checked against that schema before.
 
 ## Where it stops
 

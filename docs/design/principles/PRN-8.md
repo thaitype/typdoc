@@ -15,9 +15,9 @@ no command accepts is a dead end for an agent, however clear it looks to a perso
 
 ## What follows
 
-- Exit codes have one meaning each across every command (`SPC-3`).
+- Exit codes have one meaning each across every command.
 - `--json` names a document the way arguments accept it: by `key` for a coded document, by
-  `path` otherwise (`SPC-12`).
+  `path` otherwise.
 - The typdoc skill describes what each way of doing a thing does to the files, and leaves the
   choice to the agent.
 
