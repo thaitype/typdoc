@@ -1,6 +1,6 @@
 ---
 blocked_by:
-- TK-99
+- TK-3
 status: resolved
 title: Refs and body links read through resolve
 type: implementation
