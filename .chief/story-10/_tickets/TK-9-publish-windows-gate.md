@@ -1,6 +1,6 @@
 ---
 blocked_by: []
-status: claimed
+status: resolved
 title: Windows in publish.yml's test gate
 type: implementation
 ---
@@ -18,3 +18,9 @@ type: implementation
 ## Checks
 
 Shown red on a planted failing test, then green, on a throwaway pull request.
+
+## Evidence
+
+Throwaway pull request #35 (closed, branch deleted) ran the gate job exactly as publish.yml has it:
+red with a planted failing Windows test, run 36516652557 (windows-latest failed on it, ubuntu and
+macOS green); green with the plant removed, run 36517039758 (all three legs; Windows 1138/1138).
