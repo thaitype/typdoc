@@ -23,8 +23,10 @@ document, not part of its identity.
 
 A name is read in this order; the first step that applies decides.
 
-1. As an argument only, a path on disk: an absolute path, or one beginning with `/`, `./` or
-   `../`, and on Windows `\`, `.\` or `..\`, read from the current directory (`SPC-2`).
+1. As an argument, a path on disk: an absolute path, or one beginning with `/`, `./` or `../`, and
+   on Windows `\`, `.\` or `..\`, read from the current directory (`SPC-2`). In a ref or a body
+   link, an absolute path, a drive letter included (`C:\a.md` on Windows), is never resolved, and
+   is reported under `refs.resolve` or `body.links` as an absolute path.
 2. In a body link, a URL is not a ref: a name that begins with a scheme followed by `//`, or with
    `http:`, `https:`, `mailto:` or `file:`, the schemes no namespace or alias may be named.
    `alias::rest` otherwise: `rest` is read in the imported project `alias`, from its folder and with
@@ -41,10 +43,10 @@ A name is read in this order; the first step that applies decides.
    `rest` ends in `.md`; otherwise the link is a URL (`tel:123`), and not a ref.
 5. A name with the shape of a key, `CODE-number` with or without a slug (`SPC-17`): a key, in the
    writer's namespace in a ref, in the command's scope as an argument, whatever its code. A key no
-   document has is `no document with key <key>`. In a body link this step does not apply.
-6. An absolute path in a ref or a body link: never resolved, and reported under `refs.resolve` or
-   `body.links` as an absolute path.
-7. Anything else: a path, from the base the place gives in the table above.
+   document has is `no document with key <key>`. In a body link this step does not apply. A key
+   recorded in an `auto: moves` field is read the same way: with no prefix, in the namespace of
+   the document that holds it.
+6. Anything else: a path, from the base the place gives in the table above.
 
 `name:` and `name::` never fall back to each other, nor to a path: a name the prefix does not
 reach is an error. A path that really contains a colon is written with a leading `./`.

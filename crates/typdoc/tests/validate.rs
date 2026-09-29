@@ -2869,6 +2869,31 @@ fn an_absolute_path_in_a_ref_or_a_body_link_is_reported_and_never_followed() {
 }
 
 #[test]
+#[cfg(windows)]
+fn a_windows_absolute_path_in_a_ref_or_a_body_link_is_reported_as_an_absolute_path() {
+    let projects = slugged_projects();
+    names_config(&projects);
+    let target = projects
+        .path()
+        .join(r"main\story-2\tickets\WF-5-json-shapes.md");
+    let target = target.to_str().expect("a UTF-8 scratch path");
+    projects.file(
+        "main/story-1/notes/a.md",
+        &format!("---\nsee: ['{target}']\n---\n\n[t](<{target}>)\n"),
+    );
+
+    let ran = validate(&[], &projects.path().join("main"));
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let found = rules_and_messages(&ran);
+    let rules: Vec<&str> = found.iter().map(|(rule, _, _)| rule.as_str()).collect();
+    assert_eq!(rules, ["body.links", "refs.resolve"], "{found:?}");
+    for (_, _, message) in &found {
+        assert!(message.contains("is an absolute path"), "{found:?}");
+    }
+}
+
+#[test]
 fn a_body_link_whose_prefix_names_no_namespace_is_reported_and_a_url_is_not() {
     let projects = slugged_projects();
     names_config(&projects);

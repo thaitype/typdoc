@@ -242,18 +242,16 @@ fn rows(project: &Scratch) -> Vec<Row> {
             "exit 1",
         ),
     ];
-    // An absolute path: never followed in a ref and a body link, on disk as an argument. On
-    // Windows a drive letter reads as a prefix, so the row is Unix only.
-    if cfg!(unix) {
-        let absolute = project.path().join("story-2/notes/x.md");
-        rows.push(row(
-            absolute.to_str().expect("a UTF-8 scratch path"),
-            NOT_FOUND,
-            NOT_FOUND,
-            X2,
-            X2,
-        ));
-    }
+    // An absolute path, a drive letter included: never followed in a ref and a body link, on
+    // disk as an argument.
+    let absolute = project.path().join("story-2/notes/x.md");
+    rows.push(row(
+        absolute.to_str().expect("a UTF-8 scratch path"),
+        NOT_FOUND,
+        NOT_FOUND,
+        X2,
+        X2,
+    ));
     rows
 }
 

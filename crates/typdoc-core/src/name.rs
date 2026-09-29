@@ -188,6 +188,10 @@ fn read_with(text: &str, rules: &Rules, namespaces: &[Namespace]) -> Reading {
     if rules.in_document && (text.starts_with("./") || text.starts_with("../")) {
         return Reading::Path(join(&rules.base, text));
     }
+    // Before any prefix, so `C:\a.md` on Windows is an absolute path, not the prefix `C`.
+    if rules.in_document && (text.starts_with('/') || Path::new(text).is_absolute()) {
+        return Reading::Absolute;
+    }
     if let Some((alias, rest)) = text.split_once("::") {
         if rules.in_import {
             return Reading::BadPrefix;
@@ -215,10 +219,6 @@ fn read_with(text: &str, rules: &Rules, namespaces: &[Namespace]) -> Reading {
     }
     if rules.mention {
         return Reading::BadPrefix;
-    }
-    // After the prefixes, so `C:/a.md` reads as the prefix `C` on every system.
-    if rules.in_document && (text.starts_with('/') || Path::new(text).is_absolute()) {
-        return Reading::Absolute;
     }
     Reading::Path(join(&rules.base, text))
 }
@@ -632,7 +632,15 @@ mod tests {
             ("../../story-2/notes/x.md", path("story-2/notes/x.md")),
             ("./a:b.md", path("story-1/notes/a:b.md")),
             ("/elsewhere/x.md", Reading::Absolute),
-            ("C:/elsewhere/x.md", Reading::BadPrefix),
+            ("/story-2:x.md", Reading::Absolute),
+            (
+                "C:/elsewhere/x.md",
+                if cfg!(windows) {
+                    Reading::Absolute
+                } else {
+                    Reading::BadPrefix
+                },
+            ),
             ("stroy-2:notes/x.md", Reading::BadPrefix),
             ("story-*:WF-1", Reading::BadPrefix),
             ("story-1,story-2:WF-1", Reading::BadPrefix),
@@ -657,6 +665,21 @@ mod tests {
     }
 
     /// The rest after a key has to be a slug (SPC-17), or the name is a path.
+    /// Even beside a namespace named `C`: a drive letter is not a prefix.
+    #[test]
+    #[cfg(windows)]
+    fn a_windows_absolute_path_in_a_ref_or_a_body_link_is_absolute() {
+        let namespaces = vec![namespace("C", "C"), namespace("story-2", "story-2")];
+        for place in [
+            Place::Ref(holder(RefBase::File)),
+            Place::BodyLink(holder(RefBase::File)),
+        ] {
+            for text in [r"C:\elsewhere\x.md", "C:/elsewhere/x.md"] {
+                assert_eq!(read(text, place, &namespaces), Reading::Absolute, "{text}");
+            }
+        }
+    }
+
     #[test]
     fn a_key_followed_by_text_that_is_not_a_slug_is_a_path() {
         let place = Place::Ref(holder(RefBase::File));
