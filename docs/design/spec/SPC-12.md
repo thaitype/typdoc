@@ -163,7 +163,8 @@ the values of one field in the order they are written. For `in`, the documents o
 that hold the refs are in `path` order.
 
 A reference that does not resolve has no `path` and has `unresolved` instead, one of three values:
-`not-found`, the place the ref names is present and the file or key is not; `import-absent`, the
+`not-found`, the place the ref names is present and the file or key is not, or the ref is an
+absolute path, which is never resolved (`SPC-18`); `import-absent`, the
 import it names is not on this machine, which `imports.absent` reports; and `bad-prefix`, the
 prefix names no namespace and no import, or names a project with several namespaces without saying
 which. A missing `path` alone would make a broken link and a machine that has not been set up look

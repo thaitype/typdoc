@@ -111,7 +111,7 @@ pub(crate) fn namespace_of(namespaces: &[Namespace], path: &str) -> Option<usize
     namespaces.iter().position(|ns| ns.folder == first)
 }
 
-/// The reading `refs::classify` gives, without its `Ctx`: a leading `./` or `../` makes a colon
+/// The reading the name grammar gives (SPC-18), without a document: a leading `./` or `../` makes a colon
 /// part of the path, and `::` never reaches here, since an import prefix leads to another
 /// project.
 fn sibling_prefix<'a>(written: &'a str, namespaces: &[Namespace]) -> Option<(&'a str, &'a str)> {

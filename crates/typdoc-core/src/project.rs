@@ -23,6 +23,7 @@ use crate::index::{Entry as Indexed, Index, Member};
 use crate::lines::Position;
 use crate::links::{self, BodyLink, BodyLinks};
 use crate::mv::{self, ContentChange, MvReport, RewrittenRef, UnrewrittenReason, UnrewrittenRef};
+use crate::name;
 use crate::namespace_lock::{
     self, NamespaceLock, acquire, local_namespace_lock_path, order_locks, release,
 };
@@ -138,7 +139,6 @@ struct RefEvalCtx<'a> {
     me_entry: &'a Indexed,
     me_fields: &'a [(String, Value)],
     me_body: &'a BodyLinks,
-    codes: &'a BTreeSet<String>,
     incoming: Option<&'a [IncomingRef]>,
 }
 
@@ -198,15 +198,41 @@ pub(crate) enum ImportState {
 }
 
 struct RefProject {
-    /// A bare-key ref needs its code to exist in this project.
+    /// A mention is checked only when its code is one of this project's (`body.mentions`).
     codes: BTreeSet<String>,
-    /// A written ref that no longer resolves, to the current key or path of the document that
-    /// recorded moving away from it (`auto: moves`).
-    moved: BTreeMap<String, String>,
+    /// A name that no longer resolves, to the current name of the document that recorded moving
+    /// away from it (`auto: moves`).
+    moved: BTreeMap<MovedFrom, String>,
+}
+
+/// What a name read as, to find the document that recorded moving away from it: a key in its
+/// namespace, since the same key can be issued once in each, or a path from the project folder.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum MovedFrom {
+    Key { namespace: usize, key: String },
+    Path(String),
+}
+
+impl MovedFrom {
+    fn of(reading: name::Reading) -> Option<MovedFrom> {
+        match reading {
+            name::Reading::Key {
+                namespaces, key, ..
+            } => match namespaces.as_slice() {
+                [namespace] => Some(MovedFrom::Key {
+                    namespace: *namespace,
+                    key,
+                }),
+                _ => None,
+            },
+            name::Reading::Path(path) => Some(MovedFrom::Path(path)),
+            _ => None,
+        }
+    }
 }
 
 struct PrescanAccum {
-    moved: BTreeMap<String, String>,
+    moved: BTreeMap<MovedFrom, String>,
     edges: BTreeMap<String, Vec<(String, String)>>,
 }
 
@@ -216,7 +242,7 @@ struct BodyDocContext<'a> {
     doc_text: &'a str,
     ctx: &'a refs::Ctx<'a>,
     ignore: &'a [Template],
-    moved: &'a BTreeMap<String, String>,
+    moved: &'a BTreeMap<MovedFrom, String>,
     collection: &'a Rules,
     strict: bool,
     audit: bool,
@@ -458,17 +484,27 @@ impl Project {
         &self.root
     }
 
-    pub(crate) fn codes(&self) -> BTreeSet<String> {
-        self.project_codes()
+    /// The name of the document at `path` that reads as it from every place in this project
+    /// (SPC-18).
+    fn portable_name(&self, path: &str, entry: &Indexed) -> String {
+        let identity = name::Identity {
+            project: None,
+            namespace: entry.namespace,
+            path,
+            key: entry.key.as_deref(),
+            slug: entry.slug.as_deref(),
+        };
+        name::format(
+            identity,
+            name::Form::Portable,
+            name::Place::Argument { scope: &[] },
+            &self.config.namespaces,
+        )
     }
 
     /// The project as names are read in it.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "no caller reads names through a scene yet")
-    )]
-    pub(crate) fn scene(&self) -> crate::name::Scene<'_> {
-        crate::name::Scene {
+    pub(crate) fn scene(&self) -> name::Scene<'_> {
+        name::Scene {
             namespaces: &self.config.namespaces,
             index: &self.index,
             root: &self.root,
@@ -1402,7 +1438,6 @@ impl Project {
                 Condition::Ref(ref_condition) => self.check_ref_condition_scope(ref_condition)?,
             }
         }
-        let codes = self.project_codes();
         // Only `ref.*` reads the candidate's own body links; `refby.*` reads the other documents'
         // refs, gathered once here.
         let needs_own_body = filter
@@ -1414,7 +1449,7 @@ impl Project {
             .iter()
             .any(|c| matches!(c, Condition::Ref(r) if r.dir == Dir::RefBy))
         {
-            Some(self.incoming_refs(&codes)?)
+            Some(self.incoming_refs()?)
         } else {
             None
         };
@@ -1466,7 +1501,6 @@ impl Project {
                 me_entry: entry,
                 me_fields: &fields,
                 me_body: &body,
-                codes: &codes,
                 incoming: incoming.as_deref(),
             };
             let mut keep = true;
@@ -1747,13 +1781,7 @@ impl Project {
         match condition.dir {
             Dir::Ref => {
                 let refs: Vec<RefsReference> = self
-                    .document_out_refs(
-                        &ctx.me.path,
-                        ctx.me_entry,
-                        ctx.me_fields,
-                        ctx.me_body,
-                        ctx.codes,
-                    )
+                    .document_out_refs(&ctx.me.path, ctx.me_entry, ctx.me_fields, ctx.me_body)
                     .into_iter()
                     .filter(|r| r.field == wanted)
                     .collect();
@@ -1869,7 +1897,7 @@ impl Project {
         condition_matches(inner, &collection.schema, &doc)
     }
 
-    fn incoming_refs(&self, codes: &BTreeSet<String>) -> Result<Vec<IncomingRef>, Error> {
+    fn incoming_refs(&self) -> Result<Vec<IncomingRef>, Error> {
         let mut holders: Vec<(&str, &Indexed)> = self.index.iter().collect();
         holders.sort_by_key(|(path, _)| *path);
         let mut out = Vec::new();
@@ -1889,7 +1917,7 @@ impl Project {
                 project: None,
                 fields: fields.clone(),
             };
-            for reference in self.document_out_refs(path, entry, &fields, &body, codes) {
+            for reference in self.document_out_refs(path, entry, &fields, &body) {
                 out.push(IncomingRef {
                     holder: holder.clone(),
                     collection: entry.collection,
@@ -1953,7 +1981,6 @@ impl Project {
         }
         let (path, entry, text) = self.resolve(arg, scope, env)?;
         let document = self.ref_name_of(&path);
-        let codes = self.project_codes();
         let bad = |message| Error::Frontmatter {
             file: entry.file.clone(),
             message,
@@ -1971,7 +1998,7 @@ impl Project {
                       this `text`"
         )]
         let body = links::scan(&text).expect("frontmatter.parse already refused an unclosed block");
-        let own = self.document_out_refs(&path, entry, &fields, &body, &codes);
+        let own = self.document_out_refs(&path, entry, &fields, &body);
 
         if !reverse {
             let refs = filtered(own, field);
@@ -1996,7 +2023,7 @@ impl Project {
                 continue;
             };
             let outgoing =
-                self.document_out_refs(other_path, other_entry, &other_fields, &other_body, &codes);
+                self.document_out_refs(other_path, other_entry, &other_fields, &other_body);
             for reference in filtered(outgoing, field) {
                 let RefOutcome::Resolved(target) = &reference.other else {
                     continue;
@@ -2026,7 +2053,6 @@ impl Project {
         entry: &Indexed,
         fields: &[(String, Value)],
         body: &BodyLinks,
-        codes: &BTreeSet<String>,
     ) -> Vec<RefsReference> {
         let collection = &self.collections[entry.collection];
         let ctx = refs::Ctx {
@@ -2034,7 +2060,6 @@ impl Project {
             doc_path: path,
             ref_base: collection.ref_base,
             namespaces: &self.config.namespaces,
-            codes,
             index: &self.index,
             root: &self.root,
             imports: &self.imports,
@@ -2074,6 +2099,7 @@ impl Project {
                 refs::BodyDestination::Skip => continue,
                 refs::BodyDestination::BadPrefix => RefOutcome::Unresolved("bad-prefix"),
                 refs::BodyDestination::ImportAbsent(_) => RefOutcome::Unresolved("import-absent"),
+                refs::BodyDestination::Absolute => RefOutcome::Unresolved("not-found"),
                 refs::BodyDestination::Path(joined) => {
                     match refs::resolve_path(&joined, &self.index, &self.root) {
                         Ok(resolved) => RefOutcome::Resolved(self.ref_name_of(&resolved.path)),
@@ -2567,7 +2593,6 @@ impl Project {
             doc_path: path,
             ref_base: collection.ref_base,
             namespaces: &self.config.namespaces,
-            codes: &ref_project.codes,
             index: &self.index,
             root: &self.root,
             imports: &self.imports,
@@ -2584,16 +2609,24 @@ impl Project {
             }
             for written in ref_values(value) {
                 match refs::resolve_one(written, &ctx) {
-                    Err(reason) => findings.extend(self.unresolved_ref_finding(
-                        name,
-                        field_name,
-                        written,
-                        reason,
-                        &ref_project.moved,
-                        &collection.validation,
-                        strict,
-                        audit,
-                    )),
+                    Err(reason) => findings.extend(
+                        self.unresolved_ref_finding(
+                            name,
+                            field_name,
+                            written,
+                            reason,
+                            MovedFrom::of(name::read(
+                                written,
+                                name::Place::Ref(ctx.document()),
+                                &self.config.namespaces,
+                            ))
+                            .and_then(|from| ref_project.moved.get(&from))
+                            .map(String::as_str),
+                            &collection.validation,
+                            strict,
+                            audit,
+                        ),
+                    ),
                     Ok(resolved) => {
                         let info = self.schema_info_of(&resolved);
                         if !refs::target_allowed(field.target.as_ref(), &resolved, info.as_ref()) {
@@ -2718,7 +2751,6 @@ impl Project {
             doc_path: path,
             ref_base: collection.ref_base,
             namespaces: &self.config.namespaces,
-            codes: &ref_project.codes,
             index: &self.index,
             root: &self.root,
             imports: &self.imports,
@@ -2850,9 +2882,14 @@ impl Project {
                     line: mention.line,
                     col: mention.col,
                 };
+                let place = name::Place::Mention {
+                    namespace: entry.namespace,
+                };
+                let lookup =
+                    MovedFrom::of(name::read(&mention.written, place, &self.config.namespaces));
                 match self.moved_outcome(
                     name,
-                    &mention.written,
+                    lookup.as_ref(),
                     &mention.written,
                     position,
                     &ref_project.moved,
@@ -2896,18 +2933,19 @@ impl Project {
         findings: &mut Vec<Finding>,
     ) {
         let name = doc.name;
-        // Looked up by `target`, not `written`: a recorded move never has a `#anchor`, so
-        // `[t](old.md#section)` must be looked up as `old.md` (SPC-1).
-        let missing = |findings: &mut Vec<Finding>, lookup: &str| match self.moved_outcome(
-            name,
-            lookup,
-            written,
-            position,
-            doc.moved,
-            doc.collection,
-            doc.strict,
-            doc.audit,
-        ) {
+        // Looked up by the path `target` reads as, not `written`: a recorded move never has a
+        // `#anchor`, so `[t](old.md#section)` must be looked up as `old.md` (SPC-1).
+        let missing = |findings: &mut Vec<Finding>, lookup: Option<&MovedFrom>| match self
+            .moved_outcome(
+                name,
+                lookup,
+                written,
+                position,
+                doc.moved,
+                doc.collection,
+                doc.strict,
+                doc.audit,
+            ) {
             Some(Some(finding)) => findings.push(finding),
             Some(None) => {}
             None => {
@@ -2928,7 +2966,32 @@ impl Project {
             Some(target) => match refs::classify_body(target, doc.ctx) {
                 refs::BodyDestination::Skip => return,
                 refs::BodyDestination::BadPrefix => {
-                    missing(findings, target);
+                    if let Some(level) = doc.links_level {
+                        findings.push(validate::finding_at(
+                            name,
+                            level,
+                            "body.links",
+                            None,
+                            position,
+                            format!("the link `{written}` does not resolve: its prefix names no namespace"),
+                        ));
+                    }
+                    None
+                }
+                refs::BodyDestination::Absolute => {
+                    if let Some(level) = doc.links_level {
+                        findings.push(validate::finding_at(
+                            name,
+                            level,
+                            "body.links",
+                            None,
+                            position,
+                            format!(
+                                "the link `{written}` is an absolute path, which is never followed: \
+                                 write it from the document, or with a `namespace:` prefix"
+                            ),
+                        ));
+                    }
                     None
                 }
                 refs::BodyDestination::ImportAbsent(absence) => {
@@ -2956,14 +3019,7 @@ impl Project {
                     match refs::resolve_path(&joined, &self.index, &self.root) {
                         Ok(resolved) => Some(resolved.path),
                         Err(_) => {
-                            // A move records the path from the project folder, which a link
-                            // written from another folder names only once joined (SPC-1).
-                            let lookup = if doc.moved.contains_key(&joined) {
-                                joined.as_str()
-                            } else {
-                                target
-                            };
-                            missing(findings, lookup);
+                            missing(findings, Some(&MovedFrom::Path(joined)));
                             None
                         }
                     }
@@ -2976,7 +3032,7 @@ impl Project {
                         // The `#anchor` is not checked there (see `resolve_import_outcome`).
                         RefOutcome::Resolved(_) => None,
                         RefOutcome::Unresolved(_) => {
-                            missing(findings, target);
+                            missing(findings, None);
                             None
                         }
                     }
@@ -3018,9 +3074,9 @@ impl Project {
             .unwrap_or_default()
     }
 
-    /// `None` when the mention's code is not a code of this project, so `UTF-8` is never
-    /// checked; otherwise whether it fails to resolve. A prefix naming no sibling namespace and an
-    /// import prefix both read as not found: a mention has one outcome for every failed lookup,
+    /// `None` when the mention's code is not a code of the project it reads into, so `UTF-8` is
+    /// never checked; otherwise whether it fails to resolve. Every failed reading, a bad prefix or
+    /// an absent import included, is not found: a mention has one outcome for every failed lookup,
     /// unlike a ref's `bad-prefix` (SPC-1).
     fn mention_missing(
         &self,
@@ -3028,21 +3084,18 @@ impl Project {
         doc_namespace: usize,
         codes: &BTreeSet<String>,
     ) -> Option<bool> {
-        let key = written.rsplit(':').next().unwrap_or(written);
-        if !codes.contains(refs::code_of(key)) {
-            return None;
-        }
-        if written.contains("::") {
-            return Some(true);
-        }
-        let namespace = match written.rsplit_once(':') {
-            Some((prefix, _)) => match self.namespace_index(prefix) {
-                Some(namespace) => namespace,
-                None => return Some(true),
-            },
-            None => doc_namespace,
+        let place = name::Place::Mention {
+            namespace: doc_namespace,
         };
-        Some(self.index.key(namespace, key).is_none())
+        let key = written.rsplit(':').next().unwrap_or(written);
+        let code = refs::code_of(key);
+        // An import that is not on this machine has no codes to ask, so this project's stand in.
+        let alias = written.split_once("::").map(|(alias, _)| alias);
+        let known = match alias.and_then(|alias| self.imports.get(alias)) {
+            Some(ImportState::Loaded(imported)) => imported.project_codes().contains(code),
+            _ => codes.contains(code),
+        };
+        known.then(|| name::resolve(written, place, &self.scene()).is_err())
     }
 
     /// `None` when `lookup` matches no recorded move, and the caller reports its own missing
@@ -3057,15 +3110,15 @@ impl Project {
     fn moved_outcome(
         &self,
         name: &DocName,
-        lookup: &str,
+        lookup: Option<&MovedFrom>,
         display: &str,
         position: Position,
-        moved: &BTreeMap<String, String>,
+        moved: &BTreeMap<MovedFrom, String>,
         collection: &Rules,
         strict: bool,
         audit: bool,
     ) -> Option<Option<Finding>> {
-        let new_id = moved.get(lookup)?;
+        let new_id = moved.get(lookup?)?;
         Some(
             validate::effective_level(
                 Level::Error,
@@ -3101,15 +3154,12 @@ impl Project {
         field_name: &str,
         written: &str,
         reason: refs::Reason,
-        moved: &BTreeMap<String, String>,
+        moved_to: Option<&str>,
         collection: &Rules,
         strict: bool,
         audit: bool,
     ) -> Option<Finding> {
-        let recorded = moved.get(written).or_else(|| {
-            refs::without_slug(written).and_then(|without| moved.get(without.as_str()))
-        });
-        if let Some(new_id) = recorded {
+        if let Some(new_id) = moved_to {
             let level = validate::effective_level(
                 Level::Error,
                 "refs.moved",
@@ -3188,7 +3238,7 @@ impl Project {
     }
 
     /// `None` for a target in no collection (reachable through `target: "*"`). An alias that is
-    /// not loaded also reads as no schema, though `refs::resolve_into_import` never produces one.
+    /// not loaded also reads as no schema, though `name::resolve` never produces one.
     fn schema_info_of(&self, resolved: &refs::Resolved) -> Option<refs::SchemaInfo<'_>> {
         let collection = resolved.collection?;
         match &resolved.project {
@@ -3230,7 +3280,7 @@ impl Project {
         candidate: Option<(&str, &Indexed, &str)>,
     ) -> Result<(RefProject, Vec<Finding>), Error> {
         let codes = self.project_codes();
-        let (moved, acyclic) = self.prescan_refs(&codes, candidate)?;
+        let (moved, acyclic) = self.prescan_refs(candidate)?;
         Ok((RefProject { codes, moved }, acyclic))
     }
 
@@ -3405,17 +3455,16 @@ impl Project {
     }
 
     /// A whole-project pass: a move can be recorded, and a cycle can pass, outside the scope of
-    /// the run that reads them. Returns the `auto: moves` map from a written ref to the current
-    /// key or path of the document that moved away from it, and one `refs.acyclic` finding per
+    /// the run that reads them. Returns the `auto: moves` map from what a recorded name reads
+    /// as to the current name of the document that moved away from it, and one `refs.acyclic` finding per
     /// document on a cycle, per field.
     ///
     /// `candidate` is one write in progress: its `path` is scanned from its text instead of disk,
     /// and as an extra document when it is not indexed yet.
     fn prescan_refs(
         &self,
-        codes: &BTreeSet<String>,
         candidate: Option<(&str, &Indexed, &str)>,
-    ) -> Result<(BTreeMap<String, String>, Vec<Finding>), Error> {
+    ) -> Result<(BTreeMap<MovedFrom, String>, Vec<Finding>), Error> {
         let mut accum = PrescanAccum {
             moved: BTreeMap::new(),
             edges: BTreeMap::new(),
@@ -3434,7 +3483,7 @@ impl Project {
                 }
                 _ => fs::read_to_string(&entry.file).map_err(Error::io_at(&entry.file))?,
             };
-            self.prescan_one(path, entry, &text, codes, phantom.as_ref(), &mut accum);
+            self.prescan_one(path, entry, &text, phantom.as_ref(), &mut accum);
         }
         if let Some((candidate_path, candidate_entry, candidate_text)) = candidate
             && self.index.get(candidate_path).is_none()
@@ -3443,7 +3492,6 @@ impl Project {
                 candidate_path,
                 candidate_entry,
                 candidate_text,
-                codes,
                 phantom.as_ref(),
                 &mut accum,
             );
@@ -3490,7 +3538,6 @@ impl Project {
         path: &str,
         entry: &Indexed,
         text: &str,
-        codes: &BTreeSet<String>,
         phantom: Option<&refs::Candidate>,
         accum: &mut PrescanAccum,
     ) {
@@ -3504,12 +3551,11 @@ impl Project {
             doc_path: path,
             ref_base: collection.ref_base,
             namespaces: &self.config.namespaces,
-            codes,
             index: &self.index,
             root: &self.root,
             imports: &self.imports,
         };
-        let identity = entry.key.clone().unwrap_or_else(|| path.to_owned());
+        let scope = [entry.namespace];
         for (field_name, value) in &fields {
             let Some(field) = collection.schema.field(field_name) else {
                 continue;
@@ -3519,19 +3565,22 @@ impl Project {
                 && let Value::List(items) = value
             {
                 for item in items {
-                    // A recorded path is pointed to the path the document has now, even for a
-                    // coded document, whose slug change records the path and keeps the key
-                    // (SPC-2).
-                    let recorded_key = item
-                        .rsplit(':')
-                        .next()
-                        .is_some_and(|last| crate::argument::read_key(last).is_some());
-                    let now = if recorded_key {
-                        identity.clone()
-                    } else {
-                        path.to_owned()
+                    // A record is read as `mv` writes it: a key in the document's own namespace
+                    // unless prefixed, or a path from the project folder. A recorded key points
+                    // to the document's portable name, a recorded path to the path it has now,
+                    // even for a coded document, whose slug change records the path and keeps
+                    // the key (SPC-2).
+                    let place = name::Place::Argument { scope: &scope };
+                    let Some(from) =
+                        MovedFrom::of(name::read(item, place, &self.config.namespaces))
+                    else {
+                        continue;
                     };
-                    moved.entry(item.clone()).or_insert(now);
+                    let now = match &from {
+                        MovedFrom::Key { .. } => self.portable_name(path, entry),
+                        MovedFrom::Path(_) => path.to_owned(),
+                    };
+                    moved.entry(from).or_insert(now);
                 }
             }
             if field.is_acyclic()
@@ -4971,6 +5020,9 @@ fn ref_values(value: &Value) -> Vec<&str> {
 fn reason_message(written: &str, reason: &refs::Reason) -> String {
     match reason {
         refs::Reason::NotFound => format!("the ref `{written}` does not resolve: not found"),
+        refs::Reason::NoKey(key) => {
+            format!("the ref `{written}` does not resolve: no document with key {key}")
+        }
         refs::Reason::BadPrefix => {
             format!("the ref `{written}` does not resolve: its prefix names no namespace")
         }
@@ -4980,12 +5032,16 @@ fn reason_message(written: &str, reason: &refs::Reason) -> String {
                 absence.message()
             )
         }
+        refs::Reason::Absolute => format!(
+            "the ref `{written}` is an absolute path, which is never followed: write it from the \
+             document, or with a `namespace:` prefix"
+        ),
     }
 }
 
 fn reason_id(reason: &refs::Reason) -> &'static str {
     match reason {
-        refs::Reason::NotFound => "not-found",
+        refs::Reason::NotFound | refs::Reason::NoKey(_) | refs::Reason::Absolute => "not-found",
         refs::Reason::BadPrefix => "bad-prefix",
         refs::Reason::ImportAbsent(_) => "import-absent",
     }

@@ -241,28 +241,76 @@ fn key_in(text: &str, keys: &Keys, rules: &Rules) -> Option<Reading> {
     })
 }
 
-/// Reads and looks up `text` written at `place` in `scene`.
-pub(crate) fn resolve(text: &str, place: Place, scene: &Scene) -> Result<Resolved, Unresolved> {
+/// Where a name points before anything there is looked up: a key or a path, in this project or in
+/// an import.
+pub(crate) struct Located<'s> {
+    pub import: Option<Imported<'s>>,
+    /// A `Reading::Key` or a `Reading::Path`; any other reading is an `Unresolved` instead.
+    pub reading: Reading,
+}
+
+/// An import a name reads into: its alias in this project, and the project loaded there.
+pub(crate) struct Imported<'s> {
+    pub alias: String,
+    pub project: &'s crate::project::Project,
+}
+
+impl Located<'_> {
+    /// Looks the reading up in the project it points into: the import, or the one `scene` is.
+    pub(crate) fn look_up(self, scene: &Scene) -> Result<Resolved, Unresolved> {
+        match self.import {
+            Some(Imported { alias, project }) => {
+                let resolved = look_up(self.reading, project.index_ref(), project.root_ref())?;
+                Ok(Resolved {
+                    project: Some(alias),
+                    ..resolved
+                })
+            }
+            None => look_up(self.reading, scene.index, scene.root),
+        }
+    }
+}
+
+/// Reads `text` written at `place`, and follows an import prefix into the import, without looking
+/// the key or the path up.
+pub(crate) fn locate<'s>(
+    text: &str,
+    place: Place,
+    scene: &Scene<'s>,
+) -> Result<Located<'s>, Unresolved> {
     let rules = Rules::of(place, scene.namespaces);
-    match read_with(text, &rules, scene.namespaces) {
+    let (import, reading) = match read_with(text, &rules, scene.namespaces) {
         Reading::Import { alias, rest } => {
             let imported = match scene.imports.get(&alias) {
                 None => return Err(Unresolved::Reason(Reason::BadPrefix)),
                 Some(ImportState::Absent(absence)) => {
                     return Err(Unresolved::Reason(Reason::ImportAbsent(absence.clone())));
                 }
-                Some(ImportState::Loaded(imported)) => imported,
+                Some(ImportState::Loaded(imported)) => imported.as_ref(),
             };
             let namespaces = imported.namespaces();
             let reading = read_with(&rest, &rules.in_import(namespaces), namespaces);
-            let resolved = look_up(reading, imported.index_ref(), imported.root_ref())?;
-            Ok(Resolved {
-                project: Some(alias),
-                ..resolved
-            })
+            (
+                Some(Imported {
+                    alias,
+                    project: imported,
+                }),
+                reading,
+            )
         }
-        reading => look_up(reading, scene.index, scene.root),
+        reading => (None, reading),
+    };
+    match reading {
+        Reading::Key { .. } | Reading::Path(_) => Ok(Located { import, reading }),
+        Reading::Import { .. } | Reading::BadPrefix => Err(Unresolved::Reason(Reason::BadPrefix)),
+        Reading::Absolute => Err(Unresolved::Absolute),
+        Reading::NotARef => Err(Unresolved::NotARef),
     }
+}
+
+/// Reads and looks up `text` written at `place` in `scene`.
+pub(crate) fn resolve(text: &str, place: Place, scene: &Scene) -> Result<Resolved, Unresolved> {
+    locate(text, place, scene)?.look_up(scene)
 }
 
 fn look_up(reading: Reading, index: &Index, root: &Path) -> Result<Resolved, Unresolved> {
@@ -291,7 +339,7 @@ fn resolve_key_in(
         .filter_map(|&namespace| index.key(namespace, key).map(|path| (namespace, path)))
         .collect();
     let path = match found.as_slice() {
-        [] => return Err(Unresolved::Reason(Reason::NotFound)),
+        [] => return Err(Unresolved::Reason(Reason::NoKey(key.to_owned()))),
         [(_, path)] => *path,
         more => {
             return Err(Unresolved::Ambiguous(
@@ -520,6 +568,19 @@ mod tests {
         }
     }
 
+    #[test]
+    fn folder_of_a_top_level_path_is_the_project_folder() {
+        assert_eq!(folder_of("a.md"), "");
+        assert_eq!(folder_of("tickets/a.md"), "tickets");
+    }
+
+    #[test]
+    fn join_normalizes_dots_the_same_way_a_schema_reference_does() {
+        assert_eq!(join("tickets", "./a.md"), "tickets/a.md");
+        assert_eq!(join("tickets", "../a.md"), "a.md");
+        assert_eq!(join("", "a.md"), "a.md");
+    }
+
     fn two() -> Vec<Namespace> {
         vec![
             namespace("story-1", "story-1"),
@@ -593,6 +654,20 @@ mod tests {
                 slug: Some("some-slug".to_owned())
             }
         );
+    }
+
+    /// The rest after a key has to be a slug (SPC-17), or the name is a path.
+    #[test]
+    fn a_key_followed_by_text_that_is_not_a_slug_is_a_path() {
+        let place = Place::Ref(holder(RefBase::File));
+        for (text, expected) in [
+            ("WF-1-", "story-1/notes/WF-1-"),
+            ("WF-1-a#b", "story-1/notes/WF-1-a#b"),
+            ("WF-1-a b", "story-1/notes/WF-1-a b"),
+            ("story-2:WF-5-a#b", "story-2/WF-5-a#b"),
+        ] {
+            assert_eq!(read(text, place, &two()), path(expected), "{text}");
+        }
     }
 
     #[test]

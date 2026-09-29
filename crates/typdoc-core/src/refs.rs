@@ -5,22 +5,18 @@
 //! `names.shadowed` lives in `project.rs`, since it is a fact about the config and never reads a
 //! document.
 //!
-//! A ref is not an argument: a bare form always means the document's own namespace, whatever the
-//! working directory, and a prefix that names neither a sibling namespace nor an import is
-//! `bad-prefix`, never a relative path (SPC-14).
-//!
-//! `classify` reads no file and no index, so the form rules are tested here without a file
-//! system; the part of `resolve_one` that reads the disk is tested through `validate` in the
-//! binary's tests.
+//! A ref is read by the name grammar in `name.rs` (SPC-18), where the reading rules are tested
+//! without a file system; the part of `resolve_one` that reads the disk is tested through
+//! `validate` in the binary's tests.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use crate::argument::read_key;
 use crate::config::{Namespace, RefBase};
 use crate::imports::Absence;
 use crate::index::Index;
+use crate::name::{self, InDocument, Place, Reading, Scene, Unresolved};
 use crate::project::ImportState;
 use crate::schema::{Target, normalize};
 
@@ -29,8 +25,13 @@ use crate::schema::{Target, normalize};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Reason {
     NotFound,
+    /// A key no document in the namespaces it was looked up in has: `not-found`, with the key
+    /// named in the message.
+    NoKey(String),
     BadPrefix,
     ImportAbsent(Absence),
+    /// An absolute path, which a ref never follows (SPC-18).
+    Absolute,
 }
 
 /// Whether a ref was written as a key or as a path: `refs.codedByPath` cares only about the
@@ -85,29 +86,9 @@ pub(crate) struct Ctx<'a> {
     pub doc_path: &'a str,
     pub ref_base: RefBase,
     pub namespaces: &'a [Namespace],
-    pub codes: &'a BTreeSet<String>,
     pub index: &'a Index,
     pub root: &'a Path,
     pub imports: &'a BTreeMap<String, ImportState>,
-}
-
-enum Form {
-    Key {
-        namespace: usize,
-        key: String,
-        slug: Option<String>,
-    },
-    Path {
-        base: String,
-        rest: String,
-    },
-    /// Not yet looked up: `classify` reads no index, and `Ctx::imports` decides between
-    /// `bad-prefix`, `import-absent` and a resolution.
-    Import {
-        alias: String,
-        rest: String,
-    },
-    BadPrefix,
 }
 
 /// An `Import` path is already joined against the imported project's folder, so it is resolved
@@ -117,28 +98,40 @@ pub(crate) enum BodyDestination {
     Import { alias: String, path: String },
     BadPrefix,
     ImportAbsent(Absence),
+    Absolute,
     Skip,
 }
 
-/// Resolves one frontmatter ref by the forms in SPC-14.
-pub(crate) fn resolve_one(written: &str, ctx: &Ctx) -> Outcome {
-    match classify(
-        written,
-        ctx.doc_namespace,
-        ctx.doc_path,
-        ctx.ref_base,
-        ctx.namespaces,
-        ctx.codes,
-    ) {
-        Form::Key {
-            namespace,
-            key,
-            slug,
-        } => resolve_key(namespace, &key, slug.as_deref(), ctx.index),
-        Form::Path { base, rest } => resolve_path(&join(&base, &rest), ctx.index, ctx.root),
-        Form::Import { alias, rest } => resolve_into_import(&alias, &rest, ctx.imports),
-        Form::BadPrefix => Err(Reason::BadPrefix),
+impl Ctx<'_> {
+    pub(crate) fn document(&self) -> InDocument<'_> {
+        InDocument {
+            path: self.doc_path,
+            namespace: self.doc_namespace,
+            ref_base: self.ref_base,
+        }
     }
+
+    fn scene(&self) -> Scene<'_> {
+        Scene {
+            namespaces: self.namespaces,
+            index: self.index,
+            root: self.root,
+            imports: self.imports,
+        }
+    }
+}
+
+/// A frontmatter ref read by the name grammar (SPC-18). A ref never reads as a URL, and a key
+/// with no prefix is looked up in the document's own namespace alone, so neither of the grammar's
+/// other outcomes reaches here.
+pub(crate) fn resolve_one(written: &str, ctx: &Ctx) -> Outcome {
+    name::resolve(written, Place::Ref(ctx.document()), &ctx.scene()).map_err(|unresolved| {
+        match unresolved {
+            Unresolved::Reason(reason) => reason,
+            Unresolved::Absolute => Reason::Absolute,
+            Unresolved::NotARef | Unresolved::Ambiguous(_) => Reason::NotFound,
+        }
+    })
 }
 
 /// The identity a write's candidate is about to carry. `new`'s is not in `Ctx::index` or on disk
@@ -158,248 +151,69 @@ pub(crate) fn resolve_one_for_candidate(
     ctx: &Ctx,
     candidate: &Candidate,
 ) -> Outcome {
-    match classify(
-        written,
-        ctx.doc_namespace,
-        ctx.doc_path,
-        ctx.ref_base,
-        ctx.namespaces,
-        ctx.codes,
-    ) {
-        Form::Key {
-            namespace,
-            key,
-            slug,
-        } => {
-            if namespace == candidate.namespace && candidate.key == Some(key.as_str()) {
-                return Ok(Resolved {
-                    path: candidate.path.to_owned(),
-                    collection: None,
-                    via: Via::Key,
-                    project: None,
-                    slug: None,
-                });
-            }
-            resolve_key(namespace, &key, slug.as_deref(), ctx.index)
+    let via = match name::read(written, Place::Ref(ctx.document()), ctx.namespaces) {
+        Reading::Key {
+            namespaces, key, ..
+        } if namespaces == [candidate.namespace] && candidate.key == Some(key.as_str()) => {
+            Some(Via::Key)
         }
-        Form::Path { base, rest } => {
-            let joined = join(&base, &rest);
-            if joined == candidate.path {
-                return Ok(Resolved {
-                    path: candidate.path.to_owned(),
-                    collection: None,
-                    via: Via::Path,
-                    project: None,
-                    slug: None,
-                });
-            }
-            resolve_path(&joined, ctx.index, ctx.root)
-        }
-        Form::Import { alias, rest } => resolve_into_import(&alias, &rest, ctx.imports),
-        Form::BadPrefix => Err(Reason::BadPrefix),
+        Reading::Path(path) if path == candidate.path => Some(Via::Path),
+        _ => None,
+    };
+    if let Some(via) = via {
+        return Ok(Resolved {
+            path: candidate.path.to_owned(),
+            collection: None,
+            via,
+            project: None,
+            slug: None,
+        });
     }
+    resolve_one(written, ctx)
 }
 
-fn resolve_into_import(
-    alias: &str,
-    rest: &str,
-    imports: &BTreeMap<String, ImportState>,
-) -> Outcome {
-    match imports.get(alias) {
-        None => Err(Reason::BadPrefix),
-        Some(ImportState::Absent(absence)) => Err(Reason::ImportAbsent(absence.clone())),
-        Some(ImportState::Loaded(imported)) => resolve_into_project(
-            rest,
-            imported.namespaces(),
-            imported.index_ref(),
-            imported.root_ref(),
-            &imported.codes(),
-        )
-        .map(|resolved| Resolved {
-            project: Some(alias.to_owned()),
-            ..resolved
-        }),
-    }
-}
-
-/// `rest` after an import prefix (SPC-14). A bare key into a project with several namespaces is
-/// `bad-prefix` even when no key collides. A path is read from the imported project's folder,
-/// never by `refBase`, which belongs to the referring document's collection. A further `::` is
-/// `bad-prefix`: imports of imports are ignored.
-fn resolve_into_project(
-    rest: &str,
-    namespaces: &[Namespace],
-    index: &Index,
-    root: &Path,
-    codes: &BTreeSet<String>,
-) -> Outcome {
-    if rest.contains("::") {
-        return Err(Reason::BadPrefix);
-    }
-    if let Some((prefix, sub)) = rest.split_once(':') {
-        let namespace = namespace_named(namespaces, prefix).ok_or(Reason::BadPrefix)?;
-        return match read_key(sub) {
-            Some((key, slug)) => resolve_key(namespace, key, slug, index),
-            None => resolve_path(&join(&namespaces[namespace].folder, sub), index, root),
-        };
-    }
-    if let Some((key, slug)) = read_key(rest)
-        && codes.contains(code_of(key))
-    {
-        if namespaces.len() != 1 {
-            return Err(Reason::BadPrefix);
-        }
-        return resolve_key(0, key, slug, index);
-    }
-    resolve_path(rest, index, root)
-}
-
-/// `target` is percent-decoded with any `#anchor` split off. The prefix rules are a frontmatter
-/// ref's, except that a body link is always a path, never a key, and a single colon whose prefix
-/// names no sibling is a URL scheme, skipped rather than `bad-prefix`, since body text holds
-/// real URLs.
+/// `target` is percent-decoded with any `#anchor` split off, and read by the name grammar as a body
+/// link (SPC-18): always a path, never a key, and a URL is `Skip`, never a finding. An `Import`
+/// path is from the imported project's folder, to be resolved against that project's index.
 pub(crate) fn classify_body(target: &str, ctx: &Ctx) -> BodyDestination {
-    if target.starts_with("./") || target.starts_with("../") {
-        let base = base_of(
-            ctx.ref_base,
-            ctx.doc_path,
-            ctx.doc_namespace,
-            ctx.namespaces,
-        );
-        return BodyDestination::Path(join(&base, target));
-    }
-    if let Some((alias, rest)) = target.split_once("::") {
-        return match ctx.imports.get(alias) {
-            None => BodyDestination::BadPrefix,
-            Some(ImportState::Absent(absence)) => BodyDestination::ImportAbsent(absence.clone()),
-            Some(ImportState::Loaded(imported)) => {
-                // `alias::namespace:path` is accepted as a frontmatter ref accepts it, though the
-                // path alone would already be unambiguous.
-                let (base, rest) = match rest.split_once(':') {
-                    Some((namespace, sub)) => {
-                        match namespace_named(imported.namespaces(), namespace) {
-                            Some(index) => (imported.namespaces()[index].folder.clone(), sub),
-                            None => return BodyDestination::BadPrefix,
-                        }
-                    }
-                    None => (String::new(), rest),
-                };
-                BodyDestination::Import {
-                    alias: alias.to_owned(),
-                    path: join(&base, rest),
-                }
+    match name::locate(target, Place::BodyLink(ctx.document()), &ctx.scene()) {
+        Ok(located) => {
+            let Reading::Path(path) = located.reading else {
+                return BodyDestination::BadPrefix;
+            };
+            match located.import {
+                Some(imported) => BodyDestination::Import {
+                    alias: imported.alias,
+                    path,
+                },
+                None => BodyDestination::Path(path),
             }
-        };
+        }
+        Err(Unresolved::Reason(Reason::ImportAbsent(absence))) => {
+            BodyDestination::ImportAbsent(absence)
+        }
+        Err(Unresolved::Reason(Reason::Absolute) | Unresolved::Absolute) => {
+            BodyDestination::Absolute
+        }
+        Err(Unresolved::NotARef) => BodyDestination::Skip,
+        Err(
+            // `locate` looks nothing up, so only `BadPrefix` reaches here; the others read as it.
+            Unresolved::Reason(Reason::BadPrefix | Reason::NotFound | Reason::NoKey(_))
+            | Unresolved::Ambiguous(_),
+        ) => BodyDestination::BadPrefix,
     }
-    if let Some((prefix, rest)) = target.split_once(':') {
-        return match namespace_named(ctx.namespaces, prefix) {
-            Some(namespace) => BodyDestination::Path(join(&ctx.namespaces[namespace].folder, rest)),
-            None => BodyDestination::Skip,
-        };
-    }
-    let base = base_of(
-        ctx.ref_base,
-        ctx.doc_path,
-        ctx.doc_namespace,
-        ctx.namespaces,
-    );
-    BodyDestination::Path(join(&base, target))
-}
-
-/// A leading `./` or `../` is read before any prefix, so a file name holding a colon is never
-/// read as a namespace (SPC-14).
-fn classify(
-    written: &str,
-    doc_namespace: usize,
-    doc_path: &str,
-    ref_base: RefBase,
-    namespaces: &[Namespace],
-    codes: &BTreeSet<String>,
-) -> Form {
-    if written.starts_with("./") || written.starts_with("../") {
-        return Form::Path {
-            base: base_of(ref_base, doc_path, doc_namespace, namespaces),
-            rest: written.to_owned(),
-        };
-    }
-    if let Some((alias, rest)) = written.split_once("::") {
-        return Form::Import {
-            alias: alias.to_owned(),
-            rest: rest.to_owned(),
-        };
-    }
-    if let Some((prefix, rest)) = written.split_once(':') {
-        return match namespace_named(namespaces, prefix) {
-            Some(namespace) => match read_key(rest) {
-                Some((key, slug)) => Form::Key {
-                    namespace,
-                    key: key.to_owned(),
-                    slug: slug.map(str::to_owned),
-                },
-                None => Form::Path {
-                    base: namespaces[namespace].folder.clone(),
-                    rest: rest.to_owned(),
-                },
-            },
-            None => Form::BadPrefix,
-        };
-    }
-    if let Some((key, slug)) = read_key(written)
-        && codes.contains(code_of(key))
-    {
-        return Form::Key {
-            namespace: doc_namespace,
-            key: key.to_owned(),
-            slug: slug.map(str::to_owned),
-        };
-    }
-    Form::Path {
-        base: base_of(ref_base, doc_path, doc_namespace, namespaces),
-        rest: written.to_owned(),
-    }
-}
-
-fn base_of(
-    ref_base: RefBase,
-    doc_path: &str,
-    doc_namespace: usize,
-    namespaces: &[Namespace],
-) -> String {
-    match ref_base {
-        RefBase::File => folder_of(doc_path),
-        RefBase::Namespace => namespaces[doc_namespace].folder.clone(),
-    }
-}
-
-fn namespace_named(namespaces: &[Namespace], name: &str) -> Option<usize> {
-    namespaces
-        .iter()
-        .position(|namespace| namespace.name == name)
 }
 
 #[expect(
     clippy::expect_used,
-    reason = "each of the three calls passes text that has the key shape, which needs a dash: \
-              `resolve_into_project` and `classify` in this file pass the key `read_key(..)` \
-              returned, and `Project::mention_missing` passes the part after the last `:` of a \
-              `Mention.written`, which `links::mention_shape` accepts only when \
-              `looks_like_key_shape` holds for that same part"
+    reason = "the one caller, `Project::mention_missing`, passes the part after the last `:` of \
+              a `Mention.written`, which `links::mention_shape` accepts only when \
+              `looks_like_key_shape` holds for that same part, and the key shape needs a dash"
 )]
 pub(crate) fn code_of(key: &str) -> &str {
     key.split_once('-')
         .map(|(code, _)| code)
         .expect("a key has a dash")
-}
-
-/// `written` with the slug of a key written with one taken off, any prefix kept
-/// (`story-2:WF-5-x` is `story-2:WF-5`); `None` for any other form. A recorded move names the
-/// key alone, so this is what `refs.moved` looks up for such a ref.
-pub(crate) fn without_slug(written: &str) -> Option<String> {
-    let prefix = written.rfind(':').map_or(0, |at| at + 1);
-    match read_key(&written[prefix..])? {
-        (key, Some(_)) => Some(format!("{}{key}", &written[..prefix])),
-        (_, None) => None,
-    }
 }
 
 /// The name in `path` that carries `key`, for a message: the last segment where `key` is
@@ -414,49 +228,6 @@ pub(crate) fn name_with_key<'a>(path: &'a str, key: &str) -> &'a str {
         .find(|segment| carries(segment))
         .or_else(|| path.rsplit('/').next())
         .unwrap_or(path)
-}
-
-/// `slug` is the one the ref was written with, if any; it plays no part in finding the document
-/// (SPC-14).
-fn resolve_key(namespace: usize, key: &str, slug: Option<&str>, index: &Index) -> Outcome {
-    let path = index.key(namespace, key).ok_or(Reason::NotFound)?;
-    #[expect(
-        clippy::expect_used,
-        reason = "`path` comes from `index.key(..)` on the same `index`; `Index::build` binds a key \
-                  to a path in the same step that inserts the path's entry, removes both together \
-                  for a path more than one collection matches, and `Index` has no other mutator, so \
-                  a path in a key group has an entry"
-    )]
-    let entry = index
-        .get(path)
-        .expect("a key in the key index always has a matching entry");
-    Ok(Resolved {
-        path: path.to_owned(),
-        collection: Some(entry.collection),
-        via: Via::Key,
-        project: None,
-        slug: slug.map(|written| WrittenSlug {
-            key: key.to_owned(),
-            written: written.to_owned(),
-            current: entry.slug.clone(),
-        }),
-    })
-}
-
-/// `""` (the project folder) for a path with no folder.
-fn folder_of(path: &str) -> String {
-    match path.rsplit_once('/') {
-        Some((folder, _)) => folder.to_owned(),
-        None => String::new(),
-    }
-}
-
-fn join(base: &str, rest: &str) -> String {
-    if base.is_empty() {
-        normalize(rest)
-    } else {
-        normalize(&format!("{base}/{rest}"))
-    }
 }
 
 /// A file on disk that matches no collection resolves with no collection; only `target: "*"`
@@ -490,8 +261,8 @@ pub(crate) fn resolve_path(path: &str, index: &Index, root: &Path) -> Outcome {
 /// Every component is compared, not only the last: a file system that folds case does so for
 /// each component of a lookup.
 ///
-/// Normalizes first because `resolve_into_project` passes an import's path here without `join`,
-/// so `.` and `..` must not be searched for as names.
+/// Normalizes first, so `.` and `..` are never searched for as names, whatever path a caller
+/// passes.
 ///
 /// A missing or unreadable directory answers `false`. A symbolic link is followed: only the
 /// spelling of each name is checked.
@@ -644,230 +415,6 @@ pub(crate) fn cyclic_nodes(edges: &[(String, String)]) -> BTreeSet<String> {
 mod tests {
     use super::*;
 
-    fn namespaces() -> Vec<Namespace> {
-        vec![
-            Namespace {
-                name: "default".to_owned(),
-                folder: String::new(),
-            },
-            Namespace {
-                name: "story-2".to_owned(),
-                folder: "story-2".to_owned(),
-            },
-        ]
-    }
-
-    fn classify_default(written: &str, ref_base: RefBase, codes: &BTreeSet<String>) -> Form {
-        classify(
-            written,
-            0,
-            "tickets/WF-1.md",
-            ref_base,
-            &namespaces(),
-            codes,
-        )
-    }
-
-    /// `classify_body` reads neither `codes` nor `index`, so empty ones stand in.
-    fn classify_body_default(target: &str, ref_base: RefBase) -> BodyDestination {
-        let namespaces = namespaces();
-        let codes = BTreeSet::new();
-        let index = Index::default();
-        let imports = BTreeMap::new();
-        let ctx = Ctx {
-            doc_namespace: 0,
-            doc_path: "tickets/WF-1.md",
-            ref_base,
-            namespaces: &namespaces,
-            codes: &codes,
-            index: &index,
-            root: Path::new("."),
-            imports: &imports,
-        };
-        classify_body(target, &ctx)
-    }
-
-    fn code_set(codes: &[&str]) -> BTreeSet<String> {
-        codes.iter().map(|c| c.to_string()).collect()
-    }
-
-    #[test]
-    fn a_bare_key_shaped_value_whose_code_exists_is_a_key_in_the_documents_own_namespace() {
-        let form = classify_default("WF-1", RefBase::File, &code_set(&["WF"]));
-
-        assert!(matches!(form, Form::Key { namespace: 0, key, slug: None } if key == "WF-1"));
-    }
-
-    #[test]
-    fn a_key_written_with_a_slug_is_that_key_with_the_slug_kept_bare_or_prefixed() {
-        let bare = classify_default("WF-1-lock-order", RefBase::File, &code_set(&["WF"]));
-        let sibling = classify_default("story-2:WF-5-x", RefBase::File, &code_set(&[]));
-
-        assert!(matches!(
-            bare,
-            Form::Key { namespace: 0, key, slug: Some(slug) } if key == "WF-1" && slug == "lock-order"
-        ));
-        assert!(matches!(
-            sibling,
-            Form::Key { namespace: 1, key, slug: Some(slug) } if key == "WF-5" && slug == "x"
-        ));
-    }
-
-    /// The rest has to be a slug (SPC-17), or the value is a relative path.
-    #[test]
-    fn a_key_followed_by_text_that_is_not_a_slug_is_a_path() {
-        for written in ["WF-1-", "WF-1-a#b", "WF-1-a b"] {
-            let form = classify_default(written, RefBase::File, &code_set(&["WF"]));
-
-            assert!(
-                matches!(&form, Form::Path { rest, .. } if rest == written),
-                "{written}"
-            );
-        }
-        let sibling = classify_default("story-2:WF-5-a#b", RefBase::File, &code_set(&[]));
-        assert!(
-            matches!(sibling, Form::Path { base, rest } if base == "story-2" && rest == "WF-5-a#b")
-        );
-    }
-
-    #[test]
-    fn a_key_shaped_value_whose_code_is_not_in_the_project_is_read_as_a_relative_path() {
-        let form = classify_default("WF-1", RefBase::File, &code_set(&[]));
-
-        assert!(matches!(form, Form::Path { rest, .. } if rest == "WF-1"));
-    }
-
-    #[test]
-    fn a_double_colon_is_an_import_form_never_a_relative_path() {
-        // Whether `chief` is configured is decided later, against `Ctx::imports`.
-        let form = classify_default("chief::WF-5", RefBase::File, &code_set(&[]));
-
-        assert!(
-            matches!(&form, Form::Import { alias, rest } if alias == "chief" && rest == "WF-5")
-        );
-    }
-
-    #[test]
-    fn a_double_colon_is_an_import_form_whatever_the_project_has() {
-        let form = classify(
-            "chief::WF-5",
-            0,
-            "a.md",
-            RefBase::File,
-            &namespaces(),
-            &code_set(&[]),
-        );
-
-        assert!(
-            matches!(&form, Form::Import { alias, rest } if alias == "chief" && rest == "WF-5")
-        );
-    }
-
-    #[test]
-    fn a_single_colon_naming_no_sibling_namespace_is_bad_prefix() {
-        let form = classify_default("nosuch:WF-5", RefBase::File, &code_set(&[]));
-
-        assert!(matches!(form, Form::BadPrefix));
-    }
-
-    #[test]
-    fn a_single_colon_naming_a_sibling_with_a_key_shaped_rest_is_a_key_in_that_namespace() {
-        let form = classify_default("story-2:WF-5", RefBase::File, &code_set(&[]));
-
-        // No code is known on purpose: a sibling key needs only a real namespace, unlike a bare
-        // key (SPC-14).
-        assert!(matches!(form, Form::Key { namespace: 1, key, slug: None } if key == "WF-5"));
-    }
-
-    #[test]
-    fn a_single_colon_naming_a_sibling_with_a_path_rest_is_a_path_from_that_namespaces_folder() {
-        let form = classify_default("story-2:notes/x.md", RefBase::Namespace, &code_set(&[]));
-
-        // `RefBase::Namespace` on purpose: a sibling path reads from that namespace's folder,
-        // never by `refBase`.
-        assert!(
-            matches!(form, Form::Path { base, rest } if base == "story-2" && rest == "notes/x.md")
-        );
-    }
-
-    #[test]
-    fn a_leading_dot_slash_escapes_a_colon_that_is_really_part_of_the_path() {
-        let form = classify_default("./weird:name.md", RefBase::File, &code_set(&[]));
-
-        assert!(matches!(form, Form::Path { rest, .. } if rest == "./weird:name.md"));
-    }
-
-    #[test]
-    fn a_body_link_with_no_prefix_is_a_path_never_a_key_even_when_key_shaped() {
-        let form = classify_body_default("WF-1", RefBase::File);
-
-        assert!(matches!(form, BodyDestination::Path(path) if path == "tickets/WF-1"));
-    }
-
-    #[test]
-    fn a_body_link_sibling_prefix_is_a_path_from_that_namespaces_folder_never_a_key() {
-        let form = classify_body_default("story-2:WF-5", RefBase::File);
-
-        assert!(matches!(form, BodyDestination::Path(path) if path == "story-2/WF-5"));
-    }
-
-    #[test]
-    fn a_body_link_double_colon_naming_no_configured_import_is_bad_prefix() {
-        let form = classify_body_default("memory::precedents/x.md", RefBase::File);
-
-        assert!(matches!(form, BodyDestination::BadPrefix));
-    }
-
-    #[test]
-    fn a_body_link_single_colon_naming_no_sibling_is_skipped_as_a_url_scheme() {
-        for target in ["https://example.com/a.md", "mailto:a@b.com", "file:///a.md"] {
-            let form = classify_body_default(target, RefBase::File);
-
-            assert!(matches!(form, BodyDestination::Skip), "{target}");
-        }
-    }
-
-    #[test]
-    fn a_body_link_unprefixed_path_joins_against_the_documents_folder_or_its_namespace() {
-        let file = classify_body_default("x.md", RefBase::File);
-        let namespace = classify_body_default("x.md", RefBase::Namespace);
-
-        assert!(matches!(file, BodyDestination::Path(path) if path == "tickets/x.md"));
-        assert!(matches!(namespace, BodyDestination::Path(path) if path == "x.md"));
-    }
-
-    #[test]
-    fn a_body_link_leading_dot_slash_escapes_a_colon_that_is_really_part_of_the_path() {
-        let form = classify_body_default("./weird:name.md", RefBase::File);
-
-        assert!(matches!(form, BodyDestination::Path(path) if path == "tickets/weird:name.md"));
-    }
-
-    #[test]
-    fn the_unprefixed_form_is_joined_against_the_documents_folder_or_its_namespace_by_ref_base() {
-        let file = classify_default("x.md", RefBase::File, &code_set(&[]));
-        let namespace = classify_default("x.md", RefBase::Namespace, &code_set(&[]));
-
-        assert!(matches!(file, Form::Path { base, .. } if base == "tickets"));
-        assert!(matches!(namespace, Form::Path { base, .. } if base.is_empty()));
-    }
-
-    #[test]
-    fn without_slug_keeps_the_prefix_and_drops_only_a_slug() {
-        assert_eq!(without_slug("WF-5-x").as_deref(), Some("WF-5"));
-        assert_eq!(
-            without_slug("story-2:WF-5-x").as_deref(),
-            Some("story-2:WF-5")
-        );
-        assert_eq!(
-            without_slug("chief::story-3:WF-5-x").as_deref(),
-            Some("chief::story-3:WF-5")
-        );
-        for written in ["WF-5", "story-2:WF-5", "old.md", "./WF-5-x"] {
-            assert_eq!(without_slug(written), None, "{written}");
-        }
-    }
-
     #[test]
     fn name_with_key_is_the_segment_that_carries_the_key() {
         assert_eq!(
@@ -876,19 +423,6 @@ mod tests {
         );
         assert_eq!(name_with_key("WF-5-x/README.md", "WF-5"), "WF-5-x");
         assert_eq!(name_with_key("WF-5/WF-50.md", "WF-5"), "WF-5");
-    }
-
-    #[test]
-    fn folder_of_a_top_level_path_is_the_project_folder() {
-        assert_eq!(folder_of("a.md"), "");
-        assert_eq!(folder_of("tickets/a.md"), "tickets");
-    }
-
-    #[test]
-    fn join_normalizes_dots_the_same_way_a_schema_reference_does() {
-        assert_eq!(join("tickets", "./a.md"), "tickets/a.md");
-        assert_eq!(join("tickets", "../a.md"), "a.md");
-        assert_eq!(join("", "a.md"), "a.md");
     }
 
     #[test]

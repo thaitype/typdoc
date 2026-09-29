@@ -1,10 +1,9 @@
-//! Covers SPC-2 and SPC-14: how each form of a name is read today, in a frontmatter ref, in a body
+//! Covers SPC-2, SPC-14 and SPC-18: how each form of a name is read in a frontmatter ref, in a body
 //! link and as a command's argument, from the project folder and from a namespace folder, and the
 //! names commands print.
 //!
-//! A characterisation, written before the name grammar is unified (story 10): every row states
-//! what typdoc does now, including where the places disagree. A row that the unification changes
-//! is changed on purpose, in the same commit as the code.
+//! A characterisation: every row states what typdoc does, including where the places disagree. A
+//! row that a change to the grammar moves is changed on purpose, in the same commit as the code.
 //!
 //! The project: namespaces `story-1` and `story-2`, a `notes` collection (`notes/**/*.md`, a `see`
 //! ref, `refBase` left at `file`) and a coded `tickets` collection (`WF`), and an import `memory`
@@ -184,8 +183,8 @@ fn rows(project: &Scratch) -> Vec<Row> {
             "memory::default:learn/LRN-1.md",
             "memory::default:learn/LRN-1.md",
         ),
-        // A key-shaped name with a code no schema has: a ref reads it as a relative path, an
-        // argument as a key. Neither finds anything.
+        // A key-shaped name with a code no schema has: a key in a ref and as an argument, which
+        // no document has.
         row("XX-1", NOT_FOUND, NOT_FOUND, "exit 5", "exit 5"),
         // A path after a namespace prefix: from the namespace's folder in a ref and a body link,
         // from the project folder as an argument.
@@ -219,25 +218,32 @@ fn rows(project: &Scratch) -> Vec<Row> {
             "memory::default:notes/y.md",
             "memory::default:notes/y.md",
         ),
-        // A prefix that names no namespace: a bad prefix in a ref and an argument; in a body link
-        // it reads as a URL scheme, so the link is not a ref at all.
+        // A prefix that names no namespace: a bad prefix everywhere. In a body link only because
+        // the rest ends in `.md`; `tel:123` is a URL, not a ref.
         row(
             "default:notes/x.md",
             "unresolved:bad-prefix",
-            "no ref",
+            "unresolved:bad-prefix",
             "exit 1",
             "exit 1",
         ),
         row(
             "stroy-2:notes/x.md",
             "unresolved:bad-prefix",
+            "unresolved:bad-prefix",
+            "exit 1",
+            "exit 1",
+        ),
+        row(
+            "tel:123",
+            "unresolved:bad-prefix",
             "no ref",
             "exit 1",
             "exit 1",
         ),
     ];
-    // An absolute path: read as a relative path in a ref and a body link, on disk as an argument.
-    // On Windows a drive letter reads as a prefix in a ref, so the row is Unix only.
+    // An absolute path: never followed in a ref and a body link, on disk as an argument. On
+    // Windows a drive letter reads as a prefix, so the row is Unix only.
     if cfg!(unix) {
         let absolute = project.path().join("story-2/notes/x.md");
         rows.push(row(
@@ -252,7 +258,7 @@ fn rows(project: &Scratch) -> Vec<Row> {
 }
 
 #[test]
-fn each_name_form_is_read_today_as_this_table_says() {
+fn each_name_form_is_read_as_this_table_says() {
     let project = project();
     let mut differences = Vec::new();
     for row in rows(&project) {
