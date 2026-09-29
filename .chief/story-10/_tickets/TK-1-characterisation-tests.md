@@ -1,6 +1,6 @@
 ---
 blocked_by: []
-status: claimed
+status: resolved
 title: Characterisation tests of how every name form is read today
 type: implementation
 ---
