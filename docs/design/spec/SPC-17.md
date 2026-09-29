@@ -47,7 +47,7 @@ file maps files to a schema. It is configuration only: numbering state lives in 
 | `match` | yes | Which files belong to the collection. See Match templates. |
 | `schema` | yes | Relative path or `http://` or `https://` URL of the schema. See `SPC-16`. |
 | `slug` | no | Coded schemas only: whether a file name carries a slug after its key, `optional` (default), `required` or `none`. See Slugs in file names. |
-| `refBase` | no | How frontmatter paths resolve: `file` (default, relative to the document) or `namespace` (relative to the namespace folder) |
+| `refBase` | no | Where a frontmatter path with no prefix is read from: `file` (default, the document's folder) or `namespace` (the namespace folder). `./` and `../` are always read from the document's folder. See `SPC-18`. |
 | `validation` | no | Rule levels and options for this collection only, merged over `validation.global`. See `SPC-1`. |
 
 ## Match templates

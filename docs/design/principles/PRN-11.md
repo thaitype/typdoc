@@ -17,6 +17,10 @@ difference is found only when something breaks.
 
 ## What follows
 
+- A ref is a name. The direction is a ref that means the same from every document: a path in a ref
+  carries its `namespace:` or `project::` prefix, and a key may drop its prefix, since it is read in
+  the writer's namespace. The grammar reads a path with no prefix in a ref too, from the base it
+  gives it, and requiring the prefix is not part of it.
 - One grammar reads every name, and one function writes every name, as its inverse. A ref and an
   argument differ only where the grammar leaves the choice to the place: the base of a path with no
   prefix.
@@ -30,8 +34,9 @@ difference is found only when something breaks.
 ## Where it stops
 
 - A path with no prefix is relative to where it is written: the document or its namespace folder in
-  a ref, the project folder as an argument, and `./` the current directory there.
-- A body link is always a path, never a key, since a link is followed by readers that know nothing
-  of keys.
+  a ref, the project folder as an argument, and `./` the current directory there. `./` and `../` in
+  a ref are always from the document's folder; `refBase` moves only a path with no prefix.
+- A body link is not a name but a Markdown link, read as Markdown readers read it (`PRN-6`): a path
+  from the document, never a key.
 - `path` stays where the file is, from the project folder: it is for opening the file, not a name to
   write elsewhere.

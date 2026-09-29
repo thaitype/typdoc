@@ -1395,6 +1395,71 @@ fn ref_base_namespace_reads_a_relative_ref_from_the_namespace_folder() {
     assert_eq!(ran.stdout_json()["findings"], json!([]));
 }
 
+/// The fix a ref is given is its target's portable name; a body link's is a path from the document,
+/// since a Markdown reader follows no prefix.
+#[test]
+fn ref_base_namespace_reads_dot_slash_from_the_documents_folder_and_names_the_fix() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "notes/*.md", "schema": "note.json", "refBase": "namespace" }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": { "see": { "type": "ref[]", "target": "*" } } }"#,
+        ),
+    ]);
+    project.file("target.md", "");
+    project.file("notes/near.md", "---\n---\n");
+    project.file(
+        "notes/a.md",
+        "---\nsee: [./near.md, ./target.md]\n---\n\n[t](./target.md#top)\n",
+    );
+
+    let ran = validate(&[], project.path());
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let found = rules_and_messages(&ran);
+    let hint = "`./` and `../` are read from the document's folder, and from the namespace folder it \
+                would be `target.md`: write";
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert_eq!(found[0].0, "body.links");
+    assert!(
+        found[0].2.ends_with(&format!("{hint} `../target.md`")),
+        "{found:?}"
+    );
+    assert_eq!(found[1].0, "refs.resolve");
+    assert!(
+        found[1].2.ends_with(&format!("{hint} `default:target.md`")),
+        "{found:?}"
+    );
+}
+
+/// Outside every namespace folder a file has no portable name, so a ref is given the path from the
+/// document too.
+#[test]
+fn ref_base_namespace_names_a_path_for_a_target_outside_every_namespace() {
+    let projects = slugged_projects();
+    projects.file(
+        "main/.typdoc/collections/notes.json",
+        r#"{ "match": "notes/*.md", "schema": "schemas/note.json", "refBase": "namespace" }"#,
+    );
+    projects.file("main/top.md", "");
+    slug_note(&projects, "../top.md");
+
+    let ran = validate(&[], &projects.path().join("main"));
+
+    assert_eq!(ran.code, 2, "{}", ran.stderr);
+    let found = rules_and_messages(&ran);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0]
+            .2
+            .ends_with("from the namespace folder it would be `top.md`: write `../../top.md`"),
+        "{found:?}"
+    );
+}
+
 #[test]
 fn refs_target_refuses_a_schema_not_named_by_target() {
     let project = Scratch::project(&[

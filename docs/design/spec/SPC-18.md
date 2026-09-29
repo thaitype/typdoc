@@ -19,6 +19,13 @@ document, not part of its identity.
 | a mention (`body.mentions`) | not a path | not a path | only |
 | a command's argument | the project folder | the current directory | yes |
 
+A ref and a body link are two kinds of text. A ref is a name: the direction is that a path in a ref
+carries its prefix, so that it means the same from every document, while a key may drop its prefix
+(`PRN-11`). A body link is a Markdown link, read as Markdown readers read it: a path from the
+document, never a key, and in the direction of `PRN-6` never prefixed. The grammar below reads
+a path with no prefix in a ref and a prefix in a body link. In both, `./` and `../` are read from
+the document's folder, whatever `refBase` says; `refBase` moves only a path with no prefix.
+
 ## Reading a name
 
 A name is read in this order; the first step that applies decides.

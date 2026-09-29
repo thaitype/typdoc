@@ -33,6 +33,12 @@ are left out unless they change something a user of the `typdoc` binary sees.
   with `--namespace` or `TYPDOC_NAMESPACE`: `typdoc get WF-1 --namespace 'story-*'`. `default:`
   names the only namespace of a project, or of an imported project, that has one, whatever it is
   called.
+- `./` and `../` in a frontmatter ref or a body link are read from the document's folder under
+  both `refBase` values; `refBase` moves only a path with no prefix. A project whose collection sets
+  `"refBase": "namespace"` and writes `./x.md` in frontmatter meaning the namespace folder's `x.md`
+  now finds nothing there: `refs.resolve` and `body.links` say where the name used to lead and what
+  to write instead, `story-1:x.md` in a ref (`default:x.md` in a project with one namespace) and a
+  path from the document in a body link.
 - A ref with the shape of a key (`XX-1`) is a key whatever its code, as on the command line: it
   used to be read as a relative path when no schema had the code. A key no document has is
   reported as `no document with key XX-1`, in `refs.resolve` and as a command's error (exit 5,

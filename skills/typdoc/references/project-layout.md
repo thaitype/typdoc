@@ -56,6 +56,9 @@ A collection says which files a schema applies to:
 - `slug` (coded schemas only): whether a file name carries a slug after its key, `optional`
   (default), `required` or `none`. Any other value, or `slug` on a schema without a code, is
   `config.collection-slug`. A `match` with a digit or `-` right after `{key}` needs `none`.
+- `refBase`: where a path with no prefix in a frontmatter ref is read from, `file` (default, the
+  document's folder) or `namespace` (its namespace folder). `./` and `../` are always from the
+  document's folder.
 - A collection file may carry its own `validation`, merged over the project's.
 
 A schema says which fields a document has:

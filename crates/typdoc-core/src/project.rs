@@ -580,15 +580,66 @@ impl Project {
         &self.root
     }
 
+    /// For a `./` or `../` name that names nothing from the document's folder but names a file
+    /// from the namespace folder, a clause saying so, with the name to write for it: in a ref its
+    /// portable name, and in a body link, which is a Markdown link (`PRN-6`), its path from the
+    /// document.
+    fn namespace_folder_hint(&self, written: &str, ctx: &refs::Ctx, link: bool) -> Option<String> {
+        if ctx.ref_base != RefBase::Namespace || !name::from_document(written) {
+            return None;
+        }
+        let destination = written.split('#').next().unwrap_or(written);
+        let folder = &self.config.namespaces[ctx.doc_namespace].folder;
+        let found = refs::resolve_path(&name::join(folder, destination), &self.index, &self.root)
+            .ok()?
+            .path;
+        let namespace = name::namespace_of_path(&self.config.namespaces, &found);
+        let instead = match (link, namespace) {
+            (false, Some(namespace)) => {
+                let entry = self.index.get(&found);
+                self.portable_at(
+                    namespace,
+                    &found,
+                    entry.and_then(|entry| entry.key.as_deref()),
+                    entry.and_then(|entry| entry.slug.as_deref()),
+                )
+            }
+            // `./` or `../` in front, which is read from the document whatever `refBase` says.
+            _ => match name::relative_to(&name::folder_of(ctx.doc_path), &found) {
+                climbing if climbing.starts_with("../") => climbing,
+                below => format!("./{below}"),
+            },
+        };
+        Some(format!(
+            "`./` and `../` are read from the document's folder, and from the namespace folder it \
+             would be `{found}`: write `{instead}`"
+        ))
+    }
+
     /// The name of the document at `path` that reads as it from every place in this project
     /// (SPC-18).
     fn portable_name(&self, path: &str, entry: &Indexed) -> String {
+        self.portable_at(
+            entry.namespace,
+            path,
+            entry.key.as_deref(),
+            entry.slug.as_deref(),
+        )
+    }
+
+    fn portable_at(
+        &self,
+        namespace: usize,
+        path: &str,
+        key: Option<&str>,
+        slug: Option<&str>,
+    ) -> String {
         let identity = name::Identity {
             project: None,
-            namespace: entry.namespace,
+            namespace,
             path,
-            key: entry.key.as_deref(),
-            slug: entry.slug.as_deref(),
+            key,
+            slug,
         };
         name::format(
             identity,
@@ -2736,7 +2787,15 @@ impl Project {
                             &collection.validation,
                             strict,
                             audit,
-                        ),
+                        )
+                        .map(|mut finding| {
+                            if finding.rule == "refs.resolve"
+                                && let Some(hint) = self.namespace_folder_hint(written, &ctx, false)
+                            {
+                                finding.message = format!("{}; {hint}", finding.message);
+                            }
+                            finding
+                        }),
                     ),
                     Ok(resolved) => {
                         let info = self.schema_info_of(&resolved);
@@ -3067,7 +3126,14 @@ impl Project {
                         "body.links",
                         None,
                         position,
-                        missing_target_message(written, uses),
+                        match target
+                            .and_then(|target| self.namespace_folder_hint(target, doc.ctx, true))
+                        {
+                            Some(hint) => {
+                                format!("{}; {hint}", missing_target_message(written, uses))
+                            }
+                            None => missing_target_message(written, uses),
+                        },
                     ));
                 }
             }
@@ -4481,7 +4547,7 @@ impl Project {
             // Outside every namespace folder no prefix names where the document is: a path from
             // the place's base, `./` kept. Neither form reads `namespace`.
             None => {
-                let form = if written.starts_with("./") || written.starts_with("../") {
+                let form = if name::from_document(written) {
                     name::Form::Like(written)
                 } else {
                     name::Form::Relative

@@ -25,6 +25,11 @@ pub(crate) struct InDocument<'a> {
 }
 
 impl InDocument<'_> {
+    /// The folder `./` and `../` are read from: the document's own, whatever `refBase` says.
+    fn here(&self) -> String {
+        folder_of(self.path)
+    }
+
     fn base(&self, namespaces: &[Namespace]) -> String {
         match self.ref_base {
             RefBase::File => folder_of(self.path),
@@ -104,8 +109,11 @@ enum Keys {
 
 /// What a place allows, which is all [`read_with`] needs to know of it.
 struct Rules {
-    /// The folder a path with no prefix, and `./` in a document, is read from.
+    /// The folder a path with no prefix is read from.
     base: String,
+    /// The folder `./` and `../` are read from in a document: the document's own, whatever
+    /// `refBase` says (SPC-18).
+    here: String,
     keys: Keys,
     body_link: bool,
     mention: bool,
@@ -119,6 +127,7 @@ impl Rules {
     fn of(place: Place, namespaces: &[Namespace]) -> Rules {
         let plain = Rules {
             base: String::new(),
+            here: String::new(),
             keys: Keys::None,
             body_link: false,
             mention: false,
@@ -128,12 +137,14 @@ impl Rules {
         match place {
             Place::Ref(doc) => Rules {
                 base: doc.base(namespaces),
+                here: doc.here(),
                 keys: Keys::In(vec![doc.namespace]),
                 in_document: true,
                 ..plain
             },
             Place::BodyLink(doc) => Rules {
                 base: doc.base(namespaces),
+                here: doc.here(),
                 body_link: true,
                 in_document: true,
                 ..plain
@@ -154,6 +165,7 @@ impl Rules {
     fn in_import(&self, namespaces: &[Namespace]) -> Rules {
         Rules {
             base: String::new(),
+            here: String::new(),
             keys: match (&self.keys, namespaces.len()) {
                 (Keys::None, _) => Keys::None,
                 (_, 1) => Keys::In(vec![0]),
@@ -185,8 +197,8 @@ fn read_with(text: &str, rules: &Rules, namespaces: &[Namespace]) -> Reading {
         return Reading::NotARef;
     }
     // Before any prefix, so a file whose name holds a colon is written `./a:b.md`.
-    if rules.in_document && (text.starts_with("./") || text.starts_with("../")) {
-        return Reading::Path(join(&rules.base, text));
+    if rules.in_document && from_document(text) {
+        return Reading::Path(join(&rules.here, text));
     }
     // Before any prefix, so `C:\a.md` on Windows is an absolute path, not the prefix `C`.
     if rules.in_document && (text.starts_with('/') || Path::new(text).is_absolute()) {
@@ -406,7 +418,7 @@ pub(crate) fn format(
             Some(key) => format!("{alias}{}:{key}", prefix_of(namespaces, identity.namespace)),
             None => format!("{alias}{}", with_prefix(identity, namespaces)),
         },
-        Form::Relative => relative(identity, place, namespaces, false),
+        Form::Relative => relative(identity, place, namespaces, Start::Base),
         Form::Like(written) => like(identity, written, place, namespaces),
     }
 }
@@ -434,8 +446,9 @@ fn like_in_project(
     in_import: bool,
 ) -> String {
     let in_document = matches!(place, Place::Ref(_) | Place::BodyLink(_));
-    if in_document && !in_import && (written.starts_with("./") || written.starts_with("../")) {
-        return relative(identity, place, namespaces, written.starts_with("./"));
+    if in_document && !in_import && from_document(written) {
+        let dot = written.starts_with("./");
+        return relative(identity, place, namespaces, Start::Here { dot });
     }
     let (prefixed, rest) = match written.split_once(':') {
         Some((_, rest)) => (true, rest),
@@ -463,7 +476,9 @@ fn like_in_project(
         _ if in_import => identity.path.to_owned(),
         _ => match place {
             Place::Argument { .. } | Place::Mention { .. } => identity.path.to_owned(),
-            Place::Ref(_) | Place::BodyLink(_) => relative(identity, place, namespaces, false),
+            Place::Ref(_) | Place::BodyLink(_) => {
+                relative(identity, place, namespaces, Start::Base)
+            }
         },
     }
 }
@@ -496,18 +511,37 @@ fn prefix_of(namespaces: &[Namespace], namespace: usize) -> &str {
     }
 }
 
-/// `identity`'s path from `place`'s base, `./` kept when `dot` asks for it or the first segment
-/// holds a colon, which would otherwise read as a prefix.
-fn relative(identity: Identity, place: Place, namespaces: &[Namespace], dot: bool) -> String {
-    let base = match place {
-        Place::Ref(doc) | Place::BodyLink(doc) => doc.base(namespaces),
-        Place::Mention { .. } | Place::Argument { .. } => String::new(),
+/// Which folder [`relative`] writes a path from.
+#[derive(Debug, Clone, Copy)]
+enum Start {
+    /// The place's base, as a path with no prefix is read.
+    Base,
+    /// The document's folder, as `./` and `../` are read; `dot` keeps a leading `./`.
+    Here { dot: bool },
+}
+
+/// `identity`'s path from `start`. A path from the base that would climb out of it starts with
+/// `../`, which is read from the document's folder, so it is written from there. A first segment
+/// holding a colon, which would read as a prefix, is written with `./` when that is the document's
+/// folder, and with the namespace's prefix otherwise.
+fn relative(identity: Identity, place: Place, namespaces: &[Namespace], start: Start) -> String {
+    let (base, here) = match place {
+        Place::Ref(doc) | Place::BodyLink(doc) => (doc.base(namespaces), doc.here()),
+        Place::Mention { .. } | Place::Argument { .. } => (String::new(), String::new()),
     };
-    let relative = relative_to(&base, identity.path);
+    let (from, dot) = match start {
+        Start::Here { dot } => (&here, dot),
+        Start::Base if relative_to(&base, identity.path).starts_with("../") => (&here, false),
+        Start::Base => (&base, false),
+    };
+    let relative = relative_to(from, identity.path);
     let colon = relative
         .split('/')
         .next()
         .is_some_and(|first| first.contains(':'));
+    if colon && *from != here {
+        return with_prefix(identity, namespaces);
+    }
     if dot || colon {
         format!("./{relative}")
     } else {
@@ -563,6 +597,11 @@ pub(crate) fn namespace_of_path(namespaces: &[Namespace], path: &str) -> Option<
         .map(|(index, _)| index)
 }
 
+/// Whether a name in a document is read from the document's folder: `./` or `../` (SPC-18).
+pub(crate) fn from_document(text: &str) -> bool {
+    text.starts_with("./") || text.starts_with("../")
+}
+
 /// `""` (the project folder) for a path with no folder.
 pub(crate) fn folder_of(path: &str) -> String {
     match path.rsplit_once('/') {
@@ -571,7 +610,7 @@ pub(crate) fn folder_of(path: &str) -> String {
     }
 }
 
-fn join(base: &str, rest: &str) -> String {
+pub(crate) fn join(base: &str, rest: &str) -> String {
     if base.is_empty() {
         normalize(rest)
     } else {
@@ -908,7 +947,19 @@ mod tests {
                 Place::Ref(holder(RefBase::Namespace)),
                 &two()
             ),
-            "../story-2/notes/x.md"
+            // Out of the namespace folder: `../` is read from the document, so it is written
+            // from there.
+            "../../story-2/notes/x.md"
+        );
+        // `./` would be the document's folder, not the namespace's: the prefix says where.
+        assert_eq!(
+            format(
+                identity(0, "story-1/a:b.md", None),
+                Form::Relative,
+                Place::BodyLink(holder(RefBase::Namespace)),
+                &two()
+            ),
+            "story-1:a:b.md"
         );
         assert_eq!(
             format(
@@ -919,6 +970,21 @@ mod tests {
             ),
             "./a:b.md"
         );
+    }
+
+    #[test]
+    fn dot_slash_and_dot_dot_are_read_from_the_documents_folder_under_either_ref_base() {
+        for ref_base in [RefBase::File, RefBase::Namespace] {
+            for place in [
+                Place::Ref(holder(ref_base)),
+                Place::BodyLink(holder(ref_base)),
+            ] {
+                assert_eq!(read("./x.md", place, &two()), path("story-1/notes/x.md"));
+                assert_eq!(read("../x.md", place, &two()), path("story-1/x.md"));
+            }
+        }
+        let place = Place::Ref(holder(RefBase::Namespace));
+        assert_eq!(read("x.md", place, &two()), path("story-1/x.md"));
     }
 
     #[test]
