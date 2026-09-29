@@ -2,7 +2,7 @@
 title: JSON output explained
 status: active
 migrated_from: docs/archived-design/design.md#json-output
-follows: [PRN-2, PRN-8]
+follows: [PRN-2, PRN-8, PRN-11]
 ---
 
 Every command accepts `--json`, and its result is one JSON object on standard output. Commands
@@ -29,14 +29,18 @@ the version does: a count of findings per rule, for example, is not in it.
 
 There is one way to name a document, and every shape that has to mention one uses it: `path`,
 `namespace` (absent for a file outside every namespace folder, which a ref can still reach), `key`
-when the document has a code, and `project` when the document belongs to an imported project. `key`
+when the document has a code, `project` when the document belongs to an imported project, and
+`ref`, its portable name (`SPC-18`), which reads back as the document in a ref and as an argument
+from anywhere in the project. `path` is the file to open, from the project folder; `ref` is the
+name to write elsewhere. `key`
 is the key alone, never with the slug a file name carries (`SPC-17`); the slug is in `path`, and no
 field of its own repeats it, since a caller can read it from `path`. `project` is the alias under
 which this project imports it; it is absent for a document of this project. A document object is
 that name plus `code`, `collection`, `schema` and `fields`; a finding is that name, without
-`project` since a finding is always in this project, plus `rule`, `level`, `message` and a position;
-a reference is that name plus `field`, `written` and a position. A new shape that mentions a
-document adds to the name and never renames a part of it.
+`project` since a finding is always in this project and without `ref`, plus `rule`, `level`,
+`message` and a position; a reference is that name plus `field`, `written` and a position. A new
+shape that mentions a document adds to the name and never renames a part of it. Text output prints
+the same `path` it prints today and the portable name beside it, labelled `ref`.
 
 ## A finding
 

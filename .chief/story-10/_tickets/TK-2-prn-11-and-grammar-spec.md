@@ -1,6 +1,6 @@
 ---
 blocked_by: []
-status: open
+status: resolved
 title: PRN-11 and the name grammar in one spec
 type: implementation
 ---

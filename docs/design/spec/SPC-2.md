@@ -2,7 +2,7 @@
 title: Commands explained
 status: active
 migrated_from: docs/archived-design/design.md#commands
-follows: [PRN-1, PRN-2, PRN-3, PRN-4, PRN-8]
+follows: [PRN-1, PRN-2, PRN-3, PRN-4, PRN-8, PRN-11]
 ---
 
 `typdoc` has nine commands: `new`, `get`, `list`, `set`, `toc`, `refs`, `mv`, `pull`, and
@@ -177,46 +177,37 @@ new document, which is the ref meaning what it says.
 
 ## Arguments that name a document
 
-An argument that names a document is a path or a key, told apart by its form and never guessed.
-After any `project::` prefix, an argument that ends in `.md` is a path, and one that has the form of
-a key is a key. A key followed by its slug (`WF-5-json-output-shape`, `SPC-17`) has the form of a
-key and names the document `WF-5`, as it does in a ref (`SPC-14`), whatever its slug: `typdoc get
-WF-5-old-name` prints `WF-5` and nothing about the slug, since a command has no findings of its own
-to put the difference in. A key never ends in `.md` and a document is always a `.md` file, so the
-two cannot be confused. Anything else is bad arguments (exit 1). A path that begins with `/`, `./`
-or `../` is a path on disk, absolute or relative to the current directory. So is a path that is
-absolute on the system typdoc runs on, and that is read before any `project::` or `namespace:`
-prefix: on Windows, `C:\notes\a.md`, `C:/notes/a.md` and `\\server\share\a.md` are paths on disk,
-and `C:\notes\a.md` does not name the namespace `C`. On Windows the three forms are also written
-with its own separator, `\`, `.\` and `..\`, and are paths on disk then too; on Unix a leading `\`
-is not. A drive-relative path on Windows, `C:note.md`, is not recognised: it is read as the
-namespace `C` and the path `note.md`. Any other path is relative to the project folder, the folder
-that holds `.typdoc`, which is what `path` is in `--json`. The path of a document of an imported
-project is written `project::path`, relative to that project's folder. On Windows, where `\` cannot
-be part of a file name, a path relative to the project may be written with it, after any prefix:
-`notes\a.md` names what `notes/a.md` does, and is printed with `/`. On Unix `\` is a character a
-name may hold, and is read as one. This is about arguments only: a path written inside a document is
-written with `/` everywhere. `mv` reads both its arguments in this way, except that neither may
-carry a `project::` prefix: `mv` writes only in the project it is run in, so an argument naming a
-document of another project is bad arguments (exit 1). Its second names a file that does not exist
-yet: a `mv` whose destination is already there writes nothing and exits 7, and so does a
-`--renumber` whose destination name is taken. When a path relative to the project names nothing in
-it but a file of that name exists relative to the current directory, the error is exit 5 and says
-that `./name` exists. That is a suggestion; nothing is done in its place.
+An argument that names a document is a name (`SPC-18`): a key, or a path, with or without a
+`namespace:` or `project::` prefix, read as it is read in a ref, and a key followed by its slug
+names the key's document whatever the slug (`typdoc get WF-5-old-name` prints `WF-5` and nothing
+about the slug, since a command has no findings of its own to put the difference in). A name that is
+neither a path nor a key is bad arguments (exit 1). What is particular to an argument is which paths
+are on disk and where a path with no prefix starts.
 
-The string that names a document in an argument follows from the name it is printed with
-(`SPC-12`):
+A path that begins with `/`, `./` or `../` is a path on disk, absolute or relative to the current
+directory. So is a path that is absolute on the system typdoc runs on, and that is read before any
+`project::` or `namespace:` prefix: on Windows, `C:\notes\a.md`, `C:/notes/a.md` and
+`\\server\share\a.md` are paths on disk, and `C:\notes\a.md` does not name the namespace `C`. On
+Windows the three forms are also written with its own separator, `\`, `.\` and `..\`, and are paths
+on disk then too; on Unix a leading `\` is not. A drive-relative path on Windows, `C:note.md`, is
+not recognised: it is read as the namespace `C` and the path `note.md`. Any other path with no
+prefix is relative to the project folder, the folder that holds `.typdoc`, which is what `path` is
+in `--json`. On Windows, where `\` cannot be part of a file name, a path relative to the project may
+be written with it, after any prefix: `notes\a.md` names what `notes/a.md` does, and is printed with
+`/`. On Unix `\` is a character a name may hold, and is read as one. This is about arguments only: a
+path written inside a document is written with `/` everywhere.
 
-| The document | As a path | As a key (a coded document only) |
-| --- | --- | --- |
-| In this project | `path` | `key` when the project has one namespace, `namespace:key` when it has several |
-| In an imported project | `project::path` | `project::key` when that project has one namespace, `project::namespace:key` when it has several |
+`mv` reads both its arguments in this way, except that neither may carry a `project::` prefix: `mv`
+writes only in the project it is run in, so an argument naming a document of another project is bad
+arguments (exit 1). Its second names a file that does not exist yet: a `mv` whose destination is
+already there writes nothing and exits 7, and so does a `--renumber` whose destination name is
+taken. When a path relative to the project names nothing in it but a file of that name exists
+relative to the current directory, the error is exit 5 and says that `./name` exists. That is a
+suggestion; nothing is done in its place.
 
-The path form works for every document and needs to know nothing about how many namespaces a
-project has, so it is the form for a program to pass on. A key into an imported project with
-several namespaces must name one, as a ref must, even when the key is not ambiguous. A name that a
-command prints is accepted by every command that takes a key or a path, and a test walks every
-document of every project in the fixtures to check it.
+A document can be named in an argument by either name it is printed with (`SPC-12`): its `path`,
+from the project folder, or its portable name, `ref` (`SPC-18`). A test walks every document of
+every project in the fixtures to check that both read back as it.
 
 ## `new`
 
