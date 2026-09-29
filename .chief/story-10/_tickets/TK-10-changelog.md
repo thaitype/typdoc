@@ -7,7 +7,7 @@ blocked_by:
 - TK-8
 - TK-9
 - TK-13
-status: open
+status: resolved
 title: CHANGELOG for story 10
 type: implementation
 ---
