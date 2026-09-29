@@ -521,7 +521,9 @@ enum Start {
 }
 
 /// `identity`'s path from `start`. A path from the base that would climb out of it starts with
-/// `../`, which is read from the document's folder, so it is written from there. A first segment
+/// `../`, which is read from the document's folder: where that is not the base, a ref names the
+/// document with its prefix instead (`PRN-11`), and a body link, which takes none (`PRN-6`), with
+/// the path from the document. A first segment
 /// holding a colon, which would read as a prefix, is written with `./` when that is the document's
 /// folder, and with the namespace's prefix otherwise.
 fn relative(identity: Identity, place: Place, namespaces: &[Namespace], start: Start) -> String {
@@ -531,7 +533,15 @@ fn relative(identity: Identity, place: Place, namespaces: &[Namespace], start: S
     };
     let (from, dot) = match start {
         Start::Here { dot } => (&here, dot),
-        Start::Base if relative_to(&base, identity.path).starts_with("../") => (&here, false),
+        Start::Base if relative_to(&base, identity.path).starts_with("../") => {
+            if base != here
+                && matches!(place, Place::Ref(_))
+                && namespace_of_path(namespaces, identity.path) == Some(identity.namespace)
+            {
+                return with_prefix(identity, namespaces);
+            }
+            (&here, false)
+        }
         Start::Base => (&base, false),
     };
     let relative = relative_to(from, identity.path);
@@ -947,8 +957,17 @@ mod tests {
                 Place::Ref(holder(RefBase::Namespace)),
                 &two()
             ),
-            // Out of the namespace folder: `../` is read from the document, so it is written
-            // from there.
+            // Out of the namespace folder, where no path with no prefix reaches: a ref takes the
+            // prefix, and a body link the path from the document.
+            "story-2:notes/x.md"
+        );
+        assert_eq!(
+            format(
+                uncoded,
+                Form::Relative,
+                Place::BodyLink(holder(RefBase::Namespace)),
+                &two()
+            ),
             "../../story-2/notes/x.md"
         );
         // `./` would be the document's folder, not the namespace's: the prefix says where.

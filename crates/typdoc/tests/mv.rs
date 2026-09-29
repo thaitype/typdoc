@@ -420,6 +420,45 @@ fn a_dot_slash_is_kept_in_front_of_a_path_that_climbs_out_of_the_folder() {
     assert_eq!(project.read("sub/h.md"), "---\n---\n\n[a](./../b.md)\n");
 }
 
+/// Under `refBase: namespace`, a path with no prefix cannot reach a document moved out of the
+/// namespace folder, so `mv` changes its form: a frontmatter ref takes the namespace prefix, and a
+/// body link, which a Markdown reader follows with no prefix, the path from the document.
+#[test]
+fn a_no_prefix_path_to_a_document_moved_out_of_the_namespace_becomes_prefixed_or_a_link_path() {
+    let project = Scratch::project(&[
+        (
+            ".typdoc/config.json",
+            r#"{ "version": 1, "namespaces": ["story-1", "story-2"] }"#,
+        ),
+        (
+            ".typdoc/collections/notes.json",
+            r#"{ "match": "notes/*.md", "schema": "note.json", "refBase": "namespace" }"#,
+        ),
+        (
+            "note.json",
+            r#"{ "name": "note", "fields": { "see": { "type": "ref[]", "target": "*" } } }"#,
+        ),
+    ]);
+    project.file("story-1/notes/q.md", "---\n---\n");
+    project.file("story-2/.keep", "");
+    project.file(
+        "story-1/notes/h.md",
+        "---\nsee: [notes/q.md]\n---\n\n[q](notes/q.md)\n",
+    );
+
+    let ran = mv(&project, "story-1:notes/q.md", "story-2:notes/q.md");
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(
+        project.read("story-1/notes/h.md"),
+        "---\nsee:\n- story-2:notes/q.md\n---\n\n[q](../../story-2/notes/q.md)\n"
+    );
+    let validated = common::Spawn::args(["validate", "--json"])
+        .cwd(project.path())
+        .run();
+    assert_eq!(validated.code, 0, "{}", validated.stdout);
+}
+
 /// No prefix names a folder outside every namespace, so a prefixed ref becomes a path from the
 /// document that holds it.
 #[test]

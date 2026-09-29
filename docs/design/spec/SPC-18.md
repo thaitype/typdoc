@@ -76,7 +76,10 @@ typdoc writes a document's name in one of three forms, from the context it is wr
   where it is, and a path with no prefix depends on the place.
 - **as written**: when `mv` rewrites a ref to a document it moved, the new name keeps the form the
   old one had: a key stays a key, a prefix stays, a slug is kept or renamed as `SPC-17` says, and a
-  body link keeps its `./`, its `#anchor`, its `<…>` and its percent-encoding.
+  body link keeps its `./`, its `#anchor`, its `<…>` and its percent-encoding. Where the old form
+  can no longer reach the document, a path with no prefix under `refBase: namespace` to a document
+  moved out of the namespace folder, a ref takes the document's prefix (`PRN-11`) and a body link
+  the path from the document (`PRN-6`).
 
 Every name typdoc writes in a context reads back, in that context, as the document it was written
 for; and every document's portable name reads back as it from every context. A test holds this for
