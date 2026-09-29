@@ -1,6 +1,6 @@
 ---
 blocked_by: []
-status: open
+status: claimed
 title: Windows in publish.yml's test gate
 type: implementation
 ---

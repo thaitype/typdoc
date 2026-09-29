@@ -118,9 +118,10 @@ read straight from `main`.
    because publishing cannot be undone.
 3. Run the `publish` workflow from the release branch (Actions, publish, "Use workflow from"
    `release-X.Y.Z`) with `version` `X.Y.Z`: first with `dry_run` on, then off. It refuses to run
-   from any other branch, without `docs/releases/X.Y.Z.md`, or when the tag already exists. It
-   publishes the crates, creates the tag `vX.Y.Z` on the branch's last commit, attaches the
-   binaries with the notes as the release body, and installs the release from the live installer.
+   from any other branch, without `docs/releases/X.Y.Z.md`, or when the tag already exists. It runs
+   the tests and clippy on Linux, macOS and Windows, then publishes the crates, creates the tag
+   `vX.Y.Z` on the branch's last commit, attaches the binaries with the notes as the release body,
+   and installs the release from the live installer.
 4. Merge the pull request with **Create a merge commit**, not squash, so the tagged commit is in
    `main`'s history. CI on `main` fails when the newest release tag is not. If the pull request
    was squashed by mistake, record the tag with a merge commit that changes no file:
