@@ -273,8 +273,25 @@ pub struct Template {
     slug: SlugMode,
 }
 
+/// The first character of the glob syntax in `pattern` that a path pattern (`match`, `ignore`)
+/// does not take: a leading `!`, or any `?`, `[`, `]`, `\` or `,`. It takes `*` and `**` only, and
+/// refuses the rest rather than read it as a character that matches nothing (SPC-19).
+pub(crate) fn untaken_glob_character(pattern: &str) -> Option<char> {
+    if pattern.starts_with('!') {
+        return Some('!');
+    }
+    pattern
+        .chars()
+        .find(|c| matches!(c, '?' | '[' | ']' | '\\' | ','))
+}
+
 impl Template {
     pub fn parse(text: &str) -> Result<Template, String> {
+        if let Some(c) = untaken_glob_character(text) {
+            return Err(format!(
+                "the match `{text}` has `{c}`, which a match does not take: it takes `*` and `**`"
+            ));
+        }
         let steps = text
             .split('/')
             .map(|segment| match segment {

@@ -1,4 +1,4 @@
-//! Covers SPC-1, SPC-3, SPC-6, SPC-7.
+//! Covers SPC-1, SPC-3, SPC-6, SPC-7, SPC-19.
 //!
 //! The config errors that need no schema, import, state file or pin.
 
@@ -767,4 +767,92 @@ fn a_slug_in_a_collection_whose_schema_has_no_code_is_config_collection_slug() {
             "{slug}: {object}"
         );
     }
+}
+
+/// `?`, `[..]`, `\`, `,` and a leading `!` are glob syntax a path pattern does not take (SPC-19):
+/// each is refused and named, rather than read as a character that matches nothing.
+const UNTAKEN: [(&str, char); 6] = [
+    ("notes/q?.md", '?'),
+    ("notes/q[1].md", '['),
+    ("notes/q].md", ']'),
+    ("notes/star\\\\*.md", '\\'),
+    ("notes/{a,b}.md", ','),
+    ("!notes/a.md", '!'),
+];
+
+#[test]
+fn a_match_with_glob_syntax_it_does_not_take_is_config_match_template_naming_it() {
+    for (pattern, character) in UNTAKEN {
+        let project = with_collection(
+            ".typdoc/collections/notes.json",
+            &format!(r#"{{ "match": "{pattern}", "schema": "note.json" }}"#),
+        );
+
+        let object = config_error(&get_a(&project));
+
+        assert_eq!(
+            details(&object),
+            vec![pair(
+                "config.match-template",
+                ".typdoc/collections/notes.json"
+            )],
+            "{pattern}"
+        );
+        let message = object["details"][0]["message"].as_str().unwrap();
+        let written = pattern.replace("\\\\", "\\");
+        assert!(message.contains(&format!("`{written}`")), "{message}");
+        assert!(message.contains(&format!("`{character}`")), "{message}");
+    }
+}
+
+#[test]
+fn an_ignore_with_glob_syntax_it_does_not_take_is_a_config_error_naming_it() {
+    for (pattern, character) in UNTAKEN {
+        let project = with_config(&format!(
+            r#"{{ "version": 1, "validation": {{ "global": {{ "body.links": {{ "ignore": ["**/assets/**", "{pattern}"] }} }} }} }}"#
+        ));
+
+        let object = config_error(&get_a(&project));
+
+        assert_eq!(
+            details(&object),
+            vec![pair("config.rule-unknown", ".typdoc/config.json")],
+            "{pattern}"
+        );
+        let message = object["details"][0]["message"].as_str().unwrap();
+        let written = pattern.replace("\\\\", "\\");
+        assert!(message.contains(&format!("`{written}`")), "{message}");
+        assert!(message.contains(&format!("`{character}`")), "{message}");
+    }
+}
+
+#[test]
+fn a_match_and_an_ignore_that_take_only_star_and_star_star_still_load() {
+    let project = with_config(
+        r#"{ "version": 1, "validation": { "global": { "body.links": { "ignore": ["**/assets/**", "*.png"] } } } }"#,
+    );
+    project.file("a.md", "---\n---\n");
+
+    let ran = get_a(&project);
+
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+}
+
+/// A pattern that cannot be read for any other reason is reported too, never dropped without a
+/// word (SPC-19).
+#[test]
+fn an_ignore_pattern_that_cannot_be_read_is_a_config_error_naming_it() {
+    let project = with_config(
+        r#"{ "version": 1, "validation": { "global": { "body.links": { "ignore": ["notes//x.png"] } } } }"#,
+    );
+
+    let object = config_error(&get_a(&project));
+
+    assert_eq!(
+        details(&object),
+        vec![pair("config.rule-unknown", ".typdoc/config.json")]
+    );
+    let message = object["details"][0]["message"].as_str().unwrap();
+    assert!(message.contains("`notes//x.png`"), "{message}");
+    assert!(message.contains("cannot be read"), "{message}");
 }

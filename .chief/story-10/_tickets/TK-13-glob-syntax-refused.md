@@ -1,7 +1,7 @@
 ---
 blocked_by:
 - TK-12
-status: open
+status: resolved
 title: match and ignore refuse glob syntax they do not take
 type: implementation
 ---
