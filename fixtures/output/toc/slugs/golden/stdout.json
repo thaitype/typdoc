@@ -1,6 +1,7 @@
 {
   "document": {
     "path": "slugs.md",
+    "ref": "default:slugs.md",
     "namespace": "default"
   },
   "headings": [

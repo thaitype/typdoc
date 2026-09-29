@@ -1,6 +1,6 @@
-//! Covers SPC-2, SPC-14 and SPC-18: how each form of a name is read in a frontmatter ref, in a body
-//! link and as a command's argument, from the project folder and from a namespace folder, and the
-//! names commands print.
+//! Covers SPC-2, SPC-12, SPC-14 and SPC-18: how each form of a name is read in a frontmatter ref,
+//! in a body link and as a command's argument, from the project folder and from a namespace folder,
+//! and the names commands print.
 //!
 //! A characterisation: every row states what typdoc does, including where the places disagree. A
 //! row that a change to the grammar moves is changed on purpose, in the same commit as the code.
@@ -252,8 +252,8 @@ fn rows(project: &Scratch) -> Vec<Row> {
     let absolute = project.path().join("story-2/notes/x.md");
     rows.push(row(
         absolute.to_str().expect("a UTF-8 scratch path"),
-        NOT_FOUND,
-        NOT_FOUND,
+        "unresolved:absolute",
+        "unresolved:absolute",
         X2,
         X2,
     ));
@@ -296,7 +296,7 @@ fn each_name_form_is_read_as_this_table_says() {
 /// A path is printed from the project folder, with no namespace prefix, and a document of an
 /// import with no project prefix.
 #[test]
-fn the_names_commands_print_today() {
+fn the_names_commands_print() {
     let project = project();
     project.file(HOLDER, "---\ntitle: A\n---\n");
 
@@ -314,7 +314,8 @@ fn the_names_commands_print_today() {
 
     let ran = run(&project, &["list", "--namespace", "memory::*"], "");
     assert_eq!(ran.code, 0, "{}", ran.stderr);
-    for name in ["default:LRN-1", "notes/y.md"] {
+    // A document of an import is printed with its alias, so the name reads back from here.
+    for name in ["memory::LRN-1", "memory::notes/y.md"] {
         assert!(
             ran.stdout
                 .lines()

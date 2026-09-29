@@ -2,6 +2,7 @@
   "documents": [
     {
       "path": "story-2/notes/a.md",
+      "ref": "story-2:notes/a.md",
       "namespace": "story-2",
       "code": null,
       "collection": "notes",
@@ -12,6 +13,7 @@
     },
     {
       "path": "story-3/notes/a.md",
+      "ref": "story-3:notes/a.md",
       "namespace": "story-3",
       "code": null,
       "collection": "notes",

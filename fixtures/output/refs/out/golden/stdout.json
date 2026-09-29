@@ -1,6 +1,7 @@
 {
   "document": {
     "path": "tickets/WF-1.md",
+    "ref": "WF-1",
     "namespace": "default",
     "key": "WF-1"
   },
@@ -13,6 +14,7 @@
     },
     {
       "path": "tickets/WF-2.md",
+      "ref": "WF-2",
       "namespace": "default",
       "key": "WF-2",
       "field": "blocked_by",
@@ -25,6 +27,7 @@
     },
     {
       "path": "notes/a.md",
+      "ref": "default:notes/a.md",
       "namespace": "default",
       "field": "$body",
       "written": "../notes/a.md",

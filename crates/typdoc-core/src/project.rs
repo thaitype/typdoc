@@ -66,6 +66,69 @@ pub struct Toc {
     pub headings: Vec<Heading>,
 }
 
+/// What a document's portable name is written from (SPC-18): the namespaces of this project and
+/// of each import loaded on this machine.
+#[derive(Debug, Clone)]
+pub struct Names {
+    own: Vec<crate::config::Namespace>,
+    imports: BTreeMap<String, Vec<crate::config::Namespace>>,
+}
+
+impl Names {
+    /// The portable name, `ref` in output, of the document at `path` in `namespace` of `project`
+    /// (an import's alias, `None` for this one): `None` for a file outside every namespace folder,
+    /// which no name reaches from every place.
+    pub fn portable(
+        &self,
+        project: Option<&str>,
+        namespace: Option<&str>,
+        key: Option<&str>,
+        path: &str,
+    ) -> Option<String> {
+        let namespaces = match project {
+            None => &self.own,
+            Some(alias) => self.imports.get(alias)?,
+        };
+        let namespace = namespaces
+            .iter()
+            .position(|space| Some(space.name.as_str()) == namespace)?;
+        let identity = name::Identity {
+            project,
+            namespace,
+            path,
+            key,
+            slug: None,
+        };
+        Some(name::format(
+            identity,
+            name::Form::Portable,
+            name::Place::Argument { scope: &[] },
+            namespaces,
+        ))
+    }
+
+    /// The name a command prints for a document in a table or a line (SPC-5): a coded document's
+    /// portable name, its key qualified only where its project needs it, and any other document's
+    /// path from its project's folder, after the import's `alias::`.
+    pub fn printed(
+        &self,
+        project: Option<&str>,
+        namespace: Option<&str>,
+        key: Option<&str>,
+        path: &str,
+    ) -> String {
+        if key.is_some()
+            && let Some(portable) = self.portable(project, namespace, key, path)
+        {
+            return portable;
+        }
+        match project {
+            Some(alias) => format!("{alias}::{path}"),
+            None => path.to_owned(),
+        }
+    }
+}
+
 /// The name of a document at the other end of a reference, once it is known to exist. `key` is
 /// present only for a coded document, `project` is the alias of the imported project the document
 /// belongs to (`None` for this project), and `namespace` is `None` for a file outside every
@@ -482,6 +545,23 @@ impl Project {
             imports,
             state: state_by_namespace,
         })
+    }
+
+    /// What every document's portable name is written from, for printing it.
+    pub fn names(&self) -> Names {
+        Names {
+            own: self.config.namespaces.clone(),
+            imports: self
+                .imports
+                .iter()
+                .filter_map(|(alias, state)| match state {
+                    ImportState::Loaded(project) => {
+                        Some((alias.clone(), project.config.namespaces.clone()))
+                    }
+                    ImportState::Absent(_) => None,
+                })
+                .collect(),
+        }
     }
 
     pub fn config(&self) -> &Config {
@@ -2130,7 +2210,7 @@ impl Project {
                 refs::BodyDestination::Skip => continue,
                 refs::BodyDestination::BadPrefix => RefOutcome::Unresolved("bad-prefix"),
                 refs::BodyDestination::ImportAbsent(_) => RefOutcome::Unresolved("import-absent"),
-                refs::BodyDestination::Absolute => RefOutcome::Unresolved("not-found"),
+                refs::BodyDestination::Absolute => RefOutcome::Unresolved("absolute"),
                 refs::BodyDestination::Path(joined) => {
                     match refs::resolve_path(&joined, &self.index, &self.root) {
                         Ok(resolved) => RefOutcome::Resolved(self.ref_name_of(&resolved.path)),
@@ -5147,7 +5227,8 @@ fn reason_message(written: &str, reason: &refs::Reason) -> String {
 
 fn reason_id(reason: &refs::Reason) -> &'static str {
     match reason {
-        refs::Reason::NotFound | refs::Reason::NoKey(_) | refs::Reason::Absolute => "not-found",
+        refs::Reason::NotFound | refs::Reason::NoKey(_) => "not-found",
+        refs::Reason::Absolute => "absolute",
         refs::Reason::BadPrefix => "bad-prefix",
         refs::Reason::ImportAbsent(_) => "import-absent",
     }

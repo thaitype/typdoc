@@ -66,6 +66,7 @@ fn a_document_in_list_is_the_same_shape_as_get() {
         wf1,
         &json!({
             "path": "tickets/WF-1.md",
+            "ref": "WF-1",
             "namespace": "default",
             "key": "WF-1",
             "code": "WF",
@@ -395,7 +396,7 @@ fn the_default_table_shows_identity_title_and_every_field_used_in_where() {
     assert_eq!(lines.len(), 3, "{lines:?}");
     assert_eq!(
         lines[0].split_whitespace().collect::<Vec<_>>(),
-        ["key", "title", "context"],
+        ["key", "ref", "title", "context"],
         "{lines:?}"
     );
     assert!(lines[1].starts_with("WF-1"), "{lines:?}");
@@ -414,7 +415,7 @@ fn the_header_row_names_path_for_a_path_identified_collection() {
     assert_eq!(lines.len(), 2, "{lines:?}");
     assert_eq!(
         lines[0].split_whitespace().collect::<Vec<_>>(),
-        ["path", "title"],
+        ["path", "ref", "title"],
         "{lines:?}"
     );
     assert!(lines[1].starts_with("notes/a.md"), "{lines:?}");
@@ -430,7 +431,7 @@ fn the_header_row_names_document_when_the_matched_set_mixes_coded_and_path_ident
     assert_eq!(lines.len(), 5, "{lines:?}");
     assert_eq!(
         lines[0].split_whitespace().collect::<Vec<_>>(),
-        ["document", "title"],
+        ["document", "ref", "title"],
         "{lines:?}"
     );
     assert!(
@@ -462,7 +463,7 @@ fn fields_overrides_the_where_derived_columns() {
     let header = lines.next().unwrap();
     assert_eq!(
         header.split_whitespace().collect::<Vec<_>>(),
-        ["key", "title", "collection"],
+        ["key", "ref", "title", "collection"],
         "{header:?}"
     );
     for line in lines {

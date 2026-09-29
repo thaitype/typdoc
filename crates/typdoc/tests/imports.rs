@@ -256,7 +256,7 @@ fn toc_with_a_project_prefix_resolves_inside_the_import_and_names_it() {
     assert_eq!(document["project"], json!("memory_import"));
     assert_eq!(
         document,
-        json!({ "path": "learnings/LRN-1.md", "namespace": "default", "key": "LRN-1", "project": "memory_import" })
+        json!({ "path": "learnings/LRN-1.md", "ref": "memory_import::LRN-1", "namespace": "default", "key": "LRN-1", "project": "memory_import" })
     );
 }
 
@@ -269,7 +269,7 @@ fn refs_with_a_project_prefix_reads_the_imported_documents_own_out_refs() {
     let out = ran.stdout_json();
     assert_eq!(
         out["document"],
-        json!({ "path": "learnings/LRN-1.md", "namespace": "default", "key": "LRN-1", "project": "memory_import" })
+        json!({ "path": "learnings/LRN-1.md", "ref": "memory_import::LRN-1", "namespace": "default", "key": "LRN-1", "project": "memory_import" })
     );
     assert_eq!(out["refs"], json!([]));
 }
@@ -1006,6 +1006,7 @@ fn a_ref_inside_this_project_is_a_reverse_ref_when_an_import_has_the_same_path()
         reverse_refs_of_target(&a, &[]),
         json!([{
             "path": "notes/pointer.md",
+            "ref": "default:notes/pointer.md",
             "namespace": "default",
             "field": "see",
             "written": "target.md"
@@ -1030,6 +1031,7 @@ fn a_body_link_inside_this_project_is_a_reverse_ref_when_an_import_has_the_same_
         reverse_refs_of_target(&a, &[]),
         json!([{
             "path": "notes/pointer.md",
+            "ref": "default:notes/pointer.md",
             "namespace": "default",
             "field": "$body",
             "written": "target.md",

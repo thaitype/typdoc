@@ -1,4 +1,4 @@
-//! Covers SPC-2, SPC-4, SPC-5, SPC-6, SPC-7, SPC-14, SPC-17.
+//! Covers SPC-2, SPC-4, SPC-5, SPC-6, SPC-7, SPC-12, SPC-14, SPC-17, SPC-18.
 
 #[allow(dead_code, reason = "each test file uses part of the shared helper")]
 mod common;
@@ -19,6 +19,7 @@ fn get_by_path_prints_the_document() {
         json!({
             "document": {
                 "path": "note.md",
+                "ref": "default:note.md",
                 "namespace": "default",
                 "code": null,
                 "collection": "notes",
@@ -244,6 +245,7 @@ fn get_without_json_prints_the_labeled_block() {
     assert_eq!(
         ran.stdout,
         "path: note.md\n\
+         ref: default:note.md\n\
          collection: notes\n\
          schema: note\n\
          namespace: default\n\

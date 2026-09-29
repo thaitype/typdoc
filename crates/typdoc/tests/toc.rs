@@ -52,7 +52,7 @@ fn toc_prints_the_document_it_was_asked_about_and_its_headings() {
     assert_eq!(
         ran.stdout_json(),
         json!({
-            "document": { "path": "note.md", "namespace": "default" },
+            "document": { "path": "note.md", "ref": "default:note.md", "namespace": "default" },
             "headings": [
                 { "level": 1, "text": "A minimal note", "slug": "a-minimal-note", "line": 6, "end": 8 }
             ]
@@ -81,7 +81,7 @@ fn a_document_of_another_namespace_names_its_namespace() {
     assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
     assert_eq!(
         ran.stdout_json()["document"],
-        json!({ "path": "story-2/notes/a.md", "namespace": "story-2" })
+        json!({ "path": "story-2/notes/a.md", "ref": "story-2:notes/a.md", "namespace": "story-2" })
     );
 }
 
@@ -96,7 +96,7 @@ fn a_coded_document_carries_its_key_and_a_key_argument_reads_the_same_document()
         assert_eq!(ran.code, 0, "stderr: {}", ran.stderr);
         assert_eq!(
             ran.stdout_json()["document"],
-            json!({ "path": "tickets/WF-1.md", "namespace": "default", "key": "WF-1" })
+            json!({ "path": "tickets/WF-1.md", "ref": "WF-1", "namespace": "default", "key": "WF-1" })
         );
     }
 }

@@ -137,7 +137,8 @@ TK-2                 blocked_by
 `--json`: `{"document": <name>, "direction": "out" | "in", "refs": [...]}`. Each ref names the
 document at the other end, its `field`, and `written`, the text as it appears in the file; a body
 link also has `line` and `col`. A ref that doesn't resolve has `unresolved` instead of a path:
-`not-found`, `import-absent` or `bad-prefix`.
+`not-found`, `import-absent`, `bad-prefix` or `absolute` (an absolute path, which typdoc never
+follows).
 
 `--reverse` doesn't look inside projects that import this one.
 

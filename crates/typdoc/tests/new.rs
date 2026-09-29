@@ -520,6 +520,7 @@ fn new_path_without_json_prints_the_labeled_block() {
     assert_eq!(
         ran.stdout,
         "path: a-new-note.md\n\
+         ref: default:a-new-note.md\n\
          collection: notes\n\
          schema: note\n\
          namespace: default\n\
@@ -544,6 +545,7 @@ fn new_coded_without_json_prints_the_labeled_block_not_the_bare_key() {
     assert_eq!(
         ran.stdout,
         "path: tickets/WF-2.md\n\
+         ref: WF-2\n\
          collection: tickets\n\
          schema: ticket\n\
          namespace: default\n\
@@ -863,6 +865,7 @@ fn slug_in_the_text_output_is_in_the_path_and_not_in_the_key() {
     assert_eq!(
         ran.stdout,
         "path: tickets/WF-2-lock-order.md\n\
+         ref: WF-2\n\
          collection: tickets\n\
          schema: ticket\n\
          namespace: default\n\

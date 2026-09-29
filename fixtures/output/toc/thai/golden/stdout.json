@@ -1,6 +1,7 @@
 {
   "document": {
     "path": "thai.md",
+    "ref": "default:thai.md",
     "namespace": "default"
   },
   "headings": [

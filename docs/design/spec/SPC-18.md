@@ -25,8 +25,9 @@ A name is read in this order; the first step that applies decides.
 
 1. As an argument, a path on disk: an absolute path, or one beginning with `/`, `./` or `../`, and
    on Windows `\`, `.\` or `..\`, read from the current directory (`SPC-2`). In a ref or a body
-   link, an absolute path, a drive letter included (`C:\a.md` on Windows), is never resolved, and
-   is reported under `refs.resolve` or `body.links` as an absolute path.
+   link, an absolute path, a drive letter included (`C:\a.md` on Windows), is never resolved: it is
+   reported under `refs.resolve` or `body.links` as an absolute path, and `refs` lists it as
+   `unresolved: absolute` (`SPC-12`).
 2. In a body link, a URL is not a ref: a name that begins with a scheme followed by `//`, or with
    `http:`, `https:`, `mailto:` or `file:`, the schemes no namespace or alias may be named.
    `alias::rest` otherwise: `rest` is read in the imported project `alias`, from its folder and with
@@ -64,7 +65,8 @@ typdoc writes a document's name in one of three forms, from the context it is wr
   `namespace:KEY` in a project with several; `default:path` for a document with no code in a project
   with one namespace, `namespace:path-from-its-folder` in a project with several; a document of an
   import is prefixed with `alias::`. The portable name reads back as the document from every context
-  of the project it is printed for.
+  of the project it is printed for. A file outside every namespace folder has none: no prefix names
+  where it is, and a path with no prefix depends on the place.
 - **as written**: when `mv` rewrites a ref to a document it moved, the new name keeps the form the
   old one had: a key stays a key, a prefix stays, a slug is kept or renamed as `SPC-17` says, and a
   body link keeps its `./`, its `#anchor`, its `<…>` and its percent-encoding.

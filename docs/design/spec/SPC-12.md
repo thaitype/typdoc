@@ -29,18 +29,19 @@ the version does: a count of findings per rule, for example, is not in it.
 
 There is one way to name a document, and every shape that has to mention one uses it: `path`,
 `namespace` (absent for a file outside every namespace folder, which a ref can still reach), `key`
-when the document has a code, `project` when the document belongs to an imported project, and
-`ref`, its portable name (`SPC-18`), which reads back as the document in a ref and as an argument
-from anywhere in the project. `path` is the file to open, from the project folder; `ref` is the
-name to write elsewhere. `key`
-is the key alone, never with the slug a file name carries (`SPC-17`); the slug is in `path`, and no
-field of its own repeats it, since a caller can read it from `path`. `project` is the alias under
-which this project imports it; it is absent for a document of this project. A document object is
-that name plus `code`, `collection`, `schema` and `fields`; a finding is that name, without
-`project` since a finding is always in this project and without `ref`, plus `rule`, `level`,
-`message` and a position; a reference is that name plus `field`, `written` and a position. A new
-shape that mentions a document adds to the name and never renames a part of it. Text output prints
-the same `path` it prints today and the portable name beside it, labelled `ref`.
+when the document has a code, `project` when the document belongs to an imported project, and `ref`,
+its portable name (`SPC-18`), which reads back as the document in a ref and as an argument from
+anywhere in the project (absent, like `namespace`, for a file outside every namespace folder: no
+prefix names where it is, so no one name reaches it from every place). `path` is the file to open,
+from the project folder; `ref` is the name to write elsewhere. `key` is the key alone, never with
+the slug a file name carries (`SPC-17`); the slug is in `path`, and no field of its own repeats it,
+since a caller can read it from `path`. `project` is the alias under which this project imports it;
+it is absent for a document of this project. A document object is that name plus `code`,
+`collection`, `schema` and `fields`; a finding is that name, without `project` since a finding is
+always in this project and without `ref`, plus `rule`, `level`, `message` and a position; a
+reference is that name plus `field`, `written` and a position. A new shape that mentions a document
+adds to the name and never renames a part of it. Text output prints the same `path` it prints today
+and the portable name beside it, labelled `ref`.
 
 ## A finding
 
@@ -162,18 +163,18 @@ writes its fields, not the order its schema declares them, then its body links b
 the values of one field in the order they are written. For `in`, the documents of this project
 that hold the refs are in `path` order.
 
-A reference that does not resolve has no `path` and has `unresolved` instead, one of three values:
-`not-found`, the place the ref names is present and the file or key is not, or the ref is an
-absolute path, which is never resolved (`SPC-18`); `import-absent`, the
-import it names is not on this machine, which `imports.absent` reports; and `bad-prefix`, the
-prefix names no namespace and no import, or names a project with several namespaces without saying
-which. A missing `path` alone would make a broken link and a machine that has not been set up look
-the same, and they are different problems with different fixes. `path` and `unresolved` never
-appear together, and `unresolved` occurs only for `out`, since a reference read from a document
-that holds it has been found. Unresolved references are listed: a ref is counted from what is
-written in the field. `--field` keeps only the refs in that field, `$body` for body links, and it
-means the field that holds the ref in both directions, so with `--reverse` it is a field of the
-document that holds it.
+A reference that does not resolve has no `path` and has `unresolved` instead, one of four values:
+`not-found`, the place the ref names is present and the file or key is not; `import-absent`, the
+import it names is not on this machine, which `imports.absent` reports; `bad-prefix`, the prefix
+names no namespace and no import, or names a project with several namespaces without saying which;
+and `absolute`, the ref is an absolute path, which typdoc never looks up (`SPC-18`), so saying the
+file is not there would claim more than was checked. A missing `path` alone would make a broken link
+and a machine that has not been set up look the same, and they are different problems with different
+fixes. `path` and `unresolved` never appear together, and `unresolved` occurs only for `out`, since
+a reference read from a document that holds it has been found. Unresolved references are listed: a
+ref is counted from what is written in the field. `--field` keeps only the refs in that field,
+`$body` for body links, and it means the field that holds the ref in both directions, so with
+`--reverse` it is a field of the document that holds it.
 
 ## The write commands
 

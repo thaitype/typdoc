@@ -551,6 +551,7 @@ fn a_move_that_rewrites_refs_prints_the_labeled_block_and_the_rewritten_count() 
     assert_eq!(
         ran.stdout,
         "path: renamed.md\n\
+         ref: default:renamed.md\n\
          collection: notes\n\
          schema: note\n\
          namespace: default\n\
@@ -607,6 +608,7 @@ fn a_move_that_rewrites_exactly_one_ref_in_one_document_uses_the_singular_form()
     assert_eq!(
         ran.stdout,
         "path: renamed.md\n\
+         ref: default:renamed.md\n\
          collection: notes\n\
          schema: note\n\
          namespace: default\n\
@@ -643,6 +645,7 @@ fn a_move_that_leaves_a_ref_unrewritten_prints_its_own_count_and_entry_line() {
     assert_eq!(
         ran.stdout,
         "path: new.md\n\
+         ref: default:new.md\n\
          collection: notes\n\
          schema: note\n\
          namespace: default\n\
@@ -688,6 +691,7 @@ fn unrewritten_names_a_coded_holder_by_its_bare_key_in_a_single_namespace_projec
     assert_eq!(
         ran.stdout,
         "path: new.md\n\
+         ref: default:new.md\n\
          collection: notes\n\
          schema: note\n\
          namespace: default\n\
@@ -720,6 +724,7 @@ fn a_clean_move_prints_zero_rewritten_and_none_unrewritten() {
     assert_eq!(
         ran.stdout,
         "path: b.md\n\
+         ref: default:b.md\n\
          collection: notes\n\
          schema: note\n\
          namespace: default\n\
@@ -781,6 +786,7 @@ fn a_move_that_fails_the_destination_schema_lists_the_finding_in_text_mode() {
     assert_eq!(
         ran.stdout,
         "path: tasks/plain.md\n\
+         ref: default:tasks/plain.md\n\
          collection: tasks\n\
          schema: task\n\
          namespace: default\n\

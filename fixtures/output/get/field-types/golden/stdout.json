@@ -1,6 +1,7 @@
 {
   "document": {
     "path": "records/typed.md",
+    "ref": "default:records/typed.md",
     "namespace": "default",
     "code": null,
     "collection": "records",

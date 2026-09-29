@@ -1,6 +1,7 @@
 {
   "document": {
     "path": "renamed.md",
+    "ref": "default:renamed.md",
     "namespace": "default",
     "code": null,
     "collection": "notes",

@@ -2891,6 +2891,17 @@ fn a_windows_absolute_path_in_a_ref_or_a_body_link_is_reported_as_an_absolute_pa
     for (_, _, message) in &found {
         assert!(message.contains("is an absolute path"), "{found:?}");
     }
+    let refs = Spawn::args(["refs", "story-1/notes/a.md", "--json"])
+        .cwd(projects.path().join("main"))
+        .run();
+    assert_eq!(refs.code, 0, "{}", refs.stderr);
+    let unresolved: Vec<Value> = refs.stdout_json()["refs"]
+        .as_array()
+        .expect("an array")
+        .iter()
+        .map(|reference| reference["unresolved"].clone())
+        .collect();
+    assert_eq!(unresolved, [json!("absolute"), json!("absolute")]);
 }
 
 #[test]

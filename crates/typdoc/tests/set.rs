@@ -221,6 +221,7 @@ fn set_without_json_prints_the_labeled_block_after_the_write() {
     assert_eq!(
         ran.stdout,
         "path: note.md\n\
+         ref: default:note.md\n\
          collection: notes\n\
          schema: note\n\
          namespace: default\n\

@@ -1,6 +1,7 @@
 {
   "document": {
     "path": "story-2/notes/a.md",
+    "ref": "story-2:notes/a.md",
     "namespace": "story-2",
     "code": null,
     "collection": "notes",

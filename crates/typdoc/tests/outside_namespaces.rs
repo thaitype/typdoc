@@ -1,4 +1,4 @@
-//! Covers SPC-7, SPC-12, SPC-13.
+//! Covers SPC-7, SPC-12, SPC-13, SPC-18.
 //!
 //! Every expected value is written out by hand, never copied from the tool's output.
 
@@ -60,7 +60,7 @@ fn refs_names_a_root_file_reached_by_a_frontmatter_ref_by_its_path_alone() {
 
     assert_eq!(
         out["document"],
-        json!({ "path": "story-1/a.md", "namespace": "story-1" })
+        json!({ "path": "story-1/a.md", "ref": "story-1:a.md", "namespace": "story-1" })
     );
     assert_eq!(out["direction"], json!("out"));
     assert_eq!(
@@ -101,6 +101,7 @@ fn refs_reverse_finds_the_holder_while_another_document_refers_to_a_root_file() 
         out["refs"],
         json!([{
             "path": "story-2/b.md",
+            "ref": "story-2:b.md",
             "namespace": "story-2",
             "field": "up",
             "written": "../story-1/a.md"
@@ -289,6 +290,7 @@ fn with_one_namespace_a_file_outside_every_collection_is_still_in_default() {
         out["refs"],
         json!([{
             "path": "README.md",
+            "ref": "default:README.md",
             "namespace": "default",
             "field": "up",
             "written": "../README.md"

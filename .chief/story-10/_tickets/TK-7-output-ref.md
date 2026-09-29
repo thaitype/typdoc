@@ -1,7 +1,7 @@
 ---
 blocked_by:
 - TK-3
-status: open
+status: resolved
 title: Every document printed with its portable name, ref
 type: implementation
 ---

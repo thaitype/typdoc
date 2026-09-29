@@ -1,6 +1,7 @@
 {
   "document": {
     "path": "nothing-under.md",
+    "ref": "default:nothing-under.md",
     "namespace": "default"
   },
   "headings": [

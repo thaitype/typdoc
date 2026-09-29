@@ -1,6 +1,7 @@
 {
   "document": {
     "path": "records/words.md",
+    "ref": "default:records/words.md",
     "namespace": "default",
     "code": null,
     "collection": "records",

@@ -1,6 +1,7 @@
 {
   "document": {
     "path": "tasks/plain.md",
+    "ref": "default:tasks/plain.md",
     "namespace": "default",
     "code": null,
     "collection": "tasks",
@@ -16,6 +17,7 @@
   "unrewritten": [
     {
       "path": "holder-a.md",
+      "ref": "default:holder-a.md",
       "namespace": "default",
       "field": "$body",
       "written": "plain.md",
@@ -25,6 +27,7 @@
     },
     {
       "path": "holder-b.md",
+      "ref": "default:holder-b.md",
       "namespace": "default",
       "field": "$body",
       "written": "plain.md",

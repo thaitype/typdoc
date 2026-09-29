@@ -87,6 +87,7 @@ fn renumber_allocates_the_next_key_from_the_destination_and_prints_the_labeled_b
     assert_eq!(
         bare.stdout,
         "path: story-3/tickets/WF-2.md\n\
+         ref: story-3:WF-2\n\
          collection: tickets\n\
          schema: ticket\n\
          namespace: story-3\n\
@@ -504,6 +505,7 @@ fn a_renumber_that_rewrites_refs_prints_the_labeled_block_and_the_rewritten_coun
     assert_eq!(
         ran.stdout,
         "path: story-3/tickets/WF-1.md\n\
+         ref: story-3:WF-1\n\
          collection: tickets\n\
          schema: ticket\n\
          namespace: story-3\n\
@@ -573,6 +575,7 @@ fn a_renumber_that_leaves_a_ref_unrewritten_prints_its_own_count_and_entry_line(
     assert_eq!(
         ran.stdout,
         "path: story-3/tickets/WF-1.md\n\
+         ref: story-3:WF-1\n\
          collection: tickets\n\
          schema: ticket\n\
          namespace: story-3\n\
@@ -648,6 +651,7 @@ fn renumber_prints_the_mention_entry_in_the_text_golden() {
     assert_eq!(
         ran.stdout,
         "path: story-3/tickets/WF-1.md\n\
+         ref: story-3:WF-1\n\
          collection: tickets\n\
          schema: ticket\n\
          namespace: story-3\n\
