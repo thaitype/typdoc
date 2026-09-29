@@ -2,7 +2,7 @@
 title: Validation rules explained
 status: active
 migrated_from: docs/archived-design/design.md#validation-rules
-follows: [PRN-2, PRN-3, PRN-7]
+follows: [PRN-2, PRN-3, PRN-7, PRN-12]
 ---
 
 Every rule `typdoc validate` can report falls into one of two groups.
@@ -65,7 +65,9 @@ after; `validate` does not report it on a file as it stands.
 
 Markdown links in the body (inline, image and reference-style) point at existing files; also text
 that looks like a link but is not, and a reference label defined twice. Its `ignore` option holds
-globs of relative targets to skip, matched after percent-decoding.
+globs (`SPC-19`) of targets to skip, matched after percent-decoding against the target's path from
+the project folder, not the link as written: `**/assets/**` skips a link into any `assets` folder,
+from any document.
 
 **Text that looks like a link but is not.** A `[text](inner)` or `![text](inner)` outside code that
 the parser does not read as a link, and a line `[label]: inner` that it does not read as a

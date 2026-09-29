@@ -2,7 +2,7 @@
 title: Collections explained
 status: active
 migrated_from: docs/archived-design/design.md#config-typdocconfigjson
-follows: [PRN-1, PRN-2, PRN-3, PRN-5, PRN-6, PRN-7]
+follows: [PRN-1, PRN-2, PRN-3, PRN-5, PRN-6, PRN-7, PRN-12]
 ---
 
 A collection is one file in `.typdoc/collections/` that maps files to a schema: which files belong
@@ -53,7 +53,7 @@ file maps files to a schema. It is configuration only: numbering state lives in 
 ## Match templates
 
 For a coded schema, `match` is a template with a placeholder; for a schema without a code, it is a
-glob.
+glob (`SPC-19`): `*` and `**`, and no other character of the syntax.
 
 | Placeholder | Stands for | Allowed in |
 | --- | --- | --- |

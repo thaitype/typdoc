@@ -23,7 +23,7 @@ down with its own `.typdoc/` is a separate project.
   "imports": { "memory": "../memory" },
   "validation": {
     "global": {
-      "body.links": { "level": "error", "ignore": ["assets/**"] },
+      "body.links": { "level": "error", "ignore": ["**/assets/**"] },
       "frontmatter.unknown": { "level": "off" }
     }
   }

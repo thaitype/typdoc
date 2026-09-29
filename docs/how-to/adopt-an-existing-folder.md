@@ -114,7 +114,7 @@ collection file, for that collection's documents:
   "validation": {
     "global": {
       "frontmatter.unknown": { "level": "off" },
-      "body.links": { "level": "error", "ignore": ["assets/**"] }
+      "body.links": { "level": "error", "ignore": ["**/assets/**"] }
     }
   }
 }
