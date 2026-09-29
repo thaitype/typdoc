@@ -19,8 +19,7 @@ difference is found only when something breaks.
 
 - A ref is a name. The direction is a ref that means the same from every document: a path in a ref
   carries its `namespace:` or `project::` prefix, and a key may drop its prefix, since it is read in
-  the writer's namespace. The grammar reads a path with no prefix in a ref too, from the base it
-  gives it, and requiring the prefix is not part of it.
+  the writer's namespace.
 - One grammar reads every name, and one function writes every name, as its inverse. A ref and an
   argument differ only where the grammar leaves the choice to the place: the base of a path with no
   prefix.

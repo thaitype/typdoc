@@ -66,8 +66,32 @@ pick a side: leave both as they are and list the mismatch in the PR.
 - `spec/` — what typdoc does. An SPC names the principles it follows in `follows`.
 - `catalog/` — the lists code and tests read.
 
+### Principles
+
+- A principle stands on its own: it names no SPC and no code, and its example comes from a
+  different domain from the case that produced it.
+- A principle may name another principle.
+- A spec names the principles it follows in `follows`; that is the only link between the two, and
+  it runs from the spec to the principle.
+- What the code does today, or what is not built yet, belongs in a spec or the CHANGELOG, never in
+  a principle.
+
+### A spec states what the code does today
+
+The spec is where code comments, tests and people look for the reason behind a behavior. A spec
+that mixes intentions with facts cannot be trusted for either: a reader cannot tell which sentences
+the binary honours. So design that is not built yet, or that the code does differently, is not
+written into a spec as if it held:
+
+- Design moved into a spec is rewritten to what the code does, and a difference between the old
+  text and the code is listed for a decision instead of being settled silently.
+- A change to behavior updates the spec in the same pull request.
+- A spec may name what is known to be missing ("`pull` is not built"), as long as it says so.
+
+### Deciding
+
 A new design decision is argued from the principles. When a case fits a principle, the principle
 decides it and the SPC cites it. When no principle covers a case, or two principles pull in
 opposite directions, a principle is proposed or amended first and agreed before the spec is
-written. A principle that stops holding is superseded (`status: superseded`, `superseded_by`),
-never edited into a different rule.
+written. A principle that stops holding is superseded (`status: superseded`, with `superseded_by` when
+another principle replaces it), never edited into a different rule.

@@ -17,10 +17,9 @@ allow.
 ## What follows
 
 - A body link is a Markdown link, read as Markdown readers read it: a path from the document it is
-  in, `./` and `../` included. It is never a key, and the direction is that it carries no namespace
-  or project prefix either, which no Markdown reader follows; the grammar reads one (`SPC-18`), and
-  requiring the form is not part of it. A name that reaches a document from anywhere belongs in a
-  ref (`PRN-11`).
+  in, `./` and `../` included. It is never a key, and it carries no namespace or project prefix,
+  which no Markdown reader follows. A name that reaches a document from anywhere belongs in a ref
+  (`PRN-11`).
 - A body link names its file exactly. A space must be written `<…>` or `%20`, since CommonMark does
   not allow it bare (`SPC-1`, `body.links`).
 - A slug may not contain `#`, which every Markdown reader takes as the start of an anchor.
