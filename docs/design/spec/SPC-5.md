@@ -1,6 +1,7 @@
 ---
 title: Text output explained
 status: active
+follows: [PRN-9]
 ---
 
 One principle holds for every command's text output, without `--json`: a value is always

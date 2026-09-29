@@ -14,8 +14,7 @@ turns a small move into a large, noisy diff, and overrides choices it was not as
 ## What follows
 
 - A key-only ref stays key-only; a key written with its slug gets the new slug; a prefixed ref
-  keeps its prefix; a relative path stays relative, recomputed from the document that holds it
-  (`SPC-2`).
+  keeps its prefix; a relative path stays relative, recomputed from the document that holds it.
 - A body link keeps its `<…>` or `%20` form.
 
 ## Where it stops

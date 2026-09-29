@@ -9,7 +9,7 @@ levels.** Where that cannot hold, the changelog says exactly which projects are 
 ## Why
 
 A version bump that breaks projects nobody changed teaches users not to upgrade. `version: 1` in
-`config.json` is a promise that the meaning of a project's files does not move under it (`SPC-7`).
+`config.json` is a promise that the meaning of a project's files does not move under it.
 
 ## What follows
 

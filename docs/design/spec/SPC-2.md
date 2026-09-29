@@ -2,7 +2,7 @@
 title: Commands explained
 status: active
 migrated_from: docs/archived-design/design.md#commands
-follows: [PRN-1, PRN-2, PRN-3, PRN-4, PRN-8, PRN-11]
+follows: [PRN-1, PRN-2, PRN-3, PRN-4, PRN-8, PRN-9, PRN-11]
 ---
 
 `typdoc` has nine commands: `new`, `get`, `list`, `set`, `toc`, `refs`, `mv`, `pull`, and

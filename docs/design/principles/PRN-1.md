@@ -15,7 +15,7 @@ typdoc corrects is a name the caller did not choose and may not recognise.
 
 ## What follows
 
-- `new` for a document without a code takes the path the caller types (`SPC-2`).
+- `new` for a document without a code takes the path the caller types.
 - A slug in a coded document's file name is given by the caller; typdoc does not derive it from
   the title, and a slug that breaks the rules is refused rather than repaired.
 - The title and the file name are independent: changing the title never renames the file.

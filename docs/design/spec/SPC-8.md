@@ -2,6 +2,7 @@
 title: State and numbering explained
 status: active
 migrated_from: docs/archived-design/design.md#config-typdocconfigjson
+follows: [PRN-2]
 ---
 
 `.typdoc/state/<namespace>.json` holds, per collection, the highest number ever issued in that

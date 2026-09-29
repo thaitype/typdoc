@@ -15,9 +15,9 @@ guessing.
 ## What follows
 
 - `get` prints one `name: value` line per field; `list` prints a header row naming its
-  columns (`SPC-5`).
+  columns.
 - Write commands, `mv --renumber` included, print the same labeled block as `get` for the
-  document they wrote; a caller that wants a bare key reads it from `--json` (`SPC-2`).
+  document they wrote; a caller that wants a bare key reads it from `--json`.
 
 ## Where it stops
 
